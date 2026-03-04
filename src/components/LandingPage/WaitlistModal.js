@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 
 const PRICE_TIERS = [
   { amount: 49,  label: "Per month." },
-  { amount: 99,  label: "Per month.", popular: true },
+  { amount: 99,  label: "Per month." },
   { amount: 149, label: "Per month." },
 ];
 
@@ -144,7 +144,7 @@ export default function WaitlistModal({ onClose }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
-  const emailValid = email.includes("@") && email.includes(".");
+  const emailValid = email.length <= 254 && email.includes("@") && email.includes(".");
 
   const goNext = () => {
     if (!emailValid) return;
@@ -264,6 +264,7 @@ export default function WaitlistModal({ onClose }) {
                   placeholder="you@company.com"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
+                  maxLength={254}
                   onKeyDown={e => e.key === "Enter" && goNext()}
                   autoFocus
                   style={{
@@ -318,7 +319,7 @@ export default function WaitlistModal({ onClose }) {
                 borderRadius: 6, padding: "4px 10px", marginBottom: 20,
               }}>
                 <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 600 }}>
-                  You are not being charged — this is purely for research.
+                  You are not being charged, this is purely for research.
                 </span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 20 }}>
