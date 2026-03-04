@@ -18,8 +18,6 @@ import { MongoClient }         from 'mongodb';
 const __dirname  = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_FILE = path.join(__dirname, '..', 'sessions.json');
 
-const serviceFile = new Storage({ keyFilename: join(__dirname, 'service-account-key.json')});
-
 const router = express.Router();
 
 // ── Session persistence ──────────────────────────────────────────────────────
