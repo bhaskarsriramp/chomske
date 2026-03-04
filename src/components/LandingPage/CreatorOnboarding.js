@@ -34,7 +34,7 @@ export default function Onboarding() {
 
   const [username, setUsername] = useState("");
   const [goal, setGoal] = useState("");
-  const apiBase = "http://localhost:8001/usersOn";
+  const apiBase = "/api/usersOn";
   const [isSaving, setIsSaving] = useState(false);
 
   // Availability state

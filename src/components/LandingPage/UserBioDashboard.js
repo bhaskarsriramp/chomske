@@ -171,7 +171,7 @@ export default function ProfileBlocksEditor() {
   const [link, setLink] = useState("");
   const [copySnackOpen, setCopySnackOpen] = useState(false);
   // const baseUrl = "/api/usersOn";
-  const baseUrl = "http://localhost:8001/usersOn";
+  const baseUrl = "/api/usersOn";
 
   const [userDetails, setUserDetails] = useState({});
 

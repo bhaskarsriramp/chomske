@@ -24,7 +24,7 @@ export default function WaitlistSuccessCard({ onClose = () => {} }) {
   const [plan, setPlan] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false); // <- new: track if feedback was sent
-  const baseUrl = "http://localhost:8001/usersOn";
+  const baseUrl = "/api/usersOn";
 
 
   const handleChange = (e) => setPlan(e.target.value);

@@ -24,7 +24,7 @@ function WaitlistSignup() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
-  const baseUrl = "http://localhost:8001/usersOn";
+  const baseUrl = "/api/usersOn";
   const theme = useTheme();
   const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
 

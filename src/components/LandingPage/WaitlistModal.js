@@ -163,7 +163,7 @@ export default function WaitlistModal({ onClose }) {
     setSubmitting(true);
     setSubmitError("");
     try {
-      const res = await fetch("http://localhost:8003/api/waitlist", {
+      const res = await fetch("/api/usersOn/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim().toLowerCase(), pricing: price }),
