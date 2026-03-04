@@ -21,9 +21,9 @@ function OnboardingDemo({ isMobile }) {
   }, []);
 
   const users = [
-    { name: "Arjun M.", days: "Day 3", status: "Setup ✓", stuck: "Never opened a core feature yet." },
-    { name: "Priya S.", days: "Day 5", status: "Setup ✓", stuck: "Invited team, but never activated." },
-    { name: "Rahul K.", days: "Day 2", status: "Setup ✓", stuck: "Profile is done, but zero actions." },
+    { name: "Arjun M.", days: "Day 3", status: "Setup ✓", stuck: "Never opened a core feature so far since.." },
+    { name: "Priya S.", days: "Day 5", status: "Setup ✓", stuck: "Invited team, but workspace is never activated." },
+    { name: "Rahul K.", days: "Day 2", status: "Setup ✓", stuck: "Profiling is done, but zero actions.." },
   ];
 
   return (
