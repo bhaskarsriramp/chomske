@@ -266,11 +266,10 @@ export default function WaitlistModal({ onClose }) {
                   onChange={e => setEmail(e.target.value)}
                   maxLength={254}
                   onKeyDown={e => e.key === "Enter" && goNext()}
-                  autoFocus
                   style={{
                     width: "100%", boxSizing: "border-box",
                     padding: "13px 16px",
-                    fontSize: 15, borderRadius: 11,
+                    fontSize: 16, borderRadius: 11,
                     border: "1.5px solid #E2E8F0",
                     outline: "none", color: "#0F172A",
                     fontFamily: "inherit",
