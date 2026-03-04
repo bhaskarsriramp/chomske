@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import Navbar from "../components/LandingPage/Navbar";
 import Footer from "../components/LandingPage/Footer";
+import WaitlistModal from "../components/LandingPage/WaitlistModal";
 
 const STEPS = [
   {
@@ -178,6 +179,7 @@ function StepRow({ step, isMobile, isLast }) {
 }
 
 export default function HowItWorksPage() {
+  const [showWaitlist, setShowWaitlist] = useState(false);
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(max-width:900px)").matches
   );
@@ -279,17 +281,20 @@ export default function HowItWorksPage() {
           <p style={{ fontSize: isMobile ? 13.5 : 15, color: "rgba(255,255,255,0.5)", margin: "0 0 28px", lineHeight: 1.6 }}>
             Connect your MongoDB. Your first analysis runs overnight.
           </p>
-          <button style={{
-            background: "#fff", color: "#0F172A",
-            fontSize: 15, fontWeight: 700,
-            padding: "14px 36px", borderRadius: 10,
-            border: "none", cursor: "pointer",
-          }}>
+          <button
+            onClick={() => setShowWaitlist(true)}
+            style={{
+              background: "#fff", color: "#0F172A",
+              fontSize: 15, fontWeight: 700,
+              padding: "14px 36px", borderRadius: 10,
+              border: "none", cursor: "pointer",
+            }}>
             Join Waitlist →
           </button>
         </div>
       </section>
 
+      {showWaitlist && <WaitlistModal onClose={() => setShowWaitlist(false)} />}
       <Footer />
     </div>
   );
