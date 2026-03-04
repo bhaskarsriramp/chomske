@@ -56,7 +56,7 @@ function GhostingCard({ isMobile }) {
           fontSize: isMobile ? 14 : 15, fontWeight: 600,
           color: "rgba(255,255,255,0.92)", margin: "0 0 16px", lineHeight: 1.45,
         }}>
-          7 paying subscribers went completely silent this week.
+          17 paying subscribers went completely silent this week.
         </p>
 
         {/* Trigger */}
@@ -219,33 +219,32 @@ export default function Hero() {
             </div>
 
             <h1 style={{
-              fontSize: isMobile ? "clamp(2rem, 8vw, 2.6rem)" : "clamp(2.5rem, 3.5vw, 3.5rem)",
+              fontSize: isMobile ? "clamp(2rem, 8vw, 2.8rem)" : "clamp(2.8rem, 4vw, 4rem)",
               fontWeight: 800,
-              letterSpacing: "-0.028em",
-              color: "#0F172A",
+              letterSpacing: "-0.03em",
+              lineHeight: 1.15,
               margin: "0 0 20px",
-              lineHeight: 1.30,
               textAlign: "left",
               animation: "heroUp 0.5s ease 0.07s backwards",
             }}>
-              Stop finding out about churn from
-              <span style={{ position: "relative", display: "inline-block", marginLeft: 10 }}>
+              <span style={{ display: "block", color: "#0F172A" }}>
                 <span style={{
-                  background: "#E0E7FF",
-                  padding: isMobile ? "2px 8px 4px" : "3px 12px 5px",
-                  borderRadius: 6,
-                  fontStyle: "italic",
-                  color: "#3730A3",
-                }}>Stripe.</span>
+                  background: "linear-gradient(135deg, #ff4400 0%, #ff7040 100%)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                  fontStyle: "normal",
+                }}>17 users</span>
+                {" cancelled"}
+              </span>
+              <span style={{ display: "block", color: "#64748B", fontWeight: 500 }}>
+                {"before "}
                 <span style={{
-                  position: "absolute",
-                  top: isMobile ? -9 : -12,
-                  right: isMobile ? -7 : -9,
-                  width: isMobile ? 9 : 12,
-                  height: isMobile ? 20 : 25,
-                  background: "#6366F1",
-                  borderRadius: 3,
-                }} />
+                  textDecoration: "line-through",
+                  textDecorationColor: "#CBD5E1",
+                  color: "#94A3B8",
+                }}>Stripe</span>
+                {" told you."}
               </span>
             </h1>
 
@@ -257,9 +256,8 @@ export default function Hero() {
               maxWidth: "100%",
               animation: "heroUp 0.5s ease 0.14s backwards",
             }}>
-              Connect your MongoDB. Chomske reads your data every morning
-              and tells you exactly who to reach out to, who's at risk, and
-              who's ready to upgrade, before they make the decision.
+              Just connect your MongoDB. Every morning, Chomske tells you
+              who's slipping away, who to check in on, and who's ready to pay more.
             </p>
 
             {!isMobile && (

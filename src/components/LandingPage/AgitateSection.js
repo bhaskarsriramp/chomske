@@ -11,26 +11,74 @@ function useInView(threshold = 0.12) {
   return [ref, inView];
 }
 
-const GAPS = [
-  {
-    before: "You see a churn chart going down.",
-    after:  "Chomske shows you the 3 users behind it.",
-  },
-  {
-    before: "You see a drop-off percentage.",
-    after:  "Chomske shows you where each user got stuck.",
-  },
-  {
-    before: "You wait for Stripe to notify you.",
-    after:  "Chomske warns you 14 days earlier.",
-  },
+// Churn sparkline — rising trend (bad signal)
+const PTS = [
+  { x: 0,   y: 54 },
+  { x: 40,  y: 50 },
+  { x: 80,  y: 46 },
+  { x: 120, y: 48 },
+  { x: 160, y: 28 },
+  { x: 200, y: 8  },
 ];
 
-const TOOLS = [
-  { name: "Mixpanel",  gives: "Funnel charts",      missing: "Not who is stuck in the funnel" },
-  { name: "Amplitude", gives: "Retention trends",   missing: "Not which user is about to leave" },
-  { name: "Grafana",   gives: "Metric dashboards",  missing: "Not which metric belongs to whom" },
-  { name: "Metabase",  gives: "SQL query results",  missing: "Requires you to know what to ask" },
+const LINE_D = PTS.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x},${p.y}`).join(" ");
+const AREA_D = `${LINE_D} L 200,62 L 0,62 Z`;
+
+const MONTH_LABELS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN"];
+
+function SparkLine({ color, gradId, inView }) {
+  return (
+    <svg viewBox="0 0 200 64" style={{ width: "100%", height: 68, display: "block" }} aria-hidden="true">
+      <defs>
+        <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={AREA_D} fill={`url(#${gradId})`}
+        style={{ opacity: inView ? 1 : 0, transition: "opacity 0.5s ease 0.9s" }} />
+      <path d={LINE_D} fill="none" stroke={color} strokeWidth="2.2"
+        strokeLinecap="round" strokeLinejoin="round"
+        pathLength="1" strokeDasharray="1"
+        strokeDashoffset={inView ? 0 : 1}
+        style={{ transition: "stroke-dashoffset 1.1s cubic-bezier(0.4,0,0.2,1) 0.2s" }} />
+      {PTS.map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r={i === PTS.length - 1 ? 4 : 2.5} fill={color}
+          style={{ opacity: inView ? 1 : 0, transition: `opacity 0.3s ease ${0.3 + i * 0.13}s` }} />
+      ))}
+    </svg>
+  );
+}
+
+function AnimCount({ to, suffix = "", inView, delay = 0 }) {
+  const [val, setVal] = useState(0);
+  useEffect(() => {
+    if (!inView) return;
+    const t = setTimeout(() => {
+      let v = 0;
+      const tick = () => {
+        v += Math.ceil((to - v) / 5) || 1;
+        if (v >= to) { setVal(to); return; }
+        setVal(v);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }, delay);
+    return () => clearTimeout(t);
+  }, [inView, to, delay]);
+  return <>{val}{suffix}</>;
+}
+
+const BADGES = [
+  { label: "Priya",  left: "53%", top: "16%", delay: "1.3s" },
+  { label: "Marcus", left: "72%", top: "2%",  delay: "1.6s" },
+  { label: "Julia",  left: "36%", top: "36%", delay: "1.9s" },
+];
+
+const STATS = [
+  { icon: "🔔", stat: "14 days", label: "earlier than Stripe alerts you." },
+  { icon: "👤", stat: "Users",   label: "not percentages, every morning." },
+  { icon: "⚡", stat: "1 action", label: "suggested per insight, daily." },
 ];
 
 export default function AgitateSection() {
@@ -46,6 +94,13 @@ export default function AgitateSection() {
     return () => window.removeEventListener("resize", h);
   }, []);
 
+  const fade = (delay = "0s", extra = {}) => ({
+    opacity: inView ? 1 : 0,
+    transform: inView ? "none" : "translateY(18px)",
+    transition: `opacity 0.55s ease ${delay}, transform 0.55s ease ${delay}`,
+    ...extra,
+  });
+
   return (
     <section
       ref={sectionRef}
@@ -57,175 +112,164 @@ export default function AgitateSection() {
     >
       <div style={{ maxWidth: 860, margin: "0 auto" }}>
 
-        {/* ── Statement ── */}
-        <div style={{
-          marginBottom: isMobile ? 56 : 80,
-          opacity: inView ? 1 : 0,
-          transform: inView ? "none" : "translateY(18px)",
-          transition: "opacity 0.55s ease, transform 0.55s ease",
-        }}>
+        {/* ── Headline ── */}
+        <div style={{ marginBottom: isMobile ? 44 : 60, textAlign: isMobile ? "left" : "center", ...fade() }}>
           <h2 style={{
-            fontSize: isMobile ? "clamp(1.6rem, 6.5vw, 2.2rem)" : "clamp(2rem, 3.2vw, 2.8rem)",
+            fontSize: isMobile ? "clamp(1.6rem,6.5vw,2.2rem)" : "clamp(2rem,3.2vw,2.8rem)",
             fontWeight: 800, color: "#0F172A",
-            lineHeight: 1.2, letterSpacing: "-0.03em",
-            margin: "0 0 16px",
+            lineHeight: 1.2, letterSpacing: "-0.03em", margin: "0 0 12px",
           }}>
             Most tools tell you what happened.
             <br />
             <span style={{ color: "#94A3B8", fontWeight: 500 }}>None tell you who to call about it.</span>
           </h2>
-          <p style={{
-            fontSize: isMobile ? 14 : 16, color: "#64748B",
-            lineHeight: 1.65, margin: 0, maxWidth: 520, fontWeight: 400,
-          }}>
-            You already have all the data. The gap is turning it into a
-            name, a context, and a reason to reach out today.
-          </p>
+         
         </div>
 
-        {/* ── Before / After rows ── */}
+        {/* ── Comparison cards ── */}
         <div style={{
-          marginBottom: isMobile ? 56 : 80,
-          opacity: inView ? 1 : 0,
-          transform: inView ? "none" : "translateY(18px)",
-          transition: "opacity 0.55s ease 0.12s, transform 0.55s ease 0.12s",
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+          gap: isMobile ? 16 : 20,
+          ...fade("0.15s"),
         }}>
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-            gap: isMobile ? 0 : 0,
-            border: "1px solid #E2E8F0",
-            borderRadius: isMobile ? 16 : 20,
-            overflow: "hidden",
-          }}>
-            {/* Column headers — desktop only */}
-            {!isMobile && (
-              <>
-                <div style={{
-                  padding: "12px 24px",
-                  background: "#F8FAFC",
-                  borderBottom: "1px solid #E2E8F0",
-                  borderRight: "1px solid #E2E8F0",
-                }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#94A3B8", letterSpacing: "0.07em", textTransform: "uppercase" }}>
-                    What your current tools give you
-                  </span>
-                </div>
-                <div style={{
-                  padding: "12px 24px",
-                  background: "#F0FDF4",
-                  borderBottom: "1px solid #E2E8F0",
-                }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#16A34A", letterSpacing: "0.07em", textTransform: "uppercase" }}>
-                    What Chomske gives you
-                  </span>
-                </div>
-              </>
-            )}
-            {GAPS.map((g, i) => (
-              isMobile ? (
-                <div key={i} style={{
-                  borderBottom: i < GAPS.length - 1 ? "1px solid #F1F5F9" : "none",
-                  padding: "18px 20px",
-                }}>
-                  <div style={{ fontSize: 13, color: "#94A3B8", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 18, height: 18, borderRadius: "50%", background: "#FEF2F2", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#EF4444", fontWeight: 700, flexShrink: 0 }}>✕</span>
-                    {g.before}
-                  </div>
-                  <div style={{ fontSize: 13.5, color: "#0F172A", fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 18, height: 18, borderRadius: "50%", background: "#F0FDF4", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#16A34A", fontWeight: 700, flexShrink: 0 }}>✓</span>
-                    {g.after}
-                  </div>
-                </div>
-              ) : (
-                <div key={i} style={{ display: "contents" }}>
-                  <div style={{
-                    padding: "18px 24px",
-                    borderBottom: i < GAPS.length - 1 ? "1px solid #F1F5F9" : "none",
-                    borderRight: "1px solid #E2E8F0",
-                    background: "#fff",
-                  }}>
-                    <p style={{ margin: 0, fontSize: 14, color: "#64748B", lineHeight: 1.5 }}>{g.before}</p>
-                  </div>
-                  <div style={{
-                    padding: "18px 24px",
-                    borderBottom: i < GAPS.length - 1 ? "1px solid #F0FDF4" : "none",
-                    background: "#FAFFF7",
-                  }}>
-                    <p style={{ margin: 0, fontSize: 14, color: "#15803D", fontWeight: 600, lineHeight: 1.5 }}>{g.after}</p>
-                  </div>
-                </div>
-              )
-            ))}
-          </div>
-        </div>
 
-        {/* ── Tool comparison ── */}
-        <div style={{
-          opacity: inView ? 1 : 0,
-          transform: inView ? "none" : "translateY(18px)",
-          transition: "opacity 0.55s ease 0.24s, transform 0.55s ease 0.24s",
-        }}>
-          <h3 style={{
-            fontSize: isMobile ? "1rem" : "1.2rem",
-            fontWeight: 700, color: "#0F172A",
-            margin: "0 0 6px", letterSpacing: "-0.02em",
-          }}>
-            Every tool you use has the same blind spot.
-          </h3>
-          <p style={{ fontSize: isMobile ? 13 : 14, color: "#64748B", margin: "0 0 20px" }}>
-            Charts and percentages. But no names or details.
-          </p>
-
+          {/* Left — generic tools */}
           <div style={{
-            border: "1px solid #E2E8F0",
-            borderRadius: isMobile ? 14 : 18,
-            overflow: "hidden",
+            border: "1px solid #E2E8F0", borderRadius: 18,
+            padding: "22px 22px 18px", background: "#FAFAFA",
           }}>
-            {TOOLS.map((t, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: isMobile ? "1fr" : "140px 1fr 1fr",
-                  padding: isMobile ? "14px 16px" : "14px 22px",
-                  borderBottom: i < TOOLS.length - 1 ? "1px solid #F1F5F9" : "none",
-                  gap: isMobile ? 4 : 12,
-                  alignItems: "center",
-                  background: "#fff",
-                  transition: "background 0.15s",
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = "#F8FAFC"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "#fff"; }}
-              >
-                <span style={{ fontSize: isMobile ? 13 : 14, fontWeight: 700, color: "#0F172A" }}>{t.name}</span>
-                <span style={{ fontSize: isMobile ? 12 : 13, color: "#64748B" }}>
-                  {isMobile ? "" : "→ "}{t.gives}
-                </span>
-                <span style={{ fontSize: isMobile ? 12 : 13, color: "#EF4444" }}>
-                  {isMobile ? "✕ " : "✕ "}{t.missing}
-                </span>
-              </div>
-            ))}
-            {/* Chomske row */}
             <div style={{
-              display: "grid",
-              gridTemplateColumns: isMobile ? "1fr" : "140px 1fr 1fr",
-              padding: isMobile ? "14px 16px" : "14px 22px",
-              gap: isMobile ? 4 : 12,
-              alignItems: "center",
-              background: "linear-gradient(135deg, #EEF2FF 0%, #F0FDF4 100%)",
-              borderTop: "2px solid #C7D2FE",
+              fontSize: 10, fontWeight: 700, color: "#94A3B8",
+              letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14,
             }}>
-              <span style={{ fontSize: isMobile ? 13 : 14, fontWeight: 800, color: "#4338CA" }}>Chomske</span>
-              <span style={{ fontSize: isMobile ? 12 : 13, color: "#374151", fontWeight: 600 }}>
-                Names, context, what to do
+              Analytics tools today
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+              {MONTH_LABELS.map(m => (
+                <span key={m} style={{ fontSize: 9, color: "#CBD5E1" }}>{m}</span>
+              ))}
+            </div>
+
+            <SparkLine color="#94A3B8" gradId="grad-gray" inView={inView} />
+
+            <div style={{ marginTop: 14, display: "flex", alignItems: "baseline", gap: 10 }}>
+              <span style={{ fontSize: 38, fontWeight: 800, color: "#0F172A", lineHeight: 1 }}>
+                <AnimCount to={12} suffix="%" inView={inView} delay={600} />
               </span>
-              <span style={{ fontSize: isMobile ? 12 : 13, color: "#16A34A", fontWeight: 600 }}>
-                ✓ Every morning, automatically
-              </span>
+              <span style={{ fontSize: 12, color: "#EF4444", fontWeight: 600 }}>↑ 4% from last month</span>
+            </div>
+            <div style={{ marginTop: 4, fontSize: 13, color: "#94A3B8" }}>8 cancellations this month</div>
+
+            <div style={{
+              marginTop: 14, padding: "10px 13px",
+              background: "#F1F5F9", borderRadius: 9,
+              fontSize: 12, color: "#94A3B8", fontStyle: "italic",
+            }}>
+              Now what? Who do I talk to?
             </div>
           </div>
+
+          {/* Right — Chomske */}
+          <div style={{
+            border: "1.5px solid #C7D2FE", borderRadius: 18,
+            padding: "22px 22px 18px",
+            background: "linear-gradient(160deg,#F5F3FF 0%,#F0FDF4 100%)",
+          }}>
+            <div style={{
+              fontSize: 10, fontWeight: 700, color: "#6366F1",
+              letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14,
+              display: "flex", alignItems: "center", gap: 7,
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: "50%", background: "#6366F1",
+                display: "inline-block", boxShadow: "0 0 0 3px #C7D2FE",
+              }} />
+              Chomske
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+              {MONTH_LABELS.map(m => (
+                <span key={m} style={{ fontSize: 9, color: "#A5B4FC" }}>{m}</span>
+              ))}
+            </div>
+
+            {/* Chart with floating name badges */}
+            <div style={{ position: "relative" }}>
+              <SparkLine color="#6366F1" gradId="grad-indigo" inView={inView} />
+              {BADGES.map(b => (
+                <div key={b.label} style={{
+                  position: "absolute", left: b.left, top: b.top,
+                  background: "#4338CA", color: "#fff",
+                  fontSize: 11, fontWeight: 700,
+                  padding: "3px 10px", borderRadius: 20,
+                  whiteSpace: "nowrap",
+                  boxShadow: "0 2px 8px rgba(67,56,202,0.35)",
+                  opacity: inView ? 1 : 0,
+                  transform: inView ? "translateY(0) scale(1)" : "translateY(6px) scale(0.88)",
+                  transition: `opacity 0.4s ease ${b.delay}, transform 0.4s ease ${b.delay}`,
+                  pointerEvents: "none",
+                }}>
+                  {b.label}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 14, display: "flex", alignItems: "baseline", gap: 10 }}>
+              <span style={{ fontSize: 38, fontWeight: 800, color: "#4338CA", lineHeight: 1 }}>
+                <AnimCount to={3} inView={inView} delay={800} />
+              </span>
+              <span style={{ fontSize: 12, color: "#4338CA", fontWeight: 600 }}>users behind that 12%</span>
+            </div>
+            <div style={{ marginTop: 4, fontSize: 13, color: "#6366F1" }}>Priya · Marcus · Julia</div>
+
+            {/* Action card */}
+            <div style={{
+              marginTop: 14, padding: "12px 14px",
+              background: "#fff", border: "1px solid #E0E7FF",
+              borderRadius: 11, boxShadow: "0 2px 10px rgba(99,102,241,0.1)",
+              opacity: inView ? 1 : 0,
+              transform: inView ? "none" : "translateY(8px)",
+              transition: "opacity 0.5s ease 2.1s, transform 0.5s ease 2.1s",
+            }}>
+              <div style={{
+                fontSize: 10.5, fontWeight: 700, color: "#6366F1",
+                marginBottom: 5, display: "flex", alignItems: "center", gap: 5,
+              }}>
+                <span>⚡</span> Today's action
+              </div>
+              <div style={{ fontSize: 13, color: "#0F172A", fontWeight: 600, lineHeight: 1.5 }}>
+                Message Julia | Free trial ends in 2 days.
+              </div>
+              <div style={{ fontSize: 11.5, color: "#64748B", marginTop: 3 }}>
+                Last active 9 days ago · Free plan
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Stat pills ── */}
+        <div style={{
+          marginTop: isMobile ? 28 : 36,
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr",
+          gap: isMobile ? 10 : 14,
+          ...fade("0.5s"),
+        }}>
+          {STATS.map((s, i) => (
+            <div key={i} style={{
+              display: "flex", alignItems: "center", gap: 11,
+              padding: "13px 16px",
+              background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12,
+            }}>
+              <span style={{ fontSize: 20 }}>{s.icon}</span>
+              <div>
+                <span style={{ fontSize: 13.5, fontWeight: 800, color: "#0F172A" }}>{s.stat} </span>
+                <span style={{ fontSize: 13, color: "#64748B" }}>{s.label}</span>
+              </div>
+            </div>
+          ))}
         </div>
 
       </div>
