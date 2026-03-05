@@ -214,7 +214,7 @@ export default function Hero() {
                 color: "#4F46E5",
                 letterSpacing: "0.02em",
               }}>
-                Operational Intelligence for SaaS Founders
+                Built for solo SaaS founders
               </span>
             </div>
 
@@ -256,7 +256,7 @@ export default function Hero() {
               maxWidth: "100%",
               animation: "heroUp 0.5s ease 0.14s backwards",
             }}>
-              Just connect your MongoDB. Every morning, Chomske tells you
+              Connect MongoDB, PostgreSQL, or Supabase. Every morning, Chomske tells you
               who's slipping away, who to check in on, and who's ready to pay more.
             </p>
 
@@ -286,9 +286,20 @@ export default function Hero() {
                 >
                   Join Waitlist →
                 </button>
-                <span style={{ fontSize: 12.5, color: "#94A3B8", fontWeight: 500 }}>
-                  Free during beta · Read-only MongoDB access
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: "#94A3B8", fontWeight: 500 }}>Free during beta ·</span>
+                  {[
+                    { label: "MongoDB",    color: "#10B981" },
+                    { label: "PostgreSQL", color: "#6366F1" },
+                    { label: "Supabase",   color: "#3ECF8E" },
+                  ].map(db => (
+                    <span key={db.label} style={{
+                      fontSize: 11, fontWeight: 600, color: db.color,
+                      background: `${db.color}18`, border: `1px solid ${db.color}35`,
+                      borderRadius: 5, padding: "2px 8px",
+                    }}>{db.label}</span>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -317,7 +328,20 @@ export default function Hero() {
                   }}>
                   Join Waitlist →
                 </button>
-                <span style={{ fontSize: 12, color: "#94A3B8" }}>Free during beta · Read-only MongoDB access</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+                  <span style={{ fontSize: 12, color: "#94A3B8", fontWeight: 500 }}>Free during beta ·</span>
+                  {[
+                    { label: "MongoDB",    color: "#10B981" },
+                    { label: "PostgreSQL", color: "#6366F1" },
+                    { label: "Supabase",   color: "#3ECF8E" },
+                  ].map(db => (
+                    <span key={db.label} style={{
+                      fontSize: 11, fontWeight: 600, color: db.color,
+                      background: `${db.color}18`, border: `1px solid ${db.color}35`,
+                      borderRadius: 5, padding: "2px 8px",
+                    }}>{db.label}</span>
+                  ))}
+                </div>
               </div>
             )}
           </div>

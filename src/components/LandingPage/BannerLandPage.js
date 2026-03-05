@@ -80,7 +80,7 @@ const BannerLandpage = () => {
           }}>
             <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#10B981" }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>
-              Free during private beta · Connect your own MongoDB
+              Free during private beta · MongoDB · PostgreSQL · Supabase
             </span>
           </div>
 
@@ -112,9 +112,9 @@ const BannerLandpage = () => {
             textAlign: isMobile ? "left" : "center",
             animation: "fadeUp 0.6s ease 0.2s backwards",
           }}>
-            Chomske connects to your MongoDB and tells you exactly which
-            3 users need your attention today. Not a chart. A list.
-            Names, context, and what to do.
+            Chomske connects to your database — MongoDB, PostgreSQL, or Supabase —
+            and tells you exactly which 3 users need your attention today.
+            Not a chart. A list. Names, context, and what to do.
           </p>
 
           {/* CTA */}
@@ -164,7 +164,7 @@ const BannerLandpage = () => {
           }}>
             {[
               "No credit card required",
-              "Read-only MongoDB access",
+              "Read-only access · No writes ever",
               "Cancel any time",
             ].map((t, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>

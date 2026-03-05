@@ -12,20 +12,31 @@ function useInView(threshold = 0.12) {
 }
 
 // ── Step 1: Connect card ──────────────────────────────────────────────
+const DB_TYPES = [
+  { id: "mongodb",    label: "MongoDB",    color: "#10B981", uri: "mongodb+srv://readonly:***@cluster0.abc.mongodb.net/prod" },
+  { id: "postgresql", label: "PostgreSQL", color: "#6366F1", uri: "postgresql://readonly:***@db.example.com:5432/prod" },
+  { id: "supabase",   label: "Supabase",   color: "#3ECF8E", uri: "postgresql://readonly:***@db.supabase.co:5432/postgres" },
+];
+
 function ConnectCard({ isMobile }) {
+  const [selectedDb, setSelectedDb] = useState(0);
   const [typed, setTyped] = useState("");
-  const uri = "mongodb+srv://readonly:***@cluster0.abc.mongodb.net/prod";
   const [done, setDone] = useState(false);
 
   useEffect(() => {
+    setTyped("");
+    setDone(false);
     let i = 0;
+    const uri = DB_TYPES[selectedDb].uri;
     const t = setInterval(() => {
       i++;
       setTyped(uri.slice(0, i));
       if (i >= uri.length) { clearInterval(t); setDone(true); }
-    }, 38);
+    }, 32);
     return () => clearInterval(t);
-  }, []);
+  }, [selectedDb]);
+
+  const db = DB_TYPES[selectedDb];
 
   return (
     <div style={{
@@ -34,14 +45,35 @@ function ConnectCard({ isMobile }) {
       padding: isMobile ? "18px 16px" : "22px 20px",
       border: "1px solid rgba(255,255,255,0.08)",
     }}>
+      {/* DB Type Selector */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {DB_TYPES.map((d, i) => (
+          <button
+            key={d.id}
+            onClick={() => setSelectedDb(i)}
+            style={{
+              fontSize: 11, fontWeight: 600, padding: "4px 10px",
+              borderRadius: 6, border: "1px solid",
+              cursor: "pointer", fontFamily: "'Inter', sans-serif",
+              background: selectedDb === i ? `${d.color}20` : "transparent",
+              borderColor: selectedDb === i ? `${d.color}60` : "rgba(255,255,255,0.1)",
+              color: selectedDb === i ? d.color : "rgba(255,255,255,0.35)",
+              transition: "all 0.2s ease",
+            }}
+          >
+            {d.label}
+          </button>
+        ))}
+      </div>
+
       <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.3)", letterSpacing: "0.07em", marginBottom: 10 }}>
-        MONGODB CONNECTION
+        DATABASE CONNECTION
       </div>
       <div style={{
         background: "#0D1117",
         borderRadius: 10,
         padding: "12px 14px",
-        border: "1px solid rgba(255,255,255,0.06)",
+        border: `1px solid ${db.color}25`,
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         fontSize: isMobile ? 11 : 12,
         color: "#A5B4FC",
@@ -49,7 +81,7 @@ function ConnectCard({ isMobile }) {
         display: "flex", alignItems: "center",
       }}>
         <span>{typed}</span>
-        <span style={{ display: "inline-block", width: 2, height: 14, background: "#6366F1", marginLeft: 1, animation: "blink 1s step-end infinite" }} />
+        <span style={{ display: "inline-block", width: 2, height: 14, background: db.color, marginLeft: 1, animation: "blink 1s step-end infinite" }} />
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
         <div style={{
@@ -259,6 +291,211 @@ function StepItem({ step, i, isMobile }) {
   );
 }
 
+// ── Use Case Visual Components ────────────────────────────────────────
+function OnboardingVisual({ inView }) {
+  const [revealed, setRevealed] = useState(-1);
+  useEffect(() => {
+    if (!inView) return;
+    setRevealed(-1);
+    let i = -1;
+    const t = setInterval(() => { i++; setRevealed(i); if (i >= 3) clearInterval(t); }, 520);
+    return () => clearInterval(t);
+  }, [inView]);
+
+  const steps = [
+    { label: "Account created", done: true },
+    { label: "Profile setup", done: true },
+    { label: "Team added", done: true },
+    { label: "Core feature", done: false },
+  ];
+  return (
+    <div style={{ padding: "2px 0" }}>
+      {steps.map((s, i) => (
+        <div key={i} style={{ display: "flex", gap: 0, opacity: revealed >= i ? 1 : 0.15, transition: "opacity 0.4s ease" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 22, flexShrink: 0 }}>
+            <div style={{
+              width: 18, height: 18, borderRadius: "50%", flexShrink: 0,
+              background: s.done ? "rgba(245,158,11,0.18)" : "rgba(239,68,68,0.15)",
+              border: `2px solid ${s.done ? "#F59E0B" : "#EF4444"}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 8, fontWeight: 900, color: s.done ? "#F59E0B" : "#EF4444",
+              animation: !s.done && revealed >= i ? "pulseGlow 1.8s ease-in-out infinite" : "none",
+            }}>{s.done ? "✓" : "!"}</div>
+            {i < steps.length - 1 && (
+              <div style={{
+                width: 2, height: 18,
+                background: revealed > i ? "rgba(245,158,11,0.35)" : "rgba(255,255,255,0.06)",
+                transition: "background 0.5s ease",
+              }} />
+            )}
+          </div>
+          <div style={{ flex: 1, paddingLeft: 10, display: "flex", alignItems: "center", height: 18, marginBottom: i < steps.length - 1 ? 18 : 0 }}>
+            <span style={{
+              fontSize: 11.5, fontWeight: s.done ? 500 : 700,
+              color: !s.done && revealed >= i ? "#FCA5A5" : "rgba(255,255,255,0.6)",
+            }}>{s.label}</span>
+            {!s.done && revealed >= i && (
+              <span style={{
+                marginLeft: 8, fontSize: 9, fontWeight: 700, color: "#FCA5A5",
+                background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)",
+                borderRadius: 4, padding: "1px 6px", animation: "fadeIn 0.3s ease",
+              }}>Never opened</span>
+            )}
+          </div>
+        </div>
+      ))}
+      {revealed >= 3 && (
+        <div style={{
+          marginTop: 14, padding: "8px 12px",
+          background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.22)",
+          borderRadius: 8, display: "flex", alignItems: "center", gap: 7,
+          animation: "fadeIn 0.4s ease",
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#FCD34D" }}>⏱ 48h window — act while they still want it to work</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GhostingVisual({ inView }) {
+  const [daysCount, setDaysCount] = useState(0);
+  useEffect(() => {
+    if (!inView) return;
+    setDaysCount(0);
+    let n = 0;
+    const t = setInterval(() => { n = Math.min(n + 1, 18); setDaysCount(n); if (n >= 18) clearInterval(t); }, 130);
+    return () => clearInterval(t);
+  }, [inView]);
+
+  const bars = [82, 71, 90, 65, 48, 33, 12, 4, 0, 0, 0, 0, 0, 0];
+  return (
+    <div>
+      <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.22)", letterSpacing: "0.07em", marginBottom: 8 }}>
+        ACTIVITY · LAST 14 DAYS
+      </div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 42, marginBottom: 12, position: "relative" }}>
+        {bars.map((val, i) => (
+          <div key={i} style={{
+            flex: 1,
+            height: val > 0 ? `${val}%` : "3px",
+            background: val > 0 ? `rgba(239,68,68,${0.28 + (val / 100) * 0.45})` : "rgba(255,255,255,0.06)",
+            borderRadius: "2px 2px 0 0",
+            transform: inView ? "scaleY(1)" : "scaleY(0)",
+            transformOrigin: "bottom",
+            transition: `transform 0.5s ease ${i * 0.04}s`,
+          }} />
+        ))}
+        <div style={{
+          position: "absolute", right: 0, top: 0,
+          width: `${(7 / 14) * 100}%`, height: "100%",
+          background: "rgba(239,68,68,0.05)", borderLeft: "1px dashed rgba(239,68,68,0.3)",
+          opacity: inView ? 1 : 0, transition: "opacity 0.4s ease 0.6s",
+        }}>
+          <span style={{ position: "absolute", top: 2, left: 6, fontSize: 8, fontWeight: 700, color: "rgba(239,68,68,0.45)", textTransform: "uppercase" }}>silent</span>
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "rgba(239,68,68,0.08)", borderRadius: 9, borderLeft: "3px solid #EF4444" }}>
+        <div style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(239,68,68,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#EF4444" }}>N</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>Neha T. · Creator plan</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>Subscription active</div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#FCA5A5" }}>{daysCount}d</div>
+          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>silent</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PowerUserVisual({ inView }) {
+  const [count, setCount] = useState(0);
+  const FREE_LIMIT = 80;
+  const MAX = 142;
+  useEffect(() => {
+    if (!inView) return;
+    setCount(0);
+    let n = 0;
+    const t = setInterval(() => { n = Math.min(n + 4, MAX); setCount(n); if (n >= MAX) clearInterval(t); }, 28);
+    return () => clearInterval(t);
+  }, [inView]);
+
+  const pct = (count / MAX) * 100;
+  const limitPct = (FREE_LIMIT / MAX) * 100;
+  const overLimit = count > FREE_LIMIT;
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.25)", letterSpacing: "0.07em" }}>ACTIONS THIS MONTH</span>
+        <span style={{ fontSize: 26, fontWeight: 900, lineHeight: 1, color: overLimit ? "#34D399" : "rgba(255,255,255,0.65)", transition: "color 0.4s ease" }}>{count}</span>
+      </div>
+      <div style={{ position: "relative", height: 10, background: "rgba(255,255,255,0.06)", borderRadius: 5, marginBottom: 6 }}>
+        <div style={{
+          height: "100%", borderRadius: 5, width: `${pct}%`,
+          background: overLimit ? "linear-gradient(90deg, rgba(16,185,129,0.5), #10B981)" : "linear-gradient(90deg, rgba(16,185,129,0.25), rgba(16,185,129,0.45))",
+          transition: "width 0.04s linear, background 0.5s ease",
+          boxShadow: overLimit ? "0 0 10px rgba(16,185,129,0.4)" : "none",
+        }} />
+        <div style={{ position: "absolute", top: -5, left: `${limitPct}%`, width: 2, height: "calc(100% + 10px)", background: "#F59E0B", borderRadius: 1 }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+        <span style={{ fontSize: 8.5, color: "rgba(255,255,255,0.2)" }}>0</span>
+        <span style={{ fontSize: 8.5, color: "#F59E0B", fontWeight: 700 }}>↑ Free limit ({FREE_LIMIT})</span>
+        <span style={{ fontSize: 8.5, color: "rgba(255,255,255,0.2)" }}>{MAX}</span>
+      </div>
+      {overLimit && (
+        <div style={{ padding: "8px 11px", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.22)", borderRadius: 8, animation: "fadeIn 0.4s ease" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#34D399" }}>🚀 {count - FREE_LIMIT} over limit · Upgrade conversation ready</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FrictionVisual({ inView }) {
+  const steps = [
+    { label: "Signed up",          count: 100, pct: 100, highlight: false },
+    { label: "Created project",    count: 62,  pct: 62,  highlight: false },
+    { label: "Sent first message", count: 31,  pct: 31,  highlight: true  },
+    { label: "Got a reply",        count: 14,  pct: 14,  highlight: false },
+  ];
+  return (
+    <div>
+      <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.22)", letterSpacing: "0.07em", marginBottom: 10 }}>
+        FUNNEL · WHERE USERS STOP
+      </div>
+      {steps.map((s, i) => (
+        <div key={i} style={{ marginBottom: i < steps.length - 1 ? 10 : 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: s.highlight ? 700 : 400, color: s.highlight ? "#A78BFA" : "rgba(255,255,255,0.5)" }}>{s.label}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              {s.highlight && inView && (
+                <span style={{
+                  fontSize: 9, fontWeight: 700, color: "#A78BFA",
+                  background: "rgba(139,92,246,0.15)", border: "1px solid rgba(139,92,246,0.3)",
+                  borderRadius: 4, padding: "1px 6px", animation: "fadeIn 0.5s ease 0.8s both",
+                }}>31 stuck here</span>
+              )}
+              <span style={{ fontSize: 11, fontWeight: 600, color: s.highlight ? "#A78BFA" : "rgba(255,255,255,0.35)" }}>{s.count}</span>
+            </div>
+          </div>
+          <div style={{ height: 6, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{
+              height: "100%", borderRadius: 3,
+              width: inView ? `${s.pct}%` : "0%",
+              background: s.highlight ? "linear-gradient(90deg, rgba(139,92,246,0.6), #8B5CF6)" : `rgba(139,92,246,${0.1 + i * 0.04})`,
+              transition: `width 0.7s cubic-bezier(0.4,0,0.2,1) ${i * 0.1}s`,
+              boxShadow: s.highlight ? "0 0 8px rgba(139,92,246,0.5)" : "none",
+            }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Use case card (needs own component so it can call useInView legally) ──
 function UseCaseCard({ uc, i, isMobile }) {
   const [ref, inView] = useInView();
@@ -269,7 +506,7 @@ function UseCaseCard({ uc, i, isMobile }) {
         background: "#fff",
         border: "1.5px solid #E2E8F0",
         borderRadius: isMobile ? 18 : 22,
-        padding: isMobile ? "24px 22px" : "32px 28px",
+        padding: isMobile ? "22px 20px" : "26px 24px",
         boxShadow: "0 2px 16px -4px rgba(0,0,0,0.06)",
         transition: "box-shadow 0.22s ease, transform 0.22s ease, border-color 0.22s ease, opacity 0.6s ease, translate 0.6s ease",
         opacity: inView ? 1 : 0,
@@ -288,38 +525,42 @@ function UseCaseCard({ uc, i, isMobile }) {
         e.currentTarget.style.transform = "translateY(0)";
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+      {/* Header: tag + icon */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{
           display: "inline-flex", alignItems: "center", gap: 6,
           background: `${uc.color}12`, border: `1px solid ${uc.color}30`,
           borderRadius: 50, padding: "4px 12px 4px 8px",
         }}>
-          <span style={{ fontSize: 14 }}>{uc.icon}</span>
+          <span style={{ fontSize: 13 }}>{uc.icon}</span>
           <span style={{ fontSize: 11, fontWeight: 700, color: uc.color, letterSpacing: "0.04em" }}>{uc.tag}</span>
         </div>
         <div style={{
-          width: 32, height: 32, borderRadius: 8,
-          background: `${uc.color}10`, border: `1px solid ${uc.color}25`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 16, flexShrink: 0,
+          width: 30, height: 30, borderRadius: 8,
+          background: `${uc.color}10`, border: `1px solid ${uc.color}22`,
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15,
         }}>{uc.icon}</div>
       </div>
-      <h3 style={{ fontSize: isMobile ? "1rem" : "1.1rem", fontWeight: 700, color: "#0F172A", margin: "0 0 10px", lineHeight: 1.35 }}>
+
+      {/* Visual area — the story */}
+      <div style={{
+        background: "#0F172A", borderRadius: 12,
+        padding: "15px 14px", marginBottom: 16,
+        border: `1px solid ${uc.color}18`,
+        minHeight: 148,
+      }}>
+        <uc.Visual inView={inView} />
+      </div>
+
+      {/* Short headline — just 4-6 words */}
+      <h3 style={{
+        fontSize: isMobile ? "0.98rem" : "1.05rem", fontWeight: 700,
+        color: "#0F172A", margin: "0 0 14px", lineHeight: 1.35,
+      }}>
         {uc.headline}
       </h3>
-      <p style={{ fontSize: isMobile ? 13 : 14, color: "#64748B", margin: "0 0 18px", lineHeight: 1.65 }}>
-        {uc.body}
-      </p>
-      <div style={{ background: "#F8FAFC", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", letterSpacing: "0.06em", marginBottom: 4 }}>
-          DATA TRIGGER
-        </div>
-        <code style={{
-          fontSize: isMobile ? 10.5 : 11, color: "#374151",
-          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-          display: "block", lineHeight: 1.6,
-        }}>{uc.trigger}</code>
-      </div>
+
+      {/* Output */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <div style={{ width: 7, height: 7, borderRadius: "50%", background: uc.color }} />
@@ -335,8 +576,8 @@ function UseCaseCard({ uc, i, isMobile }) {
 const STEPS = [
   {
     number: "01",
-    title: "Connect your MongoDB",
-    sub: "Paste your URI. Read-only credentials recommended. We analyze. Never modify your data.",
+    title: "Connect your database",
+    sub: "Paste your URI — MongoDB, PostgreSQL, or Supabase. Read-only credentials recommended. We analyze your schema and never modify your data.",
     color: "#6366F1",
     Card: ConnectCard,
   },
@@ -376,6 +617,7 @@ export default function ThreeBlockPage() {
         @keyframes fadeIn { from{opacity:0} to{opacity:1} }
         @keyframes slideIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
         @keyframes stepFadeUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes pulseGlow { 0%,100%{box-shadow:0 0 0 rgba(239,68,68,0)} 50%{box-shadow:0 0 14px rgba(239,68,68,0.55)} }
       `}</style>
 
       {/* ── HOW IT WORKS ── */}
@@ -422,7 +664,7 @@ export default function ThreeBlockPage() {
               fontWeight: 800, color: "#fff", lineHeight: 1.18,
               letterSpacing: "-0.03em", margin: "0 0 16px",
             }}>
-              From MongoDB to action list
+              From your database to action list
               <span style={{ color: "#818CF8" }}> in 60 seconds.</span>
             </h2>
             <p style={{
@@ -430,8 +672,8 @@ export default function ThreeBlockPage() {
               color: "rgba(255,255,255,0.55)", lineHeight: 1.7,
               maxWidth: 520, margin: "0 auto",
             }}>
-              No data warehouse. No BI tool. No SQL. Just connect and get your
-              daily briefing every morning.
+              No data warehouse. No BI tool. No SQL. Connect MongoDB, PostgreSQL,
+              or Supabase and get your daily briefing every morning.
             </p>
           </div>
 
@@ -457,36 +699,32 @@ const USE_CASES = [
     tag: "Onboarding Gap",
     color: "#F59E0B",
     headline: "Catch users before they ghost",
-    body: "Setup complete but core feature never used after 48 hours. This is the moment, they still want to make it work.",
-    trigger: "onboarding_completed: true  ·  last_core_action: null",
     output: "Warm Outreach List",
+    Visual: OnboardingVisual,
   },
   {
     icon: "👻",
     tag: "Ghosting Triage",
     color: "#EF4444",
     headline: "Find paying users going silent",
-    body: "Subscription active but zero activity for 7+ days. Your Sunday-night anxiety solved before Monday.",
-    trigger: "subscription_active: true  ·  activity_last_7d: 0",
     output: "At-Risk Priority List",
+    Visual: GhostingVisual,
   },
   {
     icon: "🚀",
     tag: "Silent Power Users",
     color: "#10B981",
-    headline: "Convert your most engaged users",
-    body: "Free-tier users crossing 100+ actions. They've already proven value, they just need the right conversation.",
-    trigger: "actions_count: >100  ·  plan: free",
+    headline: "Convert your most engaged free users",
     output: "Upsell Lead List",
+    Visual: PowerUserVisual,
   },
   {
     icon: "🔧",
     tag: "Feature Friction",
     color: "#8B5CF6",
-    headline: "Find where users get stuck",
-    body: "Conversations created but no messages sent for 3 days. One contextual nudge prevents churn at the feature level.",
-    trigger: "conversation_created: true  ·  messages_sent: 0  ·  stalled: 3d",
+    headline: "Find exactly where users get stuck",
     output: "Support Alert",
+    Visual: FrictionVisual,
   },
 ];
 
