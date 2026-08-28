@@ -84,7 +84,7 @@ export default function ChatWindow() {
   useEffect(() => {
     if (!influencer) return;
 
-     const socket = io("https://myhandle.in", {
+     const socket = io("https://chomske.com", {
    path: "/socket.io",
    transports: ["websocket", "polling"], // ok to start with both
    withCredentials: true, // keep ONLY if you actually rely on cookies (you do for participant token)

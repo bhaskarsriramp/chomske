@@ -78,9 +78,9 @@ const featureCategories = [
     features: [
       { text: 'Unlimited Links', icon: LinkRoundedIcon },
       { 
-        text: 'Username.myhandle.in NOT myhandle.in/username', 
+        text: 'Username.chomske.com NOT chomske.com/username', 
         icon: LanguageRoundedIcon,
-        strikethrough: 'myhandle.in/username' // Mark text to strikethrough
+        strikethrough: 'chomske.com/username' // Mark text to strikethrough
       },
       { text: 'Digital Store', icon: StorefrontOutlinedIcon },
       { text: 'Collect & Manage Subscribers', icon: GroupAddRoundedIcon },
@@ -161,9 +161,9 @@ export default function PricingPage() {
   return (
     <>
       <header>
-        <title>Pricing and Packages | MyHandle</title>
+        <title>Pricing and Packages | Chomske</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="description" content="Checkout the prices and rates for MyHandle." />
+        <meta name="description" content="Checkout the prices and rates for Chomske." />
       </header>
 
       <Navbar />

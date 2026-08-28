@@ -75,7 +75,7 @@ export default function Support() {
                   }
                 }}
               >
-                support@myhandle.in
+                support@chomske.com
               </Button>
             </CardActions>
             </CardContent>

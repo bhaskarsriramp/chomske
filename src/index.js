@@ -22,7 +22,7 @@ try {
   initialProfile = null;
 }
 
-// Extract subdomain (e.g. sid4real from sid4real.myhandle.in)
+// Extract subdomain (e.g. sid4real from sid4real.chomske.com)
 const initialSubdomain = (typeof window !== 'undefined') ? getSubdomain(window.location.hostname) : null;
 
 const rootElement = document.getElementById('root');

@@ -169,7 +169,7 @@ export default function CreatorUserLogin() {
       
           <img
             src={logo}
-            alt="MyHandle Logo"
+            alt="Chomske Logo"
             width="140"
             height="60"
             loading="eager"
@@ -243,8 +243,8 @@ export default function CreatorUserLogin() {
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1 }}>
               <Typography variant="caption" sx={{ color: "text.secondary" }}>
                 By continuing you agree to our {" "}
-                <MLink href="https://myhandle.in/terms" underline="hover">Terms</MLink> & {" "}
-                <MLink href="https://myhandle.in/privacy-policy" underline="hover">Privacy Policy</MLink>.
+                <MLink href="https://chomske.com/terms" underline="hover">Terms</MLink> & {" "}
+                <MLink href="https://chomske.com/privacy-policy" underline="hover">Privacy Policy</MLink>.
               </Typography>
             </Stack>
           </Stack>

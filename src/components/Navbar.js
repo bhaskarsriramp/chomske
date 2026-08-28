@@ -293,7 +293,7 @@ export default function Navbar() {
 >
   <img
     src={logo}
-    alt="MyHandle Logo"
+    alt="Chomske Logo"
     width="140"
     height="60"
     loading="eager"

@@ -24,7 +24,7 @@ const TrustCenter = () => {
     {
       title: 'Privacy',
       bulletPoints: [
-        'We collect only the data necessary to operate and improve MyHandle.',
+        'We collect only the data necessary to operate and improve Chomske.',
         'You have full control to access, update, or delete your data at any time.',
         'No data is shared with third parties without your explicit consent.',
         'Our systems and practices are aligned with global data privacy laws, including GDPR.',
@@ -48,23 +48,23 @@ const TrustCenter = () => {
 
 
 <Helmet>
-  <title>Trust Center | Security, Privacy & Accessibility | MyHandle</title>
+  <title>Trust Center | Security, Privacy & Accessibility | Chomske</title>
   <meta
     name="description"
-    content="The MyHandle Trust Center explains how we keep your data safe with encryption, role-based access, GDPR compliance, and accessibility-first design."
+    content="The Chomske Trust Center explains how we keep your data safe with encryption, role-based access, GDPR compliance, and accessibility-first design."
   />
 
   {/* Canonical URL */}
-  <link rel="canonical" href="https://myhandle.in/trust-center" />
+  <link rel="canonical" href="https://chomske.com/trust-center" />
 
   {/* Open Graph */}
-  <meta property="og:title" content="Trust Center | Security, Privacy & Accessibility | MyHandle" />
+  <meta property="og:title" content="Trust Center | Security, Privacy & Accessibility | Chomske" />
   <meta
     property="og:description"
-    content="Learn how MyHandle builds trust: AES-256 encryption, GDPR compliance, OAuth 2.0 authentication, WCAG 2.1 accessibility, and transparency by design."
+    content="Learn how Chomske builds trust: AES-256 encryption, GDPR compliance, OAuth 2.0 authentication, WCAG 2.1 accessibility, and transparency by design."
   />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://myhandle.in/trust-center" />
+  <meta property="og:url" content="https://chomske.com/trust-center" />
   <meta
     property="og:image"
     content="https://storage.googleapis.com/postlnbucketcom/logo_512x512-removebg-preview.png"
@@ -72,10 +72,10 @@ const TrustCenter = () => {
 
   {/* Twitter */}
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Trust Center | Security, Privacy & Accessibility | MyHandle" />
+  <meta name="twitter:title" content="Trust Center | Security, Privacy & Accessibility | Chomske" />
   <meta
     name="twitter:description"
-    content="Explore MyHandle's Trust Center — enterprise-grade security, data privacy, GDPR compliance, and accessibility for every user."
+    content="Explore Chomske's Trust Center — enterprise-grade security, data privacy, GDPR compliance, and accessibility for every user."
   />
   <meta
     name="twitter:image"
@@ -90,7 +90,7 @@ const TrustCenter = () => {
         </Typography>
 
         <Typography sx={{ fontSize: isMobile ? '18px' : '30px', fontWeight: 400 }} gutterBottom>
-          Building trust with our users starts with transparency. The MyHandle Trust Center offers clear, in-depth insights into our approach to security, privacy, accessibility, and compliance.
+          Building trust with our users starts with transparency. The Chomske Trust Center offers clear, in-depth insights into our approach to security, privacy, accessibility, and compliance.
         </Typography>
 
         <Box sx={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 2, flexWrap: 'wrap', mt: 6 }}>

@@ -135,7 +135,7 @@ export default function Onboarding() {
         const available = !!res?.data?.available;
         if (available) {
           setAvailability("available");
-          setAvailMsg(`${username}.myhandle.in is available`);
+          setAvailMsg(`${username}.chomske.com is available`);
         } else {
           setAvailability("taken");
           setAvailMsg("This subdomain is already taken");
@@ -307,7 +307,7 @@ export default function Onboarding() {
             </Typography>
 
             <Typography variant="body1" color="text.secondary" sx={{ mb: 4, fontSize: { xs: "1rem", md: "1.125rem" } }}>
-              Your unique username on myHandle. Don't worry, you can change it later.
+              Your unique username on Chomske. Don't worry, you can change it later.
             </Typography>
 
             {/* Subdomain Input with Preview */}
@@ -351,7 +351,7 @@ export default function Onboarding() {
                       fontFamily: "monospace"
                     }}
                   >
-                    .myhandle.in
+                    .chomske.com
                   </Typography>
                 </Typography>
               </Box>

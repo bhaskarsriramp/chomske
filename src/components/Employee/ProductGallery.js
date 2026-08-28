@@ -313,7 +313,7 @@ function loadRazorpayScript() {
       order_id: order.id,
       amount: order.amount,
       currency: order.currency,
-      name: "MyHandle",
+      name: "Chomske",
       description: product.title || "Purchase",
       image: product.imageUrl || undefined,
 
@@ -540,7 +540,7 @@ function loadRazorpayScript() {
       key,
       amount: order.amount, // in paise
       currency: order.currency,
-      name: "MyHandle", // your brand
+      name: "Chomske", // your brand
       description: p.title || "Purchase",
       order_id: order.id,
       image: p.imageUrl || undefined,

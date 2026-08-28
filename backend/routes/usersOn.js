@@ -78,7 +78,7 @@ const upload = multer({
 const IPDATA_KEY = process.env.IPDATA_KEY;
 const META_APP_ID = process.env.META_APP_ID;
 const META_APP_SECRET = process.env.META_APP_SECRET;
-const META_REDIRECT_URI = "https://myhandle.in/api/usersOn/meta-callback";
+const META_REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 const META_STATE_SECRET = "change_me_super_secret";
 
 const OID = (v) => new mongoose.Types.ObjectId(String(v));
@@ -344,7 +344,7 @@ async function getDateRange(rangeKey) {
 }
 
 // utils/extractSubdomain.js
-async function extractHandleFromHost(host, roots = ["myhandle.in"]) {
+async function extractHandleFromHost(host, roots = ["chomske.com"]) {
   if (!host) return "";
   const raw = String(host).toLowerCase().split(":")[0]; // strip :3000, etc.
 
@@ -665,18 +665,18 @@ async function makeReceipt(productId) {
 }
 
 router.post("/logout", authenticateToken, (req, res) => {
-  res.clearCookie("tokenMyhandleProf", {
+  res.clearCookie("tokenChomskeProf", {
     httpOnly: true,
     secure: true,
     sameSite: "none",
-    domain: ".myhandle.in",  // CRITICAL: Must match cookie creation
+    domain: ".chomske.com",  // CRITICAL: Must match cookie creation
     path: "/",
   });
   
   res.status(200).json({ message: "Logged out successfully" });
 });
 
-const DEMO_EMAIL = "demoaccount@myhandle.in";
+const DEMO_EMAIL = "demoaccount@chomske.com";
 const DEMO_PASS = "demoaccount";
 
 router.post("/demo-login", async (req, res) => {
@@ -714,11 +714,11 @@ return res.status(401).json({ success: false, message: "Invalid demo credentials
     const token = await generateJWTtoken('68cbc39db5f421a8a043046f', 'techiebhaskar7@gmail.com');
 
     // Cookie options: adjust for your environment (see notes below)
-      res.cookie("tokenMyhandleProf", token, {
+      res.cookie("tokenChomskeProf", token, {
   httpOnly: true,
   secure: true,                  // required when SameSite=None
   sameSite: "none",              // critical for iOS/Safari & any cross-site/iframe usage
-   domain: ".myhandle.in",// needed if crossing subdomains
+   domain: ".chomske.com",// needed if crossing subdomains
   path: "/",             // ensure all routes get it
   maxAge: 7 * 24 * 60 * 60 * 1000
 });
@@ -1172,7 +1172,7 @@ router.post("/connect-instagram", authenticateToken, async (req, res) => {
   }
 });
 
-const FRONTEND_ORIGIN = "https://myhandle.in"; // your app origin
+const FRONTEND_ORIGIN = "https://chomske.com"; // your app origin
 const OPENER_URL = `${FRONTEND_ORIGIN}/professional/automations?connected=1`;
 
 
@@ -3378,11 +3378,11 @@ router.post("/bookings/create", async (req, res) => {
       subject: "Booking Confirmation for " + (title || "Consultation"),
       service_title: title || "Consultation",
       meeting_link: newBooking.meeting_link || "",
-      manage_url: "https://myhandle.in/booking/details/customer",
-      support_email: "support@myhandle.in",
+      manage_url: "https://chomske.com/booking/details/customer",
+      support_email: "support@chomske.com",
       logo_url: "https://storage.googleapis.com/myhandlebucket/MyHandle%20Hori_logo.png",
-      brand_name: "MyHandle",
-      brand_url: "https://myhandle.in",
+      brand_name: "Chomske",
+      brand_url: "https://chomske.com",
       venue: newBooking.venue || "Online",
       timezone: "IST",
       booking_id: newBooking.booking_id,
@@ -3397,11 +3397,11 @@ router.post("/bookings/create", async (req, res) => {
       subject: `New Registration for ${title || "Consultation"}`,
       meeting_link: newBooking.meeting_link || "",
       service_title: title || "Consultation",
-      manage_url: "https://myhandle.in/professional/booking/sessions",
-      support_email: "support@myhandle.in",
+      manage_url: "https://chomske.com/professional/booking/sessions",
+      support_email: "support@chomske.com",
       logo_url: "https://storage.googleapis.com/myhandlebucket/MyHandle%20Hori_logo.png",
-      brand_name: "MyHandle",
-      brand_url: "https://myhandle.in",
+      brand_name: "Chomske",
+      brand_url: "https://chomske.com",
       venue: newBooking.venue || "Online",
       timezone: "IST",
       booking_id: newBooking.booking_id,
@@ -3579,11 +3579,11 @@ router.post("/bookings/verify-payment", async (req, res) => {
       subject: "Booking Confirmation for " + (title || "Consultation"),
       service_title: title || "Consultation",
       meeting_link: booking.meeting_link || "",
-      manage_url: "https://myhandle.in/booking/details/customer",
-      support_email: "support@myhandle.in",
+      manage_url: "https://chomske.com/booking/details/customer",
+      support_email: "support@chomske.com",
       logo_url: "https://storage.googleapis.com/myhandlebucket/MyHandle%20Hori_logo.png",
-      brand_name: "MyHandle",
-      brand_url: "https://myhandle.in",
+      brand_name: "Chomske",
+      brand_url: "https://chomske.com",
       venue: booking.venue || "Online",
       timezone: "IST",
       booking_id: booking.booking_id,
@@ -3598,11 +3598,11 @@ router.post("/bookings/verify-payment", async (req, res) => {
       subject: `New Registration for ${title || "Consultation"}`,
       meeting_link: booking.meeting_link || "",
       service_title: title || "Consultation",
-      manage_url: "https://myhandle.in/professional/booking/sessions",
-      support_email: "support@myhandle.in",
+      manage_url: "https://chomske.com/professional/booking/sessions",
+      support_email: "support@chomske.com",
       logo_url: "https://storage.googleapis.com/myhandlebucket/MyHandle%20Hori_logo.png",
-      brand_name: "MyHandle",
-      brand_url: "https://myhandle.in",
+      brand_name: "Chomske",
+      brand_url: "https://chomske.com",
       venue: booking.venue || "Online",
       timezone: "IST",
       booking_id: booking.booking_id,
@@ -6818,11 +6818,11 @@ router.post("/user-login-gmail", async (req, res) => {
 
 
 
-    res.cookie("tokenMyhandleProf", token, {
+    res.cookie("tokenChomskeProf", token, {
   httpOnly: true,
   secure: true,                  // required when SameSite=None
   sameSite: "none",              // critical for iOS/Safari & any cross-site/iframe usage
-   domain: ".myhandle.in",// needed if crossing subdomains
+   domain: ".chomske.com",// needed if crossing subdomains
   path: "/",             // ensure all routes get it
   maxAge: 7 * 24 * 60 * 60 * 1000
 });
@@ -6869,11 +6869,11 @@ router.post("/participant-user-login-gmail", async (req, res) => {
     const token = await generateJWTtoken(user._id, user.email);
 
     // Cookie options: adjust for your environment (see notes below)
-  res.cookie("tokenParticipantMyHandle", token, {
+  res.cookie("tokenParticipantChomske", token, {
   httpOnly: true,
   secure: true,                  // required when SameSite=None
   sameSite: "none",              // critical for iOS/Safari & any cross-site/iframe usage
-   domain: ".myhandle.in",// needed if crossing subdomains
+   domain: ".chomske.com",// needed if crossing subdomains
   path: "/",             // ensure all routes get it
   maxAge: 7 * 24 * 60 * 60 * 1000
 });
@@ -7091,7 +7091,7 @@ router.delete("/user/socials/:id", authenticateToken, async (req, res) => {
 router.get("/profile", async (req, res) => {
   try {
     const host = req.headers["x-forwarded-host"] || req.headers.host || "";
-    const inferred = extractHandleFromHost(host, ["myhandle.in"]);
+    const inferred = extractHandleFromHost(host, ["chomske.com"]);
     const handle = (req.query.handle || inferred || "").trim().toLowerCase();
 
     if (!handle) return res.status(400).json({ error: "handle required" });

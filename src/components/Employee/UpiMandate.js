@@ -165,13 +165,13 @@ export default function UpiMandateModern() {
 
     const rzp = new window.Razorpay({
       key: RZP_KEY_ID,
-      name: "MyHandle",
+      name: "Chomske",
       description: "₹399 Monthly Subscription",
       subscription_id,
       recurring: 1,
       method: { upi: true },
       prefill: { name, email, contact: phone },
-      notes: { plan: "MyHandle 399 Subscription" },
+      notes: { plan: "Chomske 399 Subscription" },
       theme: { color: "#6366f1" },
       handler: async function (resp) {
         try {

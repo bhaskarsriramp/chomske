@@ -15,4 +15,4 @@ Disallow: /staging/
 Disallow: /test/
 
 # Allow search engines to crawl the site map
-Sitemap: https://myhandle.in/sitemap.xml
+Sitemap: https://chomske.com/sitemap.xml

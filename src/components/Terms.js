@@ -9,12 +9,12 @@ const TermsConditions = () => {
   return (
     <>
       <Helmet>
-        <title>Terms & Conditions | myHandle</title>
+        <title>Terms & Conditions | Chomske</title>
         <meta
           name="description"
-          content="Terms & Conditions for myHandle, including Facebook Login and Instagram Graph/Pages API usage, publishing & messaging rules, data/token handling, revocation, and compliance."
+          content="Terms & Conditions for Chomske, including Facebook Login and Instagram Graph/Pages API usage, publishing & messaging rules, data/token handling, revocation, and compliance."
         />
-        <link rel="canonical" href="https://myhandle.in/terms" />
+        <link rel="canonical" href="https://chomske.com/terms" />
       </Helmet>
 
       <Navbar />
@@ -27,8 +27,8 @@ const TermsConditions = () => {
         <Typography variant="body1" sx={{ fontSize: isMobile ? '16px' : '18px', lineHeight: 1.8 }}>
           <strong>Last updated:</strong> October 13, 2025
           <br /><br />
-          Welcome to <strong>myHandle</strong> — a platform operated by Linck One Enterprises (“we,” “us,” “our”).
-          By accessing or using <strong>myHandle.in</strong> and related services (“Services”), you agree to these Terms & Conditions (“Terms”).
+          Welcome to <strong>Chomske</strong> — a platform operated by Linck One Enterprises (“we,” “us,” “our”).
+          By accessing or using <strong>chomske.com</strong> and related services (“Services”), you agree to these Terms & Conditions (“Terms”).
           If you do not agree, please do not use the Services.
         </Typography>
 
@@ -38,7 +38,7 @@ const TermsConditions = () => {
             1. Platform Use
           </Typography>
           <ul>
-            <li>myHandle provides a link-in-bio and mini-website builder, analytics, and creator tools under a <b>myhandle.in</b> subdomain.</li>
+            <li>Chomske provides a link-in-bio and mini-website builder, analytics, and creator tools under a <b>chomske.com</b> subdomain.</li>
             <li>You are responsible for the accuracy of the content you publish (links, images, text, payments, etc.).</li>
             <li>You agree not to use the Services for unlawful, misleading, harmful, or abusive purposes.</li>
             <li>We may suspend/terminate accounts for violations of these Terms or applicable law.</li>
@@ -51,7 +51,7 @@ const TermsConditions = () => {
             2. Accounts & Subdomains
           </Typography>
           <ul>
-            <li>Custom subdomains (e.g., <b>yourname.myhandle.in</b>) are subject to availability and naming rules.</li>
+            <li>Custom subdomains (e.g., <b>yourname.chomske.com</b>) are subject to availability and naming rules.</li>
             <li>Offensive, infringing, or misleading subdomains may be rejected or reclaimed.</li>
             <li>You must keep credentials secure and notify us of unauthorised access.</li>
           </ul>
@@ -99,7 +99,7 @@ const TermsConditions = () => {
             5A. Facebook Login & Instagram Integration
           </Typography>
           <Typography variant="body1" sx={{ mb: 1.5 }}>
-            myHandle enables connection of your <strong>Instagram Business or Creator account</strong> (and linked Facebook Page) via
+            Chomske enables connection of your <strong>Instagram Business or Creator account</strong> (and linked Facebook Page) via
             <strong> Facebook Login</strong>, the <strong>Instagram Graph API</strong>, and the <strong>Pages API</strong>. By connecting,
             you authorise us to access limited data strictly to provide the features you use (e.g., show your username/followers,
             manage publishing you initiate, and optionally manage DMs you choose to enable).
@@ -108,12 +108,12 @@ const TermsConditions = () => {
             We may request the following permissions (scopes) through Meta’s consent screen:
           </Typography>
           <ul>
-            <li><strong>public_profile</strong> — basic Facebook profile to complete login and associate the connection with your myHandle account.</li>
+            <li><strong>public_profile</strong> — basic Facebook profile to complete login and associate the connection with your Chomske account.</li>
             <li><strong>instagram_basic</strong> — Instagram username, profile picture, followers count, media count for your connected account.</li>
             <li><strong>pages_show_list</strong> — to list Pages you manage and find the Instagram account linked to each Page.</li>
             <li><strong>business_management</strong> — limited use to verify/manage the relationship between your Business assets and our app
               (e.g., linking eligible assets for advanced features). We do not use this to modify your content or advertise.</li>
-            <li><strong>(Optional)</strong> <em>instagram_content_publish</em> — to publish/schedule content you upload in myHandle.</li>
+            <li><strong>(Optional)</strong> <em>instagram_content_publish</em> — to publish/schedule content you upload in Chomske.</li>
             <li><strong>(Optional)</strong> <em>instagram_manage_messages</em>, <em>pages_messaging</em> — to view and respond to user-initiated DMs in your inbox,
               subject to Meta’s messaging rules (e.g., 24-hour window).</li>
           </ul>
@@ -135,10 +135,10 @@ const TermsConditions = () => {
             5B. Instagram Publishing & Messaging Rules
           </Typography>
           <ul>
-            <li><strong>User-initiated actions:</strong> We publish or message only when you initiate/configure it in myHandle.</li>
+            <li><strong>User-initiated actions:</strong> We publish or message only when you initiate/configure it in Chomske.</li>
             <li><strong>Messaging window:</strong> Automated replies are limited to conversations initiated by users and must follow Meta’s 24-hour standard messaging window and anti-spam rules.</li>
-            <li><strong>No unsolicited outreach:</strong> Cold DMs or mass unsolicited messaging via myHandle are prohibited.</li>
-            <li><strong>Content ownership:</strong> You must own or have rights to publish any content you upload/schedule through myHandle.</li>
+            <li><strong>No unsolicited outreach:</strong> Cold DMs or mass unsolicited messaging via Chomske are prohibited.</li>
+            <li><strong>Content ownership:</strong> You must own or have rights to publish any content you upload/schedule through Chomske.</li>
           </ul>
         </Box>
 
@@ -167,7 +167,7 @@ const TermsConditions = () => {
                 Platform Terms and Developer Policies
               </MuiLink>.
             </li>
-            <li>Do not use myHandle to circumvent Meta policies, send spam, or harvest personal data without consent.</li>
+            <li>Do not use Chomske to circumvent Meta policies, send spam, or harvest personal data without consent.</li>
           </ul>
         </Box>
 
@@ -177,7 +177,7 @@ const TermsConditions = () => {
             8. Revocation & Disconnection
           </Typography>
           <ul>
-            <li>You may disconnect at any time via Facebook Business Integrations or by contacting <b>support@myhandle.in</b>.</li>
+            <li>You may disconnect at any time via Facebook Business Integrations or by contacting <b>support@chomske.com</b>.</li>
             <li>Upon disconnection, we will cease API calls for your account and invalidate stored tokens as applicable.</li>
           </ul>
         </Box>
@@ -188,7 +188,7 @@ const TermsConditions = () => {
             9. Data Deletion
           </Typography>
           <ul>
-            <li>Request deletion by emailing <b>support@myhandle.in</b> from your registered email.</li>
+            <li>Request deletion by emailing <b>support@chomske.com</b> from your registered email.</li>
             <li>We will delete your account, tokens, and hosted content within 7 days, retaining only minimal records required by law (e.g., invoices).</li>
           </ul>
         </Box>
@@ -244,7 +244,7 @@ const TermsConditions = () => {
           </Typography>
           <Typography variant="body1">
             For questions or clarifications regarding these Terms, contact:<br />
-            <strong>Email:</strong> support@myhandle.in
+            <strong>Email:</strong> support@chomske.com
           </Typography>
         </Box>
       </Box>

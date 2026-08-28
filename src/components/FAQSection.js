@@ -15,13 +15,13 @@ import { styled } from "@mui/material/styles";
 
 const faqs = [
   {
-    question: "What exactly is myHandle?",
+    question: "What exactly is Chomske?",
     answer: `
-MyHandle is a **link-in-bio mini site**: one fast page with your links, actions (WhatsApp, Call, Maps), payments, and analytics — all on a **custom subdomain** like <strong>yourname.myhandle.in</strong>.
+Chomske is a **link-in-bio mini site**: one fast page with your links, actions (WhatsApp, Call, Maps), payments, and analytics — all on a **custom subdomain** like <strong>yourname.chomske.com</strong>.
 
 - Built to be **mobile-first** and super quick to launch.
 - Great for Instagram, YouTube, LinkedIn bios, QR codes, and business cards.
-- If you need multi-page content or blogs, you can still link out to your main site from myHandle.
+- If you need multi-page content or blogs, you can still link out to your main site from Chomske.
     `,
   },
 
@@ -31,7 +31,7 @@ MyHandle is a **link-in-bio mini site**: one fast page with your links, actions 
 Yes — we support **UPI/Razorpay** flows that your audience already uses.
 
 - Take **tips, donations, bookings**, or sell **digital items** right from your page.
-- Payments are processed by trusted partners; myHandle **does not store** full card/UPI details.
+- Payments are processed by trusted partners; Chomske **does not store** full card/UPI details.
 - You'll see **basic payment events** in your analytics for clarity.
     `,
   },
@@ -59,7 +59,7 @@ We're India-first and keep pricing simple: starting at **₹99/month**.
   },
 
     {
-    question: "Does myHandle support Hindi or other languages?",
+    question: "Does Chomske support Hindi or other languages?",
     answer: `
 Yes — we support **English + Hindi** out of the box (more languages coming).
 
@@ -74,7 +74,7 @@ Yes — we support **English + Hindi** out of the box (more languages coming).
 We offer a **7-day, no-questions-asked refund** on new subscriptions. After **14 days** from payment, **no refunds** are issued.
 
 - For duplicate/failed transactions, we'll refund after verification.
-- To request: email <strong>support@myhandle.in</strong> with your registered email, amount, date, and transaction ID.
+- To request: email <strong>support@chomske.com</strong> with your registered email, amount, date, and transaction ID.
     `,
   },
 
@@ -84,7 +84,7 @@ We offer a **7-day, no-questions-asked refund** on new subscriptions. After **14
 Plans renew automatically (monthly/yearly) unless you cancel **before** the next cycle.
 
 - Refunds are **not available** after a successful renewal charge.
-- Cancel anytime from your account or by emailing <strong>support@myhandle.in</strong> to avoid future charges.
+- Cancel anytime from your account or by emailing <strong>support@chomske.com</strong> to avoid future charges.
     `,
   },
   
@@ -92,7 +92,7 @@ Plans renew automatically (monthly/yearly) unless you cancel **before** the next
   {
     question: "Can I add WhatsApp, Call, Maps, and socials?",
     answer: `
-Absolutely. myHandle includes **smart action blocks**:
+Absolutely. Chomske includes **smart action blocks**:
 
 - **WhatsApp**, **Call**, **Email**, **Maps**, **YouTube**, **Instagram**, **LinkedIn**, and more.
 - Add unlimited links and reorder them easily.
@@ -104,7 +104,7 @@ Absolutely. myHandle includes **smart action blocks**:
   {
     question: "Will my page show up on Google? (SEO)",
     answer: `
-myHandle pages are **indexable**, fast, and mobile-friendly.
+Chomske pages are **indexable**, fast, and mobile-friendly.
 
 - You can customize page title/description for better previews.
 - If you prefer **privacy**, we can limit indexability on request.
@@ -123,10 +123,10 @@ We take security seriously: **TLS encryption**, **AES-256 at rest**, **RBAC**, a
   {
     question: "How do I migrate from another link-in-bio platform?",
     answer: `
-Just copy your existing links into myHandle and publish — it takes minutes.
+Just copy your existing links into Chomske and publish — it takes minutes.
 
 - Keep the same order/titles and add action blocks (WhatsApp/Call) to improve conversions.
-- Replace the link in your social bios with **yourname.myhandle.in** and you’re live.
+- Replace the link in your social bios with **yourname.chomske.com** and you’re live.
     `,
   },
 
@@ -135,7 +135,7 @@ Just copy your existing links into myHandle and publish — it takes minutes.
     answer: `
 No — analytics are **aggregate-level** (visits, clicks, device types, regions). We don’t sell or rent your data.
 
-- You can request account/data deletion anytime via <strong>support@myhandle.in</strong>.
+- You can request account/data deletion anytime via <strong>support@chomske.com</strong>.
 - See our full Privacy Policy for details.
     `,
   }

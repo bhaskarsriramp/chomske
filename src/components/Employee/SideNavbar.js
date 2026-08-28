@@ -16,6 +16,8 @@ import {
   Divider,
   Collapse,
   IconButton,
+  Typography,
+  Button
 } from "@mui/material";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
 import AccountCircleOutlinedIcon from "@mui/icons-material/AccountCircleOutlined";
@@ -235,7 +237,7 @@ export default function SideNavbar({ window }) {
               color: "inherit",
             }}
           >
-            <img src={logo} alt="MyHandle Logo" width="140" height="60" style={{ display: "block" }} />
+            <img src={logo} alt="Chomske Logo" width="140" height="60" style={{ display: "block" }} />
          
           </Link>
 
@@ -1058,7 +1060,7 @@ export default function SideNavbar({ window }) {
 
           {/* Brand (optional) */}
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <img src={logo} alt="MyHandle Logo" width="140" height="60" style={{ display: "block" }} />
+            <img src={logo} alt="Chomske Logo" width="140" height="60" style={{ display: "block" }} />
            
           </Box>
         </Toolbar>

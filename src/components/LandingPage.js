@@ -29,7 +29,7 @@ export default function LandingPage() {
     name="description"
     content="Monthly 25,00,000 AutoDMs quota, Unlimited Contacts, Unlimited Bio Links & more for just ₹399."
   />
-  <link rel="canonical" href="https://myhandle.in/" />
+  <link rel="canonical" href="https://chomske.com/" />
 
 </Helmet>
 

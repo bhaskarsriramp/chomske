@@ -258,7 +258,7 @@ export default function Footer() {
 
       <Box textAlign="center" sx={{ mt: 2 }}>
         <Typography variant="body2" sx={{ color: "#B9B4C7" }}>
-          &copy; myHandle.in 2025
+          &copy; chomske.com 2025
         </Typography>
       </Box>
     </Box>

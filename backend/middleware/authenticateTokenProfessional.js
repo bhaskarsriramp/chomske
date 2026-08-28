@@ -2,7 +2,7 @@ import jwt from "jsonwebtoken";
 const JWT_SECRET = "NidkPwke9485hfKDLAndu9*#&$&$jcbPOqkPkshEYfk3848Asj"
 
 const authenticateTokenProfessional = (req, res, next) => {
-  const token = req.cookies.tokenMyhandleProf || req.headers["authorization"];
+  const token = req.cookies.tokenChomskeProf || req.headers["authorization"];
 
   if (!token) {
       console.log("⚠️ No token provided");

@@ -34,8 +34,8 @@ function isAllowedOrigin(origin) {
     // dev ports/origins
     if (origin === "http://localhost:4800") return true;
 
-    // myhandle.in apex or any subdomain
-    if (hostname === ( "myhandle.in" || "https://myhandle.in" ) || hostname.endsWith(".myhandle.in")) {
+    // chomske.com apex or any subdomain
+    if (hostname === "chomske.com" || hostname.endsWith(".chomske.com")) {
       return true;
     }
 
@@ -71,9 +71,9 @@ function extractSubdomain(hostname = '') {
   if (!hostname) return null;
   const host = hostname.split(':')[0].toLowerCase();
   const parts = host.split('.');
-  if (parts.length <= 2) return null;        // myhandle.in -> no subdomain
+  if (parts.length <= 2) return null;        // chomske.com -> no subdomain
   if (parts[0] === 'www') return null;       // ignore www
-  return parts.slice(0, parts.length - 2).join('.'); // a.b.myhandle.in -> 'a.b'
+  return parts.slice(0, parts.length - 2).join('.'); // a.b.chomske.com -> 'a.b'
 }
 
 
@@ -164,9 +164,9 @@ app.get('*', async (req, res, next) => {
 
     // Build meta and initial profile script
     const meta = {
-      title: profile.displayName ? `${profile.displayName} — MyHandle` : `${subdomain} — MyHandle`,
-      description: profile.bio || profile.shortBio || `View ${profile.displayName || subdomain} on MyHandle`,
-      image: profile.ogImage || profile.avatarUrl || `https://myhandle.in/static/default-og.png`,
+      title: profile.displayName ? `${profile.displayName} — Chomske` : `${subdomain} — Chomske`,
+      description: profile.bio || profile.shortBio || `View ${profile.displayName || subdomain} on Chomske`,
+      image: profile.ogImage || profile.avatarUrl || `https://chomske.com/static/default-og.png`,
       url: `https://${host}${req.originalUrl}`
     };
 

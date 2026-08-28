@@ -15,31 +15,31 @@ const AboutUs = () => {
   return (
     <>
       <Helmet>
-        <title>About Us | MyHandle</title>
+        <title>About Us | Chomske</title>
         <meta
           name="description"
-          content="MyHandle is a link-in-bio and creator tools platform built in India: fast pages, UPI & WhatsApp actions, realtime follower trust badges, and clear analytics."
+          content="Chomske is a link-in-bio and creator tools platform built in India: fast pages, UPI & WhatsApp actions, realtime follower trust badges, and clear analytics."
         />
 
         {/* Canonical URL */}
-        <link rel="canonical" href="https://myhandle.in/about-us" />
+        <link rel="canonical" href="https://chomske.com/about-us" />
 
         {/* Open Graph */}
-        <meta property="og:title" content="About Us | MyHandle" />
+        <meta property="og:title" content="About Us | Chomske" />
         <meta
           property="og:description"
           content="We help creators and small businesses turn profile traffic into customers with trusted, fast, and India-first link-in-bio pages."
         />
         <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://myhandle.in/about-us" />
+        <meta property="og:url" content="https://chomske.com/about-us" />
         <meta property="og:image" content="https://storage.googleapis.com/postlnbucketcom/products/maximize.png" />
 
         {/* Twitter */}
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="About Us | MyHandle" />
+        <meta name="twitter:title" content="About Us | Chomske" />
         <meta
           name="twitter:description"
-          content="MyHandle gives you a beautiful bio page with UPI/WhatsApp actions, smart blocks, and privacy-first analytics. Made in India for creators everywhere."
+          content="Chomske gives you a beautiful bio page with UPI/WhatsApp actions, smart blocks, and privacy-first analytics. Made in India for creators everywhere."
         />
         <meta name="twitter:image" content="https://storage.googleapis.com/postlnbucketcom/products/maximize.png" />
       </Helmet>
@@ -48,11 +48,11 @@ const AboutUs = () => {
 
       <Box sx={{ padding: isMobile ? 3 : 8, mt: 10 }}>
         <Typography sx={{ fontWeight: 700, fontSize: isMobile ? '32px' : '40px', mb: 2 }}>
-          About MyHandle
+          About Chomske
         </Typography>
 
         <Typography sx={{ fontWeight: 400, fontSize: isMobile ? '18px' : '22px', mb: 6, color: 'text.secondary' }}>
-          MyHandle helps creators and small businesses turn profile views into actions. We built an India‑first
+          Chomske helps creators and small businesses turn profile views into actions. We built an India‑first
           link‑in‑bio and mini‑site that feels fast, looks great, and earns trust — with real‑time follower badges,
           UPI & WhatsApp actions, and clean analytics you actually understand.
         </Typography>
@@ -191,7 +191,7 @@ const AboutUs = () => {
           </Typography>
           <Typography sx={{ color: 'text.secondary' }}>
             Questions, partnerships, or press? Write to us at{' '}
-            <Link href="mailto:support@myhandle.in">support@myhandle.in</Link>.
+            <Link href="mailto:support@chomske.com">support@chomske.com</Link>.
           </Typography>
         </Box>
       </Box>

@@ -122,7 +122,7 @@ function openNewsletterDialog(block) {
 
 
 
-  function extractHandleFromHostname(hostname, roots = ["myhandle.in"]) {
+  function extractHandleFromHostname(hostname, roots = ["chomske.com"]) {
   if (!hostname) return "";
   const raw = String(hostname).toLowerCase();
 
@@ -142,7 +142,7 @@ function openNewsletterDialog(block) {
 }
 
 
-const derivedHandle = handle || extractHandleFromHostname(typeof window !== "undefined" ? window.location.hostname : "", ["myhandle.in"]);
+const derivedHandle = handle || extractHandleFromHostname(typeof window !== "undefined" ? window.location.hostname : "", ["chomske.com"]);
 
    async function handleSubscribe() {
   // basic checks
@@ -1092,7 +1092,7 @@ if (type === "newsletter") {
           <Tooltip title="Visit store" arrow>
             <IconButton
          onClick={() => {
-  const url = "https://myhandle.in/products-affiliate?subdomain=" + encodeURIComponent(derivedHandle || "");
+  const url = "https://chomske.com/products-affiliate?subdomain=" + encodeURIComponent(derivedHandle || "");
   window.location.href = url;
 }}
 
@@ -1119,7 +1119,7 @@ if (type === "newsletter") {
           <Tooltip title="Direct Message" arrow>
             <IconButton
  onClick={() => {
-  const url = "https://myhandle.in/influencer/participant/login?subdomain=" + encodeURIComponent(derivedHandle || "");
+  const url = "https://chomske.com/influencer/participant/login?subdomain=" + encodeURIComponent(derivedHandle || "");
   window.open(url, "_blank", "noopener,noreferrer");
 }}
 

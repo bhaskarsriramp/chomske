@@ -313,7 +313,7 @@ const MetaVerifiedBlock = () => {
 
       {/* Right: Description */}
       <p style={descriptionStyle}>
-        MyHandle has been certified by Meta as a Verified Tech Provider.
+        Chomske has been certified by Meta as a Verified Tech Provider.
       </p>
     </div>
   );
@@ -418,10 +418,10 @@ const MetaVerifiedBlock = () => {
         const available = !!res?.data?.available;
         if (available) {
           setAvailability("available");
-          setMessage(`${subdomain}.myhandle.in is available!`);
+          setMessage(`${subdomain}.chomske.com is available!`);
         } else {
           setAvailability("taken");
-          setMessage(`${subdomain}.myhandle.in is taken.`);
+          setMessage(`${subdomain}.chomske.com is taken.`);
         }
       } catch (err) {
         if (axios.isCancel?.(err) || err?.name === "CanceledError" || err?.name === "AbortError") {
@@ -579,7 +579,7 @@ const MetaVerifiedBlock = () => {
                   aria-describedby="availability-msg"
                   aria-invalid={availability === "invalid" || availability === "taken"}
                 />
-                <span style={suffixStyle}>.myhandle.in</span>
+                <span style={suffixStyle}>.chomske.com</span>
               </div>
 
               {/* NEW: status row */}

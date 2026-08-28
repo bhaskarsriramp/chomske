@@ -9,12 +9,12 @@ function PrivacyPolicy() {
   return (
     <>
       <Helmet>
-        <title>Privacy Policy | myHandle</title>
+        <title>Privacy Policy | Chomske</title>
         <meta
           name="description"
-          content="Learn how myHandle collects and uses your information, including data accessed through Instagram and Facebook integrations (public_profile, instagram_basic, pages_show_list, business_management, and optional publishing/messaging scopes)."
+          content="Learn how Chomske collects and uses your information, including data accessed through Instagram and Facebook integrations (public_profile, instagram_basic, pages_show_list, business_management, and optional publishing/messaging scopes)."
         />
-        <link rel="canonical" href="https://myhandle.in/privacy-policy" />
+        <link rel="canonical" href="https://chomske.com/privacy-policy" />
       </Helmet>
 
       <Navbar />
@@ -29,14 +29,14 @@ function PrivacyPolicy() {
         </Typography>
 
         <Typography variant="body1" paragraph>
-          At <strong>myHandle</strong>, your privacy matters to us. We believe your data belongs to you, not us.
+          At <strong>Chomske</strong>, your privacy matters to us. We believe your data belongs to you, not us.
           We collect only the information required to operate your handle page, process payments securely, and improve your experience.
           This Privacy Policy explains how we collect, use, and safeguard your information when you use
-          <strong> myHandle.in</strong> and its related services.
+          <strong> chomske.com</strong> and its related services.
         </Typography>
 
         <Typography variant="body1" paragraph>
-          myHandle is owned and operated by <strong>Linck One Enterprises</strong>. By using our platform, you agree
+          Chomske is owned and operated by <strong>Linck One Enterprises</strong>. By using our platform, you agree
           to the terms of this Privacy Policy. We may update this policy periodically and encourage you to revisit it from time to time.
         </Typography>
 
@@ -47,7 +47,7 @@ function PrivacyPolicy() {
         <ul>
           <li>Full name, email address, and account credentials</li>
           <li>Profile information (display name, links, profile photo, social handles)</li>
-          <li>Subdomain data (e.g., yourhandle.myhandle.in) and associated content blocks</li>
+          <li>Subdomain data (e.g., yourhandle.chomske.com) and associated content blocks</li>
           <li>Payment details processed securely through Razorpay or UPI — we do <strong>not</strong> store full payment information</li>
           <li>Website and app usage data (link clicks, visitor count, device type, region)</li>
           <li>Technical metadata (browser, IP address, timestamps) for analytics and security</li>
@@ -81,7 +81,7 @@ function PrivacyPolicy() {
           4. Cookies & Analytics
         </Typography>
         <Typography variant="body1" paragraph>
-          myHandle uses cookies and analytics tools to enhance user experience and measure performance.
+          Chomske uses cookies and analytics tools to enhance user experience and measure performance.
           Cookies store small pieces of data on your device to help with:
         </Typography>
         <ul>
@@ -116,7 +116,7 @@ function PrivacyPolicy() {
           5A. Facebook & Instagram Integration
         </Typography>
         <Typography variant="body1" paragraph>
-          myHandle allows creators and businesses to connect their <strong>Instagram Business or Creator accounts</strong> (and linked Facebook Pages)
+          Chomske allows creators and businesses to connect their <strong>Instagram Business or Creator accounts</strong> (and linked Facebook Pages)
           to access features such as analytics, post publishing, and direct message management.
           This connection uses Meta’s official <strong>Facebook Login</strong>, <strong>Instagram Graph API</strong>, and <strong>Pages API</strong>.
         </Typography>
@@ -127,7 +127,7 @@ function PrivacyPolicy() {
         </Typography>
 
         <ul>
-          <li><strong>public_profile</strong> – to identify you during Facebook Login and associate the connection with your myHandle account.</li>
+          <li><strong>public_profile</strong> – to identify you during Facebook Login and associate the connection with your Chomske account.</li>
           <li><strong>instagram_basic</strong> – access to your Instagram username, profile picture, followers count, and media count (for your connected account).</li>
           <li><strong>pages_show_list</strong> – to show the Facebook Pages you manage and discover the Instagram account linked to each Page.</li>
           <li><strong>business_management</strong> – used in limited cases to verify and manage the relationship between your Business assets and our app
@@ -158,7 +158,7 @@ function PrivacyPolicy() {
             >
               Facebook Business Integrations
             </MuiLink>{" "}
-            settings and removing myHandle; and/or
+            settings and removing Chomske; and/or
           </li>
           <li>
             Managing Page and Business permissions in{" "}
@@ -193,7 +193,7 @@ function PrivacyPolicy() {
         </Typography>
         <ul>
           <li>You can view and update your account information at any time through your dashboard.</li>
-          <li>You may request data deletion or account removal by emailing <strong>support@myhandle.in</strong>.</li>
+          <li>You may request data deletion or account removal by emailing <strong>support@chomske.com</strong>.</li>
           <li>Upon deletion, all your handle data, analytics, and media will be permanently removed within 7 days.</li>
           <li>We retain minimal records (e.g., invoices) for lawful accounting and tax purposes.</li>
         </ul>
@@ -203,7 +203,7 @@ function PrivacyPolicy() {
           7. Children's Privacy
         </Typography>
         <Typography variant="body1" paragraph>
-          myHandle is intended for individuals aged 16 and above. We do not knowingly collect data from minors.
+          Chomske is intended for individuals aged 16 and above. We do not knowingly collect data from minors.
           If you believe a minor has provided personal information, please contact us for removal.
         </Typography>
 
@@ -233,7 +233,7 @@ function PrivacyPolicy() {
         <Typography variant="body1" paragraph>
           For privacy-related queries, data requests, or clarifications, please contact us at:
           <br />
-          <strong>Email:</strong> support@myhandle.in <br />
+          <strong>Email:</strong> support@chomske.com <br />
           <strong>Response Time:</strong> Within 2–3 business days
         </Typography>
         <Typography variant="body1" paragraph>

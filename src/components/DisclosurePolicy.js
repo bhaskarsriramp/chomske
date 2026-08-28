@@ -16,7 +16,7 @@ const DisclosurePolicy = () => {
       </Typography>
 
       <Typography variant="body1">
-        At MyHandle, we're committed to maintaining the highest standards of security for our users. We welcome security researchers to report any potential vulnerabilities they discover, provided it’s done in a respectful, ethical, and responsible manner.
+        At Chomske, we're committed to maintaining the highest standards of security for our users. We welcome security researchers to report any potential vulnerabilities they discover, provided it’s done in a respectful, ethical, and responsible manner.
       </Typography>
 
       <Box sx={{ mt: 4 }}>
@@ -24,7 +24,7 @@ const DisclosurePolicy = () => {
           What You Can Expect from Us
         </Typography>
         <Typography variant="body2">
-          When you report a vulnerability in good faith, MyHandle commits to:
+          When you report a vulnerability in good faith, Chomske commits to:
         </Typography>
         <ul style={{ paddingLeft: '1.5rem' }}>
           <li><Typography variant="body2">Keeping your identity and report confidential</Typography></li>
@@ -47,7 +47,7 @@ const DisclosurePolicy = () => {
           <li><Typography variant="body2">Avoid accessing data that isn't yours</Typography></li>
           <li><Typography variant="body2">Do not run DoS/DDoS attacks or performance stress tests</Typography></li>
           <li><Typography variant="body2">No phishing, vishing, social engineering, or deceptive methods</Typography></li>
-          <li><Typography variant="body2">Do not test third-party systems integrated with MyHandle</Typography></li>
+          <li><Typography variant="body2">Do not test third-party systems integrated with Chomske</Typography></li>
           <li><Typography variant="body2">Never upload or spread malware or other harmful software</Typography></li>
           <li><Typography variant="body2">Do not test physical infrastructure like offices or servers</Typography></li>
           <li><Typography variant="body2">Ensure testing is not done from sanctioned regions or individuals on watchlists</Typography></li>
@@ -59,7 +59,7 @@ const DisclosurePolicy = () => {
           Safe Harbor Statement
         </Typography>
         <Typography variant="body2">
-          MyHandle will not pursue legal action against those who identify and report security issues in good faith and within the boundaries of this policy. We reserve all legal rights if these boundaries are not respected.
+          Chomske will not pursue legal action against those who identify and report security issues in good faith and within the boundaries of this policy. We reserve all legal rights if these boundaries are not respected.
         </Typography>
       </Box>
 
@@ -88,7 +88,7 @@ const DisclosurePolicy = () => {
           <li><Typography variant="body2">You’ve followed all terms and guidelines outlined here</Typography></li>
         </ul>
         <Typography variant="body2">
-          Please note that any reward is at our sole discretion and not guaranteed. Rewards will be issued through the channels defined by MyHandle.
+          Please note that any reward is at our sole discretion and not guaranteed. Rewards will be issued through the channels defined by Chomske.
         </Typography>
       </Box>
     </Container>

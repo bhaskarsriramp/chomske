@@ -20,7 +20,7 @@ import FeaturedPlayListOutlinedIcon from '@mui/icons-material/FeaturedPlayListOu
 /** --- NEW: business login constants --- */
 const FB_APP_ID = "1360956302356492";
 const FB_LOGIN_CONFIG_ID = "2452082071860610"; // from App → Facebook Login for Business → Configurations
-const REDIRECT_URI = "https://myhandle.in/api/usersOn/meta-callback";
+const REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 const BACKEND_STATUS_URL  = "/api/usersOn/instagram-status";
 const BACKEND_UNLINK_URL  = "/api/usersOn/unlink-instagram";
 const BACKEND_SAVE_URL     = "/api/usersOn/save-instagram-account";

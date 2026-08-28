@@ -8,18 +8,18 @@ export default function EndToEndScheduling() {
   return (
     <>
       <Helmet>
-        <title>End-to-End Scheduling & Publishing | MyHandle</title>
+        <title>End-to-End Scheduling & Publishing | Chomske</title>
         <meta
           name="description"
-          content="Go from idea to scheduled Instagram post in minutes with MyHandle. Discover trending topics, rewrite in your tone, and schedule—all in one place."
+          content="Go from idea to scheduled Instagram post in minutes with Chomske. Discover trending topics, rewrite in your tone, and schedule—all in one place."
         />
         <meta
           property="og:title"
-          content="End-to-End Scheduling & Publishing | MyHandle"
+          content="End-to-End Scheduling & Publishing | Chomske"
         />
         <meta
           property="og:description"
-          content="MyHandle handles your entire Instagram content flow—from topic inspiration to tone-accurate rewrite to scheduled publishing. All in one clean workflow."
+          content="Chomske handles your entire Instagram content flow—from topic inspiration to tone-accurate rewrite to scheduled publishing. All in one clean workflow."
         />
         <meta property="og:type" content="website" />
       </Helmet>
@@ -56,7 +56,7 @@ export default function EndToEndScheduling() {
             </Typography>
 
             <Typography variant="body1" color="text.secondary" paragraph>
-              Creating a high-quality Instagram post usually means switching between tabs, researching topics, rewriting multiple drafts, and then setting up scheduling tools. MyHandle brings all of that under one roof.
+              Creating a high-quality Instagram post usually means switching between tabs, researching topics, rewriting multiple drafts, and then setting up scheduling tools. Chomske brings all of that under one roof.
             </Typography>
 
             <Typography variant="body1" color="text.secondary" paragraph>

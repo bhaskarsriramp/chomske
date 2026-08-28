@@ -140,7 +140,7 @@ export default function ThreeBlockPage() {
               textAlign: 'left'
 
             }}>
-              Drop your MyHandle link across every platform. Update once, it's live everywhere, from Instagram bios to YouTube descriptions to offline QR codes.
+              Drop your Chomske link across every platform. Update once, it's live everywhere, from Instagram bios to YouTube descriptions to offline QR codes.
             </p>
 
            
@@ -528,7 +528,7 @@ export default function ThreeBlockPage() {
                 color: "rgba(255,255,255,0.8)",
                 marginBottom: 32,
               }}>
-                Update your MyHandle once and watch it propagate instantly across Instagram, YouTube, LinkedIn, TikTok, and everywhere else your audience lives. No more updating dozens of bios manually.
+                Update your Chomske once and watch it propagate instantly across Instagram, YouTube, LinkedIn, TikTok, and everywhere else your audience lives. No more updating dozens of bios manually.
               </p>
 
               <button

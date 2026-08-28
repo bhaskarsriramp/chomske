@@ -99,8 +99,8 @@ function shouldCategorizeConversation(conversation) {
 function extractCookieIds(handshake) {
   try {
     const parsed = cookie.parse(handshake.headers?.cookie || "");
-    const pTok = parsed.tokenParticipantMyHandle || null;
-    const iTok = parsed.tokenMyhandleProf || null;
+    const pTok = parsed.tokenParticipantChomske || null;
+    const iTok = parsed.tokenChomskeProf || null;
 
     let participantId = null;
     let influencerId = null;

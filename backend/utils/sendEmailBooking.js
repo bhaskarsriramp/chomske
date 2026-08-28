@@ -10,7 +10,7 @@ const sendMailForBookings = async (options) => {
     port: 587,
     secure: false,
     auth: {
-      user: "support@myhandle.in",
+      user: "support@chomske.com",
       pass: password,
     },
   });
@@ -25,11 +25,11 @@ const sendMailForBookings = async (options) => {
     // Optional extras (safe defaults)
     service_title = "Consultation",
     meeting_link,
-    manage_url = "https://myhandle.in/booking/details/customer",
-    support_email = "support@myhandle.in",
+    manage_url = "https://chomske.com/booking/details/customer",
+    support_email = "support@chomske.com",
     logo_url = "https://storage.googleapis.com/myhandlebucket/MyHandle%20Hori_logo.png",
-    brand_name = "MyHandle",
-    brand_url = "https://myhandle.in",
+    brand_name = "Chomske",
+    brand_url = "https://chomske.com",
     venue = "Online",
     timezone = "IST",
     booking_id, // if you have one; otherwise we generate
@@ -57,7 +57,7 @@ const sendMailForBookings = async (options) => {
     booking_id || `BK${Math.floor(100000 + Math.random() * 900000)}`;
 
   const mailOptions = {
-    from: `"${brand_name}" <support@myhandle.in>`,
+    from: `"${brand_name}" <support@chomske.com>`,
     to,
     subject,
     html: `

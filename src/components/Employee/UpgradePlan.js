@@ -159,13 +159,13 @@ export default function UpgradePlan() {
 
     const rzp = new window.Razorpay({
       key: RZP_KEY_ID,
-      name: "MyHandle",
+      name: "Chomske",
       description: "Premium Subscription",
       subscription_id,
       recurring: 1,
       method: { upi: true },
       prefill: { name, email, contact: phone },
-      notes: { plan: "MyHandle Premium" },
+      notes: { plan: "Chomske Premium" },
       theme: { color: "#6366f1" },
       handler: async function (resp) {
         try {

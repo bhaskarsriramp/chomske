@@ -605,7 +605,7 @@ const handleBlockTypeSelect = (blockType) => {
   }
 
   async function copyToClipboard() {
-    const text = userDetails.handleUserName + ".myhandle.in" || "";
+    const text = userDetails.handleUserName + ".chomske.com" || "";
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text);
@@ -1217,10 +1217,10 @@ const handleBlockTypeSelect = (blockType) => {
                   }}
                 >
                   <Box sx={{ width: { xs: "100%", sm: "auto" } }}>
-                    <HandleBtn title="Customize Link" onClick={() => window.open(`https://${userDetails.handleUserName}.myhandle.in`, "_blank", "noopener, noreferrer")}>
+                    <HandleBtn title="Customize Link" onClick={() => window.open(`https://${userDetails.handleUserName}.chomske.com`, "_blank", "noopener, noreferrer")}>
                       <LinkIcon style={{ fontSize: 18, cursor: "pointer" }} />
                       <Typography sx={{ fontFamily: "Inter", fontSize: 14, fontWeight: 500, wordBreak: "break-all", color: "#000000" }}>
-                        {userDetails.handleUserName ? userDetails.handleUserName + ".myhandle.in" : "yourhandle.myhandle.in"}
+                        {userDetails.handleUserName ? userDetails.handleUserName + ".chomske.com" : "yourhandle.chomske.com"}
                       </Typography>
                     </HandleBtn>
                   </Box>

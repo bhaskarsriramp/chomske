@@ -4,8 +4,8 @@ import Navbar from "./Navbar";
 import Footer from "./Footer";
 
 export default function ShippingPolicy({
-  brandName = "MyHandle",
-  supportEmail = "support@myhandle.in",
+  brandName = "Chomske",
+  supportEmail = "support@chomske.com",
   termsLink = "/terms",
   refundLink = "/refund-policy",
   privacyLink = "/privacy-policy",
@@ -15,7 +15,7 @@ export default function ShippingPolicy({
 
     <>
        <header>
-        <title>Shipping Policy | MyHandle</title>
+        <title>Shipping Policy | Chomske</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </header>

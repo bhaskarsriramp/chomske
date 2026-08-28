@@ -3,7 +3,7 @@ const JWT_SECRET = "NidkPwke9485hfKDLAndu9*#&$&$jcbPOqkPkshEYfk3848Asj"
 
 
 const authenticateParticipant = (req, res, next) => {
-  const token = req.cookies.tokenParticipantMyHandle || req.headers["authorization"];
+  const token = req.cookies.tokenParticipantChomske || req.headers["authorization"];
 
   if (!token) {
       console.log("⚠️ No token provided");
