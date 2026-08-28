@@ -1,17 +1,44 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
+import { hydrate, render } from 'react-dom';
 import './index.css';
-import App from './App';
-import reportWebVitals from './reportWebVitals';
+import './styles/bootstrap.css';
+import App from './App.js';
+import store from './store/store.js';
+import reportWebVitals from './reportWebVitals.js';
+import { Provider } from 'react-redux';
+import getSubdomain from './Utils/getSubdomain.js';
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
+// Read server-injected initial profile if present
+let initialProfile = null;
+try {
+  if (typeof window !== 'undefined' && window.__INITIAL_PROFILE__) {
+    // If server injected a JSON object, it should already be a JS object.
+    // If it was injected as a string for any reason, try to parse safely.
+    const injected = window.__INITIAL_PROFILE__;
+    initialProfile = typeof injected === 'string' ? JSON.parse(injected) : injected;
+  }
+} catch (err) {
+  // If parsing fails, ignore and continue without initial profile.
+  console.warn('Failed to parse window.__INITIAL_PROFILE__', err);
+  initialProfile = null;
+}
+
+// Extract subdomain (e.g. sid4real from sid4real.myhandle.in)
+const initialSubdomain = (typeof window !== 'undefined') ? getSubdomain(window.location.hostname) : null;
+
+const rootElement = document.getElementById('root');
+
+const AppTree = (
+  <Provider store={store}>
+    <App initialSubdomain={initialSubdomain} initialProfile={initialProfile} />
+  </Provider>
 );
 
-// If you want to start measuring performance in your app, pass a function
-// to log results (for example: reportWebVitals(console.log))
-// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
+// Support react-snap hydration
+if (rootElement.hasChildNodes()) {
+  hydrate(AppTree, rootElement);
+} else {
+  render(AppTree, rootElement);
+}
+
+// Optional: Performance metrics
 reportWebVitals();

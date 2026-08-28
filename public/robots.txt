@@ -1,3 +1,18 @@
-# https://www.robotstxt.org/robotstxt.html
+# Allow all search engines to access most of the site
 User-agent: *
-Disallow:
+Disallow: /admin/
+Disallow: /professional/login/
+Disallow: /api/
+Disallow: /private/
+Disallow: /login/
+Disallow: /signup/
+Disallow: /cart/      # Example for e-commerce
+Disallow: /checkout/  # Example for e-commerce
+
+# Block all crawling of staging or test environments (if applicable)
+User-agent: *
+Disallow: /staging/
+Disallow: /test/
+
+# Allow search engines to crawl the site map
+Sitemap: https://myhandle.in/sitemap.xml

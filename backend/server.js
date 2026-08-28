@@ -1,23 +1,19 @@
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import dotenv from 'dotenv';
-import dbConnection from "./db.js";
-
-
-// Load .env from the backend directory
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-dotenv.config({ path: join(__dirname, '.env') });
-
 import express from 'express';
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import dbConnection from "./db.js";
+import bodyParser from "body-parser";
 import cors from 'cors';
-import apiRouter from './routes/usersOn.js';
+import usersOnBoard from "./routes/usersOn.js";
+import mongoose from 'mongoose';
+import attachSocket from './realtime/socket.js';
 
 
-dbConnection(); // assume this sets up mongoose connection
-
+dbConnection();
 const app = express();
-const PORT = process.env.PORT || 8003;
+app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use((req, res, next) => {
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -28,22 +24,20 @@ app.use((req, res, next) => {
 
 // 1) Single source of truth for CORS check
 function isAllowedOrigin(origin) {
-  if (!origin) return true; // curl, native apps
-
+  if (!origin) return true; // curl/native apps
   try {
-    const url = new URL(origin);
+    const { protocol, hostname } = new URL(origin);
 
     // allow http(s) only
-    if (!["http:", "https:"].includes(url.protocol)) return false;
+    if (protocol !== "http:" && protocol !== "https:") return false;
 
-    // localhost dev
-    if (origin === "http://localhost:3000") return true;
+    // dev ports/origins
+    if (origin === "http://localhost:4800") return true;
 
-    // apex domain
-    if (url.hostname === "chomske.com") return true;
-
-    // all subdomains
-    if (url.hostname.endsWith(".chomske.com")) return true;
+    // myhandle.in apex or any subdomain
+    if (hostname === ( "myhandle.in" || "https://myhandle.in" ) || hostname.endsWith(".myhandle.in")) {
+      return true;
+    }
 
     return false;
   } catch {
@@ -64,17 +58,150 @@ const corsOptions = {
 // 2) Put cors BEFORE any routes
 app.use(cors(corsOptions));
 
+// 3) Preflight must use the SAME options
+app.options("*", cors(corsOptions));
 
-app.use(express.json({ limit: '2mb' }));
 
-app.use('/usersOn', apiRouter);
 
-// Error handling middleware
-app.use((err, _req, res, _next) => {
-  console.error('[Error]', err.message);
-  res.status(500).json({ error: err.message || 'Internal server error' });
+
+app.use("/usersOn", usersOnBoard);
+
+// --- Simple helper: extract subdomain from Host header
+function extractSubdomain(hostname = '') {
+  if (!hostname) return null;
+  const host = hostname.split(':')[0].toLowerCase();
+  const parts = host.split('.');
+  if (parts.length <= 2) return null;        // myhandle.in -> no subdomain
+  if (parts[0] === 'www') return null;       // ignore www
+  return parts.slice(0, parts.length - 2).join('.'); // a.b.myhandle.in -> 'a.b'
+}
+
+
+
+
+// --- Serve static build and meta-inject index.html for SPA routes
+const BUILD_DIR = path.join(process.cwd(), 'build');
+const INDEX_HTML = path.join(BUILD_DIR, 'index.html');
+
+let TEMPLATE_HTML = null;
+try {
+  TEMPLATE_HTML = fs.readFileSync(INDEX_HTML, 'utf8');
+} catch (err) {
+  console.warn('Warning: build/index.html not found. Make sure you run `npm run build` before using server to serve static files.');
+  TEMPLATE_HTML = null;
+}
+
+// Serve static assets (JS/CSS/images)
+if (fs.existsSync(BUILD_DIR)) {
+  app.use(express.static(BUILD_DIR, { index: false }));
+}
+
+// Helper to build meta tags and inject initial profile
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildMetaTags(meta) {
+  const tags = [];
+  if (meta.title) tags.push(`<title>${escapeHtml(meta.title)}</title>`);
+  if (meta.description) tags.push(`<meta name="description" content="${escapeHtml(meta.description)}">`);
+  if (meta.url) tags.push(`<link rel="canonical" href="${escapeHtml(meta.url)}">`);
+
+  // Open Graph
+  if (meta.title) tags.push(`<meta property="og:title" content="${escapeHtml(meta.title)}">`);
+  if (meta.description) tags.push(`<meta property="og:description" content="${escapeHtml(meta.description)}">`);
+  if (meta.image) tags.push(`<meta property="og:image" content="${escapeHtml(meta.image)}">`);
+  if (meta.url) tags.push(`<meta property="og:url" content="${escapeHtml(meta.url)}">`);
+
+  // Twitter
+  if (meta.title) tags.push(`<meta name="twitter:title" content="${escapeHtml(meta.title)}">`);
+  if (meta.description) tags.push(`<meta name="twitter:description" content="${escapeHtml(meta.description)}">`);
+  if (meta.image) tags.push(`<meta name="twitter:image" content="${escapeHtml(meta.image)}">`);
+
+  return tags.join('\n');
+}
+
+// catch-all for client-side routes: inject meta & initial profile for subdomain requests
+app.get('*', async (req, res, next) => {
+  try {
+
+    if (req.path === '/socket.io' || req.path.startsWith('/socket.io/')) {
+  return next(); // let Engine.IO handle it
+ }
+  if (req.path.startsWith('/api/')) {
+    return next(); // not SPA
+  }
+
+
+    // If the request matches an existing static file, let express.static have handled it.
+    // If template not loaded, fallback to next middleware (or 404).
+    if (!TEMPLATE_HTML) return next();
+
+    const host = req.headers.host || '';
+    const subdomain = extractSubdomain(host);
+    // const subdomain = 'sid4real';
+
+
+    // If no subdomain, just serve normal index.html (no injection)
+    if (!subdomain) {
+      return res.type('html').send(TEMPLATE_HTML);
+    }
+
+    // Try to fetch profile from DB
+    const profilesColl = mongoose.connection.collection('users');
+    console.log('profilesColl : ', profilesColl);
+    const profile = await profilesColl.findOne({ handleUserName: subdomain.toLowerCase() });
+
+    // If no profile, serve default index and let client show 404/notfound UI
+    if (!profile) {
+      return res.type('html').send(TEMPLATE_HTML);
+    }
+
+    // Build meta and initial profile script
+    const meta = {
+      title: profile.displayName ? `${profile.displayName} — MyHandle` : `${subdomain} — MyHandle`,
+      description: profile.bio || profile.shortBio || `View ${profile.displayName || subdomain} on MyHandle`,
+      image: profile.ogImage || profile.avatarUrl || `https://myhandle.in/static/default-og.png`,
+      url: `https://${host}${req.originalUrl}`
+    };
+
+    const metaTags = buildMetaTags(meta);
+
+    // Safe JSON for injection (escape < to avoid XSS ending script blocks)
+    const safeJson = JSON.stringify(profile).replace(/</g, '\\u003c');
+
+    const initialProfileScript = `<script>window.__INITIAL_PROFILE__ = ${safeJson};</script>`;
+
+    // inject before </head>
+    const html = TEMPLATE_HTML.replace(/<\/head>/i, `${metaTags}\n${initialProfileScript}\n</head>`);
+    // Cache if you want (not included here)
+
+    return res.type('html').send(html);
+  } catch (err) {
+    console.error('Error in meta-injection handler:', err);
+    // fallback to default index
+    if (TEMPLATE_HTML) return res.type('html').send(TEMPLATE_HTML);
+    return next(err);
+  }
 });
 
-app.listen(PORT, () => {
-  console.log(`FounderDB backend running on ${PORT}`);
+
+
+const server = http.createServer(app);
+const io = attachSocket(server, app);
+app.set('io', io);
+
+
+server.listen(8001, () => {
+  console.log('Server is running on port 8001');
 });
+
+
+
+
+
