@@ -51,7 +51,10 @@ const upload = multer({
   },
 });
 const IPDATA_KEY = process.env.IPDATA_KEY;
-const META_APP_ID = process.env.META_APP_ID;
+// Not a secret — this is the same public App ID InstagramConnect.js sends to
+// Facebook's own /dialog/oauth on the frontend, so it's hardcoded here too
+// rather than depending on an env var that isn't set on the VM.
+const META_APP_ID = "1360956302356492";
 const META_APP_SECRET = process.env.META_APP_SECRET;
 const META_REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 const META_STATE_SECRET = "change_me_super_secret";
@@ -220,8 +223,8 @@ async function refreshFacebookTokensIfNeeded(user) {
   const llResp = await axios.get(`${FB_API}/oauth/access_token`, {
     params: {
       grant_type: "fb_exchange_token",
-      client_id: process.env.META_APP_ID || META_APP_ID,
-      client_secret: process.env.META_APP_SECRET || META_APP_SECRET,
+      client_id: META_APP_ID,
+      client_secret: META_APP_SECRET,
       fb_exchange_token: user.fbLongLivedToken,
     },
   });
@@ -992,10 +995,22 @@ router.post("/meta-state", authenticateToken, async (req, res) => {
 
 
 router.get(["/meta-callback", "/meta-callback/"], async (req, res) => {
-  const { code, state } = req.query;
+  const { code, state, error, error_reason, error_description, error_code } = req.query;
 
   try {
-    if (!code) throw new Error("Missing OAuth code");
+    if (error || error_reason || error_description) {
+      // Facebook redirects here with these instead of `code` when the user
+      // denies/cancels the dialog, or the app/config rejects the request —
+      // surface what Facebook actually said instead of a generic message.
+      console.error("Meta OAuth denied by Facebook:", {
+        error, error_reason, error_description, error_code,
+      });
+      throw new Error(error_description || error_reason || error || "Facebook denied the request");
+    }
+    if (!code) {
+      console.error("Meta OAuth callback hit with no code and no error param. Full query:", req.query);
+      throw new Error("Missing OAuth code");
+    }
     if (!state) throw new Error("Missing state");
 
     // 1️⃣ Verify state → userId
