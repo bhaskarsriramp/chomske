@@ -54,7 +54,7 @@ export default function CreatorUserLogin() {
       try {
         const res = await axios.get(`${baseUrl}/verify-login-token`, { withCredentials: true });
         if (res.data.valid) {
-          navigate("/professional/dashboard/analytics");
+          navigate("/professional/automations");
         }
       } catch (error) {
         // ignore -> show login
@@ -73,12 +73,9 @@ export default function CreatorUserLogin() {
       );
 
       const data = res?.data || {};
-      if (data.success && data.wasNew) {
+      if (data.success) {
         dispatch(login({ user_email: data.user.user_email, user_id: data.user.user_id }));
-        navigate("/creator/onboarding");
-      } else if (data.success && !data.wasNew) {
-        dispatch(login({ user_email: data.user.user_email, user_id: data.user.user_id }));
-        navigate("/professional/dashboard/analytics");
+        navigate("/professional/automations");
       } else {
         toast.error("Something went wrong. Please login again.");
         setTimeout(() => navigate("/professional/login"), 1200);

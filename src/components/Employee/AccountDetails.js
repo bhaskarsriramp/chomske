@@ -4,7 +4,6 @@ import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 
 import AccountDetailsPage1 from "./AccountDetailsPage1.js";
-import BankDetails from "./BankDetails.js";
 
 // Main Component
 const AccountDetails = () => {
@@ -38,22 +37,12 @@ const AccountDetails = () => {
               color: activeTab === 0 ? "primary.main" : "text.secondary",
             }}
           />
-          {/* <Tab
-            label="Bank Details"
-            sx={{
-              fontSize: "16px",
-              fontWeight: 400,
-              textTransform: "none",
-              color: activeTab === 1 ? "primary.main" : "text.secondary",
-            }}
-          /> */}
         </Tabs>
       </Box>
 
       {/* Content Area */}
       <Box mt={2}>
         {activeTab === 0 && <AccountDetailsPage1 />}
-        {activeTab === 1 && <BankDetails />}
       </Box>
     </Box>
   );

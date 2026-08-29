@@ -5,31 +5,12 @@ import App from './App.js';
 import store from './store/store.js';
 import reportWebVitals from './reportWebVitals.js';
 import { Provider } from 'react-redux';
-import getSubdomain from './Utils/getSubdomain.js';
-
-// Read server-injected initial profile if present
-let initialProfile = null;
-try {
-  if (typeof window !== 'undefined' && window.__INITIAL_PROFILE__) {
-    // If server injected a JSON object, it should already be a JS object.
-    // If it was injected as a string for any reason, try to parse safely.
-    const injected = window.__INITIAL_PROFILE__;
-    initialProfile = typeof injected === 'string' ? JSON.parse(injected) : injected;
-  }
-} catch (err) {
-  // If parsing fails, ignore and continue without initial profile.
-  console.warn('Failed to parse window.__INITIAL_PROFILE__', err);
-  initialProfile = null;
-}
-
-// Extract subdomain (e.g. sid4real from sid4real.chomske.com)
-const initialSubdomain = (typeof window !== 'undefined') ? getSubdomain(window.location.hostname) : null;
 
 const rootElement = document.getElementById('root');
 
 const AppTree = (
   <Provider store={store}>
-    <App initialSubdomain={initialSubdomain} initialProfile={initialProfile} />
+    <App />
   </Provider>
 );
 

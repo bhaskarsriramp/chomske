@@ -2,10 +2,13 @@
 // Vertex AI: AI Studio needs just an API key (AISTUDIO_KEY), not a service-account
 // key file, which is the whole point of running this off a GCE VM.
 //
-// Scoped to what chomske actually calls today (one JSON-mode classification call
-// in realtime/socket.js). Mirrors betaFounderProduction's geminiSmartClient.js
-// pattern (Redis-backed rate limiter, multi-key support) without the parts that
-// have no caller here (embeddings, vision, grounded search).
+// No caller in the codebase right now — its one caller (realtime/socket.js, the
+// Link-in-Bio chat categorizer) was removed along with the rest of Link-in-Bio.
+// Kept in place as ready-to-use infrastructure for Instagram automation features
+// that will want Gemini later, rather than re-plumbing this from scratch. Mirrors
+// betaFounderProduction's geminiSmartClient.js pattern (Redis-backed rate limiter,
+// multi-key support) without the parts that have no caller here (embeddings,
+// vision, grounded search).
 
 import { GoogleGenAI } from "@google/genai";
 import { createHash } from "crypto";
