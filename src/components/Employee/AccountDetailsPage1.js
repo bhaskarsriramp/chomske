@@ -218,20 +218,20 @@ const AccountDetailsPage1 = () => {
       if (res.data?.success) {
         const data = res.data.response || {};
         setSubscriptionDet(data);
-      } else {
-            setLoading(false);
-            toast.error("Session expired. Please log in again.");
-            setTimeout(() => {
-              navigate("/professional/login");
-            }, 2000);
-          }
+      }
+      // No subscription doc yet (e.g. 200 without success) isn't a session
+      // problem — just leave subscriptionDet at its default and move on.
     } catch (e) {
-      // If it fails, assume disconnected (don't block page)
-     setLoading(false);
-      toast.error("Network error. Please log in again.");
-      setTimeout(() => {
-        navigate("/professional/login");
-      }, 2000);
+      // Only a real auth failure means the session is gone. A missing
+      // subscription record (404 — user has none yet) or any other error
+      // shouldn't log the user out; don't block the rest of the page.
+      const status = e?.response?.status;
+      if (status === 401 || status === 403) {
+        toast.error("Session expired. Please log in again.");
+        setTimeout(() => {
+          navigate("/professional/login");
+        }, 2000);
+      }
     } finally {
       setIgLoading(false);
     }
