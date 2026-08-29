@@ -217,7 +217,7 @@ export default function AutomationList() {
 
   /* ---- Facebook Login for Business constants ---- */
   const FB_APP_ID = "1360956302356492"; // same App ID usersOn.js hardcodes as META_APP_ID
-  const FB_LOGIN_CONFIG_ID = "2452082071860610"; // Meta App Dashboard → Facebook Login for Business → Configurations
+  const FB_LOGIN_CONFIG_ID = "742713598693584"; // Meta App Dashboard → Facebook Login for Business → Configurations
   const REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 
   /* ---- IG connect state ---- */
