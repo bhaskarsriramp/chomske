@@ -38,16 +38,12 @@ const unlinkAsync = util.promisify(fs.unlink);
 import NodeCache from "node-cache";
 const metaCache = new NodeCache({ stdTTL: 86400 });
 import { Storage } from '@google-cloud/storage';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 
-// Get __dirname equivalent in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// No keyFilename: credentials come from Application Default Credentials — the
+// GCE VM's attached service account (short-lived, auto-rotated tokens, nothing
+// on disk). Locally it's whatever `gcloud auth application-default login` wrote.
+const storage = new Storage();
 
-const storage = new Storage({
-  keyFilename: join(__dirname, 'service-account-key.json')});
-  
 const bucketName = "myhandlebucket"; 
 const bucket = storage.bucket(bucketName);
 const upload = multer({

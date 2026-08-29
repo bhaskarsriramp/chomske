@@ -4,30 +4,90 @@
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="http://www.sitemaps.org/schemas/sitemap/0.9
             http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd">
-<!-- created with Free Online Sitemap Generator www.xml-sitemaps.com -->
-
 
 <url>
   <loc>https://chomske.com/</loc>
-  <lastmod>2025-10-06T12:30:11+00:00</lastmod>
+  <lastmod>2026-08-29</lastmod>
 </url>
 
+<url>
+  <loc>https://chomske.com/pricing</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/about-us</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/contact</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/terms</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/privacy-policy</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/refund-cancellation-policy</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/shipping-policy</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/google-api-disclosure</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/disclosure-policy</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
 
 <url>
   <loc>https://chomske.com/trust-center</loc>
-  <lastmod>2025-10-06T12:30:11+00:00</lastmod>
+  <lastmod>2026-08-29</lastmod>
 </url>
 
 <url>
-  <loc>https://chomske.com/pricing/</loc>
-  <lastmod>2025-10-06T12:30:11+00:00</lastmod>
+  <loc>https://chomske.com/youtube_api_disclosure</loc>
+  <lastmod>2026-08-29</lastmod>
 </url>
 
 <url>
-  <loc>https://chomske.com/refund-cancellation-policy/</loc>
-  <lastmod>2025-10-06T12:30:11+00:00</lastmod>
+  <loc>https://chomske.com/security</loc>
+  <lastmod>2026-08-29</lastmod>
 </url>
 
+<url>
+  <loc>https://chomske.com/personalised-user-tone</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
 
+<url>
+  <loc>https://chomske.com/schedule-publish</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/save-time</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
+
+<url>
+  <loc>https://chomske.com/products-affiliate</loc>
+  <lastmod>2026-08-29</lastmod>
+</url>
 
 </urlset>

@@ -8,7 +8,6 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@google-cloud/storage": "^7.16.0",
-    "@google/generative-ai": "^0.24.1",
     "@mui/icons-material": "^6.3.1",
     "@mui/material": "^7.3.4",
     "@mui/x-data-grid": "^8.14.1",
@@ -36,6 +35,7 @@
     "framer-motion": "^12.23.12",
     "fs": "^0.0.1-security",
     "i18n-iso-countries": "^7.14.0",
+    "ioredis": "^5.9.2",
     "js-cookie": "^3.0.5",
     "jsonwebtoken": "^9.0.2",
     "jwt-decode": "^4.0.0",
@@ -47,7 +47,6 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^6.10.0",
     "nodemon": "^3.1.9",
-    "openai": "^5.12.2",
     "path": "^0.12.7",
     "razorpay": "^2.9.6",
     "react": "^18.3.1",
@@ -61,6 +60,8 @@
     "react-snap": "^1.23.0",
     "react-swipeable-views": "^0.14.0",
     "react-toastify": "^11.0.2",
+    "react-zoom-pan-pinch": "^3.7.0",
+    "recharts": "^3.6.0",
     "redux-thunk": "^3.1.0",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
@@ -72,7 +73,7 @@
   "scripts": {
     "start": "set PORT=4800&&react-scripts start",
     "build": "react-scripts build",
-    "postbuild": "react-snap",
+    "postbuild": "node scripts/prerender.js",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
@@ -81,14 +82,28 @@
     "puppeteerArgs": [
       "--no-sandbox"
     ],
+    "crawl": false,
     "include": [
       "/",
       "/pricing",
       "/about-us",
       "/contact",
       "/terms",
-      "/privacy-policy"
-    ]
+      "/privacy-policy",
+      "/refund-cancellation-policy",
+      "/shipping-policy",
+      "/google-api-disclosure",
+      "/disclosure-policy",
+      "/trust-center",
+      "/youtube_api_disclosure",
+      "/security",
+      "/personalised-user-tone",
+      "/schedule-publish",
+      "/save-time",
+      "/products-affiliate"
+    ],
+    "waitFor": 2500,
+    "skipThirdPartyRequests": true
   },
   "eslintConfig": {
     "extends": [
@@ -107,5 +122,10 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "overrides": {
+    "react-snap": {
+      "puppeteer": "^13.7.0"
+    }
   }
 }

@@ -63,7 +63,7 @@ import UpgradePlan from './components/Employee/UpgradePlan.js';
 
 function App({ initialSubdomain = null, initialProfile = null }) {
 
-   const GOOGLE_CLIENT_ID = "191478155465-ldeodgltp87ehgudqg648no94cuitbqs.apps.googleusercontent.com";
+   const GOOGLE_CLIENT_ID = "341385315335-6p5l9nqi7hrm953k4ucr48gr2fvpq6eu.apps.googleusercontent.com";
 
  // inside App component, replace the early-return branch with this:
 

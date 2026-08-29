@@ -6,7 +6,7 @@ import mongoose from "mongoose";
 import Conversation from "../models/Conversations.js";
 import Message from "../models/Messages.js";
 import USER from "../models/User.js";
-import OpenAI from "openai";
+import { callGeminiJSON } from "../services/geminiClient.js";
 
 
 const JWT_SECRET = process.env.JWT_SECRET || "NidkPwke9485hfKDLAndu9*#&$&$jcbPOqkPkshEYfk3848Asj";
@@ -16,10 +16,6 @@ const OID = (v) => new mongoose.Types.ObjectId(String(v));
 const actorKey = (model, id) => `${model}:${id.toString()}`;
 const isValidId = (v) => v && mongoose.Types.ObjectId.isValid(v);
 const s = (v) => (v == null ? null : String(v));
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 
 async function categorizeFirstMessage(messageText) {
@@ -45,24 +41,11 @@ Be decisive. If unclear, default to "General" with lower confidence.`;
 
     const userPrompt = `Categorize this first message from a user:\n\n"${messageText}"`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o", // Using GPT-4o (best model as of now)
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
+    const parsed = await callGeminiJSON(`${systemPrompt}\n\n${userPrompt}`, {
       temperature: 0.3, // Lower temperature for more consistent categorization
-      max_tokens: 150,
-      response_format: { type: "json_object" },
+      maxOutputTokens: 150,
     });
 
-    const responseText = completion.choices[0]?.message?.content;
-    if (!responseText) {
-      console.warn("[Categorizer] No response from GPT");
-      return { category: "Uncategorized", confidence: 0 };
-    }
-
-    const parsed = JSON.parse(responseText);
     const category = parsed.category === "Collaboration" ? "Collaboration" : "General";
     const confidence = Math.max(0, Math.min(1, parseFloat(parsed.confidence) || 0));
 
