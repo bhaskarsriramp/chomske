@@ -59,6 +59,12 @@ const META_APP_SECRET = process.env.META_APP_SECRET;
 const META_REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 const META_STATE_SECRET = "change_me_super_secret";
 
+// Instagram Business Login — separate app identity from the Facebook Login
+// for Business app above (App → Instagram → API setup with Instagram login).
+// Not a secret, same reasoning as META_APP_ID.
+const INSTAGRAM_APP_ID = "4361873620712464";
+const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET;
+
 const OID = (v) => new mongoose.Types.ObjectId(String(v));
 const actorKey = (model, id) => `${model}:${id.toString()}`;
 
@@ -1025,93 +1031,70 @@ router.get(["/meta-callback", "/meta-callback/"], async (req, res) => {
     console.log('userId : ', userId);
     if (!userId) throw new Error("Invalid user state");
 
-    // 2️⃣ Exchange code → short-lived token
-    const tokenResp = await axios.get("https://graph.facebook.com/v24.0/oauth/access_token", {
-      params: {
-        client_id: META_APP_ID,
-        client_secret: META_APP_SECRET,
+    // 2️⃣ Exchange code → short-lived token (Instagram Business Login — no Facebook Page involved)
+    const tokenResp = await axios.post(
+      "https://api.instagram.com/oauth/access_token",
+      new URLSearchParams({
+        client_id: INSTAGRAM_APP_ID,
+        client_secret: INSTAGRAM_APP_SECRET,
+        grant_type: "authorization_code",
         redirect_uri: META_REDIRECT_URI,
         code,
-      },
-    });
+      }).toString(),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
 
-    const shortUserToken = tokenResp.data?.access_token;
-    if (!shortUserToken) throw new Error("Token exchange failed");
+    const shortIgToken = tokenResp.data?.access_token;
+    if (!shortIgToken) throw new Error("Token exchange failed");
 
     // 3️⃣ Exchange short-lived token → long-lived token
-    const llResp = await axios.get("https://graph.facebook.com/v24.0/oauth/access_token", {
+    const llResp = await axios.get("https://graph.instagram.com/access_token", {
       params: {
-        grant_type: "fb_exchange_token",
-        client_id: META_APP_ID,
-        client_secret: META_APP_SECRET,
-        fb_exchange_token: shortUserToken,
+        grant_type: "ig_exchange_token",
+        client_secret: INSTAGRAM_APP_SECRET,
+        access_token: shortIgToken,
       },
     });
 
-    const fbLongLivedToken = llResp.data?.access_token;
-    if (!fbLongLivedToken) throw new Error("Failed to obtain long-lived token");
+    const igLongLivedToken = llResp.data?.access_token;
+    if (!igLongLivedToken) throw new Error("Failed to obtain long-lived token");
 
     // ✅ Compute expiry
     const expiresInSecRaw = llResp.data?.expires_in;
     const expiresInSec = Number.isFinite(Number(expiresInSecRaw)) ? Number(expiresInSecRaw) : null;
     const nowMs = Date.now();
-    let fbLongLivedTokenExpiry;
+    let igLongLivedTokenExpiry;
 
     if (expiresInSec && expiresInSec > 0) {
-      fbLongLivedTokenExpiry = new Date(nowMs + expiresInSec * 1000);
+      igLongLivedTokenExpiry = new Date(nowMs + expiresInSec * 1000);
     } else {
       const FIFTY_EIGHT_DAYS_MS = 58 * 24 * 60 * 60 * 1000;
-      fbLongLivedTokenExpiry = new Date(nowMs + FIFTY_EIGHT_DAYS_MS);
+      igLongLivedTokenExpiry = new Date(nowMs + FIFTY_EIGHT_DAYS_MS);
     }
 
     // Save early
     await USER.findByIdAndUpdate(
       userId,
       {
-        fbLongLivedToken,
-        fbLongLivedTokenExpiry,
+        igLongLivedToken,
+        igLongLivedTokenExpiry,
         updated_at: new Date(),
       },
       { new: false }
     );
 
-    // 4️⃣ Fetch user pages (with linked IG)
-    const pagesResp = await axios.get("https://graph.facebook.com/v24.0/me/accounts", {
+    // 4️⃣ Fetch the connected Instagram professional account's own profile directly —
+    // no Facebook Page lookup, the authenticated account IS the target account.
+    const igResp = await axios.get("https://graph.instagram.com/v21.0/me", {
       params: {
-        fields: "id,name,access_token,instagram_business_account{id,username,profile_picture_url}",
-        access_token: fbLongLivedToken,
-      },
-    });
-
-    console.log('pageResp : ', pagesResp.data);
-    console.log('pageResp Data : ', pagesResp.data.data);
-
-    const pages = pagesResp.data?.data || [];
-    if (!pages.length) throw new Error("No Facebook Pages found for this user.");
-
-    // Pick first Page that has linked IG account
-    const pageWithIG = pages.find((p) => p?.instagram_business_account?.id);
-    if (!pageWithIG) throw new Error("No Page with a linked Instagram Business/Creator account found.");
-
-    const fbPageId = pageWithIG.id;
-    const igUserId = pageWithIG.instagram_business_account.id;
-
-  const fbPageAccessToken = pageWithIG.access_token;
-
-
-    if (!fbPageAccessToken) {
-      throw new Error("Unable to fetch Page access token. Check your pages_* permissions.");
-    }
-
-    // 6️⃣ Fetch Instagram details using Page token
-    const igResp = await axios.get(`https://graph.facebook.com/v24.0/${igUserId}`, {
-      params: {
-        fields: "id,username,profile_picture_url,biography,followers_count,follows_count,media_count",
-        access_token: fbPageAccessToken,
+        fields: "user_id,username,profile_picture_url,biography,followers_count,follows_count,media_count",
+        access_token: igLongLivedToken,
       },
     });
 
     const ig = igResp.data || {};
+    const igUserId = ig.user_id || null;
+    if (!igUserId) throw new Error("Could not resolve the connected Instagram account's user id.");
     const igUsername = ig.username || null;
     const igProfilePic = ig.profile_picture_url || null;
     const igFollowersCount = ig.followers_count ?? 0;
@@ -1197,17 +1180,15 @@ await USER.findByIdAndUpdate(
   userId,
   {
     instagramConnected: true,
-    fbPageId,
-    igUserId: ig.id,
-    igId: ig.id,
-    igName: pageWithIG.name || igUsername || null,
+    igUserId,
+    igId: igUserId,
+    igName: igUsername || null,
     igUsername,
     igProfilePic,
     igFollowersCount,
     igFollowsCount,
     igMediaCount,
     igBiography,
-    fbPageAccessToken,
     has_profile_pic_ig,
     duplicateExists: false,
     duplicateInfo: null,
@@ -1546,14 +1527,14 @@ async function filterAutomatedPosts(userId, mediaItems) {
 router.get("/instagram/reels", authenticateToken, async (req, res) => {
   try {
     const userId = req.user?.user_id;
-    const user = await USER.findById(userId).select("igUserId fbLongLivedToken").lean();
+    const user = await USER.findById(userId).select("igUserId igLongLivedToken fbLongLivedToken fbPageAccessToken").lean();
     if (!user || !user.igUserId) return res.status(400).json({ error: "Instagram not connected" });
 
     const fields = "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp";
     const limit = 20; // Fetch slightly more since we might filter out non-videos
     const after = req.query.after ? `&after=${encodeURIComponent(req.query.after)}` : "";
 
-    const url = `https://graph.facebook.com/v21.0/${user.igUserId}/media?fields=${fields}&limit=${limit}${after}&access_token=${user.fbLongLivedToken}`;
+    const url = `https://graph.instagram.com/v21.0/${user.igUserId}/media?fields=${fields}&limit=${limit}${after}&access_token=${pickInstagramToken(user)}`;
 
     // Fetch
     const response = await getWithRetries(url, { retries: 3, timeout: 15000 });
@@ -1587,14 +1568,14 @@ router.get("/instagram/reels", authenticateToken, async (req, res) => {
 router.get("/instagram/stories", authenticateToken, async (req, res) => {
   try {
     const userId = req.user?.user_id;
-    const user = await USER.findById(userId).select("igUserId fbLongLivedToken").lean();
+    const user = await USER.findById(userId).select("igUserId igLongLivedToken fbLongLivedToken fbPageAccessToken").lean();
     if (!user || !user.igUserId) return res.status(400).json({ error: "Instagram not connected" });
 
     const fields = "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp";
     // Stories endpoint does not always support standard cursor pagination perfectly, but we attempt it
     const after = req.query.after ? `&after=${encodeURIComponent(req.query.after)}` : "";
-    
-    const url = `https://graph.facebook.com/v21.0/${user.igUserId}/stories?fields=${fields}${after}&access_token=${user.fbLongLivedToken}`;
+
+    const url = `https://graph.instagram.com/v21.0/${user.igUserId}/stories?fields=${fields}${after}&access_token=${pickInstagramToken(user)}`;
 
     const response = await getWithRetries(url, { retries: 3, timeout: 15000 });
     let rawData = response.data || [];
@@ -1626,14 +1607,14 @@ router.get("/instagram/stories", authenticateToken, async (req, res) => {
 router.get("/instagram/photos", authenticateToken, async (req, res) => {
   try {
     const userId = req.user?.user_id;
-    const user = await USER.findById(userId).select("igUserId fbLongLivedToken").lean();
+    const user = await USER.findById(userId).select("igUserId igLongLivedToken fbLongLivedToken fbPageAccessToken").lean();
     if (!user || !user.igUserId) return res.status(400).json({ error: "Instagram not connected" });
 
     const fields = "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp";
     const limit = 25; // Fetch slightly more to account for filtering out videos
     const after = req.query.after ? `&after=${encodeURIComponent(req.query.after)}` : "";
 
-    const url = `https://graph.facebook.com/v21.0/${user.igUserId}/media?fields=${fields}&limit=${limit}${after}&access_token=${user.fbLongLivedToken}`;
+    const url = `https://graph.instagram.com/v21.0/${user.igUserId}/media?fields=${fields}&limit=${limit}${after}&access_token=${pickInstagramToken(user)}`;
 
     // 1. Fetch Data
     const response = await getWithRetries(url, { retries: 3, timeout: 15000 });
@@ -1667,26 +1648,33 @@ router.get("/instagram/photos", authenticateToken, async (req, res) => {
 });
 
 
-async function subscribePageToInstagramWebhooks(fbPageId, fbPageAccessToken, userId) {
-  if (!fbPageId) throw new Error("fbPageId is required");
-  if (!fbPageAccessToken) throw new Error("fbPageAccessToken is required");
+// Instagram Business Login has no Facebook Page in the picture — you subscribe
+// the connected Instagram account itself, directly on graph.instagram.com.
+// This is the piece flagged as needing live verification: unlike the Facebook
+// Page version above (well-documented, long-proven), Meta's docs on the exact
+// subscribed_fields values accepted here for Instagram Login accounts are thin.
+// "comments" matches the field you enabled on the app's Instagram webhook
+// config — if this call 400s, check the Instagram product's webhook fields
+// list for the exact accepted value.
+async function subscribeInstagramAccountToWebhooks(igUserId, igAccessToken) {
+  if (!igUserId) throw new Error("igUserId is required");
+  if (!igAccessToken) throw new Error("igAccessToken is required");
 
   try {
-    
     const subResp = await axios.post(
-      `https://graph.facebook.com/v24.0/${fbPageId}/subscribed_apps`,
-      null, 
+      `https://graph.instagram.com/v21.0/${igUserId}/subscribed_apps`,
+      null,
       {
         params: {
-            subscribed_fields: "feed", 
-            access_token: fbPageAccessToken, 
+          subscribed_fields: "comments",
+          access_token: igAccessToken,
         },
       }
     );
 
     const success = subResp?.data?.success;
     if (success) {
-      console.log(`✅ Page ${fbPageId} subscribed to Webhooks!`);
+      console.log(`✅ Instagram account ${igUserId} subscribed to Webhooks!`);
     } else {
       console.warn("⚠️ Subscription response unclear:", subResp?.data);
     }
@@ -1694,9 +1682,9 @@ async function subscribePageToInstagramWebhooks(fbPageId, fbPageAccessToken, use
     return { success, raw: subResp?.data };
 
   } catch (error) {
-    console.error("❌ subscribePageToInstagramWebhooks failed", error?.response?.data || error.message);
+    console.error("❌ subscribeInstagramAccountToWebhooks failed", error?.response?.data || error.message);
     // Don't crash the whole auth flow if this fails, just log it
-    return { success: false, error: error.message }; 
+    return { success: false, error: error.message };
   }
 }
 
@@ -1850,7 +1838,7 @@ router.post("/automation/config", authenticateToken, async (req, res) => {
 
     // 1️⃣ FETCH USER CONTEXT (New Step)
     // We need the tokens and the flag to decide if we should subscribe
-    const user = await USER.findById(userId).select("fbPageId fbPageAccessToken automationFeedSubscribed");
+    const user = await USER.findById(userId).select("igUserId igLongLivedToken automationFeedSubscribed");
     
     if (!user) {
       return res.status(404).json({ success: false, message: "User profile not found." });
@@ -1881,15 +1869,14 @@ router.post("/automation/config", authenticateToken, async (req, res) => {
     let webhookStatus = "already_active";
 
     // If the user has a token BUT has not been marked as subscribed yet
-    if (user.fbPageId && user.fbPageAccessToken && !user.automationFeedSubscribed) {
+    if (user.igUserId && user.igLongLivedToken && !user.automationFeedSubscribed) {
         console.log(`🔌 Initializing Webhooks for User ${userId}...`);
-        
+
         try {
             // Run the helper function
-            const subResult = await subscribePageToInstagramWebhooks(
-                user.fbPageId, 
-                user.fbPageAccessToken, 
-                userId
+            const subResult = await subscribeInstagramAccountToWebhooks(
+                user.igUserId,
+                user.igLongLivedToken
             );
 
             if (subResult.success) {

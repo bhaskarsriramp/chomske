@@ -17,9 +17,9 @@ import FeaturedPlayListOutlinedIcon from '@mui/icons-material/FeaturedPlayListOu
 
 // import "react-toastify/dist/ReactToastify.css"; // Commented out to prevent build errors
 
-/** --- NEW: business login constants --- */
-const FB_APP_ID = "1360956302356492";
-const FB_LOGIN_CONFIG_ID = "2452082071860610"; // from App → Facebook Login for Business → Configurations
+/** Instagram Business Login — direct-to-Instagram OAuth, no Facebook Page needed */
+const IG_APP_ID = "4361873620712464"; // App → Instagram → API setup with Instagram login
+const IG_SCOPES = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments";
 const REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 const BACKEND_STATUS_URL  = "/api/usersOn/instagram-status";
 const BACKEND_UNLINK_URL  = "/api/usersOn/unlink-instagram";
@@ -86,14 +86,14 @@ const openBusinessLogin = useCallback(async () => {
 
     // 2) Build OAuth URL with signed state (no random state now)
     const q = new URLSearchParams({
-      client_id: FB_APP_ID,
+      client_id: IG_APP_ID,
       redirect_uri: REDIRECT_URI,
-      state, // <-- signed, user-bound
       response_type: "code",
-      config_id: FB_LOGIN_CONFIG_ID,
+      scope: IG_SCOPES,
+      state, // <-- signed, user-bound
     });
 
-    const authUrl = `https://www.facebook.com/v24.0/dialog/oauth?${q.toString()}`;
+    const authUrl = `https://www.instagram.com/oauth/authorize?${q.toString()}`;
     const w = 680, h = 760;
     const y = window.top.outerHeight / 2 + window.top.screenY - (h / 2);
     const x = window.top.outerWidth / 2 + window.top.screenX - (w / 2);
