@@ -19,7 +19,10 @@ import FeaturedPlayListOutlinedIcon from '@mui/icons-material/FeaturedPlayListOu
 
 /** Instagram Business Login — direct-to-Instagram OAuth, no Facebook Page needed */
 const IG_APP_ID = "4361873620712464"; // App → Instagram → API setup with Instagram login
-const IG_SCOPES = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments";
+// Matches the app's actual "Embed URL" shown under Instagram → API setup with
+// Instagram login → 3. Set up Instagram business login — copy that URL again
+// if scopes are ever added/removed there, rather than guessing a list here.
+const IG_SCOPES = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights";
 const REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 const BACKEND_STATUS_URL  = "/api/usersOn/instagram-status";
 const BACKEND_UNLINK_URL  = "/api/usersOn/unlink-instagram";
@@ -86,6 +89,7 @@ const openBusinessLogin = useCallback(async () => {
 
     // 2) Build OAuth URL with signed state (no random state now)
     const q = new URLSearchParams({
+      force_reauth: "true",
       client_id: IG_APP_ID,
       redirect_uri: REDIRECT_URI,
       response_type: "code",

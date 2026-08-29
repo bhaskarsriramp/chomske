@@ -217,7 +217,9 @@ export default function AutomationList() {
 
   /* ---- Instagram Business Login constants ---- */
   const IG_APP_ID = "4361873620712464";
-  const IG_SCOPES = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments";
+  // Matches the app's "Embed URL" under Instagram → API setup with Instagram
+  // login → 3. Set up Instagram business login.
+  const IG_SCOPES = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights";
   const REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 
   /* ---- IG connect state ---- */
@@ -484,6 +486,7 @@ const handleConnectInstagram = useCallback(async () => {
     if (!state) throw new Error("Unable to start Meta login");
 
     const q = new URLSearchParams({
+      force_reauth: "true",
       client_id: IG_APP_ID,
       redirect_uri: REDIRECT_URI,
       response_type: "code",
