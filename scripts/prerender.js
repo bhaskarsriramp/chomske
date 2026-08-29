@@ -78,7 +78,22 @@ for (const leftover of ['200.html', '404.html']) {
 }
 
 console.log('Pre-rendering marketing routes with react-snap...');
-const res = spawnSync(process.execPath, [REACT_SNAP], { cwd: ROOT, stdio: 'inherit' });
+
+// react-snap boots a real headless Chrome per included route and forwards every
+// console.log the app itself makes during that mount straight to this process's
+// stdout (prefixed "💬  console.log at <route>:"). With 15 routes that's mostly
+// noise, so it's filtered out here — real react-snap output (crawl summary,
+// 🔥 errors, ⚠️ warnings) still gets through.
+const res = spawnSync(process.execPath, [REACT_SNAP], { cwd: ROOT, encoding: 'utf8' });
+
+const dropAppConsoleNoise = (text) =>
+  (text || '')
+    .split('\n')
+    .filter((line) => !/💬\s*console\.log at /.test(line))
+    .join('\n');
+
+if (res.stdout) process.stdout.write(dropAppConsoleNoise(res.stdout));
+if (res.stderr) process.stderr.write(res.stderr);
 
 if (res.error) fail(res.error.message);
 if (res.status !== 0) fail(`react-snap exited with code ${res.status}`);

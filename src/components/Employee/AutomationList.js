@@ -215,11 +215,9 @@ export default function AutomationList() {
   const META_STATE_URL = baseUrl + "/meta-state";
   const AUTOMATIONS_URL = baseUrl + "/automations";
 
-  /* ---- Instagram Business Login constants ---- */
-  const IG_APP_ID = "4361873620712464";
-  // Matches the app's "Embed URL" under Instagram → API setup with Instagram
-  // login → 3. Set up Instagram business login.
-  const IG_SCOPES = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights";
+  /* ---- Facebook Login for Business constants ---- */
+  const FB_APP_ID = "1360956302356492"; // same App ID usersOn.js hardcodes as META_APP_ID
+  const FB_LOGIN_CONFIG_ID = "2452082071860610"; // Meta App Dashboard → Facebook Login for Business → Configurations
   const REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 
   /* ---- IG connect state ---- */
@@ -486,14 +484,13 @@ const handleConnectInstagram = useCallback(async () => {
     if (!state) throw new Error("Unable to start Meta login");
 
     const q = new URLSearchParams({
-      force_reauth: "true",
-      client_id: IG_APP_ID,
+      client_id: FB_APP_ID,
       redirect_uri: REDIRECT_URI,
       response_type: "code",
-      scope: IG_SCOPES,
+      config_id: FB_LOGIN_CONFIG_ID,
       state,
     });
-    const authUrl = `https://www.instagram.com/oauth/authorize?${q.toString()}`;
+    const authUrl = `https://www.facebook.com/v24.0/dialog/oauth?${q.toString()}`;
 
     const popup = openCenteredPopup(authUrl);
     if (!popup) {
@@ -539,8 +536,8 @@ const handleConnectInstagram = useCallback(async () => {
   fetchMobile,
   pageSize,
   isDesktop,
-  IG_APP_ID,
-  IG_SCOPES,
+  FB_APP_ID,
+  FB_LOGIN_CONFIG_ID,
   REDIRECT_URI,
 ]);
 
