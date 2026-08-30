@@ -1,0 +1,177 @@
+// models/Conversation.js
+import mongoose from "mongoose";
+const { Schema } = mongoose;
+
+const LastMessageSchema = new Schema(
+  {
+    text: { type: String },
+    type: { type: String, enum: ["text", "image", "video", "system"], default: "text" },
+    sender: { type: String, enum: ["me", "them"], required: true },
+    timestamp: { type: Date, required: true },
+  },
+  { _id: false }
+);
+
+const ConversationSchema = new Schema(
+  {
+    // Platform info
+    platform: { type: String, enum: ["instagram"], required: true },
+    igConversationId: { type: String, required: true },
+    metaThreadId: { type: String },
+
+    // Owner (creator)
+    creatorId: { type: Schema.Types.ObjectId, ref: "users", required: true },
+
+    // Other participant
+    participantId: { type: Schema.Types.ObjectId, ref: "Participant", required: true },
+
+    // Labeling
+    label: {
+      type: String,
+      enum: ["Personal", "Lead", "General", "Business"],
+      default: "General",
+    },
+    labelSource: {
+      type: String,
+      enum: ["auto", "manual", "ai"],
+      default: "auto",
+    },
+
+        /* ---------- CONVERSATION INTELLIGENCE ---------- */
+
+conversationIntent: {
+  type: String,
+  enum: ["Personal", "Lead", "Business", "General"],
+  default: "General",
+},
+
+conversationIntentConfidence: {
+  type: Number, // 0.0 → 1.0
+  default: 0,
+},
+
+// Accumulated evidence (THIS PREVENTS FLIPPING)
+intentSignals: {
+  personal: { type: Number, default: 0 },
+  lead: { type: Number, default: 0 },
+  collaboration: { type: Number, default: 0 },
+},
+
+intentSignalsUpdatedAt: {
+  type: Date,
+  default: null,
+},
+
+
+conversationIntentUpdatedAt: {
+  type: Date,
+  default: null,
+},
+
+conversationLeadSeriousness: {
+  type: Number,
+  min: 0,
+  max: 1,
+  default: 0,
+},
+conversationLeadSeriousnessUpdatedAt: Date,
+
+followUpStatus: {
+  needed: { type: Boolean, default: false },
+  priority: { type: String, enum: ["high", "medium", "low", null], default: null },
+  reason: { type: String, default: null },
+  suggestedAction: { type: String, default: null },
+  detectedAt: { type: Date, default: null },
+  dismissedAt: { type: Date, default: null },    // When creator dismisses
+  completedAt: { type: Date, default: null },    // When creator follows up
+},
+followUpAnalyzedAt: { type: Date, default: null },
+conversationLeadQuality: {
+  type: String,
+  enum: ["none", "low", "medium", "high", "hot"],
+  default: "none",
+},
+
+
+    // State
+    isBlocked: { type: Boolean, default: false },
+
+    // Inbox snapshot
+    lastMessage: { type: LastMessageSchema },
+    unreadCount: { type: Number, default: 0 },
+    lastSyncedAt: Date,
+    lastMetaCursor: String,
+    lastMetaAfterCursor: String,   // for latest sync
+lastMetaBeforeCursor: String,  // for older sync
+lastParticipantMessageAt: { type: Date, index: true },
+metaSyncCompleted: { type: Boolean, default: false },
+
+notes: {
+  text: { type: String, default: "" },
+  updatedAt: { type: Date }
+},
+
+creatorHasReplied: { type: Boolean, default: false },
+
+leadUserContext: { type: String, default: null },
+whatsappAlertMessageId: { type: String, default: null },
+whatsappAlertSentAt: { type: Date, default: null },
+
+ quickReplies: {
+      suggestions: [
+        {
+          text: { type: String },
+          intent: { type: String }, // ask-details | warm-opener | soft-close | reassure | follow-up
+          _id: false,
+        },
+      ],
+      generatedAt: { type: Date, default: null },
+      lastMessageId: { type: String, default: null }, // igMessageId of last message when generated — invalidation key
+    },
+
+    // Sorting
+    lastActivityAt: { type: Date, required: true },
+  },
+  { timestamps: true }
+);
+
+/* ---------- INDEXES ---------- */
+
+// Prevent duplicate conversations per creator
+ConversationSchema.index(
+  { creatorId: 1, igConversationId: 1 },
+  { unique: true }
+);
+
+// Inbox loading & sorting
+ConversationSchema.index(
+  { creatorId: 1, lastActivityAt: -1 }
+);
+
+// Label-based filtering
+ConversationSchema.index(
+  { creatorId: 1, label: 1 }
+);
+
+// Participant lookup
+ConversationSchema.index(
+  { participantId: 1 }
+);
+
+// Fast inbox fetch: filtered by intent + sorted by activity (replaces full collection scan)
+ConversationSchema.index(
+  { creatorId: 1, conversationIntent: 1, lastActivityAt: -1 },
+  { name: "inbox_filtered_sort" }
+);
+
+ConversationSchema.index(
+  { creatorId: 1, platform: 1, igConversationId: 1 },
+  { unique: true }
+);
+
+
+const Conversation =
+  mongoose.models.Conversation ||
+  mongoose.model("Conversation", ConversationSchema, "conversations");
+
+export default Conversation;

@@ -5,19 +5,22 @@ const AutomationSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: "users", required: true },
     platform: { type: String, enum: ["instagram"], default: "instagram" },
-    postId: { type: String, required: true },
+     postId: { type: String },
+    postType: { type: String },
     repliedCount: { type: Number, default: 0 },
     thumbnail: { type: String },
     postLive: { type: Boolean, default: true },
     lastCheckedAt: { type: Date, default: Date.now },
+    thumbnailRefreshedAt: { type: Date, default: null },
     caption: { type: String, default: null, trim: true },
     dmMessage: { type: String},
     buttonText: { type: String},
     flowNodes: { type: Array, default: []},
     keywords: { type: Array, default: []},
     hasReply: { type: Boolean, default: false},
-    replyComment: { type: String},
-
+    replyComments: { type: [String], default: [] },
+    igUserId: {type: String},
+    clonedFrom: { type: Schema.Types.ObjectId, ref: "automations" },
     createdAt: { type: Date },
     status: {
       type: String,
@@ -31,8 +34,14 @@ const AutomationSchema = new Schema(
 );
 
 AutomationSchema.index({ userId: 1, postId: 1 });
-AutomationSchema.index({ platform: 1, postId: 1, status: 1 });
+AutomationSchema.index({ platform: 1, postId: 1, status: 1, igUserId: 1 });
 AutomationSchema.index({ postLive: 1, userId: 1 });
+
+// Autodm/futurepost config lookup
+AutomationSchema.index({ userId: 1, postType: 1 });
+
+// Listing sorted by creation date
+AutomationSchema.index({ userId: 1, createdAt: -1 });
 
 const Automation =
   mongoose.models.Automation ||

@@ -1,0 +1,49 @@
+name: Deploy myhandle.in to GCP
+
+on:
+  push:
+    branches:
+      - myhandlebranch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build React app
+        run: npx react-scripts build
+        env:
+          CI: false   # prevents warnings from failing the build
+
+      - name: Copy build folder to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "build/"
+          target: "/home/ysp442218/myhandlein/"
+
+      - name: Pull backend code and reload PM2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/ysp442218/myhandlein
+            git fetch origin myhandlebranch
+            git reset --hard origin/myhandlebranch
+            npm install --omit=dev
+            pm2 reload myhandle-backend

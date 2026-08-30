@@ -9,10 +9,10 @@ const TermsConditions = () => {
   return (
     <>
       <Helmet>
-        <title>Terms & Conditions | Chomske</title>
+        <title>Terms & Conditions | myHandle</title>
         <meta
           name="description"
-          content="Terms & Conditions for Chomske, including Facebook Login and Instagram Graph/Pages API usage, publishing & messaging rules, data/token handling, revocation, and compliance."
+          content="Terms & Conditions for myHandle, including WhatsApp Business API usage, messaging rules, opt-in/opt-out requirements, data handling, and compliance."
         />
         <link rel="canonical" href="https://chomske.com/terms" />
       </Helmet>
@@ -27,8 +27,8 @@ const TermsConditions = () => {
         <Typography variant="body1" sx={{ fontSize: isMobile ? '16px' : '18px', lineHeight: 1.8 }}>
           <strong>Last updated:</strong> October 13, 2025
           <br /><br />
-          Welcome to <strong>Chomske</strong> — a platform operated by Linck One Enterprises (“we,” “us,” “our”).
-          By accessing or using <strong>chomske.com</strong> and related services (“Services”), you agree to these Terms & Conditions (“Terms”).
+          Welcome to <strong>myHandle</strong> — a platform operated by Linck One Enterprises (“we,” “us,” “our”).
+          By accessing or using <strong>myHandle.in</strong> and related services (“Services”), you agree to these Terms & Conditions (“Terms”).
           If you do not agree, please do not use the Services.
         </Typography>
 
@@ -38,7 +38,7 @@ const TermsConditions = () => {
             1. Platform Use
           </Typography>
           <ul>
-            <li>Chomske provides a link-in-bio and mini-website builder, analytics, and creator tools under a <b>chomske.com</b> subdomain.</li>
+            <li>myHandle provides a link-in-bio and mini-website builder, analytics, and creator tools under a <b>chomske.com</b> subdomain.</li>
             <li>You are responsible for the accuracy of the content you publish (links, images, text, payments, etc.).</li>
             <li>You agree not to use the Services for unlawful, misleading, harmful, or abusive purposes.</li>
             <li>We may suspend/terminate accounts for violations of these Terms or applicable law.</li>
@@ -87,87 +87,82 @@ const TermsConditions = () => {
             5. Third-Party Integrations
           </Typography>
           <ul>
-            <li>We integrate services such as Razorpay, Google Analytics, and Meta (Facebook & Instagram) to deliver features.</li>
+            <li>We integrate services such as Razorpay, Google Analytics, and the WhatsApp Business API (Meta) to deliver features.</li>
             <li>Your use of third-party services is subject to their terms and privacy policies.</li>
             <li>External links you add are your responsibility; we do not endorse third-party content.</li>
           </ul>
         </Box>
 
-        {/* 5A. Meta Integration & Scopes */}
+        {/* 5A. WhatsApp Business Integration */}
         <Box mt={4}>
           <Typography variant="h5" sx={{ fontWeight: 700, mb: 2 }}>
-            5A. Facebook Login & Instagram Integration
+            5A. WhatsApp Business Integration
           </Typography>
           <Typography variant="body1" sx={{ mb: 1.5 }}>
-            Chomske enables connection of your <strong>Instagram Business or Creator account</strong> (and linked Facebook Page) via
-            <strong> Facebook Login</strong>, the <strong>Instagram Graph API</strong>, and the <strong>Pages API</strong>. By connecting,
-            you authorise us to access limited data strictly to provide the features you use (e.g., show your username/followers,
-            manage publishing you initiate, and optionally manage DMs you choose to enable).
+            myHandle enables businesses to send <strong>WhatsApp alerts and notifications</strong> to opted-in customers
+            via the <strong>WhatsApp Business API</strong>. By using this feature, you agree to send messages only to
+            recipients who have given explicit prior consent, and to comply with all applicable messaging laws and
+            Meta’s WhatsApp Business Platform Terms.
           </Typography>
           <Typography variant="body1" sx={{ mb: 1 }}>
-            We may request the following permissions (scopes) through Meta’s consent screen:
+            To send WhatsApp alerts through myHandle, you must:
           </Typography>
           <ul>
-            <li><strong>public_profile</strong> — basic Facebook profile to complete login and associate the connection with your Chomske account.</li>
-            <li><strong>instagram_basic</strong> — Instagram username, profile picture, followers count, media count for your connected account.</li>
-            <li><strong>pages_show_list</strong> — to list Pages you manage and find the Instagram account linked to each Page.</li>
-            <li><strong>business_management</strong> — limited use to verify/manage the relationship between your Business assets and our app
-              (e.g., linking eligible assets for advanced features). We do not use this to modify your content or advertise.</li>
-            <li><strong>(Optional)</strong> <em>instagram_content_publish</em> — to publish/schedule content you upload in Chomske.</li>
-            <li><strong>(Optional)</strong> <em>instagram_manage_messages</em>, <em>pages_messaging</em> — to view and respond to user-initiated DMs in your inbox,
-              subject to Meta’s messaging rules (e.g., 24-hour window).</li>
+            <li>Obtain explicit <strong>opt-in consent</strong> from each recipient before sending any messages.</li>
+            <li>Provide a clear and easy <strong>opt-out mechanism</strong> (e.g., replying STOP) in every message or at the point of opt-in.</li>
+            <li>Use only <strong>pre-approved message templates</strong> for outbound notifications, as required by the WhatsApp Business Platform.</li>
+            <li>Accurately identify your business name in all messages so recipients know who is contacting them.</li>
+            <li>Not use the service to send spam, unsolicited promotions, or misleading content.</li>
           </ul>
           <Typography variant="body1" sx={{ mt: 1 }}>
-            You can revoke access at any time in your{" "}
-            <MuiLink href="https://www.facebook.com/settings?tab=business_tools" target="_blank" rel="noopener noreferrer" underline="hover">
-              Facebook Business Integrations
+            Our integration complies with Meta’s{" "}
+            <MuiLink href="https://developers.facebook.com/terms/" target="_blank" rel="noopener noreferrer" underline="hover">
+              WhatsApp Business Platform Terms
             </MuiLink>{" "}
-            and{" "}
-            <MuiLink href="https://business.facebook.com/settings/" target="_blank" rel="noopener noreferrer" underline="hover">
-              Meta Business Settings
-            </MuiLink>.
+            and India’s TRAI guidelines on commercial communications.
           </Typography>
         </Box>
 
-        {/* 5B. Publishing & Messaging Rules */}
+        {/* 5B. WhatsApp Messaging Rules */}
         <Box mt={4}>
           <Typography variant="h5" sx={{ fontWeight: 700, mb: 2 }}>
-            5B. Instagram Publishing & Messaging Rules
+            5B. WhatsApp Messaging Rules
           </Typography>
           <ul>
-            <li><strong>User-initiated actions:</strong> We publish or message only when you initiate/configure it in Chomske.</li>
-            <li><strong>Messaging window:</strong> Automated replies are limited to conversations initiated by users and must follow Meta’s 24-hour standard messaging window and anti-spam rules.</li>
-            <li><strong>No unsolicited outreach:</strong> Cold DMs or mass unsolicited messaging via Chomske are prohibited.</li>
-            <li><strong>Content ownership:</strong> You must own or have rights to publish any content you upload/schedule through Chomske.</li>
+            <li><strong>Consent required:</strong> You may only send messages to recipients who have explicitly opted in. Bulk messaging without consent is prohibited.</li>
+            <li><strong>Template compliance:</strong> Outbound alerts must use Meta-approved message templates. Free-form messaging is only permitted within a 24-hour customer-initiated conversation window.</li>
+            <li><strong>No spam or harassment:</strong> Mass unsolicited outreach, phishing, or abusive messaging via myHandle is strictly prohibited and will result in immediate account suspension.</li>
+            <li><strong>Content responsibility:</strong> You are responsible for ensuring all message content is accurate, lawful, and does not violate any third-party rights.</li>
           </ul>
         </Box>
 
         {/* 6. Data, Tokens & Privacy */}
         <Box mt={4}>
           <Typography variant="h5" sx={{ fontWeight: 600, mb: 2 }}>
-            6. Data, Tokens & Privacy
+            6. Data & Privacy
           </Typography>
           <ul>
-            <li>We store access tokens securely with encryption and access controls. Tokens are used only to perform actions you request.</li>
-            <li>We do not sell or rent your data. We do not use Meta data for advertising or profiling.</li>
-            <li>Inbox data (if enabled) is processed only to display and manage your DMs; we do not expose your message content to other users.</li>
+            <li>Phone numbers and opt-in records are stored securely with encryption and strict access controls, used only to send the alerts you configure.</li>
+            <li>We do not sell or rent your data or your recipients’ data to any third party.</li>
+            <li>Message delivery data (sent, delivered, read) is processed solely to provide analytics within your dashboard.</li>
             <li>Your use of the Services is also governed by our <b>Privacy Policy</b>.</li>
           </ul>
         </Box>
 
-        {/* 7. User Responsibilities (Meta Compliance) */}
+        {/* 7. User Responsibilities (WhatsApp Compliance) */}
         <Box mt={4}>
           <Typography variant="h5" sx={{ fontWeight: 600, mb: 2 }}>
-            7. User Responsibilities (Meta Compliance)
+            7. User Responsibilities (WhatsApp Compliance)
           </Typography>
           <ul>
-            <li>Maintain your Instagram as Business/Creator and link it to a Facebook Page you manage.</li>
+            <li>Ensure all recipients have provided explicit, verifiable opt-in consent before sending WhatsApp alerts.</li>
             <li>Use the Services in accordance with Meta’s{" "}
               <MuiLink href="https://developers.facebook.com/terms/" target="_blank" rel="noopener noreferrer" underline="hover">
-                Platform Terms and Developer Policies
-              </MuiLink>.
+                WhatsApp Business Platform Terms
+              </MuiLink>{" "}
+              and TRAI’s Commercial Communications regulations.
             </li>
-            <li>Do not use Chomske to circumvent Meta policies, send spam, or harvest personal data without consent.</li>
+            <li>Do not use myHandle to send spam, harvest personal data without consent, or circumvent applicable messaging policies.</li>
           </ul>
         </Box>
 
@@ -177,8 +172,8 @@ const TermsConditions = () => {
             8. Revocation & Disconnection
           </Typography>
           <ul>
-            <li>You may disconnect at any time via Facebook Business Integrations or by contacting <b>support@chomske.com</b>.</li>
-            <li>Upon disconnection, we will cease API calls for your account and invalidate stored tokens as applicable.</li>
+            <li>You may disable WhatsApp alerts or disconnect your WhatsApp Business number at any time from your myHandle dashboard or by contacting <b>support@chomske.com</b>.</li>
+            <li>Upon disconnection, we will cease sending messages on your behalf and delete stored API credentials as applicable.</li>
           </ul>
         </Box>
 

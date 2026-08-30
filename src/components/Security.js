@@ -8,7 +8,7 @@ const securitySections = [
   {
     title: 'Infrastructure & Hosting',
     points: [
-      'Chomske is hosted on industry-leading cloud infrastructure: Google Cloud Platform(GCP) known for its robust security and scalability.',
+      'MyHandle is hosted on industry-leading cloud infrastructure: Google Cloud Platform(GCP) known for its robust security and scalability.',
       'All data is stored in secure, access-controlled environments with multi-region backup strategies.',
       '24/7 monitoring and disaster recovery plans are in place to ensure business continuity.',
     ],
@@ -24,7 +24,7 @@ const securitySections = [
   {
     title: 'Reliability & Availability',
     points: [
-      'Chomske is built for high availability with auto-scaling and failover support.',
+      'MyHandle is built for high availability with auto-scaling and failover support.',
       'Our uptime goal is 99.9%+, supported by advanced monitoring tools and alerting systems.',
       'Service Status is monitored and communicated proactively.',
     ],
@@ -62,20 +62,20 @@ const Security = () => {
     <>
 
       <Helmet>
-  <title>Data Security & Privacy | Chomske</title>
+  <title>Data Security & Privacy | MyHandle</title>
   <meta
     name="description"
-    content="Learn how Chomske protects your data with enterprise-grade security: AES-256 encryption, GCP hosting, 99.9% uptime, OAuth 2.0 authentication, and strict compliance practices."
+    content="Learn how MyHandle protects your data with enterprise-grade security: AES-256 encryption, GCP hosting, 99.9% uptime, OAuth 2.0 authentication, and strict compliance practices."
   />
 
   {/* Canonical URL */}
   <link rel="canonical" href="https://chomske.com/security" />
 
   {/* Open Graph */}
-  <meta property="og:title" content="Data Security & Privacy | Chomske" />
+  <meta property="og:title" content="Data Security & Privacy | MyHandle" />
   <meta
     property="og:description"
-    content="Chomske ensures your trust with AES-256 encryption, secure Google Cloud hosting, 24/7 monitoring, OAuth 2.0 authentication, and compliance with industry standards."
+    content="MyHandle ensures your trust with AES-256 encryption, secure Google Cloud hosting, 24/7 monitoring, OAuth 2.0 authentication, and compliance with industry standards."
   />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://chomske.com/security" />
@@ -86,10 +86,10 @@ const Security = () => {
 
   {/* Twitter */}
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Data Security & Privacy | Chomske" />
+  <meta name="twitter:title" content="Data Security & Privacy | MyHandle" />
   <meta
     name="twitter:description"
-    content="Chomske protects your data with enterprise-grade security: encryption, compliance, and 24/7 monitoring."
+    content="MyHandle protects your data with enterprise-grade security: encryption, compliance, and 24/7 monitoring."
   />
   <meta
     name="twitter:image"
@@ -101,7 +101,7 @@ const Security = () => {
       <Navbar />
       <Box sx={{ px: isMobile ? 3 : 10, py: 10, mt: 3 }}>
         <Typography variant="h3" sx={{ fontWeight: 600, mb: 3 }}>
-          Security at Chomske
+          Security at MyHandle
         </Typography>
 
         <Typography variant="h6" sx={{ fontWeight: 400, mb: 5, color: 'gray' }}>

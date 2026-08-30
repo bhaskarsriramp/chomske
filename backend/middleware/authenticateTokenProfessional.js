@@ -1,22 +1,38 @@
 import jwt from "jsonwebtoken";
-const JWT_SECRET = "NidkPwke9485hfKDLAndu9*#&$&$jcbPOqkPkshEYfk3848Asj"
+import RevokedToken from "../models/RevokedToken.js";
+const JWT_SECRET = process.env.JWT_SECRET;
 
-const authenticateTokenProfessional = (req, res, next) => {
-  const token = req.cookies.tokenChomskeProf || req.headers["authorization"];
+const authenticateTokenProfessional = async (req, res, next) => {
+  let token = req.cookies.tokenMyhandleProf;
 
-  if (!token) {
-      console.log("⚠️ No token provided");
-      return res.status(401).json({ message: "Unauthorized" });
+  // Support Bearer token from Authorization header (strips the "Bearer " prefix)
+  if (!token && req.headers["authorization"]) {
+    const authHeader = req.headers["authorization"];
+    if (authHeader.startsWith("Bearer ")) {
+      token = authHeader.slice(7).trim();
+    }
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-      if (err) {
-          console.error("❌ Token verification failed:", err);
-          return res.status(403).json({ message: "Forbidden" });
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const user = jwt.verify(token, JWT_SECRET);
+
+    // Check revocation list so that logout tokens cannot be reused
+    if (user.jti) {
+      const revoked = await RevokedToken.exists({ jti: user.jti });
+      if (revoked) {
+        return res.status(401).json({ message: "Unauthorized: Token has been revoked" });
       }
-      req.user = user;
-      next();
-  });
+    }
+
+    req.user = user;
+    next();
+  } catch {
+    return res.status(401).json({ message: "Unauthorized: Invalid or expired token" });
+  }
 };
 
 

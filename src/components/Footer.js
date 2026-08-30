@@ -1,274 +1,261 @@
-import { Grid, Typography, IconButton, Box, Divider } from "@mui/material";
+import React from "react";
+import {
+  Box,
+  Container,
+  Grid,
+  Typography,
+  IconButton,
+  Divider,
+  Stack,
+  Link as MuiLink,
+} from "@mui/material";
+import { Link } from "react-router-dom";
 import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import TwitterIcon from "@mui/icons-material/Twitter";
+import logo from "../images/myhandle_logo.svg"; // Ensure path is correct
 
-export default function Footer() {
+// Organized Data Structure
+const footerSections = {
+  product: [
+    { name: "Pricing", path: "/pricing" },
+    { name: "Trust Center", path: "/trust-center" },
+    { name: "Security", path: "/security" },
+    { name: "Sitemap", path: "/sitemap.xml" },
+  ],
+  company: [
+    { name: "About Us", path: "/about-us" },
+    { name: "Contact Us", path: "/contact" },
+    { name: "Disclosure Policy", path: "/disclosure-policy" },
+    { name: "Google API Disclosure", path: "/google-api-disclosure" },
+  ],
+  legal: [
+    { name: "Privacy Policy", path: "/privacy-policy" },
+    { name: "Terms & Conditions", path: "/terms" },
+    { name: "Refund Policy", path: "/refund-cancellation-policy" },
+    { name: "Shipping Policy", path: "/shipping-policy" },
+  ],
+};
+
+const Footer = () => {
   return (
     <Box
+      component="footer"
       sx={{
-        backgroundColor: "#121212",
+        backgroundColor: "#020617", // Matches your Hero/Process sections
         color: "#fff",
-        paddingY: 5,
-        paddingX: 10,
+        borderTop: "1px solid rgba(255,255,255,0.08)",
+        pt: { xs: 8, md: 10 },
+        pb: 4,
+        position: "relative",
+        overflow: "hidden",
+        fontFamily: "Inter, sans-serif",
       }}
     >
-      <Grid container spacing={4} sx={{ display : 'flex', justifyContent : 'space-between'}}>
-        {/* Company Section */}
-        <Grid size={{ xs: 12, sm: 4, md: 3}}>
-          <Typography
-            variant="h6"
-            sx={{
-              fontWeight: "bold",
-              letterSpacing: "1px",
-              color: "#f2f2f2",
-              marginBottom: 2,
-            }}
-          >
-            Company
-          </Typography>
-        
+      {/* Top Border Glow Effect */}
+      <Box
+        sx={{
+          position: "absolute",
+          top: 0,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "80%",
+          height: "1px",
+          background:
+            "linear-gradient(90deg, transparent 0%, rgba(37, 211, 102, 0.4) 50%, transparent 100%)",
+          opacity: 0.6,
+        }}
+      />
 
-        
-
-          <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/pricing" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Pricing
-            </a>
-          </Typography>
-           
-            <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/trust-center" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Trust Center
-            </a>
-          </Typography>
-
-            <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/disclosure-policy" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Disclosure Policy
-            </a>
-          </Typography>
-
-          <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/about-us" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              About Us
-            </a>
-          </Typography>
-
-             <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/contact" style={linkStyle}>
-             Contact Us
-            </a>
-          </Typography>
-          
-          <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/sitemap.xml" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Sitemap
-            </a>
-          </Typography>
-        </Grid>
-
-        {/* Useful Links Section */}
-        <Grid size={{ xs: 12, sm: 4, md: 3}}>
-          <Typography
-            variant="h6"
-            sx={{
-              fontWeight: "bold",
-              letterSpacing: "1px",
-              color: "#f2f2f2",
-              marginBottom: 2,
-            }}
-          >
-            Useful
-          </Typography>
-        
-            <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/google-api-disclosure" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-               Google API Disclosure
-            </a>
-          </Typography>
-
-          <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/terms" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Terms & Conditions
-            </a>
-          </Typography>
-
-          <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Privacy Policy
-            </a>
-          </Typography>
-          
-
-             <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/refund-cancellation-policy" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Refund & Cancellation
-            </a>
-          </Typography>
-
+      <Container maxWidth="lg">
+        <Grid container spacing={8}>
+          {/* 1. Brand Identity Column */}
+          <Grid item xs={12} md={4}>
+            <Box sx={{ mb: 3 }}>
+              {/* Logo Link */}
+              <Link to="/" style={{ textDecoration: "none", display: 'inline-block' }}>
+                 {/* NOTE: If you want the logo white, use filter. 
+                    If using an SVG component, pass color props.
+                 */}
+                 <img 
+                   src={logo} 
+                   alt="MyHandle" 
+                   style={{ 
+                     height: "46px", 
+                     marginBottom: "16px", 
+                     filter: "brightness(0) invert(1)" // Forces white logo
+                   }} 
+                 />
+              </Link>
               <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/shipping-policy" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Shipping Policy
-            </a>
-          </Typography>
+                variant="body1"
+                sx={{
+                  color: "#94a3b8", // Slate-400
+                  lineHeight: 1.6,
+                  maxWidth: "320px",
+                  fontSize: "15px",
+                  mt: 1,
+                }}
+              >
+                WhatsApp alerts for server downtime, failed payments, and critical events. Paste one webhook. Sleep soundly.
+              </Typography>
+            </Box>
 
-          <Typography
-            variant="body2"
-            sx={{
-              color: "#ccc",
-              mb: 1,
-              transition: "color 0.3s",
-              "&:hover": { color: "#f2f2f2" },
-            }}
-          >
-            <a href="/security" target="_blank" rel="noopener noreferrer" style={linkStyle}>
-              Security
-            </a>
-          </Typography>
+            {/* Social Icons */}
+            <Stack direction="row" spacing={1.5}>
+              <IconButton
+                href="https://www.linkedin.com/company/myhandle-in/"
+                target="_blank"
+                aria-label="LinkedIn"
+                sx={{
+                  color: "#94a3b8",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  transition: "all 0.2s",
+                  "&:hover": { 
+                    color: "#fff", 
+                    borderColor: "#fff", 
+                    bgcolor: "rgba(255,255,255,0.05)" 
+                  },
+                }}
+              >
+                <LinkedInIcon fontSize="small" />
+              </IconButton>
+              <IconButton
+                href="https://x.com/ibhaskarsriram"
+                target="_blank"
+                aria-label="Twitter"
+                sx={{
+                  color: "#94a3b8",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  transition: "all 0.2s",
+                  "&:hover": { 
+                    color: "#fff", 
+                    borderColor: "#fff", 
+                    bgcolor: "rgba(255,255,255,0.05)" 
+                  },
+                }}
+              >
+                <TwitterIcon fontSize="small" />
+              </IconButton>
+            </Stack>
+          </Grid>
 
+          {/* 2. Link Columns (Mapped dynamically) */}
+          {[
+            { title: "Product", items: footerSections.product },
+            { title: "Company", items: footerSections.company },
+            { title: "Legal", items: footerSections.legal }
+          ].map((section) => (
+            <Grid item xs={6} md={2.5} key={section.title}>
+              <Typography
+                variant="subtitle1"
+                sx={{
+                  fontWeight: 700,
+                  color: "#fff",
+                  mb: 3,
+                  fontSize: "15px",
+                  letterSpacing: "0.5px"
+                }}
+              >
+                {section.title}
+              </Typography>
+              <Stack spacing={1.5}>
+                {section.items.map((link) => (
+                  <Link
+                    key={link.name}
+                    to={link.path}
+                    style={{ textDecoration: "none" }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: "#94a3b8",
+                        fontSize: "14px",
+                        transition: "all 0.2s ease",
+                        display: "inline-block",
+                        "&:hover": {
+                          color: "#fff",
+                          transform: "translateX(4px)", // Subtle slide effect
+                        },
+                      }}
+                    >
+                      {link.name}
+                    </Typography>
+                  </Link>
+                ))}
+              </Stack>
+            </Grid>
+          ))}
         </Grid>
 
-        {/* Social Media Section */}
-        <Grid size={{ xs: 12, sm: 4, md: 3}}>
+        {/* 3. Bottom Bar */}
+        <Divider
+          sx={{
+            borderColor: "rgba(255,255,255,0.08)",
+            mt: 8,
+            mb: 4,
+          }}
+        />
+
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: { xs: "column", sm: "row" },
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 2,
+          }}
+        >
           <Typography
-            variant="h6"
-            sx={{
-              fontWeight: "bold",
-              letterSpacing: "1px",
-              color: "#f2f2f2",
-              marginBottom: 2,
-            }}
+            variant="caption"
+            sx={{ color: "#64748b", fontSize: "13px" }}
           >
-            Follow Us
+            &copy; {new Date().getFullYear()} MyHandle.in. All rights reserved.
           </Typography>
-          <Box display="flex" justifyContent="flex-start" gap={2}>
-           
-            <IconButton
-              href="https://www.linkedin.com/company/postln"
-              target="_blank"
-              color="inherit"
-              sx={{ "&:hover": { color: "#E4405F" } }}
-              aria-label="Visit our LinkedIn page"
+
+          <Box sx={{ display: "flex", gap: 3 }}>
+            <Typography
+              variant="caption"
+              sx={{ 
+                color: "#64748b", 
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5
+              }}
             >
-              <LinkedInIcon sx={{ fontSize: 34 }} />
-            </IconButton>
-            <IconButton
-              href="https://x.com/ibhaskarsriram"
-              target="_blank"
-              color="inherit"
-              sx={{ "&:hover": { color: "#1DA1F2" } }}
-              aria-label="Visit our Twitter page"
-            >
-              <TwitterIcon sx={{ fontSize: 30 }} />
-            </IconButton>
+              Built for SaaS founders who hate being last to know.
+            </Typography>
           </Box>
-        </Grid>
-      </Grid>
+        </Box>
+      </Container>
 
-      {/* Footer Divider */}
-      <Divider sx={{ my: 4, backgroundColor: "#444" }} />
-
-      <Box textAlign="center" sx={{ mt: 2 }}>
-        <Typography variant="body2" sx={{ color: "#B9B4C7" }}>
-          &copy; chomske.com 2025
+      {/* Large brand watermark */}
+      <Box
+        sx={{
+          overflow: "hidden",
+          mt: 2,
+          lineHeight: 0.85,
+          userSelect: "none",
+          pointerEvents: "none",
+        }}
+      >
+        <Typography
+          sx={{
+            fontFamily: "'Inter', sans-serif",
+            fontWeight: 900,
+            fontSize: "clamp(5rem, 18vw, 16rem)",
+            letterSpacing: "-0.04em",
+            color: "rgba(255,255,255,0.04)",
+            textAlign: "center",
+            whiteSpace: "nowrap",
+            lineHeight: 0.9,
+          }}
+        >
+          MyHandle
         </Typography>
       </Box>
     </Box>
   );
-}
-
-// Styles for links
-const linkStyle = {
-  textDecoration: "none",
-  color: "#ccc",
-  transition: "color 0.3s ease",
 };
 
+export default Footer;

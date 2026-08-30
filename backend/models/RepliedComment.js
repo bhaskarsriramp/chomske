@@ -40,6 +40,8 @@ RepliedCommentSchema.index(
   { unique: true, partialFilterExpression: { status: { $ne: "failed" } } }
 );
 
+// Analytics aggregates by user and date
+RepliedCommentSchema.index({ userId: 1, createdAt: -1 });
 
 const RepliedComment =
   mongoose.models.RepliedComment ||

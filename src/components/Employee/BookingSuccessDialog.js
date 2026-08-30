@@ -1,5 +1,4 @@
 // BookingSuccessDialog.jsx (separate file)
-import React from 'react';
 import {
   Dialog,
   DialogContent,

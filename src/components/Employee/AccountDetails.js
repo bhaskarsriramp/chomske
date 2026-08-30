@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Box, Tab, Tabs } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
-
 import AccountDetailsPage1 from "./AccountDetailsPage1.js";
 
 // Main Component
@@ -37,6 +36,15 @@ const AccountDetails = () => {
               color: activeTab === 0 ? "primary.main" : "text.secondary",
             }}
           />
+          {/* <Tab
+            label="Bank Details"
+            sx={{
+              fontSize: "16px",
+              fontWeight: 400,
+              textTransform: "none",
+              color: activeTab === 1 ? "primary.main" : "text.secondary",
+            }}
+          /> */}
         </Tabs>
       </Box>
 

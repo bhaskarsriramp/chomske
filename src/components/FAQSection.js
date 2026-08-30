@@ -7,7 +7,7 @@ import {
   Typography,
   Container,
   Box,
-    useMediaQuery,
+  useMediaQuery,
   useTheme
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -15,28 +15,17 @@ import { styled } from "@mui/material/styles";
 
 const faqs = [
   {
-    question: "What exactly is Chomske?",
+    question: "Is there a free plan? What's the pricing?",
     answer: `
-Chomske is a **link-in-bio mini site**: one fast page with your links, actions (WhatsApp, Call, Maps), payments, and analytics — all on a **custom subdomain** like <strong>yourname.chomske.com</strong>.
+Yes! We have a **Forever Free plan ($0)** that gives you access to **all features** and **10 leads per month** completely free.
 
-- Built to be **mobile-first** and super quick to launch.
-- Great for Instagram, YouTube, LinkedIn bios, QR codes, and business cards.
-- If you need multi-page content or blogs, you can still link out to your main site from Chomske.
+- **No credit card required** to get started.
+- Need more capacity? Paid plans start at just **$29/month**.
+- Transparent pricing with **no hidden fees**.
     `,
   },
 
-    {
-    question: "Can I accept payments on my page?",
-    answer: `
-Yes — we support **UPI/Razorpay** flows that your audience already uses.
-
-- Take **tips, donations, bookings**, or sell **digital items** right from your page.
-- Payments are processed by trusted partners; Chomske **does not store** full card/UPI details.
-- You'll see **basic payment events** in your analytics for clarity.
-    `,
-  },
-
-    {
+  {
     question: "What analytics do I get?",
     answer: `
 Your dashboard shows **Visitors vs. Views**, **top links**, **CTR**, **referrers**, **device types**, and **region**.
@@ -47,28 +36,39 @@ Your dashboard shows **Visitors vs. Views**, **top links**, **CTR**, **referrers
     `,
   },
 
-    {
-    question: "Is there a free plan? What's the pricing?",
+  {
+    question: "Can I add WhatsApp, Call, Maps, and socials?",
     answer: `
-We're India-first and keep pricing simple: starting at **₹99/month**.
+Absolutely. myHandle includes **smart action blocks**:
 
-- Transparent pricing with **no hidden fees** from our side.
-- Payment gateway charges (if any) are as per **Razorpay/UPI**.
-- You can cancel anytime to stop future renewals.
+- **WhatsApp**, **Call**, **Email**, **Maps**, **YouTube**, **Instagram**, **LinkedIn**, and more.
+- Add unlimited links and reorder them easily.
+- Use **QR codes** offline to send users straight to your page.
     `,
   },
 
-    {
-    question: "Does Chomske support Hindi or other languages?",
+  {
+    question: "Is my data secure? Do you store payment details?",
     answer: `
-Yes — we support **English + Hindi** out of the box (more languages coming).
+We take security seriously: **TLS encryption**, **AES-256 at rest**, **RBAC**, and secure hosting on **GCP**.
 
-- Add Hindi text to your page and blocks seamlessly.
-- We're optimizing performance for Indian networks and devices.
+- We **do not store** full card or UPI credentials — payments flow via PCI-compliant partners like **Razorpay**.
+- We collect **aggregated analytics** only (visitors, clicks, referrers) per our Privacy Policy and India’s **DPDP Act, 2023**.
     `,
   },
 
-    {
+  {
+    question: "Will my page show up on Google? (SEO)",
+    answer: `
+myHandle pages are **indexable**, fast, and mobile-friendly.
+
+- You can customize page title/description for better previews.
+- If you prefer **privacy**, we can limit indexability on request.
+- For deeper SEO (blogs/landing pages), link out to your main site.
+    `,
+  },
+
+  {
     question: "What is your refund policy?",
     answer: `
 We offer a **7-day, no-questions-asked refund** on new subscriptions. After **14 days** from payment, **no refunds** are issued.
@@ -87,43 +87,11 @@ Plans renew automatically (monthly/yearly) unless you cancel **before** the next
 - Cancel anytime from your account or by emailing <strong>support@chomske.com</strong> to avoid future charges.
     `,
   },
-  
 
-  {
-    question: "Can I add WhatsApp, Call, Maps, and socials?",
-    answer: `
-Absolutely. Chomske includes **smart action blocks**:
-
-- **WhatsApp**, **Call**, **Email**, **Maps**, **YouTube**, **Instagram**, **LinkedIn**, and more.
-- Add unlimited links and reorder them easily.
-- Use **QR codes** offline to send users straight to your page.
-    `,
-  },
-
-
-  {
-    question: "Will my page show up on Google? (SEO)",
-    answer: `
-Chomske pages are **indexable**, fast, and mobile-friendly.
-
-- You can customize page title/description for better previews.
-- If you prefer **privacy**, we can limit indexability on request.
-- For deeper SEO (blogs/landing pages), link out to your main site.
-    `,
-  },
-  {
-    question: "Is my data secure? Do you store payment details?",
-    answer: `
-We take security seriously: **TLS encryption**, **AES-256 at rest**, **RBAC**, and secure hosting on **GCP**.
-
-- We **do not store** full card or UPI credentials — payments flow via PCI-compliant partners like **Razorpay**.
-- We collect **aggregated analytics** only (visitors, clicks, referrers) per our Privacy Policy and India’s **DPDP Act, 2023**.
-    `,
-  },
   {
     question: "How do I migrate from another link-in-bio platform?",
     answer: `
-Just copy your existing links into Chomske and publish — it takes minutes.
+Just copy your existing links into myHandle and publish — it takes minutes.
 
 - Keep the same order/titles and add action blocks (WhatsApp/Call) to improve conversions.
 - Replace the link in your social bios with **yourname.chomske.com** and you’re live.
@@ -152,20 +120,26 @@ const ExpandIcon = styled((props) => <ExpandMoreIcon {...props} />)(
   })
 );
 
-// 🎨 Background colors array
+// 🎨 UPDATED: Distinct Pastels (Visible on White Background)
 const bgColors = [
-  "#ECFAE5",
-  "#FFDCDC",
-  "#e0f7fa",
-  "#D2E0FB",
-  "#E4D8DC",
-  "#F9F9F9",
+  "#F3F4F6", // Cool Gray
+  "#EEF2FF", // Indigo Tint
+  "#F0FDF4", // Emerald Tint
+  "#FFF7ED", // Orange Tint
+  "#FAF5FF", // Purple Tint
+  "#ECFEFF", // Cyan Tint
+  "#FFF1F2", // Rose Tint
+  "#FFFBEB", // Amber Tint
+  "#F0FDFA", // Teal Tint
+  "#EFF6FF", // Blue Tint
+  "#FDF4FF", // Fuchsia Tint
+  "#F5F5F4", // Warm Gray
 ];
 
 const FAQSection = () => {
   const [expanded, setExpanded] = React.useState(false);
-   const theme = useTheme();
-    const isMobile = useMediaQuery(theme.breakpoints.down("sm")); 
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
   const handleChange = (panel) => (_, isExpanded) => {
     setExpanded(isExpanded ? panel : false);
@@ -174,10 +148,10 @@ const FAQSection = () => {
   return (
     <Container maxWidth="md" sx={{ py: 6 }}>
       <Box textAlign="center" mb={4}>
-        <Typography gutterBottom sx={{ fontFamily : 'Inter', fontSize : isMobile ? '22px' : '32px', fontWeight : 600}}>
+        <Typography gutterBottom sx={{ fontFamily: 'Inter', fontSize: isMobile ? '22px' : '32px', fontWeight: 600 }}>
           Frequently Asked Questions
         </Typography>
-        <Typography color="text.secondary" sx={{ fontFamily : 'Inter', fontSize : isMobile ? '14px' : '15px', fontWeight : 400}}>
+        <Typography color="text.secondary" sx={{ fontFamily: 'Inter', fontSize: isMobile ? '14px' : '15px', fontWeight: 400 }}>
           Everything you need to know before using the platform
         </Typography>
       </Box>
@@ -190,9 +164,10 @@ const FAQSection = () => {
           disableGutters
           sx={{
             mb: 2,
-            borderRadius: 2,
-            boxShadow: 2,
-            py: 2,
+            borderRadius: 3, // slightly more rounded
+            boxShadow: "0 2px 8px rgba(0,0,0,0.08)", // subtle lift
+            border: "1px solid rgba(0,0,0,0.05)", // subtle border definition
+            py: 1,
             px: isMobile ? 0 : 2,
             backgroundColor: bgColors[index % bgColors.length],
             "&:before": { display: "none" }, // 🔥 removes the horizontal line
@@ -203,27 +178,23 @@ const FAQSection = () => {
             aria-controls={`faq-content-${index}`}
             id={`faq-header-${index}`}
           >
-            <Typography sx={{ fontFamily : 'Inter', fontSize : isMobile ? '16px' : '20px', fontWeight : 500, px: isMobile ? 0 : 2}}>
+            <Typography sx={{ fontFamily: 'Inter', fontSize: isMobile ? '15px' : '18px', fontWeight: 600, px: isMobile ? 0 : 2 }}>
               {faq.question}
             </Typography>
           </AccordionSummary>
           <AccordionDetails>
- <Typography
-  sx={{ whiteSpace: "pre-line", fontFamily : 'Inter', fontSize : '14px', fontWeight : 400 }}
-  dangerouslySetInnerHTML={{
-    __html: faq.answer
-      // Convert **bold** → <strong>
-      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-      // Convert "- text" → bullet points
-      .replace(/^- (.*$)/gim, "<li>$1</li>")
-      // Wrap consecutive <li>…</li> in <ul>…</ul>
-      .replace(/(<li>.*<\/li>)/gims, "<ul>$1</ul>")
-  }}
-/>
-
-
-              {/* {faq.answer}
-            </Typography> */}
+            <Typography
+              sx={{ whiteSpace: "pre-line", fontFamily: 'Inter', fontSize: '14px', fontWeight: 400, color: '#374151' }}
+              dangerouslySetInnerHTML={{
+                __html: faq.answer
+                  // Convert **bold** → <strong>
+                  .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+                  // Convert "- text" → bullet points
+                  .replace(/^- (.*$)/gim, "<li>$1</li>")
+                  // Wrap consecutive <li>…</li> in <ul>…</ul>
+                  .replace(/(<li>.*<\/li>)/gims, "<ul>$1</ul>")
+              }}
+            />
           </AccordionDetails>
         </Accordion>
       ))}

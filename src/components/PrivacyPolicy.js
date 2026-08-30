@@ -9,10 +9,10 @@ function PrivacyPolicy() {
   return (
     <>
       <Helmet>
-        <title>Privacy Policy | Chomske</title>
+        <title>Privacy Policy | myHandle</title>
         <meta
           name="description"
-          content="Learn how Chomske collects and uses your information, including data accessed through Instagram and Facebook integrations (public_profile, instagram_basic, pages_show_list, business_management, and optional publishing/messaging scopes)."
+          content="Learn how myHandle collects and uses your information, including data accessed through WhatsApp Business API integrations for sending alerts and notifications."
         />
         <link rel="canonical" href="https://chomske.com/privacy-policy" />
       </Helmet>
@@ -29,14 +29,14 @@ function PrivacyPolicy() {
         </Typography>
 
         <Typography variant="body1" paragraph>
-          At <strong>Chomske</strong>, your privacy matters to us. We believe your data belongs to you, not us.
+          At <strong>myHandle</strong>, your privacy matters to us. We believe your data belongs to you, not us.
           We collect only the information required to operate your handle page, process payments securely, and improve your experience.
           This Privacy Policy explains how we collect, use, and safeguard your information when you use
-          <strong> chomske.com</strong> and its related services.
+          <strong> myHandle.in</strong> and its related services.
         </Typography>
 
         <Typography variant="body1" paragraph>
-          Chomske is owned and operated by <strong>Linck One Enterprises</strong>. By using our platform, you agree
+          myHandle is owned and operated by <strong>Linck One Enterprises</strong>. By using our platform, you agree
           to the terms of this Privacy Policy. We may update this policy periodically and encourage you to revisit it from time to time.
         </Typography>
 
@@ -81,7 +81,7 @@ function PrivacyPolicy() {
           4. Cookies & Analytics
         </Typography>
         <Typography variant="body1" paragraph>
-          Chomske uses cookies and analytics tools to enhance user experience and measure performance.
+          myHandle uses cookies and analytics tools to enhance user experience and measure performance.
           Cookies store small pieces of data on your device to help with:
         </Typography>
         <ul>
@@ -111,80 +111,45 @@ function PrivacyPolicy() {
           We do not sell or rent your personal data to any third party.
         </Typography>
 
-        {/* NEW SECTION 5A - META INTEGRATION */}
+        {/* SECTION 5A - WHATSAPP INTEGRATION */}
         <Typography variant="h5" gutterBottom fontWeight={600} sx={{ mt: 4 }}>
-          5A. Facebook & Instagram Integration
+          5A. WhatsApp Business Integration
         </Typography>
         <Typography variant="body1" paragraph>
-          Chomske allows creators and businesses to connect their <strong>Instagram Business or Creator accounts</strong> (and linked Facebook Pages)
-          to access features such as analytics, post publishing, and direct message management.
-          This connection uses Meta’s official <strong>Facebook Login</strong>, <strong>Instagram Graph API</strong>, and <strong>Pages API</strong>.
+          myHandle allows businesses to send <strong>WhatsApp alerts and notifications</strong> to their customers and subscribers
+          using the <strong>WhatsApp Business API</strong> (provided by Meta). This enables you to deliver order updates,
+          reminders, promotional messages, and other alerts directly to opted-in recipients on WhatsApp.
         </Typography>
 
         <Typography variant="body1" paragraph>
-          When you connect your Instagram account through Facebook Login, we receive an authentication token and limited data as permitted by the
-          permissions (scopes) you approve in the consent screen. We request only the minimum scopes needed to provide the features you use:
+          When you or your customers interact with WhatsApp-powered features on myHandle, we collect and process the following:
         </Typography>
 
         <ul>
-          <li><strong>public_profile</strong> – to identify you during Facebook Login and associate the connection with your Chomske account.</li>
-          <li><strong>instagram_basic</strong> – access to your Instagram username, profile picture, followers count, and media count (for your connected account).</li>
-          <li><strong>pages_show_list</strong> – to show the Facebook Pages you manage and discover the Instagram account linked to each Page.</li>
-          <li><strong>business_management</strong> – used in limited cases to verify and manage the relationship between your Business assets and our app
-              (e.g., linking eligible assets, assigning permissions within your Business if you choose to enable advanced features). We do not use this scope
-              to modify your content or advertise on your behalf.</li>
-          <li><strong>instagram_content_publish</strong> (optional; when you enable publishing) – to allow you to publish or schedule posts to your Instagram account.</li>
-          <li><strong>instagram_manage_messages</strong> and <strong>pages_messaging</strong> (optional; when you enable inbox) – to help you view and respond to DMs
-              initiated by your audience, in accordance with Meta’s messaging policies.</li>
+          <li><strong>Phone numbers</strong> – collected only from individuals who have explicitly opted in to receive WhatsApp alerts from your business.</li>
+          <li><strong>Message content</strong> – the text and media of alerts sent through our platform, processed solely to deliver the message to the intended recipient.</li>
+          <li><strong>Delivery status</strong> – delivery receipts (sent, delivered, read) returned by WhatsApp to help you track alert performance.</li>
+          <li><strong>Opt-in/opt-out records</strong> – maintained to honour recipient preferences and comply with messaging regulations.</li>
         </ul>
 
         <Typography variant="body1" paragraph>
-          We use these permissions <strong>only</strong> to provide the features you explicitly use. We do not read, store, or share your private messages,
-          photos, or content beyond what is necessary to display insights or manage publishing on your behalf. Access tokens are stored securely and encrypted
-          on our servers with strict access controls.
+          We use this data <strong>only</strong> to send the alerts you configure and to display delivery analytics in your dashboard.
+          We do not store message content beyond what is necessary for delivery confirmation. Phone numbers and opt-in records are
+          encrypted at rest with strict access controls.
         </Typography>
 
         <Typography variant="body1" paragraph>
-          You can revoke our access to your Instagram or Facebook data at any time by:
-        </Typography>
-        <ul>
-          <li>
-            Visiting your{" "}
-            <MuiLink
-              href="https://www.facebook.com/settings?tab=business_tools"
-              target="_blank"
-              rel="noopener noreferrer"
-              underline="hover"
-            >
-              Facebook Business Integrations
-            </MuiLink>{" "}
-            settings and removing Chomske; and/or
-          </li>
-          <li>
-            Managing Page and Business permissions in{" "}
-            <MuiLink
-              href="https://business.facebook.com/settings/"
-              target="_blank"
-              rel="noopener noreferrer"
-              underline="hover"
-            >
-              Meta Business Settings
-            </MuiLink>
-            .
-          </li>
-        </ul>
-
-        <Typography variant="body1" paragraph>
-          Our integration complies with Meta’s{" "}
+          All WhatsApp messaging through myHandle complies with Meta’s{" "}
           <MuiLink
             href="https://developers.facebook.com/terms/"
             target="_blank"
             rel="noopener noreferrer"
             underline="hover"
           >
-            Platform Terms and Developer Policies
-          </MuiLink>
-          . We do not use Meta data for advertising, profiling, or selling to third parties.
+            WhatsApp Business Platform Terms
+          </MuiLink>{" "}
+          and India’s TRAI regulations. We only send messages to recipients who have given explicit prior consent.
+          Recipients can opt out at any time by replying <strong>STOP</strong> or by contacting <strong>support@chomske.com</strong>.
         </Typography>
 
         {/* SECTION 6 */}
@@ -203,7 +168,7 @@ function PrivacyPolicy() {
           7. Children's Privacy
         </Typography>
         <Typography variant="body1" paragraph>
-          Chomske is intended for individuals aged 16 and above. We do not knowingly collect data from minors.
+          myHandle is intended for individuals aged 16 and above. We do not knowingly collect data from minors.
           If you believe a minor has provided personal information, please contact us for removal.
         </Typography>
 
@@ -237,8 +202,8 @@ function PrivacyPolicy() {
           <strong>Response Time:</strong> Within 2–3 business days
         </Typography>
         <Typography variant="body1" paragraph>
-          For Meta data access or deletion requests related to Facebook or Instagram integrations,
-          please include your connected Instagram username or Facebook Page name in your email.
+          For WhatsApp-related data access or deletion requests, please include your registered phone number
+          or business name in your email so we can locate and remove your records promptly.
         </Typography>
       </Box>
 

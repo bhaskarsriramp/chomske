@@ -14,7 +14,14 @@ import {
   CircularProgress,
   ClickAwayListener,
   Avatar,
-  Alert
+  Alert,
+  Card,
+  CardContent,
+  Chip,
+  Divider,
+  IconButton,
+  LinearProgress,
+  Tooltip
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -26,6 +33,12 @@ import LogoutIcon from "@mui/icons-material/Logout";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import LinkOffOutlinedIcon from "@mui/icons-material/LinkOffOutlined";
 import LinkOutlinedIcon from "@mui/icons-material/LinkOutlined";
+import PersonOutlineIcon from "@mui/icons-material/PersonOutline";
+import EmailOutlinedIcon from "@mui/icons-material/EmailOutlined";
+import InstagramIcon from "@mui/icons-material/Instagram";
+import WorkspacePremiumIcon from "@mui/icons-material/WorkspacePremium";
+import TrendingUpIcon from "@mui/icons-material/TrendingUp";
+import MessageIcon from "@mui/icons-material/Message";
 import { useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 
@@ -33,14 +46,17 @@ const AccountDetailsPage1 = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-
-  // Delete account flows
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [deleteRequestLoading, setDeleteRequestLoading] = useState(false);
   const [deleteCodeLoading, setDeleteCodeLoading] = useState(false);
   const [userDetails, setUserDetails] = useState({});
   const [deleteAccountDialog, setDeleteAccountDialog] = useState(false);
   const [enterCodeDialog, setEnterCodeDialog] = useState(false);
   const [emailCode, setEmailCode] = useState("");
+
+  // DMs usage state
+  const [dmsUsage, setDmsUsage] = useState({ total_dms_sent: 0, dms_plan_limit: 0 });
+  const [dmsUsageLoading, setDmsUsageLoading] = useState(true);
 
   // Instagram state
   const [igLoading, setIgLoading] = useState(false);
@@ -53,37 +69,30 @@ const AccountDetailsPage1 = () => {
     imageUrl: "",
   });
 
-  // const baseUrl = "http://localhost:8001/usersOn";
-  const baseUrl="/api/usersOn";
+  const baseUrl = "/api/usersOn";
+  // const baseUrl="/api/usersOn";
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isTablet = useMediaQuery(theme.breakpoints.down("md"));
 
   const formatISTDate = (isoString) => {
-  if (!isoString) return "";
-
-  const date = new Date(isoString);
-
-  // Convert to IST manually (UTC + 5:30)
-  const istDate = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
-
-  const dd = String(istDate.getDate()).padStart(2, "0");
-  const mm = String(istDate.getMonth() + 1).padStart(2, "0");
-  const yyyy = istDate.getFullYear();
-
-  return `${dd}-${mm}-${yyyy}`;
-};
-
-
-  const handleClickAway = () => {
-    //this function keeps the dialogue open, even when user clicks outside the dialogue. dont delete this function
+    if (!isoString) return "";
+    const date = new Date(isoString);
+    const istDate = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
+    const dd = String(istDate.getDate()).padStart(2, "0");
+    const mm = String(istDate.getMonth() + 1).padStart(2, "0");
+    const yyyy = istDate.getFullYear();
+    return `${dd}-${mm}-${yyyy}`;
   };
+
+  const handleClickAway = () => {};
 
   const handleSignOut = async () => {
     try {
       await axios.post(baseUrl + "/logout", {}, { withCredentials: true });
-      dispatch(logout()); // Clear Redux state
-      window.location.href = "/professional/login"; // Ensures full logout
+      dispatch(logout());
+      window.location.href = "/professional/login";
     } catch (error) {
       console.error("Logout failed:", error);
     }
@@ -95,7 +104,6 @@ const AccountDetailsPage1 = () => {
 
   const checkPin = async (e) => {
     e.preventDefault();
-
     setDeleteCodeLoading(true);
 
     if (!emailCode) {
@@ -115,8 +123,7 @@ const AccountDetailsPage1 = () => {
           } else if (res.data.matching) {
             setDeleteCodeLoading(false);
             toast.success("Account and data has been deleted successfully!");
-            dispatch(logout()); // Clear Redux state
-
+            dispatch(logout());
             setTimeout(() => {
               navigate("/");
             }, 2500);
@@ -157,7 +164,6 @@ const AccountDetailsPage1 = () => {
     } catch (err) {
       if (err.response) {
         const { error } = err.response.data;
-
         if (error === "User does not exist") {
           setDeleteRequestLoading(false);
           toast.warning("User does not exist");
@@ -178,8 +184,6 @@ const AccountDetailsPage1 = () => {
       navigate("/professional/login");
     }, 2000);
   };
-
-
 
   const fetchData = async () => {
     try {
@@ -206,42 +210,45 @@ const AccountDetailsPage1 = () => {
     }
   };
 
-      const fetchSubscriptionDetails = async () => {
-    setIgLoading(true);
+  const fetchSubscriptionDetails = async () => {
+    setSubscriptionLoading(true);
     try {
-      // Backend should respond with: { success: true, data: { connected: boolean, username: string, imageUrl: string } }
       const res = await axios.get(
         `${baseUrl}/subscription/details`,
         { withCredentials: true }
       );
 
       if (res.data?.success) {
-        const data = res.data.response || {};
-        setSubscriptionDet(data);
+        setSubscriptionDet(res.data.response || {});
+      } else {
+        handleSessionExpired();
       }
-      // No subscription doc yet (e.g. 200 without success) isn't a session
-      // problem — just leave subscriptionDet at its default and move on.
     } catch (e) {
-      // Only a real auth failure means the session is gone. A missing
-      // subscription record (404 — user has none yet) or any other error
-      // shouldn't log the user out; don't block the rest of the page.
-      const status = e?.response?.status;
-      if (status === 401 || status === 403) {
-        toast.error("Session expired. Please log in again.");
-        setTimeout(() => {
-          navigate("/professional/login");
-        }, 2000);
-      }
+      handleSessionExpired();
     } finally {
-      setIgLoading(false);
+      setSubscriptionLoading(false);
     }
   };
 
-  // ============== Instagram: get details (username, imageUrl, status) ==============
+  const fetchDmsUsage = async () => {
+    setDmsUsageLoading(true);
+    try {
+      const res = await axios.get(`${baseUrl}/dms-usage/current`, {
+        withCredentials: true,
+      });
+      if (res.data?.success) {
+        setDmsUsage(res.data.data);
+      }
+    } catch (e) {
+      console.error("Error fetching DMs usage:", e);
+    } finally {
+      setDmsUsageLoading(false);
+    }
+  };
+
   const fetchInstagramDetails = async () => {
     setIgLoading(true);
     try {
-      // Backend should respond with: { success: true, data: { connected: boolean, username: string, imageUrl: string } }
       const res = await axios.post(
         `${baseUrl}/instagram/get-details`,
         {},
@@ -255,21 +262,18 @@ const AccountDetailsPage1 = () => {
           username: data.username || "",
           imageUrl: data.imageUrl || "",
         });
-          await fetchSubscriptionDetails();
+        await fetchSubscriptionDetails();
       } else {
         setInstagram((prev) => ({ ...prev, connected: false }));
       }
     } catch (e) {
-      // If it fails, assume disconnected (don't block page)
       setInstagram((prev) => ({ ...prev, connected: false }));
     } finally {
       setIgLoading(false);
     }
   };
 
-
-
-    useEffect(() => {
+  useEffect(() => {
     const verifyToken = async () => {
       setLoading(true);
 
@@ -279,6 +283,7 @@ const AccountDetailsPage1 = () => {
         if (res.data.valid) {
           fetchData();
           fetchInstagramDetails();
+          fetchDmsUsage();
         } else {
           handleSessionExpired();
         }
@@ -295,17 +300,14 @@ const AccountDetailsPage1 = () => {
     };
 
     verifyToken();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ============== Instagram: unlink ==============
   const handleOpenUnlinkDialog = () => setIgDialogOpen(true);
   const handleCloseUnlinkDialog = () => setIgDialogOpen(false);
 
   const handleUnlinkInstagram = async () => {
     setIgUnlinkLoading(true);
     try {
-      // Backend should set instagramConnected:false and unlink tokens/sessions if any
       const res = await axios.post(
         `${baseUrl}/instagram/unlink`,
         {},
@@ -326,616 +328,672 @@ const AccountDetailsPage1 = () => {
     }
   };
 
-  // Connect instagram (front-end redirect)
   const handleConnectInstagram = () => {
-    // Replace with your real connect route/page
-    navigate("/connect-instagram");
+    navigate("/professional/automations");
   };
 
-  // Small reusable IG block
-  const InstagramBlock = () => {
-    if (igLoading) {
-      return (
-        <Grid
-          container
-          fullWidth
-          sx={{ borderStyle: "solid", borderWidth: "1px", borderColor: "#BCCCDC", mb: "22px", py: "12px", px: "12px" }}
-        >
-          <Grid size={{ md: 4 }}>
-            <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Instagram</Typography>
-          </Grid>
-          <Grid size={{ md: 8 }}>
-            <Skeleton variant="rectangular" width={320} height={24} />
-          </Grid>
-        </Grid>
-      );
-    }
-
-    // Connected state
-    if (instagram.connected) {
-      return (
-        <Grid
-          container
-          fullWidth
-          sx={{
-            borderStyle: "solid",
-            borderWidth: "1px",
-            borderColor: "#BCCCDC",
-            mb: "22px",
-            py: "12px",
-            px: "12px",
-            alignItems: "center",
-          }}
-        >
-          <Grid size={{ md: 4 }}>
-            <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Instagram</Typography>
-          </Grid>
-
-          <Grid size={{ md: 8 }}>
-            <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
-              <Stack direction="row" spacing={1.5} alignItems="center">
-                <Avatar
-                  src={instagram.imageUrl || ""}
-                  alt={instagram.username || "Instagram"}
-                  sx={{ width: 36, height: 36 }}
-                />
-                <Box>
-                  <Typography sx={{ fontSize: "14px", fontWeight: 500 }}>
-                    @{instagram.username || "connected_user"}
-                  </Typography>
-                  <Typography sx={{ fontSize: "12px", color: "grey" }}>Connected</Typography>
-                </Box>
-              </Stack>
-
-              <Button
-                variant="outlined"
-                startIcon={<LinkOffOutlinedIcon />}
-                sx={{ textTransform: "none" }}
-                onClick={handleOpenUnlinkDialog}
-              >
-                Unlink Instagram
-              </Button>
-            </Stack>
-          </Grid>
-        </Grid>
-      );
-    }
-
-    // Not connected state
-    return (
-      <Grid
-        container
-        fullWidth
-        sx={{
-          borderStyle: "solid",
-          borderWidth: "1px",
-          borderColor: "#BCCCDC",
-          mb: "22px",
-          py: "12px",
-          px: "12px",
-          alignItems: "center",
-        }}
-      >
-        <Grid size={{ md: 4 }}>
-          <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Instagram</Typography>
-        </Grid>
-
-        <Grid size={{ md: 8 }}>
-          <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
-            <Typography sx={{ fontSize: "14px", color: "grey" }}>
-              Link Instagram Account.
-            </Typography>
-
-            <Button
-              variant="contained"
-              startIcon={<LinkOutlinedIcon />}
-              sx={{ textTransform: "none" }}
-              onClick={()=> navigate('/professional/automations')}
-            >
-              Connect Instagram
-            </Button>
-          </Stack>
-        </Grid>
-      </Grid>
-    );
-  };
-
-  // Mobile version IG block
-  const MobileInstagramBlock = () => {
-    if (igLoading) {
-      return <Skeleton variant="rectangular" height={48} />;
-    }
-
-    if (instagram.connected) {
-      return (
-        <Box
-          sx={{
-            border: "1px solid #BCCCDC",
-            borderRadius: "6px",
-            p: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 1.5,
-          }}
-        >
-          <Stack direction="row" spacing={1.5} alignItems="center">
-            <Avatar
-              src={instagram.imageUrl || ""}
-              alt={instagram.username || "Instagram"}
-              sx={{ width: 32, height: 32 }}
-            />
-            <Box>
-              <Typography sx={{ fontSize: "14px", fontWeight: 500 }}>
-                @{instagram.username || "connected_user"}
-              </Typography>
-              <Typography sx={{ fontSize: "12px", color: "grey" }}>Connected</Typography>
-            </Box>
-          </Stack>
-
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<LinkOffOutlinedIcon />}
-            sx={{ textTransform: "none" }}
-            onClick={handleOpenUnlinkDialog}
-          >
-            Disconnect
-          </Button>
-        </Box>
-      );
-    }
-
-    return (
-      <Box
-        sx={{
-          border: "1px solid #BCCCDC",
-          borderRadius: "6px",
-          p: 1.25,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 1.5,
-        }}
-      >
-        <Typography sx={{ fontSize: "14px", color: "grey" }}>
-          Link Instagram Account.
-        </Typography>
-
-        <Button
-          size="small"
-          variant="contained"
-          startIcon={<LinkOutlinedIcon />}
-          sx={{ textTransform: "none" }}
-          onClick={handleConnectInstagram}
-        >
-          Connect
-        </Button>
-      </Box>
-    );
-  };
+  // Calculate usage percentages
+  const leadsUsagePercent = subscriptionDet.leads_plan_limit 
+    ? ((subscriptionDet.leads_found) / subscriptionDet.leads_plan_limit) * 100 
+    : 0;
+  
+  const dmsUsagePercent = dmsUsage.dms_plan_limit
+    ? (dmsUsage.total_dms_sent / dmsUsage.dms_plan_limit) * 100
+    : 0;
 
   return (
-    <>
-      <>
-        {isMobile ? (
-          <>
-            <Stack sx={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              {/* Instagram (mobile) */}
-         
-              <Box sx={{ display: "flex", flexDirection: "column", gap: "4px", py: "4px" }}>
-                <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Name</Typography>
+    <Box sx={{ 
+      maxWidth: 1200, 
+      mx: "auto", 
+      px: { xs: 2, sm: 3, md: 4 }, 
+      py: { xs: 3, md: 4 },
+      fontFamily: 'Inter, sans-serif'
+    }}>
+      {/* Header Section */}
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h5" sx={{ 
+          fontWeight: 600, 
+          mb: 1, 
+          color: "#1a1a1a",
+          fontFamily: 'Inter, sans-serif',
+          fontSize: { xs: '1.25rem', sm: '1.5rem', md: '1.75rem' }
+        }}>
+          Account Settings
+        </Typography>
+        <Typography variant="body2" sx={{ 
+          color: "text.secondary",
+          fontFamily: 'Inter, sans-serif',
+          fontSize: { xs: '0.813rem', sm: '0.875rem' }
+        }}>
+          Manage your profile, subscription, and integrations
+        </Typography>
+      </Box>
 
+      <Grid container spacing={3}>
+        {/* Left Column - Profile & Instagram */}
+        <Grid size={{ xs: 12, md: 7}}>
+          {/* Profile Information Card */}
+          <Card sx={{ mb: 3, boxShadow: "0 2px 8px rgba(0,0,0,0.08)", border: "1px solid #f0f0f0" }}>
+            <CardContent sx={{ p: 3 }}>
+              <Typography variant="h6" sx={{ 
+                mb: 3, 
+                fontWeight: 600, 
+                color: "#1a1a1a",
+                fontFamily: 'Inter, sans-serif',
+                fontSize: { xs: '1rem', sm: '1.125rem', md: '1.25rem' }
+              }}>
+                Profile Information
+              </Typography>
+
+              {/* Name */}
+              <Box sx={{ mb: 3 }}>
+                <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1 }}>
+                  <PersonOutlineIcon sx={{ fontSize: { xs: 18, sm: 20 }, color: "text.secondary" }} />
+                  <Typography variant="body2" sx={{ 
+                    fontWeight: 500, 
+                    color: "text.secondary",
+                    fontFamily: 'Inter, sans-serif',
+                    fontSize: { xs: '0.813rem', sm: '0.875rem' }
+                  }}>
+                    Full Name
+                  </Typography>
+                </Stack>
                 {loading ? (
-                  <Skeleton variant="rectangular" height={20} />
+                  <Skeleton variant="text" width="60%" height={32} />
                 ) : (
-                  <Typography sx={{ fontSize: "14px", fontWeight: "400" }}>
+                  <Typography variant="body1" sx={{ 
+                    ml: 4.5, 
+                    fontWeight: 500, 
+                    color: "#1a1a1a",
+                    fontFamily: 'Inter, sans-serif',
+                    fontSize: { xs: '0.938rem', sm: '1rem' }
+                  }}>
                     {userDetails.name}
                   </Typography>
-
-
                 )}
               </Box>
 
-               <Box sx={{ display: "flex", flexDirection: "column", gap: "4px", py: "4px" }}>
-                <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Email</Typography>
+              <Divider sx={{ my: 2.5 }} />
 
+              {/* Email */}
+              <Box>
+                <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1 }}>
+                  <EmailOutlinedIcon sx={{ fontSize: { xs: 18, sm: 20 }, color: "text.secondary" }} />
+                  <Typography variant="body2" sx={{ 
+                    fontWeight: 500, 
+                    color: "text.secondary",
+                    fontFamily: 'Inter, sans-serif',
+                    fontSize: { xs: '0.813rem', sm: '0.875rem' }
+                  }}>
+                    Email Address
+                  </Typography>
+                </Stack>
                 {loading ? (
-                  <Skeleton variant="rectangular" height={20} />
+                  <Skeleton variant="text" width="70%" height={32} />
                 ) : (
-                  <Typography sx={{ fontSize: "14px", fontWeight: "400" }}>
+                  <Typography variant="body1" sx={{ 
+                    ml: 4.5, 
+                    fontWeight: 500, 
+                    color: "#1a1a1a",
+                    fontFamily: 'Inter, sans-serif',
+                    fontSize: { xs: '0.938rem', sm: '1rem' }
+                  }}>
                     {userDetails.email}
                   </Typography>
                 )}
               </Box>
+            </CardContent>
+          </Card>
 
-               <Box sx={{ display: "flex", flexDirection: "column", gap: "4px", py: "4px" }}>
-                <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Subscription</Typography>
-
-                {loading ? (
-                  <Skeleton variant="rectangular" height={20} />
-                ) : (
-                  <Typography sx={{ fontSize: "14px", fontWeight: "400" }}>
-                    {subscriptionDet.status === 'active' ? 'Active' : 'Free Trial'}
-                  </Typography>
-
-
-                )}
-              </Box>
-
-              {subscriptionDet?.freeTrial && (
-
-               <Box sx={{ display: "flex", flexDirection: "column", gap: "4px", py: "4px" }}>
-                <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Subscription</Typography>
-
-                {loading ? (
-                  <Skeleton variant="rectangular" height={20} />
-                ) : (
-                  <Typography sx={{ fontSize: "14px", fontWeight: "400" }}>
-                    {subscriptionDet.status === 'active' ? 'Active' : 'Free Trial'}
-                  </Typography>
-
-
-                )}
-              </Box>
-              )}
-
-                   <Box sx={{ display: "flex", flexDirection: "column", gap: "4px", py: "4px" }}>
-                <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>
-                  Instagram
+          {/* Instagram Integration Card */}
+          <Card sx={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)", border: "1px solid #f0f0f0" }}>
+            <CardContent sx={{ p: 3 }}>
+              <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2.5 }}>
+                <InstagramIcon sx={{ fontSize: { xs: 22, sm: 24 }, color: "#E4405F" }} />
+                <Typography variant="h6" sx={{ 
+                  fontWeight: 600, 
+                  color: "#1a1a1a",
+                  fontFamily: 'Inter, sans-serif',
+                  fontSize: { xs: '1rem', sm: '1.125rem', md: '1.25rem' }
+                }}>
+                  Instagram Connection
                 </Typography>
-                <MobileInstagramBlock />
-              </Box>
+              </Stack>
 
+              {igLoading ? (
+                <Skeleton variant="rectangular" height={80} sx={{ borderRadius: 2 }} />
+              ) : instagram.connected ? (
+                <Box sx={{ 
+                  bgcolor: "#f8f9fa", 
+                  borderRadius: 2, 
+                  p: 2.5,
+                  border: "1px solid #e9ecef"
+                }}>
+                  <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
+                    <Stack direction="row" spacing={2} alignItems="center">
+                      <Avatar
+                        src={instagram.imageUrl || ""}
+                        alt={instagram.username || "Instagram"}
+                        sx={{ width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 } }}
+                      />
+                      <Box>
+                        <Typography variant="body1" sx={{ 
+                          fontWeight: 600, 
+                          color: "#1a1a1a",
+                          fontFamily: 'Inter, sans-serif',
+                          fontSize: { xs: '0.938rem', sm: '1rem' }
+                        }}>
+                          @{instagram.username || "connected_user"}
+                        </Typography>
+                        <Chip 
+                          label="Connected" 
+                          size="small" 
+                          sx={{ 
+                            bgcolor: "#d4edda", 
+                            color: "#155724",
+                            fontWeight: 500,
+                            height: 22,
+                            fontFamily: 'Inter, sans-serif',
+                            fontSize: { xs: '0.688rem', sm: '0.75rem' }
+                          }} 
+                        />
+                      </Box>
+                    </Stack>
 
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<LinkOffOutlinedIcon />}
+                      onClick={handleOpenUnlinkDialog}
+                      sx={{ 
+                        textTransform: "none",
+                        borderColor: "#dc3545",
+                        color: "#dc3545",
+                        fontFamily: 'Inter, sans-serif',
+                        fontSize: { xs: '0.813rem', sm: '0.875rem' },
+                        "&:hover": {
+                          borderColor: "#c82333",
+                          bgcolor: "#fff5f5"
+                        }
+                      }}
+                    >
+                      Unlink
+                    </Button>
+                  </Stack>
+                </Box>
+              ) : (
+                <Box sx={{ 
+                  bgcolor: "#fff9f0", 
+                  borderRadius: 2, 
+                  p: 2.5,
+                  border: "1px dashed #ffc107"
+                }}>
+                  <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
+                    <Typography variant="body2" sx={{ 
+                      color: "text.secondary",
+                      fontFamily: 'Inter, sans-serif',
+                      fontSize: { xs: '0.813rem', sm: '0.875rem' }
+                    }}>
+                      Connect your Instagram account to enable automations
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      startIcon={<LinkOutlinedIcon />}
+                      onClick={handleConnectInstagram}
+                      sx={{ 
+                        textTransform: "none",
+                        px: 3,
+                        bgcolor: "#E4405F",
+                        fontFamily: 'Inter, sans-serif',
+                        fontSize: { xs: '0.813rem', sm: '0.875rem' },
+                        "&:hover": {
+                          bgcolor: "#d6355a"
+                        }
+                      }}
+                    >
+                      Connect
+                    </Button>
+                  </Stack>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
 
+        {/* Right Column - Subscription */}
+        <Grid size={{ xs: 12, md: 5}}>
+          <Card sx={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)", border: "1px solid #f0f0f0" }}>
+            <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+              <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
+                <WorkspacePremiumIcon sx={{ fontSize: { xs: 20, sm: 24 }, color: "#6366f1" }} />
+                <Typography variant="h6" sx={{ 
+                  fontWeight: 600, 
+                  color: "#1a1a1a",
+                  fontFamily: 'Inter, sans-serif',
+                  fontSize: { xs: '1rem', sm: '1.125rem', md: '1.25rem' }
+                }}>
+                  Subscription Plan
+                </Typography>
+              </Stack>
 
-            
-              <div style={{ textAlign: "start" }}>
-                <Button
-                  startIcon={<LogoutIcon />}
-                  sx={{ color: "grey", textTransform: "none" }}
-                  variant="outlined"
-                  color="warning"
-                  onClick={handleSignOut}
-                  size="small"
-                >
-                  Sign Out
-                </Button>
-              </div>
+              {subscriptionLoading ? (
+                <Stack spacing={2}>
+                  <Skeleton height={40} />
+                  <Skeleton height={80} />
+                  <Skeleton height={80} />
+                  <Skeleton height={40} />
+                </Stack>
+              ) : (
+                <>
+                  <Box sx={{ 
+                    bgcolor: "#f8f9fa", 
+                    borderRadius: 2, 
+                    p: { xs: 2, sm: 2.5 }, 
+                    mb: 3,
+                    border: "1px solid #e9ecef"
+                  }}>
+                    <Typography variant="h5" sx={{ 
+                      fontWeight: 700, 
+                      textTransform: "capitalize",
+                      color: "#6366f1",
+                      mb: 0.5,
+                      fontFamily: 'Inter, sans-serif',
+                      fontSize: { xs: '1.25rem', sm: '1.5rem' }
+                    }}>
+                      {subscriptionDet.subscription_plan || "Free"}
+                    </Typography>
+                    <Typography variant="caption" sx={{ 
+                      color: "text.secondary",
+                      fontFamily: 'Inter, sans-serif',
+                      fontSize: { xs: '0.688rem', sm: '0.75rem' }
+                    }}>
+                      Current Plan
+                    </Typography>
+                  </Box>
 
-            
-            </Stack>
+                  {/* Leads Usage */}
+                  <Box sx={{ mb: 3 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                      <TrendingUpIcon sx={{ fontSize: { xs: 16, sm: 18 }, color: "#10b981" }} />
+                      <Typography variant="body2" sx={{ 
+                        fontWeight: 600, 
+                        color: "#1a1a1a",
+                        fontFamily: 'Inter, sans-serif',
+                        fontSize: { xs: '0.813rem', sm: '0.875rem' }
+                      }}>
+                        Leads Usage
+                      </Typography>
+                    </Stack>
+                    <Box sx={{ bgcolor: "#f8f9fa", borderRadius: 1.5, p: { xs: 1.5, sm: 2 } }}>
+                      <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
+                        <Typography variant="body2" sx={{ 
+                          color: "text.secondary",
+                          fontFamily: 'Inter, sans-serif',
+                          fontSize: { xs: '0.75rem', sm: '0.875rem' }
+                        }}>
+                          Used
+                        </Typography>
+                        <Typography variant="body2" sx={{ 
+                          fontWeight: 600,
+                          fontFamily: 'Inter, sans-serif',
+                          fontSize: { xs: '0.75rem', sm: '0.875rem' }
+                        }}>
+                          {(subscriptionDet.leads_found) || 0} / {subscriptionDet.leads_plan_limit || 0}
+                        </Typography>
+                      </Stack>
+                      <LinearProgress 
+                        variant="determinate" 
+                        value={leadsUsagePercent} 
+                        sx={{ 
+                          height: { xs: 6, sm: 8 }, 
+                          borderRadius: 4,
+                          bgcolor: "#e9ecef",
+                          "& .MuiLinearProgress-bar": {
+                            bgcolor: leadsUsagePercent > 80 ? "#ef4444" : "#10b981",
+                            borderRadius: 4
+                          }
+                        }} 
+                      />
+                    </Box>
+                  </Box>
 
-          
-          </>
-        ) : (
-          <>
-          <Grid container mt={5}>
-            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-              <Typography sx={{ fontSize: "18px", fontWeight: "500" }}>
-                Your Account
+                  {/* DMs Usage */}
+                  <Box sx={{ mb: 3 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                      <MessageIcon sx={{ fontSize: { xs: 16, sm: 18 }, color: "#3b82f6" }} />
+                      <Typography variant="body2" sx={{
+                        fontWeight: 600,
+                        color: "#1a1a1a",
+                        fontFamily: 'Inter, sans-serif',
+                        fontSize: { xs: '0.813rem', sm: '0.875rem' }
+                      }}>
+                        DMs Usage
+                      </Typography>
+                    </Stack>
+                    {dmsUsageLoading ? (
+                      <Skeleton height={60} sx={{ borderRadius: 1.5 }} />
+                    ) : (
+                    <Box sx={{ bgcolor: "#f8f9fa", borderRadius: 1.5, p: { xs: 1.5, sm: 2 } }}>
+                      <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
+                        <Typography variant="body2" sx={{
+                          color: "text.secondary",
+                          fontFamily: 'Inter, sans-serif',
+                          fontSize: { xs: '0.75rem', sm: '0.875rem' }
+                        }}>
+                          Sent
+                        </Typography>
+                        <Typography variant="body2" sx={{
+                          fontWeight: 600,
+                          fontFamily: 'Inter, sans-serif',
+                          fontSize: { xs: '0.75rem', sm: '0.875rem' }
+                        }}>
+                          {dmsUsage.total_dms_sent} / {subscriptionDet.subscription_plan === 'free' ? dmsUsage.dms_plan_limit : 'Unlimited'}
+                        </Typography>
+                      </Stack>
+                      {subscriptionDet.subscription_plan === 'free' && (
+                        <LinearProgress
+                          variant="determinate"
+                          value={dmsUsagePercent}
+                          sx={{
+                            height: { xs: 6, sm: 8 },
+                            borderRadius: 4,
+                            bgcolor: "#e9ecef",
+                            "& .MuiLinearProgress-bar": {
+                              bgcolor: dmsUsagePercent > 80 ? "#ef4444" : "#3b82f6",
+                              borderRadius: 4
+                            }
+                          }}
+                        />
+                      )}
+                    </Box>
+                    )}
+                  </Box>
+
+                  {subscriptionDet.subscription_plan === 'creator' ? (
+                    <Tooltip
+                      title="More Plans are coming soon!"
+                      arrow
+                      disableHoverListener={isMobile}
+                      disableFocusListener={isMobile}
+                    >
+                      <span style={{ width: '100%' }}>
+                        <Button
+                          variant="contained"
+                          fullWidth
+                          disabled
+                          onClick={() => {
+                            if (isMobile) {
+                              toast.info("More Plans are coming soon!");
+                            }
+                          }}
+                          sx={{
+                            textTransform: "none",
+                            py: { xs: 1.25, sm: 1.5 },
+                            fontWeight: 600,
+                            fontFamily: 'Inter, sans-serif',
+                            fontSize: { xs: '0.875rem', sm: '1rem' },
+                            pointerEvents: "auto"
+                          }}
+                        >
+                          Upgrade Plan
+                        </Button>
+                      </span>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      variant="contained"
+                      fullWidth
+                      onClick={() => navigate("/professional/upgrade/plan")}
+                      sx={{
+                        textTransform: "none",
+                        py: { xs: 1.25, sm: 1.5 },
+                        fontWeight: 600,
+                        fontFamily: 'Inter, sans-serif',
+                        fontSize: { xs: '0.875rem', sm: '1rem' },
+                        bgcolor: "#6366f1",
+                        "&:hover": {
+                          bgcolor: "#4f46e5"
+                        }
+                      }}
+                    >
+                      Upgrade Plan
+                    </Button>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Actions Card */}
+          <Card sx={{ mt: 3, boxShadow: "0 2px 8px rgba(0,0,0,0.08)", border: "1px solid #f0f0f0" }}>
+            <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+              <Typography variant="h6" sx={{ 
+                mb: 2.5, 
+                fontWeight: 600, 
+                color: "#1a1a1a",
+                fontFamily: 'Inter, sans-serif',
+                fontSize: { xs: '1rem', sm: '1.125rem', md: '1.25rem' }
+              }}>
+                Account Actions
               </Typography>
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6, md: 8 }}>
-              {/* Instagram (desktop) */}
-           
-
-              <Grid
-                container
+              
+              <Button
+                variant="outlined"
                 fullWidth
-                sx={{
-                  borderStyle: "solid",
-                  borderWidth: "1px",
-                  borderColor: "#BCCCDC",
-                  marginBottom: "22px",
-                  paddingY: "12px",
-                  paddingX: "12px",
+                startIcon={<LogoutIcon sx={{ fontSize: { xs: 18, sm: 20 } }} />}
+                onClick={handleSignOut}
+                sx={{ 
+                  textTransform: "none",
+                  py: { xs: 1, sm: 1.25 },
+                  fontFamily: 'Inter, sans-serif',
+                  fontSize: { xs: '0.875rem', sm: '1rem' },
+                  borderColor: "#6b7280",
+                  color: "#6b7280",
+                  "&:hover": {
+                    borderColor: "#4b5563",
+                    bgcolor: "#f9fafb"
+                  }
                 }}
               >
-                <Grid size={{ md: 4 }}>
-                  <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Name</Typography>
-                </Grid>
+                Sign Out
+              </Button>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
 
-                <Grid size={{ md: 8 }}>
-                  {loading ? (
-                    <Skeleton variant="rectangular" width={300} height={20} />
-                  ) : (
-                    <Typography sx={{ fontSize: "14px", fontWeight: "400" }}>
-                      {userDetails.name}
-                    </Typography>
-                  )}
-                </Grid>
-              </Grid>
+   
 
-              <Grid
-                container
-                fullWidth
-                sx={{
-                  borderStyle: "solid",
-                  borderWidth: "1px",
-                  borderColor: "#BCCCDC",
-                  marginBottom: "22px",
-                  paddingY: "12px",
-                  paddingX: "12px",
-                }}
-              >
-                <Grid size={{ md: 4 }}>
-                  <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Email</Typography>
-                </Grid>
-
-                <Grid size={{ md: 8 }}>
-                  {loading ? (
-                    <Skeleton variant="rectangular" width={300} height={20} />
-                  ) : (
-                    <Typography sx={{ fontSize: "14px", fontWeight: "400" }}>
-                      {userDetails.email}
-                    </Typography>
-                  )}
-                </Grid>
-              </Grid>
-
-                 <InstagramBlock />
-
-              <div style={{ textAlign: "start" }}>
-                <Button
-                  startIcon={<LogoutIcon />}
-                  sx={{ color: "grey", textTransform: "none" }}
-                  variant="outlined"
-                  color="warning"
-                  onClick={handleSignOut}
-                >
-                  Sign Out
-                </Button>
-              </div>
-            </Grid>
-
-          </Grid>
-
-           <Grid container mt={5}>
-            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-              <Typography sx={{ fontSize: "18px", fontWeight: "500" }}>
-                Subscriptions
-              </Typography>
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6, md: 8 }}>
-
-              <Grid
-                container
-                fullWidth
-                sx={{
-                  borderStyle: "solid",
-                  borderWidth: "1px",
-                  borderColor: "#BCCCDC",
-                  marginBottom: "22px",
-                  paddingY: "12px",
-                  paddingX: "12px",
-                }}
-              >
-                <Grid size={{ md: 4 }}>
-                  <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Status</Typography>
-                </Grid>
-
-                <Grid size={{ md: 8 }}>
-                  {loading ? (
-                    <Skeleton variant="rectangular" width={300} height={20} />
-                  ) : (
-                    <Typography sx={{ fontSize: "14px", fontWeight: "400" }}>
-                      {subscriptionDet.status === 'active' ? 'Active' : 'Free Trial'}
-                    </Typography>
-                  )}
-                </Grid>
-              </Grid>
-{subscriptionDet?.freeTrial && (
-              <Grid
-                container
-                fullWidth
-                sx={{
-                  borderStyle: "solid",
-                  borderWidth: "1px",
-                  borderColor: "#BCCCDC",
-                  marginBottom: "22px",
-                  paddingY: "12px",
-                  paddingX: "12px",
-                }}
-              >
-                <Grid size={{ md: 4 }}>
-                  <Typography sx={{ fontSize: "14px", fontWeight: "500" }}>Paid starts At</Typography>
-                </Grid>
-
-                <Grid size={{ md: 8 }}>
-                  {loading ? (
-                    <Skeleton variant="rectangular" width={300} height={20} />
-                  ) : (
-                    <Typography sx={{ fontSize: "14px", fontWeight: "400" }}>
-                      {formatISTDate(subscriptionDet.subscription_starts_at)}
-
-                    </Typography>
-                  )}
-                </Grid>
-              </Grid>
-)}
-
-            
-            </Grid>
-
-            
-          </Grid>
-          </>
-        )}
-      </>
-
-      {/* ===== IG Unlink Dialog ===== */}
+      {/* Instagram Unlink Dialog */}
       <Dialog
         open={igDialogOpen}
         onClose={handleCloseUnlinkDialog}
-        disableEscapeKeyDown
-        keepMounted
-        maxWidth="xs"
+        maxWidth="sm"
         fullWidth
+        PaperProps={{
+          sx: { borderRadius: 2 }
+        }}
       >
-        <DialogTitle>
-          <Stack direction="row" gap={2} alignItems="center">
-            <Box sx={{ backgroundColor: "#FFF3F3", px: "6px", py: "2px", borderRadius: "6px" }}>
-              <LinkOffOutlinedIcon sx={{ fontSize: isMobile ? "20px" : "26px", color: "red" }} />
+        <DialogTitle sx={{ pb: 2 }}>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Box sx={{ 
+              bgcolor: "#fee", 
+              p: 1, 
+              borderRadius: 1.5,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center"
+            }}>
+              <LinkOffOutlinedIcon sx={{ fontSize: 24, color: "#dc3545" }} />
             </Box>
-            <Typography sx={{ fontSize: isMobile ? "15px" : "16px", fontWeight: 500 }}>
-              Unlink Instagram account?
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Unlink Instagram?
             </Typography>
           </Stack>
         </DialogTitle>
-        <DialogContent dividers>
+        <DialogContent>
           {igUnlinkLoading ? (
-            <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: 150 }}>
+            <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
               <CircularProgress />
             </Box>
           ) : (
             <>
-  <Typography sx={{ fontSize: isMobile ? "15px" : "16px", mt: "5px", mb: "10px" }}>
-    You're about to disconnect <strong>@{instagram.username || "your_instagram"}</strong>.
-    You can reconnect any time. Continue?
-  </Typography>
-
-  <Alert severity="warning" variant="outlined" sx={{ mt: 1.5 }}>
-    Heads up: Unlinking Instagram account will immediately stop all your
-    existing Instagram automations (Comment, DM responders, etc.).
-   
-  </Alert>
-
+              <Typography sx={{ mb: 2 }}>
+                You're about to disconnect <strong>@{instagram.username || "your_instagram"}</strong>. You can reconnect anytime.
+              </Typography>
+              <Alert severity="warning" variant="outlined">
+                Disconnecting will immediately stop Lead detection, All Instagram automations (Comment & DM responders).
+              </Alert>
             </>
           )}
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ p: 3, pt: 2 }}>
           <Button
             onClick={handleCloseUnlinkDialog}
-            sx={{ borderRadius: "18px", backgroundColor: "#EC5228", color: "#FFFFFF", px: 3, textTransform: "none" }}
+            variant="outlined"
+            sx={{ textTransform: "none" }}
           >
             Cancel
           </Button>
-          <Button color="success" onClick={handleUnlinkInstagram} sx={{ textTransform: "none", fontFamily : 'Inter', fontWeight : 600 }} disabled={igUnlinkLoading}>
-            {igUnlinkLoading ? "Unlinking..." : "Unlink"}
+          <Button
+            onClick={handleUnlinkInstagram}
+            variant="contained"
+            disabled={igUnlinkLoading}
+            sx={{ 
+              textTransform: "none",
+              bgcolor: "#dc3545",
+              "&:hover": {
+                bgcolor: "#c82333"
+              }
+            }}
+          >
+            {igUnlinkLoading ? "Disconnecting..." : "Disconnect"}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* ===== Delete Account Dialogs (unchanged behaviour) ===== */}
+      {/* Delete Account Dialog */}
       {deleteAccountDialog && (
         <Dialog
           open={deleteAccountDialog}
           onClose={handleDialogAccountDeleteClose}
-          disableEscapeKeyDown
-          keepMounted
           maxWidth="sm"
           fullWidth
+          PaperProps={{
+            sx: { borderRadius: 2 }
+          }}
         >
-          <DialogTitle>
-            <Stack sx={{ display: "flex", flexDirection: "row", gap: 2, alignItems: "center" }}>
-              <Box
-                sx={{
-                  backgroundColor: "#F8E8EE",
-                  px: "6px",
-                  py: "2px",
-                  borderRadius: "6px",
-                  alignItems: "center",
-                }}
-              >
-                <DeleteOutlineOutlinedIcon
-                  sx={{ fontSize: isMobile ? "20px" : "26px", color: "red" }}
-                />
+          <DialogTitle sx={{ pb: 2 }}>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Box sx={{ 
+                bgcolor: "#fee", 
+                p: 1, 
+                borderRadius: 1.5,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+              }}>
+                <DeleteOutlineOutlinedIcon sx={{ fontSize: 24, color: "#dc3545" }} />
               </Box>
-              <Typography sx={{ fontSize: isMobile ? "15px" : "16px", fontWeight: 500 }}>
-                Delete account & erase data ?
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                Delete Account?
               </Typography>
             </Stack>
           </DialogTitle>
-          <DialogContent dividers>
+          <DialogContent>
             {deleteRequestLoading ? (
-              <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: 150 }}>
+              <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
                 <CircularProgress />
               </Box>
             ) : (
               <>
-                <Typography sx={{ fontSize: isMobile ? "15px" : "16px", marginTop: "5px", marginBottom: "22px" }}>
-                  All your data and account will be deleted permanently. This cannot be undone. Are
-                  you sure you want to proceed?
+                <Typography sx={{ mb: 2 }}>
+                  All your data and account will be deleted permanently. This action cannot be undone.
                 </Typography>
-
-                <div style={{ display: "flex", flexDirection: "row", gap: "2%", alignItems: "center" }}>
-                  <Typography sx={{ fontSize: "14px", fontWeight: "400", color: "grey" }}>
-                    A delete code will be sent to your email address : {userDetails.email}
-                  </Typography>
-                </div>
+                <Alert severity="info" variant="outlined">
+                  A delete code will be sent to: <strong>{userDetails.email}</strong>
+                </Alert>
               </>
             )}
           </DialogContent>
-          <DialogActions>
+          <DialogActions sx={{ p: 3, pt: 2 }}>
             <Button
               onClick={() => setDeleteAccountDialog(false)}
-              sx={{
-                borderRadius: "18px",
-                backgroundColor: "#EC5228",
-                color: "#FFFFFF",
-                px: 3,
-                textTransform: "none",
-              }}
+              variant="outlined"
+              sx={{ textTransform: "none" }}
             >
               Cancel
             </Button>
-            <Button color="success" onClick={deleteAccount} sx={{ textTransform: "none" }}>
+            <Button
+              onClick={deleteAccount}
+              variant="contained"
+              sx={{ 
+                textTransform: "none",
+                bgcolor: "#dc3545",
+                "&:hover": {
+                  bgcolor: "#c82333"
+                }
+              }}
+            >
               Proceed
             </Button>
           </DialogActions>
         </Dialog>
       )}
 
+      {/* Enter Code Dialog */}
       {enterCodeDialog && (
         <ClickAwayListener onClickAway={handleClickAway}>
           <Dialog
             open={enterCodeDialog}
             onClose={handleDialogAccountDeleteClose}
-            disableEscapeKeyDown
-            keepMounted
             maxWidth="sm"
             fullWidth
+            PaperProps={{
+              sx: { borderRadius: 2 }
+            }}
           >
-            <DialogTitle sx={{ fontSize: isMobile ? "16px" : "16px" }}>
-              Delete Confirmation
-            </DialogTitle>
-            <DialogContent dividers>
+            <DialogTitle>Delete Confirmation</DialogTitle>
+            <DialogContent>
               {deleteCodeLoading ? (
-                <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: 150 }}>
+                <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
                   <CircularProgress />
                 </Box>
               ) : (
                 <>
-                  <Typography sx={{ fontSize: isMobile ? "15px" : "16px", marginTop: "5px" }}>
-                    Enter the 6-digit delete code that was sent to {userDetails.email}
+                  <Typography sx={{ mb: 2 }}>
+                    Enter the 6-digit code sent to <strong>{userDetails.email}</strong>
                   </Typography>
-
                   <TextField
-                    type="email"
-                    id="email"
-                    onChange={(e) => {
-                      setEmailCode(e.target.value);
-                    }}
-                    margin="normal"
-                    variant="outlined"
+                    fullWidth
+                    type="text"
                     label="6-digit code"
                     value={emailCode}
-                  ></TextField>
+                    onChange={(e) => setEmailCode(e.target.value)}
+                    variant="outlined"
+                  />
                 </>
               )}
             </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setEnterCodeDialog(false)} color="primary" sx={{ textTransform: "none" }}>
+            <DialogActions sx={{ p: 3, pt: 2 }}>
+              <Button
+                onClick={() => setEnterCodeDialog(false)}
+                variant="outlined"
+                sx={{ textTransform: "none" }}
+              >
                 Cancel
               </Button>
               <Button
-                color="success"
                 onClick={checkPin}
-                sx={{ borderRadius: "18px", backgroundColor: "#EC5228", color: "#FFFFFF", px: 3, textTransform: "none" }}
+                variant="contained"
+                sx={{ 
+                  textTransform: "none",
+                  bgcolor: "#dc3545",
+                  "&:hover": {
+                    bgcolor: "#c82333"
+                  }
+                }}
               >
                 Submit
               </Button>
@@ -943,8 +1001,7 @@ const AccountDetailsPage1 = () => {
           </Dialog>
         </ClickAwayListener>
       )}
-
-    </>
+    </Box>
   );
 };
 

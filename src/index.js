@@ -5,29 +5,40 @@ import App from './App.js';
 import store from './store/store.js';
 import reportWebVitals from './reportWebVitals.js';
 import { Provider } from 'react-redux';
+import getSubdomain from './Utils/getSubdomain.js';
+import { SnackbarProvider } from './components/Employee/SnackbarProvider.js';
+
+// Read server-injected initial profile if present
+let initialProfile = null;
+try {
+  if (typeof window !== 'undefined' && window.__INITIAL_PROFILE__) {
+    // If server injected a JSON object, it should already be a JS object.
+    // If it was injected as a string for any reason, try to parse safely.
+    const injected = window.__INITIAL_PROFILE__;
+    initialProfile = typeof injected === 'string' ? JSON.parse(injected) : injected;
+  }
+} catch (err) {
+  // If parsing fails, ignore and continue without initial profile.
+  console.warn('Failed to parse window.__INITIAL_PROFILE__', err);
+  initialProfile = null;
+}
+
+// Extract subdomain (e.g. sid4real from sid4real.chomske.com)
+const initialSubdomain = (typeof window !== 'undefined') ? getSubdomain(window.location.hostname) : null;
 
 const rootElement = document.getElementById('root');
 
 const AppTree = (
   <Provider store={store}>
-    <App />
+    <SnackbarProvider>
+    <App initialSubdomain={initialSubdomain} initialProfile={initialProfile} />
+  </SnackbarProvider>
+
   </Provider>
 );
 
-// Routes react-snap actually pre-renders — keep this in sync with
-// reactSnap.include in package.json. Any other path (every /professional/*
-// app route included) falls back to nginx serving the root build/index.html,
-// which react-snap overwrites with the "/" page's markup. That markup doesn't
-// match what App() renders for those paths, so hydrating onto it corrupts the
-// DOM instead of replacing it — those paths need a clean render() instead.
-const PRERENDERED_PATHS = new Set([
-  "/", "/pricing", "/about-us", "/contact", "/terms", "/privacy-policy",
-  "/refund-cancellation-policy", "/shipping-policy", "/google-api-disclosure",
-  "/disclosure-policy", "/trust-center", "/youtube_api_disclosure", "/security",
-  "/personalised-user-tone", "/schedule-publish", "/save-time",
-]);
-
-if (rootElement.hasChildNodes() && PRERENDERED_PATHS.has(window.location.pathname)) {
+// Support react-snap hydration
+if (rootElement.hasChildNodes()) {
   hydrate(AppTree, rootElement);
 } else {
   render(AppTree, rootElement);

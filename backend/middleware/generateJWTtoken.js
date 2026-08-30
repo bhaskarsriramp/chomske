@@ -1,24 +1,14 @@
 import jwt from "jsonwebtoken";
-const JWT_SECRET = "NidkPwke9485hfKDLAndu9*#&$&$jcbPOqkPkshEYfk3848Asj"
-
-
+import { randomUUID } from "crypto";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const generateJWTtoken = async (user_id, email) => {
-
+  const jti = randomUUID();
   const token = jwt.sign(
-    { user_id: user_id, user_email: email },
+    { user_id: user_id, user_email: email, jti },
     JWT_SECRET,
-    { expiresIn: "7d" }
-
-    
+    { expiresIn: "72h" }
   );
-
-  const decoded = jwt.verify(token, JWT_SECRET);
-
-console.log("Token:", token);
-console.log("Decoded payload:", decoded);
-console.log("Expiry (UTC):", new Date(decoded.exp * 1000));
-
   return token;
 };
 

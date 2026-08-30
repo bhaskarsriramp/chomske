@@ -2,11 +2,11 @@ import { Box, Typography, useMediaQuery, Grid, Card, CardContent, Avatar, Link }
 import Navbar from './Navbar';
 import Footer from './Footer';
 import BoltIcon from '@mui/icons-material/Bolt';
-import CurrencyRupeeIcon from '@mui/icons-material/CurrencyRupee';
-import VerifiedIcon from '@mui/icons-material/Verified';
+import WebhookIcon from '@mui/icons-material/Webhook';
 import ShieldIcon from '@mui/icons-material/Shield';
-import InsightsIcon from '@mui/icons-material/Insights';
-import SmartphoneIcon from '@mui/icons-material/Smartphone';
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import GroupIcon from '@mui/icons-material/Group';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { Helmet } from 'react-helmet';
 
 const AboutUs = () => {
@@ -15,31 +15,25 @@ const AboutUs = () => {
   return (
     <>
       <Helmet>
-        <title>About Us | Chomske</title>
+        <title>About Us | MyHandle</title>
         <meta
           name="description"
-          content="Chomske is a link-in-bio and creator tools platform built in India: fast pages, UPI & WhatsApp actions, realtime follower trust badges, and clear analytics."
+          content="MyHandle sends instant WhatsApp alerts when your server goes down, a payment fails, or a critical event fires. No WhatsApp API required — paste one webhook and you're live in 5 minutes."
         />
-
-        {/* Canonical URL */}
         <link rel="canonical" href="https://chomske.com/about-us" />
-
-        {/* Open Graph */}
-        <meta property="og:title" content="About Us | Chomske" />
+        <meta property="og:title" content="About Us | MyHandle" />
         <meta
           property="og:description"
-          content="We help creators and small businesses turn profile traffic into customers with trusted, fast, and India-first link-in-bio pages."
+          content="We built the fastest way for SaaS founders to get WhatsApp alerts from any webhook source — Stripe, Vercel, Sentry, and more. No API setup. $9/mo."
         />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://chomske.com/about-us" />
         <meta property="og:image" content="https://storage.googleapis.com/postlnbucketcom/products/maximize.png" />
-
-        {/* Twitter */}
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="About Us | Chomske" />
+        <meta name="twitter:title" content="About Us | MyHandle" />
         <meta
           name="twitter:description"
-          content="Chomske gives you a beautiful bio page with UPI/WhatsApp actions, smart blocks, and privacy-first analytics. Made in India for creators everywhere."
+          content="WhatsApp alerts for server downtime, failed payments, and critical events. Paste one webhook. Sleep soundly. No WhatsApp API required."
         />
         <meta name="twitter:image" content="https://storage.googleapis.com/postlnbucketcom/products/maximize.png" />
       </Helmet>
@@ -48,13 +42,13 @@ const AboutUs = () => {
 
       <Box sx={{ padding: isMobile ? 3 : 8, mt: 10 }}>
         <Typography sx={{ fontWeight: 700, fontSize: isMobile ? '32px' : '40px', mb: 2 }}>
-          About Chomske
+          About MyHandle
         </Typography>
 
         <Typography sx={{ fontWeight: 400, fontSize: isMobile ? '18px' : '22px', mb: 6, color: 'text.secondary' }}>
-          Chomske helps creators and small businesses turn profile views into actions. We built an India‑first
-          link‑in‑bio and mini‑site that feels fast, looks great, and earns trust — with real‑time follower badges,
-          UPI & WhatsApp actions, and clean analytics you actually understand.
+          MyHandle is the fastest way for SaaS founders and developers to receive WhatsApp alerts from any
+          webhook source. No WhatsApp Business API, no complex setup — paste one URL and you're live in under
+          5 minutes. We handle the routing, escalation, and delivery so you can focus on building.
         </Typography>
 
         <Grid container spacing={4}>
@@ -65,11 +59,11 @@ const AboutUs = () => {
                   <BoltIcon />
                 </Avatar>
                 <Typography sx={{ fontSize: '18px', fontWeight: 700 }}>
-                  Fast, Beautiful, Reliable
+                  5-Minute Setup
                 </Typography>
                 <Typography variant="body1" sx={{ mt: 1 }}>
-                  Pages load in a blink and work on every device. Prebuilt themes, smart blocks (links, media, socials,
-                  shoppable items) and automatic image optimization keep things crisp and quick.
+                  Generate a webhook URL, paste it into Stripe, Vercel, Sentry, or any platform that supports
+                  webhooks, and receive your first WhatsApp alert before your coffee gets cold.
                 </Typography>
               </CardContent>
             </Card>
@@ -78,15 +72,15 @@ const AboutUs = () => {
           <Grid item xs={12} md={4}>
             <Card sx={{ borderRadius: 4, boxShadow: 3, height: '100%' }}>
               <CardContent>
-                <Avatar sx={{ bgcolor: '#22c55e', mb: 2 }}>
-                  <VerifiedIcon />
+                <Avatar sx={{ bgcolor: '#25D366', mb: 2 }}>
+                  <NotificationsActiveIcon />
                 </Avatar>
                 <Typography sx={{ fontSize: '18px', fontWeight: 700 }}>
-                  Trust That Converts
+                  P0 / P1 Priority Tiers
                 </Typography>
                 <Typography variant="body1" sx={{ mt: 1 }}>
-                  Optional real‑time follower count badges and verified social links help visitors trust your page. Clear
-                  CTAs like <strong>WhatsApp</strong> and <strong>UPI</strong> drive action, not just clicks.
+                  Not every alert is a fire. Tag webhooks as P0 (critical) or P1 (important) so your team
+                  gets the right level of urgency — including phone call escalation for incidents that can't wait.
                 </Typography>
               </CardContent>
             </Card>
@@ -95,15 +89,15 @@ const AboutUs = () => {
           <Grid item xs={12} md={4}>
             <Card sx={{ borderRadius: 4, boxShadow: 3, height: '100%' }}>
               <CardContent>
-                <Avatar sx={{ bgcolor: '#ef4444', mb: 2 }}>
-                  <CurrencyRupeeIcon />
+                <Avatar sx={{ bgcolor: '#6366f1', mb: 2 }}>
+                  <WebhookIcon />
                 </Avatar>
                 <Typography sx={{ fontSize: '18px', fontWeight: 700 }}>
-                  Fair, India‑First Pricing
+                  No WhatsApp API Required
                 </Typography>
                 <Typography variant="body1" sx={{ mt: 1 }}>
-                  Why pay 10× more for foreign tools? Get locally‑priced plans, GST invoices, and payment methods that
-                  work here.
+                  Most WhatsApp notification tools require Meta Business approval, a verified number, and weeks of
+                  setup. MyHandle needs none of that — you receive alerts on your personal WhatsApp instantly.
                 </Typography>
               </CardContent>
             </Card>
@@ -115,38 +109,39 @@ const AboutUs = () => {
             Our Mission
           </Typography>
           <Typography sx={{ fontSize: '18px', color: 'text.primary' }}>
-            Give every creator and small business a trustworthy home on the internet that converts attention into
-            outcomes — sales, sign‑ups, bookings, and conversations — without complexity.
+            No founder should be the last to know when their product breaks. We're building the simplest,
+            most reliable bridge between the tools you already use and the WhatsApp you already have open —
+            so critical events reach you in seconds, not hours.
           </Typography>
         </Box>
 
         <Box sx={{ mt: 8, maxWidth: 1000 }}>
           <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>
-            Our approach
+            How it works
           </Typography>
 
           <Grid container spacing={3}>
             <Grid item xs={12} md={4}>
-              <Typography sx={{ fontWeight: 800 }}>Own Your Funnel</Typography>
+              <Typography sx={{ fontWeight: 800 }}>Any Webhook Source</Typography>
               <Typography sx={{ color: '#374151' }}>
-                Move traffic from bios and stories to a page you control. Add store links, forms, and messaging actions
-                so every visit has a clear next step.
+                Works with Stripe, Vercel, Sentry, GitHub, PagerDuty, Grafana, or any custom service that
+                can fire an HTTP POST. If it has a webhook, MyHandle can alert you.
               </Typography>
             </Grid>
 
             <Grid item xs={12} md={4}>
-              <Typography sx={{ fontWeight: 800 }}>Convert With Native Actions</Typography>
+              <Typography sx={{ fontWeight: 800 }}>Smart Escalation Chain</Typography>
               <Typography sx={{ color: '#374151' }}>
-                One‑tap <strong>WhatsApp</strong>, <strong>UPI</strong>, and <strong>Call</strong> buttons reduce
-                friction for buyers and clients. Auto‑formatted links for Instagram, YouTube, and more.
+                Set primary and backup recipients. If a P0 alert goes unacknowledged within your configured
+                window, it automatically escalates — up to a phone call if needed.
               </Typography>
             </Grid>
 
             <Grid item xs={12} md={4}>
-              <Typography sx={{ fontWeight: 800 }}>Measure What Matters</Typography>
+              <Typography sx={{ fontWeight: 800 }}>Quiet Hours & Team Controls</Typography>
               <Typography sx={{ color: '#374151' }}>
-                Privacy‑respecting analytics with views, CTR, and top referrers. Export data and integrate pixels when
-                you need deeper attribution.
+                Configure quiet hours so non-critical alerts don't wake your team at 2am. Add team members,
+                assign alert ownership, and keep everyone in the loop without the noise.
               </Typography>
             </Grid>
           </Grid>
@@ -157,12 +152,13 @@ const AboutUs = () => {
             <Grid item xs={12} md={6}>
               <Card sx={{ borderRadius: 4, boxShadow: 2, height: '100%' }}>
                 <CardContent>
-                  <Avatar sx={{ bgcolor: '#6366f1', mb: 2 }}>
-                    <SmartphoneIcon />
+                  <Avatar sx={{ bgcolor: '#f59e0b', mb: 2 }}>
+                    <GroupIcon />
                   </Avatar>
-                  <Typography sx={{ fontSize: '18px', fontWeight: 700 }}>Built for Speed</Typography>
+                  <Typography sx={{ fontSize: '18px', fontWeight: 700 }}>Built for Small Teams</Typography>
                   <Typography sx={{ mt: 1 }}>
-                    CDN delivery, image compression, and lightweight pages keep things lightning‑fast even on 3G.
+                    Whether you're a solo founder or a team of ten, MyHandle scales with you. Add team members,
+                    share alert channels, and make sure no critical event slips through the cracks.
                   </Typography>
                 </CardContent>
               </Card>
@@ -174,10 +170,10 @@ const AboutUs = () => {
                   <Avatar sx={{ bgcolor: '#0d9488', mb: 2 }}>
                     <ShieldIcon />
                   </Avatar>
-                  <Typography sx={{ fontSize: '18px', fontWeight: 700 }}>Privacy & Control</Typography>
+                  <Typography sx={{ fontSize: '18px', fontWeight: 700 }}>Privacy & Security</Typography>
                   <Typography sx={{ mt: 1 }}>
-                    You own your data. We never sell it. Simple controls to disable tracking, export your page, and
-                    disconnect integrations.
+                    Your webhook payloads are processed and discarded — we don't store sensitive event data.
+                    Encrypted in transit, no third-party data sharing, and full control to revoke access anytime.
                   </Typography>
                 </CardContent>
               </Card>

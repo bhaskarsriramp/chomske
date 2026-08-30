@@ -12,6 +12,7 @@ const Subscriptions_Schema = new Schema({
 
     razorpay_signature: String,
     subscription_starts_at: Date,
+    next_subscription_date: Date,
     status: {
         type: String    },
     recurring: {

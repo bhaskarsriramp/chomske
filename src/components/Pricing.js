@@ -13,7 +13,7 @@ function Pricing() {
   return (
     <>
       <header>
-        <title>Pricing and Packages | Chomske</title>
+        <title>Pricing and Packages | MyHandle</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="description" content="Checkout the prices and rates for Employers." />
       </header>

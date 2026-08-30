@@ -1,4 +1,4 @@
-import { Backdrop, Box, LinearProgress, Typography } from '@mui/material';
+import { Backdrop, LinearProgress, Typography } from '@mui/material';
 
 const FullscreenLoader = ({ open, message }) => (
   <Backdrop

@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-const JWT_SECRET = "NidkPwke9485hfKDLAndu9*#&$&$jcbPOqkPkshEYfk3848Asj"
+const JWT_SECRET = process.env.JWT_SECRET;
 
 
 const authenticateTokenEmployer = (req, res, next) => {

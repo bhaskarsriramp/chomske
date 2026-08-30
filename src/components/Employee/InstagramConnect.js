@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Box, Button, Card, CardContent, CircularProgress, Alert, Chip, Tooltip,
-  Fade, Zoom, Dialog, DialogTitle, DialogContent, DialogActions, Avatar,
+  Fade, Dialog, DialogTitle, DialogContent, DialogActions, Avatar,
   Typography, Stack, DialogContentText
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
@@ -17,10 +17,9 @@ import FeaturedPlayListOutlinedIcon from '@mui/icons-material/FeaturedPlayListOu
 
 // import "react-toastify/dist/ReactToastify.css"; // Commented out to prevent build errors
 
-/** Facebook Login for Business — user authenticates via Facebook, then the
- * backend looks up their linked Instagram Business/Creator account via the Page. */
-const FB_APP_ID = "1360956302356492"; // same App ID usersOn.js hardcodes as META_APP_ID
-const FB_LOGIN_CONFIG_ID = "742713598693584"; // Meta App Dashboard → Facebook Login for Business → Configurations
+/** --- NEW: business login constants --- */
+const FB_APP_ID = "1360956302356492";
+const FB_LOGIN_CONFIG_ID = "742713598693584"; // from App → Facebook Login for Business → Configurations
 const REDIRECT_URI = "https://chomske.com/api/usersOn/meta-callback";
 const BACKEND_STATUS_URL  = "/api/usersOn/instagram-status";
 const BACKEND_UNLINK_URL  = "/api/usersOn/unlink-instagram";
@@ -89,9 +88,9 @@ const openBusinessLogin = useCallback(async () => {
     const q = new URLSearchParams({
       client_id: FB_APP_ID,
       redirect_uri: REDIRECT_URI,
+      state, // <-- signed, user-bound
       response_type: "code",
       config_id: FB_LOGIN_CONFIG_ID,
-      state, // <-- signed, user-bound
     });
 
     const authUrl = `https://www.facebook.com/v24.0/dialog/oauth?${q.toString()}`;

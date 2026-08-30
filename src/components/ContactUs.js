@@ -13,20 +13,20 @@ function SupportContact() {
   
 
 <Helmet>
-  <title>Contact Us & Support | Chomske</title>
+  <title>Contact Us & Support | MyHandle</title>
   <meta
     name="description"
-    content="Get in touch with Chomske. Reach our support team at support@chomske.com, sales inquiries at support@chomske.com, or visit our Hyderabad office. We're here to help you."
+    content="Get in touch with MyHandle. Reach our support team at support@chomske.com, sales inquiries at support@chomske.com, or visit our Hyderabad office. We're here to help you."
   />
 
   {/* Canonical URL */}
   <link rel="canonical" href="https://chomske.com/contact" />
 
   {/* Open Graph */}
-  <meta property="og:title" content="Contact Us & Support | Chomske" />
+  <meta property="og:title" content="Contact Us & Support | MyHandle" />
   <meta
     property="og:description"
-    content="Need help or have questions? Contact Chomske support at support@chomske.com, sales@chomske.com, or visit our Hyderabad office."
+    content="Need help or have questions? Contact MyHandle support at support@chomske.com, sales@chomske.com, or visit our Hyderabad office."
   />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://chomske.com/contact" />
@@ -37,10 +37,10 @@ function SupportContact() {
 
   {/* Twitter */}
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Contact Us & Support | Chomske" />
+  <meta name="twitter:title" content="Contact Us & Support | MyHandle" />
   <meta
     name="twitter:description"
-    content="Get support from Chomske: email support@chomske.com, sales@chomske.com, or visit our Hyderabad office."
+    content="Get support from MyHandle: email support@chomske.com, sales@chomske.com, or visit our Hyderabad office."
   />
   <meta
     name="twitter:image"

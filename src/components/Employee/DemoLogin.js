@@ -66,7 +66,11 @@ export default function DemoLogin({ onSuccess }) {
 
     
     } catch (err) {
-      setError(err.message || "Login failed");
+      if (err?.response?.status === 429) {
+        setError("Too many login attempts. Please wait a moment and try again.");
+      } else {
+        setError(err?.response?.data?.message || err.message || "Login failed");
+      }
     } finally {
       setLoading(false);
     }

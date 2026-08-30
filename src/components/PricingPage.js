@@ -1,442 +1,333 @@
-// PricingPage.js
+import React, { useState } from 'react';
 import {
-  Box,
-  Grid,
-  Typography,
-  Card,
-  CardContent,
-  Button,
-  useMediaQuery,
-  Chip,
-  Divider,
-  Stack,
+  Box, Grid, Typography, Card, CardContent, Button, Stack,
+  useMediaQuery, useTheme, alpha, Divider, Tooltip, ClickAwayListener
 } from '@mui/material';
 import Navbar from './Navbar';
 import Footer from './Footer';
-import StarRoundedIcon from '@mui/icons-material/StarRounded';
-import VerifiedRoundedIcon from '@mui/icons-material/VerifiedRounded';
-import ShieldRoundedIcon from '@mui/icons-material/ShieldRounded';
-import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import CheckCircleOutlineRoundedIcon from '@mui/icons-material/CheckCircleOutlineRounded';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { Helmet } from "react-helmet";
 
-// Feature Icons
-import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
-import ContactsRoundedIcon from '@mui/icons-material/ContactsRounded';
-import QuickreplyRoundedIcon from '@mui/icons-material/QuickreplyRounded';
-import SendRoundedIcon from '@mui/icons-material/SendRounded';
-import ShareRoundedIcon from '@mui/icons-material/ShareRounded';
-import InsightsRoundedIcon from '@mui/icons-material/InsightsRounded';
-import GroupAddRoundedIcon from '@mui/icons-material/GroupAddRounded';
-import LanguageRoundedIcon from '@mui/icons-material/LanguageRounded';
-import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded';
-import TranslateRoundedIcon from '@mui/icons-material/TranslateRounded';
-import HttpsRoundedIcon from '@mui/icons-material/HttpsRounded';
-import DragIndicatorRoundedIcon from '@mui/icons-material/DragIndicatorRounded';
-import SupportAgentRoundedIcon from '@mui/icons-material/SupportAgentRounded';
-import InstagramIcon from '@mui/icons-material/Instagram';
-import WebStoriesOutlinedIcon from '@mui/icons-material/WebStoriesOutlined';
-import PolylineOutlinedIcon from '@mui/icons-material/PolylineOutlined';
-import StorageOutlinedIcon from '@mui/icons-material/StorageOutlined';
-import StorefrontOutlinedIcon from '@mui/icons-material/StorefrontOutlined';
-import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
-import LoyaltyOutlinedIcon from '@mui/icons-material/LoyaltyOutlined';
-import MoveDownOutlinedIcon from '@mui/icons-material/MoveDownOutlined';
-import CurrencyRupeeOutlinedIcon from '@mui/icons-material/CurrencyRupeeOutlined';
-import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined';
-import CardGiftcardOutlinedIcon from '@mui/icons-material/CardGiftcardOutlined';
-import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
-import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
-import AdUnitsOutlinedIcon from '@mui/icons-material/AdUnitsOutlined';
-import ShortcutOutlinedIcon from '@mui/icons-material/ShortcutOutlined';
-import OutdoorGrillOutlinedIcon from '@mui/icons-material/OutdoorGrillOutlined';
-import DownloadingOutlinedIcon from '@mui/icons-material/DownloadingOutlined';
-const PLAN = {
-  price: 399,
-  label: 'Monthly',
-  subLabel: 'Billed monthly',
-  cta: 'Start for ₹399',
-  note: '7 days free trial'
+const FeatureRow = ({ item, isMobile }) => {
+  const [open, setOpen] = useState(false);
+  const isObject = typeof item === 'object';
+  const text = isObject ? item.text : item;
+  const tooltipText = isObject ? item.tooltip : null;
+
+  const tooltipStyles = {
+    tooltip: {
+      bgcolor: '#1e293b', color: '#fff', fontSize: '0.85rem',
+      padding: '12px', borderRadius: '8px',
+      border: `1px solid ${alpha('#fff', 0.1)}`,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+      fontFamily: 'Inter', maxWidth: 220, textAlign: 'center'
+    },
+    arrow: { sx: { color: '#1e293b' } }
+  };
+
+  return (
+    <Box display="flex" gap={1.5} alignItems="center">
+      <Box sx={{ minWidth: 20, display: 'flex', justifyContent: 'center' }}>
+        <CheckCircleOutlineRoundedIcon sx={{ fontSize: 20, color: alpha('#FFFFFF', 0.5) }} />
+      </Box>
+      <Typography fontSize={isMobile ? 14 : 16} color={alpha('#FFFFFF', 1.0)} sx={{ fontFamily: 'Inter', flex: 1 }}>
+        {text}
+      </Typography>
+      {tooltipText && (
+        <>
+          {isMobile ? (
+            <ClickAwayListener onClickAway={() => setOpen(false)}>
+              <Box>
+                <Tooltip title={tooltipText} arrow placement="top" open={open} onClose={() => setOpen(false)}
+                  disableFocusListener disableHoverListener disableTouchListener componentsProps={tooltipStyles}>
+                  <Box onClick={() => setOpen(p => !p)} sx={{ display: 'flex', cursor: 'pointer', opacity: open ? 1 : 0.6 }}>
+                    <InfoOutlinedIcon sx={{ fontSize: 18, color: '#25D366' }} />
+                  </Box>
+                </Tooltip>
+              </Box>
+            </ClickAwayListener>
+          ) : (
+            <Tooltip title={tooltipText} arrow placement="top" componentsProps={tooltipStyles}>
+              <Box sx={{ display: 'flex', cursor: 'pointer', opacity: 0.6, '&:hover': { opacity: 1 } }}>
+                <InfoOutlinedIcon sx={{ fontSize: 18, color: '#25D366' }} />
+              </Box>
+            </Tooltip>
+          )}
+        </>
+      )}
+    </Box>
+  );
 };
 
-// Organized features by category
-const featureCategories = [
-    {
-    title: 'Instagram Automation',
-    icon: InstagramIcon,
-    color: '#e4405f',
-    features: [
-      { text: '25 Lakh Automated Replies per Month', icon: QuickreplyRoundedIcon },
-      { text: '25 Lakh Automated DMs per Month', icon: SendRoundedIcon },
-      { text: 'Unlimited Contacts', icon: ContactsRoundedIcon },
-      { text: 'Unlimited Automations', icon: PolylineOutlinedIcon },
-      { text: 'Unlimited File Upload/Downloads', icon: DownloadingOutlinedIcon },
-    ]
-  },
-  {
-    title: 'Link-in-Bio Features',
-    icon: WebStoriesOutlinedIcon,
-    color: '#7c3aed',
-    features: [
-      { text: 'Unlimited Links', icon: LinkRoundedIcon },
-      { 
-        text: 'Username.chomske.com NOT chomske.com/username', 
-        icon: LanguageRoundedIcon,
-        strikethrough: 'chomske.com/username' // Mark text to strikethrough
-      },
-      { text: 'Digital Store', icon: StorefrontOutlinedIcon },
-      { text: 'Collect & Manage Subscribers', icon: GroupAddRoundedIcon },
-      { text: 'Advanced Analytics: Visitors, Views, CTR, Top links, Referrers, City & State', icon: InsightsRoundedIcon },
-      { text: 'Simple Editor • drag & reorder links', icon: DragIndicatorRoundedIcon },
-      { text: 'Social Profiles, Videos & Embeds', icon: ShareRoundedIcon },
-      { text: 'English + Hindi support', icon: TranslateRoundedIcon },
-    ]
-  },
-
-  {
-    title: 'Support & Security',
-    icon: ShieldRoundedIcon,
-    color: '#10b981',
-    features: [
-      { text: 'Data stays in India', icon: StorageOutlinedIcon },
-      { text: 'Fast, secure hosting with SSL', icon: HttpsRoundedIcon },
-      { text: 'Priority support (24–48 business hours)', icon: SupportAgentRoundedIcon },
-    ]
-  },
-
-  //  {
-  //   title: 'Payments & Transactions',
-  //   icon: PaymentsRoundedIcon,
-  //   color: '#F87B1B',
-  //   features: [
-  //     { text: 'Razorpay Payment Gateway', icon: AccountBalanceOutlinedIcon },
-  //      { 
-  //       text: '4% on Digital Sale NOT ', 
-  //       icon: LoyaltyOutlinedIcon,
-  //       strikethrough: '10%'
-  //     },
-  //      { 
-  //       text: 'Weekly Settlements NOT ', 
-  //       icon: MoveDownOutlinedIcon,
-  //       strikethrough: 'Monthly'
-  //     },
-  //     { text: 'Supports All Payment Methods', icon: CurrencyRupeeOutlinedIcon },
-  //   ]
-  // },
-
-   {
-    title: 'Coming Very Soon',
-    icon: OutdoorGrillOutlinedIcon,
-    color: '#44444E',
-    features: [
-      { text: 'Brand Outreach & Collaboration', icon: Inventory2OutlinedIcon },
-      { text: 'Give-away Feature in Bio', icon: CardGiftcardOutlinedIcon },
-      { text: 'AI-powered Reply & DM suggestions', icon: AutoAwesomeOutlinedIcon },
-      { text: 'Competitor Benchmarks', icon: FactCheckOutlinedIcon },
-      { text: 'Pop-up Banner for Faster Sale', icon: AdUnitsOutlinedIcon },
-      { text: 'Link shortner', icon: ShortcutOutlinedIcon },
-      
-    ]
-  }
-];
-
 export default function PricingPage() {
-  const isMobile = useMediaQuery('(max-width:600px)');
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  // Helper function to render text with strikethrough
-  const renderFeatureText = (feature) => {
-    if (feature.strikethrough) {
-      const parts = feature.text.split(feature.strikethrough);
-      return (
-        <>
-          {parts[0]}
-          <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>
-            {feature.strikethrough}
-          </span>
-          {parts[1]}
-        </>
-      );
-    }
-    return feature.text;
+  const ltdFounderFeatures = [
+    '400 alerts /month',
+    'Unlimited webhooks',
+    '5 team contacts',
+    { text: 'P0 / P1 priority tiers', tooltip: 'Tag each webhook as critical (P0) or important (P1) to control alert behavior.' },
+    'All integrations (Stripe, Vercel + more)',
+    'Pay once, yours forever',
+  ];
+
+  const ltdTeamFeatures = [
+    'Everything in Founder',
+    '1,000 alerts /month',
+    '10 team contacts',
+    { text: 'Quiet hours config', tooltip: 'P1 alerts respect your quiet hours. P0 critical alerts always go through.' },
+    'Priority support',
+    'Pay once, yours forever',
+
+  ];
+
+  const commonCardStyles = {
+    height: '100%', width: '100%',
+    borderRadius: '24px',
+    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+    transition: 'transform 0.3s ease-in-out, box-shadow 0.3s ease',
   };
 
   return (
     <>
-      <header>
-        <title>Pricing and Packages | Chomske</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="description" content="Checkout the prices and rates for Chomske." />
-      </header>
+      <Helmet>
+        <title>Pricing | MyHandle — WhatsApp Webhook Alerts</title>
+        <meta name="description" content="Lifetime deal pricing for WhatsApp webhook alerts. Founder LTD at $49, Team LTD at $79. No monthly fees. No WhatsApp API required. Try free — no card needed." />
+      </Helmet>
 
       <Navbar />
 
-      {/* Background */}
-      <Box
-        sx={{
-          minHeight: '100vh',
-          mt: 4,
-          background:
-            'radial-gradient(1200px 600px at 20% -10%, #ede9fe 0%, rgba(237,233,254,0) 50%), radial-gradient(900px 500px at 120% 10%, #f0f9ff 0%, rgba(240,249,255,0) 55%), linear-gradient(180deg, #ffffff 0%, #fafafa 100%)'
-        }}
-      >
-        <Box sx={{ py: 8, px: isMobile ? 2 : 6 }}>
-          {/* Header */}
-          <Box sx={{ textAlign: 'center', mb: 4 }}>
-            <Chip
-              icon={<VerifiedRoundedIcon />}
-              label="Made in India • Priced for India"
-              color="default"
-              sx={{
-                mb: 2,
-                bgcolor: '#eef2ff',
-                borderRadius: 2,
-                fontWeight: 700,
-                fontFamily: 'Inter'
-              }}
-            />
+      <Box sx={{
+        minHeight: '100vh', position: 'relative', overflow: 'hidden',
+        pt: 12, pb: 12, px: isMobile ? 2 : 4,
+        bgcolor: '#020617',
+        backgroundImage: `
+          radial-gradient(at 50% 0%, ${alpha('#25D366', 0.1)} 0px, transparent 50%),
+          radial-gradient(at 10% 20%, ${alpha('#60A5FA', 0.06)} 0px, transparent 40%),
+          radial-gradient(at 90% 20%, ${alpha('#A78BFA', 0.06)} 0px, transparent 40%)
+        `,
+      }}>
 
-            <Typography
-              sx={{
-                fontFamily: 'Inter',
-                fontWeight: 700,
-                letterSpacing: '-0.02em',
-                fontSize: isMobile ? 22 : 42,
-                lineHeight: 1.1
-              }}
-            >
-              One simple plan. Everything you need.
+        {/* Header */}
+        <Box textAlign="center" mb={8} position="relative" zIndex={1}>
+         
+          <Typography component="h1" sx={{
+            color: '#F8FAFC', fontWeight: 800,
+            fontSize: isMobile ? '2.25rem' : '3.5rem',
+            fontFamily: 'Inter', letterSpacing: '-0.02em',
+            lineHeight: 1.1, mb: 3,
+          }}>
+            Pay once.<br />
+            <Box component="span" sx={{ color: '#25D366' }}>Never miss a critical alert.</Box>
+          </Typography>
+          <Typography sx={{
+            color: '#64748B', fontSize: isMobile ? 14 : 16,
+            fontFamily: 'Inter', maxWidth: 480, mx: 'auto', lineHeight: 1.7
+          }}>
+           No monthly fees. One payment, lifetime access for first 100 SaaS founders.</Typography>
+        </Box>
+
+        {/* Cards */}
+        <Grid
+          container spacing={3} justifyContent="center" alignItems="stretch"
+          sx={{ maxWidth: '860px', mx: 'auto', position: 'relative', zIndex: 1 }}
+        >
+
+          {/* Starter */}
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Card sx={{
+              ...commonCardStyles,
+              background: alpha('#1E293B', 1),
+              backdropFilter: 'blur(20px)',
+              color: '#fff',
+              border: '1px solid rgba(255,255,255,0.08)',
+              '&:hover': { borderColor: alpha('#fff', 0.15) }
+            }}>
+              <CardContent sx={{ p: 4 }}>
+                <Typography fontSize={isMobile ? 18 : 20} fontWeight={600} color={alpha('#fff', 0.9)} sx={{ fontFamily: 'Inter' }}>
+                  Founder LTD
+                </Typography>
+                <Typography variant="body2" sx={{ color: alpha('#94a3b8', 1), mt: 1, mb: 3, minHeight: '40px', fontFamily: 'Inter', fontSize: isMobile ? '0.875rem' : '1rem' }}>
+                  Everything you need to stop flying blind. Paid once, yours forever.
+                </Typography>
+
+                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mb: 0.5 }}>
+                  <Typography component="span" fontSize={isMobile ? 36 : 48} fontWeight={800} sx={{ fontFamily: 'Inter' }}>
+                    $49
+                  </Typography>
+                  <Typography component="span" sx={{ color: alpha('#94a3b8', 1), fontFamily: 'Inter', fontSize: isMobile ? '0.9rem' : '1rem' }}>
+                    one-time
+                  </Typography>
+                </Box>
+
+                <Button
+                  fullWidth variant="outlined" size="large"
+                  onClick={() => (window.location.href = '/professional/login')}
+                  sx={{
+                    py: 1.5, borderRadius: '12px',
+                    borderColor: alpha('#fff', 0.2), color: '#fff',
+                    textTransform: 'none', fontWeight: 600,
+                    fontSize: isMobile ? '0.9rem' : '1rem', fontFamily: 'Inter',
+                    '&:hover': { borderColor: '#fff', bgcolor: alpha('#fff', 0.05) }
+                  }}
+                >
+                  Get Lifetime Access
+                </Button>
+
+                <Divider sx={{ my: 4, borderColor: alpha('#fff', 0.1) }} />
+
+                <Stack spacing={2}>
+                  {ltdFounderFeatures.map((item, i) => (
+                    <FeatureRow key={i} item={item} isMobile={isMobile} />
+                  ))}
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Pro */}
+          <Grid size={{ xs: 12, md: 6 }} sx={{ pt: isMobile ? 0 : '14px !important' }}>
+            <Card sx={{
+              ...commonCardStyles,
+              background: 'linear-gradient(145deg, rgba(37,211,102,0.12) 0%, rgba(37,211,102,0.04) 100%)',
+              backdropFilter: 'blur(20px)',
+              border: '1.5px solid rgba(37,211,102,0.3)',
+              boxShadow: `0 0 40px -10px ${alpha('#25D366', 0.25)}`,
+              position: 'relative',
+              overflow: 'visible',
+              transform: isMobile ? 'none' : 'scale(1.02)',
+              zIndex: 2,
+              '&:hover': { borderColor: 'rgba(37,211,102,0.5)' }
+            }}>
+            {/* Best Value badge */}
+            <div style={{
+              position: "absolute", top: -14, left: "50%", transform: "translateX(-50%)",
+              background: "#25D366", borderRadius: 50,
+              padding: "5px 18px",
+              fontSize: 10, fontWeight: 700, color: "#fff",
+              letterSpacing: ".07em", textTransform: "uppercase",
+              whiteSpace: "nowrap",
+              boxShadow: "0 4px 16px rgba(37,211,102,.4)",
+            }}>
+              Best Value
+            </div>
+
+              <CardContent sx={{ p: 4 }}>
+                <Typography fontSize={isMobile ? 18 : 20} fontWeight={600} sx={{ color: '#86EFAC', display: 'flex', alignItems: 'center', gap: 1, fontFamily: 'Inter' }}>
+                  Team LTD <AutoAwesomeIcon sx={{ fontSize: 18, color: '#25D366' }} />
+                </Typography>
+                <Typography variant="body2" sx={{ color: '#86EFAC', mt: 1, mb: 3, minHeight: '40px', fontFamily: 'Inter', fontSize: isMobile ? '0.875rem' : '1rem', fontWeight: 500 }}>
+                  For teams where one person can't be the single point of failure.
+                </Typography>
+
+                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mb: 0.5 }}>
+                  <Typography component="span" fontSize={isMobile ? 36 : 48} fontWeight={800} color="#fff" sx={{ fontFamily: 'Inter' }}>
+                    $79
+                  </Typography>
+                  <Typography component="span" sx={{ color: alpha('#cbd5e1', 1), fontFamily: 'Inter', fontSize: isMobile ? '0.9rem' : '1rem' }}>
+                    one-time
+                  </Typography>
+                </Box>
+                <Typography sx={{ fontSize: 11, color: '#4ADE80', mb: 3, fontFamily: 'Inter' }}>
+                  3x the alerts + team backup contacts
+                </Typography>
+
+                <Button
+                  fullWidth size="large"
+                  onClick={() => (window.location.href = '/professional/login')}
+                  sx={{
+                    py: 1.5, borderRadius: '12px',
+                    background: '#25D366', color: '#fff',
+                    textTransform: 'none', fontWeight: 600,
+                    fontSize: isMobile ? '0.9rem' : '1rem', fontFamily: 'Inter',
+                    boxShadow: '0 8px 24px rgba(37,211,102,.3)',
+                    '&:hover': { background: '#1ebe5a', boxShadow: '0 12px 32px rgba(37,211,102,.4)' }
+                  }}
+                >
+                  Get Lifetime Access →
+                </Button>
+
+                <Divider sx={{ my: 4, borderColor: alpha('#fff', 0.15) }} />
+
+                <Stack spacing={2}>
+                  {ltdTeamFeatures.map((item, i) => (
+                    <FeatureRow key={i} item={item} isMobile={isMobile} />
+                  ))}
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+
+        {/* Free Trial Strip */}
+        <Box sx={{
+          maxWidth: '860px', mx: 'auto', mt: 3, mb: 0,
+          position: 'relative', zIndex: 1,
+          background: 'rgba(255,255,255,0.025)',
+          border: '1px dashed rgba(255,255,255,0.1)',
+          borderRadius: '20px',
+          p: isMobile ? '20px 22px' : '22px 32px',
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          alignItems: isMobile ? 'flex-start' : 'center',
+          gap: isMobile ? 2 : 3,
+        }}>
+          <Box sx={{ flex: 1 }}>
+            <Typography sx={{ fontSize: 11, fontWeight: 700, color: '#475569', mb: 0.5, letterSpacing: '.05em', textTransform: 'uppercase', fontFamily: 'Inter' }}>
+              Not ready to commit?
             </Typography>
-
-            {/* Trust row */}
-            <Stack
-              direction="row"
-              spacing={1.5}
-              justifyContent="center"
-              alignItems="center"
-              sx={{ mt: 2, flexWrap: 'wrap', rowGap: 1 }}
-            >
-              <Chip
-                icon={<ShieldRoundedIcon />}
-                label="Secure SSL"
-                variant="outlined"
-                sx={{ borderRadius: 2 }}
-              />
-              <Chip
-                icon={<BoltRoundedIcon />}
-                label="UPI/Razorpay"
-                variant="outlined"
-                sx={{ borderRadius: 2 }}
-              />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+              <Typography sx={{ fontSize: 15, fontWeight: 700, color: '#CBD5E1', fontFamily: 'Inter' }}>
+                Try it free
+              </Typography>
+              <Box sx={{ width: 5, height: 5, borderRadius: '50%', background: '#25D366', flexShrink: 0 }} />
+              <Typography sx={{ fontSize: 15, fontWeight: 700, color: '#CBD5E1', fontFamily: 'Inter' }}>
+                No card needed.
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
+              {['1 Free Webhook', '2 Test Messages', 'No credit card'].map((f, i) => (
+                <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                  <Box sx={{ width: 5, height: 5, borderRadius: '50%', background: '#25D366', flexShrink: 0 }} />
+                  <Typography sx={{ fontSize: 12, color: '#64748B', fontFamily: 'Inter' }}>{f}</Typography>
+                </Box>
+              ))}
             </Stack>
           </Box>
+          <Button
+            onClick={() => (window.location.href = '/professional/login')}
+            variant="outlined"
+            sx={{
+              color: '#4ADE80', borderColor: 'rgba(37,211,102,0.3)',
+              borderRadius: '12px', px: 3, py: 1.25,
+              textTransform: 'none', fontWeight: 700, fontSize: 13,
+              fontFamily: 'Inter', whiteSpace: 'nowrap', flexShrink: 0,
+              '&:hover': { borderColor: 'rgba(37,211,102,0.6)', background: 'rgba(37,211,102,0.06)' }
+            }}
+          >
+            Try Free →
+          </Button>
+        </Box>
 
-          {/* Pricing Card */}
-          <Grid container justifyContent="center">
-            <Grid item xs={12} sm={12} md={6} lg={6}>
-              <Card
-                elevation={0}
-                sx={{
-                  overflow: 'hidden',
-                  borderRadius: 4,
-                  border: '1px solid rgba(0,0,0,0.06)',
-                  background:
-                    'linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.9) 100%)',
-                  backdropFilter: 'blur(6px)',
-                  boxShadow:
-                    '0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(17,24,39,0.06)'
-                }}
-              >
-                <CardContent sx={{ p: isMobile ? 3 : 5 }}>
-                  {/* Header */}
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: isMobile ? 'flex-start' : 'center',
-                      justifyContent: 'space-between',
-                      gap: 2,
-                      mb: 3,
-                      pb: 3,
-                      borderBottom: '2px solid rgba(0,0,0,0.06)',
-                      flexWrap: 'wrap'
-                    }}
-                  >
-                    <Box>
-                      <Typography
-                        sx={{
-                          letterSpacing: '-0.01em',
-                          fontFamily: 'Inter',
-                          fontSize: isMobile ? 18 : 24,
-                          fontWeight: 700
-                        }}
-                      >
-                        {PLAN.label} Plan
-                      </Typography>
-                      <Typography color="text.secondary" sx={{ mt: 0.5, fontSize: 15 }}>
-                        {PLAN.subLabel}
-                      </Typography>
-                    </Box>
-
-                    <Box sx={{ textAlign: isMobile ? 'left' : 'right' }}>
-                      <Typography
-                        sx={{
-                          letterSpacing: '-0.01em',
-                          fontFamily: 'Inter',
-                          fontSize: isMobile ? 22 : 28,
-                          fontWeight: 800
-                        }}
-                      >
-                        ₹{PLAN.price}
-                        <Typography
-                          component="span"
-                          color="text.secondary"
-                          sx={{ ml: 0.5, fontSize: isMobile ? 14 : 16, fontWeight: 500 }}
-                        >
-                          /month
-                        </Typography>
-                      </Typography>
-                      <Typography color="success.dark" sx={{ fontWeight: 600, fontSize: 14 }}>
-                        {PLAN.note}
-                      </Typography>
-                    </Box>
-                  </Box>
-
-                  {/* CTA */}
-                  <Button
-                    fullWidth
-                    size="large"
-                    variant="contained"
-                    endIcon={<StarRoundedIcon />}
-                    sx={{
-                      mb: 4,
-                      py: 1.6,
-                      borderRadius: 2.5,
-                      textTransform: 'none',
-                      fontFamily: 'Inter',
-                      fontSize: 17,
-                      fontWeight: 700,
-                      letterSpacing: '0.02em',
-                      background:
-                        'linear-gradient(90deg, #111827 0%, #4f46e5 50%, #7c3aed 100%)',
-                      boxShadow: '0 6px 20px rgba(79,70,229,0.35)',
-                      '&:hover': { 
-                        opacity: 0.95,
-                        transform: 'translateY(-2px)',
-                        boxShadow: '0 8px 24px rgba(79,70,229,0.4)'
-                      }
-                    }}
-                    onClick={() => (window.location.href = '/professional/login')}
-                  >
-                    {PLAN.cta}
-                  </Button>
-
-                  {/* Feature Categories */}
-                  {featureCategories.map((category, idx) => {
-                    const CategoryIcon = category.icon;
-                    return (
-                      <Box key={idx} sx={{ mb: idx < featureCategories.length - 1 ? 0 : 0 }}>
-                        {/* Category Header */}
-                        <Box
-                          sx={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 1,
-                            mb: 2.5
-                          }}
-                        >
-                          <CategoryIcon
-                            sx={{
-                              fontSize: 24,
-                              color: category.color
-                            }}
-                          />
-                          <Typography
-                            sx={{
-                              fontFamily: 'Inter',
-                              fontSize: 18,
-                              fontWeight: 700,
-                              color: category.color
-                            }}
-                          >
-                            {category.title}
-                          </Typography>
-                        </Box>
-
-                        {/* Features List */}
-                        <Stack>
-                          {category.features.map((feature, i) => {
-                            const FeatureIcon = feature.icon;
-                            return (
-                              <Box
-                                key={i}
-                                sx={{
-                                  display: 'flex',
-                                  gap: 1.5,
-                                  p: 1.5,
-                                  bgcolor: 'rgba(255,255,255,0.5)',
-                                  borderRadius: 1.5,
-                                  transition: 'all 0.2s',
-                                  '&:hover': {
-                                    bgcolor: 'rgba(124,58,237,0.05)',
-                                    transform: 'translateX(4px)'
-                                  }
-                                }}
-                              >
-                                <FeatureIcon
-                                  fontSize="small"
-                                  sx={{
-                                    color: category.color,
-                                    mt: '2px',
-                                    flexShrink: 0
-                                  }}
-                                />
-                                <Typography
-                                  sx={{
-                                    color: '#111827',
-                                    fontFamily: 'Inter',
-                                    fontSize: isMobile ? 16 : 16,
-                                    lineHeight: 1.5,
-                                    fontWeight: 500
-                                  }}
-                                >
-                                  {renderFeatureText(feature)}
-                                </Typography>
-                              </Box>
-                            );
-                          })}
-                        </Stack>
-
-                        {/* Divider between categories */}
-                        {idx < featureCategories.length - 1 && (
-                          <Divider sx={{ my: 3 }} />
-                        )}
-                      </Box>
-                    );
-                  })}
-
-                  {/* Guarantee strip */}
-                  <Box
-                    sx={{
-                      mt: 3,
-                      p: 2,
-                      bgcolor: '#f0fdf4',
-                      border: '1px solid #dcfce7',
-                      borderRadius: 2
-                    }}
-                  >
-                    <Typography variant="body2" sx={{ color: '#065f46', lineHeight: 1.6 }}>
-                      <strong>7-day no-questions-asked refund.</strong> Cancel anytime from your dashboard.{' '}
-                      Read our{' '}
-                      <a
-                        href="/refund-cancellation-policy"
-                        style={{ color: '#065f46', fontWeight: 600, textDecoration: 'underline' }}
-                      >
-                        Refund Policy
-                      </a>
-                      .
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
+        {/* Trust line */}
+        <Box sx={{ textAlign: 'center', mt: 6, position: 'relative', zIndex: 1 }}>
+          <Typography sx={{ color: '#475569', fontSize: 13, fontFamily: 'Inter' }}>
+            One-time payment · No subscriptions · Meta verified sender
+          </Typography>
+          <Stack direction="row" spacing={3} justifyContent="center" mt={2} flexWrap="wrap">
+            {[
+              { icon: "🔒", text: "No Meta API signup" },
+              { icon: "⚡", text: "Live in 5 minutes" },
+              { icon: "🌍", text: "Works worldwide" },
+            ].map((t, i) => (
+              <Typography key={i} sx={{ color: '#64748B', fontSize: 13, fontWeight: 500, fontFamily: 'Inter', display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <span>{t.icon}</span> {t.text}
+              </Typography>
+            ))}
+          </Stack>
         </Box>
       </Box>
 

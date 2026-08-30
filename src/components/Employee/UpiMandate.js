@@ -8,23 +8,15 @@ import {
   CardHeader,
   Typography,
   TextField,
-  Divider,
   Stack,
   Button,
-  Chip,
-  Tooltip,
   InputAdornment,
   Snackbar,
   Alert,
-  useMediaQuery,
-  LinearProgress,
   Container,
-  Paper,
   Fade,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
-import LockIcon from "@mui/icons-material/Lock";
-import VerifiedUserIcon from "@mui/icons-material/VerifiedUser";
 import PersonIcon from "@mui/icons-material/Person";
 import EmailIcon from "@mui/icons-material/Email";
 import PhoneIphoneIcon from "@mui/icons-material/PhoneIphone";
@@ -39,7 +31,6 @@ const RZP_KEY_ID = "rzp_live_RbZ0rhbWlR25Cl";
 
 export default function UpiMandateModern() {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const dispatch = useDispatch();
 
   const [name, setName] = useState("");
@@ -165,13 +156,13 @@ export default function UpiMandateModern() {
 
     const rzp = new window.Razorpay({
       key: RZP_KEY_ID,
-      name: "Chomske",
+      name: "MyHandle",
       description: "₹399 Monthly Subscription",
       subscription_id,
       recurring: 1,
       method: { upi: true },
       prefill: { name, email, contact: phone },
-      notes: { plan: "Chomske 399 Subscription" },
+      notes: { plan: "MyHandle 399 Subscription" },
       theme: { color: "#6366f1" },
       handler: async function (resp) {
         try {

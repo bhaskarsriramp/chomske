@@ -1,6 +1,4 @@
-// src/realtime/redis.js
-// Shared Redis connection — same GCP Memorystore instance betaFounderProduction
-// uses. Private IP, only reachable from within the VPC the VM sits in.
+// services/redis.js
 const Redis = require("ioredis");
 
 const redis = new Redis({

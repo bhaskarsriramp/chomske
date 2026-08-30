@@ -39,6 +39,8 @@ import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
 import SearchOffIcon from '@mui/icons-material/SearchOff';
 import InstagramIcon from '@mui/icons-material/Instagram';
+import { useNavigate } from "react-router-dom";
+
 
 const NoContactsYet = () => (
     <Box sx={{ py: 6, px: 3, display: "flex", flexDirection: "column", alignItems: "center", gap: 2.5, border: "2px dashed", borderColor: "grey.300", borderRadius: 3, bgcolor: "grey.50", textAlign: "center", mt: 3 }}>
@@ -149,7 +151,7 @@ const UserCard = ({ user }) => (
 );
 
 // --- Main Component ---
-export default function RepliedContacts() { 
+export default function RepliedContactsList() { 
     const theme = useTheme();
     const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
     
@@ -158,6 +160,8 @@ export default function RepliedContacts() {
     const [error, setError] = useState(null);
     const [totalCount, setTotalCount] = useState(0); // Count in selected date range
     const [totalAllTimeCount, setTotalAllTimeCount] = useState(0); // NEW: All time total
+    const navigate = useNavigate();
+
     
     // --- Pagination State ---
     const [page, setPage] = useState(1);
@@ -236,6 +240,27 @@ export default function RepliedContacts() {
             setLoading(false);
         }
     }, [calculateDates, isDesktop]); 
+
+       const fetchIgConnectionStatus = async () => {
+            try {
+              setLoading(true);
+                const res = await axios.get(`${BASE_URL}/instagram-status`, {
+                withCredentials: true,
+              });
+              if(!res.data.instagramConnected){
+                navigate('/professional/automations');
+        
+              }
+            } catch (error) {
+              console.error("Failed to fetch connection status:", error);
+            } finally {
+              setLoading(false);
+            }
+          };
+        
+          useEffect(() => {
+            fetchIgConnectionStatus();
+          }, []);
 
     // --- Effects & Handlers ---
 
