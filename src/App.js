@@ -6,7 +6,7 @@ import api from "./api";
 import LandingPage from "./components/Landing/LandingPage";
 import Dashboard from "./components/Dashboard/Dashboard";
 
-const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || "341385315335-6p5l9nqi7hrm953k4ucr48gr2fvpq6eu.apps.googleusercontent.com";
 
 export default function App() {
   // null = still checking. Distinguishing "unknown" from "signed out" is what
