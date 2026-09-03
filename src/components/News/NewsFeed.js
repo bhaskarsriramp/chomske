@@ -36,7 +36,7 @@ const BARS = [
   { key: 8, label: "Major only" },
 ];
 
-export default function NewsFeed({ onGoTranscribe }) {
+export default function NewsFeed({ onGoTranscribe, voiceRev = 0 }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
@@ -61,7 +61,10 @@ export default function NewsFeed({ onGoTranscribe }) {
     } catch { /* the panel degrades to "transcribe first" — never block the feed */ }
   }, []);
 
-  useEffect(() => { loadVoice(); }, [loadVoice]);
+  // voiceRev changes when videos are added, deleted or re-analysed on the other
+  // screen — without it this pane would keep offering to write in a profile that
+  // no longer matches, or keep saying "transcribe first" after they just did.
+  useEffect(() => { loadVoice(); }, [loadVoice, voiceRev]);
 
   // Nothing polls here: the collector runs on its own 15-minute clock, so a
   // client-side interval would re-read identical rows and add load for nothing.

@@ -53,6 +53,24 @@ a { color: inherit; }
   from { opacity: 0; transform: translateY(18px); }
   to   { opacity: 1; transform: none; }
 }
+@keyframes hg-slide-right {
+  from { transform: translateX(-100%); }
+  to   { transform: none; }
+}
+.hg-slide-right { animation: hg-slide-right .22s cubic-bezier(.2,.7,.3,1) both; }
+
+/* Inactive nav rows warm on hover; the active one is already solid. */
+.hg-nav-item { transition: background .12s ease; }
+.hg-nav-item:hover { background: #F5F1EB !important; }
+
+/* Destructive icon buttons stay quiet until pointed at — a row of red bins
+   reads as a warning screen rather than a list. */
+.hg-icon-btn { transition: background .12s ease, color .12s ease, border-color .12s ease; }
+.hg-icon-btn:hover {
+  background: #FDF1EE !important;
+  border-color: #F3D6CE !important;
+  color: var(--bad) !important;
+}
 .hg-rise { animation: hg-rise .45s cubic-bezier(.2,.7,.3,1) both; }
 .hg-fade { animation: hg-fade .18s ease both; }
 .hg-sheet-up { animation: hg-sheet-up .26s cubic-bezier(.2,.7,.3,1) both; }

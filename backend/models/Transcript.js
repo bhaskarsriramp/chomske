@@ -31,6 +31,17 @@ const TranscriptSchema = new Schema({
   error:    { type: String, default: "" },
   ms_taken: { type: Number, default: 0 },
 
+  // ── Video metadata, from apidirect before we ever pay to read it ───────────
+  // duration_seconds is the gate: voice profiling accepts short-form only, and a
+  // URL tells you nothing about length. Checking for $0.005 beats transcribing a
+  // 40-minute video for ₹60 and then rejecting it.
+  //
+  // null means UNKNOWN, not zero — apidirect returns null for live streams, and
+  // treating that as 0 would let a stream through a "under 60 seconds" check.
+  duration_seconds: { type: Number, default: null },
+  channel:          { type: String, default: "" },
+  thumbnail:        { type: String, default: "" },
+
   // What this row actually cost to produce. Stored per transcript because reading
   // video is the only real cost here and it varies enormously with length — a
   // 60-second Short and a 40-minute talk are two different businesses. Keeping

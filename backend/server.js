@@ -16,7 +16,9 @@ import authRoutes from "./routes/auth.js";
 import transcribeRoutes from "./routes/transcribe.js";
 import newsRoutes from "./routes/news.js";
 import scriptRoutes from "./routes/script.js";
+import statsRoutes from "./routes/stats.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
+import { warmApidirectKeys } from "./services/apidirectClient.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "8001", 10);
@@ -77,6 +79,7 @@ app.use(
   rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
   scriptRoutes
 );
+app.use("/stats", statsRoutes);
 
 // 404 + error handler. Errors are logged in full and answered generically —
 // stack traces and provider messages must never reach the browser.
@@ -104,6 +107,13 @@ function assertConfig() {
       console.log(`[server] Hinglish API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
       console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);
       startNewsScheduler();
+      // Load the key pool once at boot. Without this, isApidirectConfigured()
+      // stays false until something forces a load — and nothing would, because
+      // the duration gate is itself behind that check, so it would silently
+      // never run after a restart.
+      warmApidirectKeys().catch((err) =>
+        console.error("[apidirect] key warmup failed:", err.message)
+      );
     });
   } catch (err) {
     console.error("[server] failed to start:", err.message);

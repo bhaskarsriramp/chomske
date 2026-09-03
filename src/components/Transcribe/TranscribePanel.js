@@ -3,18 +3,20 @@ import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 
 /**
- * Paste a video, get back what was said — in the language it was spoken in.
+ * My voice — the videos that teach us how this creator talks.
  *
- * Transcription is async on the server (a long video outlives an HTTP request),
- * so this posts once and polls the row until it stops being "processing". The
- * interval is cleared on unmount and on completion; a stray one here would keep
- * hitting the API from a screen nobody is looking at.
+ * ── WHY ANALYSIS IS A BUTTON, NOT AUTOMATIC ──────────────────────────────────
+ * Profiling on every added URL would re-analyse the whole set five times while
+ * someone pastes five links, paying four times for a profile that is thrown away.
+ * Worse, the intermediate profiles are wrong: a voice built from video one is a
+ * different voice from one built from all five, so the output would change under
+ * the user for reasons they cannot see. Adding is cheap and incremental;
+ * analysing is one deliberate act over the finished set.
  *
- * On desktop the past transcripts sit in their own rail rather than below the
- * result, so switching between two videos doesn't mean scrolling past a
- * thousand words of the first one.
+ * Transcription still happens per video on add, because that is the part that
+ * genuinely is per-video and it lets someone read each transcript as they go.
  */
-export default function TranscribePanel({ onQuota }) {
+export default function TranscribePanel({ onQuota, onVoiceChange }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
@@ -23,7 +25,15 @@ export default function TranscribePanel({ onQuota }) {
   const [submitting, setSubmitting] = useState(false);
   const [active, setActive] = useState(null);
   const [history, setHistory] = useState([]);
+  const [meta, setMeta] = useState(null);      // slots, ready_count, mixed_languages
   const [copied, setCopied] = useState(false);
+
+  const [voice, setVoice] = useState(null);
+  const [analysing, setAnalysing] = useState(false);
+  const [analysed, setAnalysed] = useState(false);
+
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const pollRef = useRef(null);
 
@@ -31,11 +41,24 @@ export default function TranscribePanel({ onQuota }) {
     try {
       const { data } = await api.get("/transcribe", { params: { limit: 20 } });
       setHistory(data.transcripts || []);
+      setMeta({
+        slots: data.slots,
+        ready: data.ready_count || 0,
+        mixed: data.mixed_languages,
+        maxSeconds: data.max_seconds || 60,
+      });
       onQuota?.(data.quota || null);
-    } catch { /* history is secondary — never block the main flow on it */ }
+    } catch { /* secondary — never block the main flow on it */ }
   }, [onQuota]);
 
-  useEffect(() => { loadHistory(); }, [loadHistory]);
+  const loadVoice = useCallback(async () => {
+    try {
+      const { data } = await api.get("/script/voice");
+      setVoice(data);
+    } catch { /* the panel degrades to "not built yet" */ }
+  }, []);
+
+  useEffect(() => { loadHistory(); loadVoice(); }, [loadHistory, loadVoice]);
   useEffect(() => () => clearInterval(pollRef.current), []);
 
   const startPolling = useCallback((id) => {
@@ -43,15 +66,14 @@ export default function TranscribePanel({ onQuota }) {
     pollRef.current = setInterval(async () => {
       try {
         const { data } = await api.get(`/transcribe/${id}`);
-        const t = data.transcript;
-        setActive(t);
-        if (t.status !== "processing") {
+        setActive(data.transcript);
+        if (data.transcript.status !== "processing") {
           clearInterval(pollRef.current);
           loadHistory();
         }
       } catch (err) {
         clearInterval(pollRef.current);
-        setError(errorMessage(err, "Lost track of that transcription. Try opening it from the list."));
+        setError(errorMessage(err, "Lost track of that video. Try opening it from the list."));
       }
     }, 3000);
   }, [loadHistory]);
@@ -68,23 +90,52 @@ export default function TranscribePanel({ onQuota }) {
     setSubmitting(true);
     try {
       const { data } = await api.post("/transcribe", { url: value });
-      const t = data.transcript;
-      setActive(t);
+      setActive(data.transcript);
       setUrl("");
-      if (t.status === "processing") startPolling(t.id);
+      setAnalysed(false);   // the set changed, so the last analysis is behind
+      if (data.transcript.status === "processing") startPolling(data.transcript.id);
       else loadHistory();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setSubmitting(false);
+      loadHistory();
     }
   }
 
-  function openFromHistory(item) {
+  async function doDelete() {
+    if (!confirmDelete || deleting) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/transcribe/${confirmDelete.id}`);
+      if (active?.id === confirmDelete.id) setActive(null);
+      setConfirmDelete(null);
+      setAnalysed(false);
+      await loadHistory();
+      await loadVoice();
+      onVoiceChange?.();
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't delete that video."));
+      setConfirmDelete(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function analyseVoice() {
+    if (analysing) return;
     setError("");
-    setCopied(false);
-    setActive(item);
-    if (item.status === "processing") startPolling(item.id);
+    setAnalysing(true);
+    try {
+      const { data } = await api.post("/script/voice/rebuild");
+      setVoice((v) => ({ ...(v || {}), profile: data.profile, stale: false }));
+      setAnalysed(true);
+      onVoiceChange?.();
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't analyse your voice. Please try again."));
+    } finally {
+      setAnalysing(false);
+    }
   }
 
   function copyText() {
@@ -95,56 +146,64 @@ export default function TranscribePanel({ onQuota }) {
     );
   }
 
-  const gut = isPhone ? 16 : 26;
+  const gut = isPhone ? 16 : 30;
+  const full = meta?.slots ? meta.slots.left <= 0 : false;
+  const canAnalyse = (meta?.ready || 0) > 0;
 
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0, width: "100%" }}>
       <section
         className="hg-scroll"
-        style={{
-          flex: "1 1 0", minWidth: 0, minHeight: 0,
-          padding: `${isPhone ? 18 : 26}px ${gut}px ${isPhone ? 40 : 60}px`,
-        }}
+        style={{ flex: "1 1 0", minWidth: 0, minHeight: 0, padding: `${isPhone ? 18 : 28}px ${gut}px ${isPhone ? 40 : 60}px` }}
       >
-        <h1
-          style={{
-            fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
-            color: "var(--ink)", margin: "0 0 5px",
-          }}
-        >
-          Paste a video
+        <h1 style={{ fontSize: isPhone ? 21 : 25, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 5px" }}>
+          My voice
         </h1>
-        <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 18px" }}>
-          Any public YouTube link. The transcript comes back in the language it was spoken in.
+        <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 20px", lineHeight: 1.6 }}>
+          Add up to {meta?.slots?.max || 5} of your own short videos, under {meta?.maxSeconds || 60} seconds
+          each. We read how you open, the words you keep in English and how you sign off,
+          then write new scripts that sound like you.
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: isPhone ? "column" : "row", gap: 9 }}>
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.youtube.com/watch?v=…"
+            placeholder="https://www.youtube.com/shorts/…"
             aria-label="YouTube video URL"
-            disabled={submitting}
+            disabled={submitting || full}
             style={{
               flex: 1, minWidth: 0, fontSize: 14.5, padding: "13px 15px",
               border: "1px solid var(--line)", borderRadius: 11,
-              background: "var(--card)", color: "var(--ink)", outline: "none",
+              background: full ? "#F7F5F1" : "var(--card)",
+              color: "var(--ink)", outline: "none",
             }}
           />
           <button
             type="submit"
             className="hg-btn-primary"
-            disabled={submitting}
+            disabled={submitting || full}
             style={{
               fontSize: 14.5, fontWeight: 600, padding: "13px 22px", borderRadius: 11,
               border: "none", background: "var(--accent)", color: "#fff",
-              cursor: submitting ? "default" : "pointer",
-              opacity: submitting ? 0.65 : 1, whiteSpace: "nowrap",
+              cursor: submitting || full ? "default" : "pointer",
+              opacity: submitting || full ? 0.55 : 1, whiteSpace: "nowrap",
             }}
           >
-            {submitting ? "Starting…" : "Transcribe"}
+            {submitting ? "Adding…" : "Add video"}
           </button>
         </form>
+
+        {meta?.slots && (
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <SlotDots used={meta.slots.used} max={meta.slots.max} />
+            <span style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>
+              {full
+                ? `All ${meta.slots.max} slots used. Delete one to add another.`
+                : `${meta.slots.used} of ${meta.slots.max} added`}
+            </span>
+          </div>
+        )}
 
         {error && (
           <div
@@ -159,6 +218,29 @@ export default function TranscribePanel({ onQuota }) {
           </div>
         )}
 
+        {meta?.mixed && (
+          <div
+            style={{
+              marginTop: 13, padding: "12px 14px", borderRadius: 10,
+              background: "var(--accent-soft)", border: "1px solid #F6DDCE",
+              fontSize: 13, lineHeight: 1.6, color: "var(--ink-body)",
+            }}
+          >
+            <strong style={{ color: "var(--ink)" }}>These videos are in different languages</strong>{" "}
+            ({meta.mixed.join(", ")}). A voice profile is one person, so mixing languages
+            blends them into a voice that is nobody's. Keep one creator's videos here.
+          </div>
+        )}
+
+        <AnalyseBlock
+          voice={voice}
+          canAnalyse={canAnalyse}
+          readyCount={meta?.ready || 0}
+          analysing={analysing}
+          analysed={analysed}
+          onAnalyse={analyseVoice}
+        />
+
         {active && (
           <Result
             t={active}
@@ -169,12 +251,10 @@ export default function TranscribePanel({ onQuota }) {
           />
         )}
 
-        {/* Below the split point the rail has nowhere to live, so past
-            transcripts fall in under the result. */}
         {isNarrow && history.length > 0 && (
-          <div style={{ marginTop: 36 }}>
-            <RailHeading>Recent</RailHeading>
-            <HistoryList items={history} activeId={active?.id} onOpen={openFromHistory} />
+          <div style={{ marginTop: 34 }}>
+            <RailHeading>Your videos</RailHeading>
+            <VideoList items={history} activeId={active?.id} onOpen={setActive} onDelete={setConfirmDelete} />
           </div>
         )}
       </section>
@@ -185,24 +265,200 @@ export default function TranscribePanel({ onQuota }) {
           style={{
             flex: "0 0 clamp(280px, 24%, 400px)", minHeight: 0,
             borderLeft: "1px solid var(--line)", background: "var(--paper)",
-            padding: "26px 20px 60px",
+            padding: "28px 20px 60px",
           }}
         >
-          <RailHeading>Recent</RailHeading>
+          <RailHeading>Your videos</RailHeading>
           {history.length ? (
-            <HistoryList items={history} activeId={active?.id} onOpen={openFromHistory} />
+            <VideoList items={history} activeId={active?.id} onOpen={setActive} onDelete={setConfirmDelete} />
           ) : (
             <p style={{ fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.6, margin: 0 }}>
-              Videos you transcribe will collect here.
+              Videos you add will collect here.
             </p>
           )}
         </aside>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          item={confirmDelete}
+          busy={deleting}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={doDelete}
+        />
       )}
     </div>
   );
 }
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */
+
+function SlotDots({ used, max }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 4 }} aria-hidden="true">
+      {Array.from({ length: max }).map((_, i) => (
+        <span
+          key={i}
+          style={{
+            width: 7, height: 7, borderRadius: "50%",
+            background: i < used ? "var(--accent)" : "#E2DCD3",
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function AnalyseBlock({ voice, canAnalyse, readyCount, analysing, analysed, onAnalyse }) {
+  const profile = voice?.profile;
+  // Behind if the profile never saw the current set — either the server says so,
+  // or a video was added or deleted since it last ran.
+  const stale = profile && (voice?.stale || profile.transcript_count !== readyCount);
+
+  return (
+    <section
+      style={{
+        marginTop: 22, padding: 18, borderRadius: "var(--radius)",
+        background: "var(--card)",
+        border: `1px solid ${stale ? "#F6DDCE" : "var(--line)"}`,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 4 }}>
+            {profile ? "Your voice profile" : "Analyse your voice"}
+          </div>
+          <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink-body)" }}>
+            {!canAnalyse
+              ? "Add at least one video, then analyse."
+              : stale
+              ? `Your videos changed since this was built. Re-analyse to use all ${readyCount}.`
+              : profile
+              ? `${profile.language_label || "Learned"} · from ${profile.transcript_count} video${profile.transcript_count === 1 ? "" : "s"}`
+              : `Ready to analyse ${readyCount} video${readyCount === 1 ? "" : "s"}. This runs once, not per video.`}
+          </div>
+          {profile && !stale && profile.confidence === "thin" && (
+            <div style={{ fontSize: 12.5, color: "var(--ink-mute)", marginTop: 6, lineHeight: 1.55 }}>
+              One video is a hint, not a voice. Three or more is where scripts start
+              genuinely sounding like you.
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={onAnalyse}
+          disabled={!canAnalyse || analysing}
+          className={!canAnalyse || analysing ? undefined : "hg-btn-primary"}
+          style={{
+            fontSize: 14, fontWeight: 600, padding: "11px 18px", borderRadius: 11,
+            border: "none", flexShrink: 0,
+            background: !canAnalyse || analysing ? "#E9E4DB" : "var(--accent)",
+            color: !canAnalyse || analysing ? "var(--ink-mute)" : "#fff",
+            cursor: !canAnalyse || analysing ? "default" : "pointer",
+          }}
+        >
+          {analysing ? "Analysing…" : profile ? "Re-analyse" : "Analyse my voice"}
+        </button>
+      </div>
+
+      {analysed && !analysing && profile && (
+        <div
+          className="hg-rise"
+          style={{
+            marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)",
+            display: "flex", flexDirection: "column", gap: 9,
+          }}
+        >
+          {profile.sample_openings?.length > 0 && (
+            <ProfileRow label="How you open">
+              <span className="indic">“{profile.sample_openings[0]}”</span>
+            </ProfileRow>
+          )}
+          {profile.signature_phrases?.length > 0 && (
+            <ProfileRow label="Your phrases">
+              <span className="indic">{profile.signature_phrases.slice(0, 6).join(" · ")}</span>
+            </ProfileRow>
+          )}
+          {profile.sentiment && <ProfileRow label="Your stance">{profile.sentiment}</ProfileRow>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProfileRow({ label, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--ink-mute)", marginBottom: 3 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)" }}>{children}</div>
+    </div>
+  );
+}
+
+function ConfirmDialog({ item, busy, onCancel, onConfirm }) {
+  return (
+    <>
+      <div
+        onClick={busy ? undefined : onCancel}
+        className="hg-fade"
+        style={{ position: "fixed", inset: 0, background: "rgba(18,16,13,.4)", zIndex: 70 }}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Delete video"
+        className="hg-sheet-up"
+        style={{
+          position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+          zIndex: 71, width: "min(420px, calc(100vw - 32px))",
+          background: "var(--card)", border: "1px solid var(--line)",
+          borderRadius: "var(--radius)", padding: 22,
+          boxShadow: "0 30px 70px -30px rgba(18,16,13,.5)",
+        }}
+      >
+        <div style={{ fontSize: 17, fontWeight: 700, color: "var(--ink)", marginBottom: 8, letterSpacing: "-0.02em" }}>
+          Delete this video?
+        </div>
+        <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--ink-body)", margin: "0 0 6px" }}>
+          <span className="indic" style={{ fontWeight: 600, color: "var(--ink)" }}>
+            {item.title || item.url}
+          </span>
+        </p>
+        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 0 18px" }}>
+          Its transcript goes too, and it frees a slot. Your voice profile keeps working
+          until you re-analyse without it.
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="hg-btn-ghost"
+            style={{
+              fontSize: 13.5, fontWeight: 600, padding: "10px 16px", borderRadius: 10,
+              border: "1px solid var(--line)", background: "var(--card)",
+              color: "var(--ink-body)", cursor: busy ? "default" : "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              fontSize: 13.5, fontWeight: 600, padding: "10px 16px", borderRadius: 10,
+              border: "1px solid var(--bad)", background: "var(--bad)", color: "#fff",
+              cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1,
+            }}
+          >
+            {busy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
 
 function RailHeading({ children }) {
   return (
@@ -217,17 +473,75 @@ function RailHeading({ children }) {
   );
 }
 
+function VideoList({ items, activeId, onOpen, onDelete }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+      {items.map((it) => {
+        const on = it.id === activeId;
+        return (
+          <div
+            key={it.id}
+            className={on ? undefined : "hg-row"}
+            style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "10px 10px 10px 12px",
+              background: on ? "#FBF6F1" : "var(--card)",
+              border: `1px solid ${on ? "#EBD8C8" : "var(--line)"}`,
+              borderLeft: `3px solid ${on ? "var(--accent)" : "transparent"}`,
+              borderRadius: 10,
+            }}
+          >
+            <button
+              onClick={() => onOpen(it)}
+              style={{
+                flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
+                border: "none", background: "transparent", padding: 0,
+              }}
+            >
+              <span
+                className="indic"
+                style={{
+                  display: "block", fontSize: 13.5, fontWeight: 500, color: "var(--ink)",
+                  lineHeight: 1.45, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}
+              >
+                {it.title || it.url}
+              </span>
+              <span style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11.5, color: "var(--ink-mute)", marginTop: 3 }}>
+                <StatusTag status={it.status} />
+                {it.duration_seconds != null && <span>{it.duration_seconds}s</span>}
+                {it.language_label && <span>· {it.language_label}</span>}
+              </span>
+            </button>
+
+            <button
+              onClick={() => onDelete(it)}
+              aria-label={`Delete ${it.title || "video"}`}
+              title="Delete"
+              className="hg-icon-btn"
+              style={{
+                flexShrink: 0, display: "grid", placeItems: "center",
+                width: 30, height: 30, borderRadius: 8,
+                border: "1px solid transparent", background: "transparent",
+                color: "var(--ink-mute)", cursor: "pointer",
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+              </svg>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Result({ t, isPhone, onCopy, copied, onRetry }) {
   if (t.status === "processing") return <Processing />;
 
   if (t.status === "failed") {
     return (
-      <div
-        style={{
-          marginTop: 22, padding: 19, borderRadius: "var(--radius)",
-          background: "#FDF1EE", border: "1px solid #F3D6CE",
-        }}
-      >
+      <div style={{ marginTop: 22, padding: 19, borderRadius: "var(--radius)", background: "#FDF1EE", border: "1px solid #F3D6CE" }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--bad)", marginBottom: 6 }}>
           Couldn't read this video
         </div>
@@ -253,7 +567,7 @@ function Result({ t, isPhone, onCopy, copied, onRetry }) {
     <div
       className="hg-rise"
       style={{
-        marginTop: 24, background: "var(--card)", border: "1px solid var(--line)",
+        marginTop: 22, background: "var(--card)", border: "1px solid var(--line)",
         borderRadius: "var(--radius)", overflow: "hidden",
       }}
     >
@@ -276,7 +590,7 @@ function Result({ t, isPhone, onCopy, copied, onRetry }) {
               {t.title}
             </div>
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: t.title ? 6 : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: t.title ? 6 : 0, flexWrap: "wrap" }}>
             {t.language_label && (
               <span
                 style={{
@@ -287,12 +601,10 @@ function Result({ t, isPhone, onCopy, copied, onRetry }) {
                 {t.language_label}
               </span>
             )}
-            <a
-              href={t.url}
-              target="_blank"
-              rel="noreferrer"
-              style={{ fontSize: 12, color: "var(--ink-mute)", textDecoration: "none" }}
-            >
+            {t.duration_seconds != null && (
+              <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>{t.duration_seconds}s</span>
+            )}
+            <a href={t.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "var(--ink-mute)", textDecoration: "none" }}>
               open on YouTube ↗
             </a>
           </div>
@@ -314,11 +626,8 @@ function Result({ t, isPhone, onCopy, copied, onRetry }) {
       <div
         className="indic"
         style={{
-          padding: isPhone ? 18 : 26,
-          fontSize: isPhone ? 15.5 : 16.5,
-          color: "var(--ink)",
-          whiteSpace: "pre-wrap",   // the model returns real paragraph breaks
-          wordBreak: "break-word",
+          padding: isPhone ? 18 : 26, fontSize: isPhone ? 15.5 : 16.5,
+          color: "var(--ink)", whiteSpace: "pre-wrap", wordBreak: "break-word",
         }}
       >
         {t.text}
@@ -331,7 +640,7 @@ function Processing() {
   return (
     <div
       style={{
-        marginTop: 24, padding: 24, borderRadius: "var(--radius)",
+        marginTop: 22, padding: 24, borderRadius: "var(--radius)",
         background: "var(--card)", border: "1px solid var(--line)",
         display: "flex", alignItems: "center", gap: 14,
       }}
@@ -347,52 +656,9 @@ function Processing() {
       <div>
         <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--ink)" }}>Listening to the video…</div>
         <div style={{ fontSize: 13, color: "var(--ink-mute)", marginTop: 3 }}>
-          A few minutes for a long one. You can leave this page open.
+          A few seconds for a Short. You can leave this page open.
         </div>
       </div>
-    </div>
-  );
-}
-
-function HistoryList({ items, activeId, onOpen }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-      {items.map((it) => {
-        const on = it.id === activeId;
-        return (
-          <button
-            key={it.id}
-            onClick={() => onOpen(it)}
-            className={on ? undefined : "hg-row"}
-            style={{
-              textAlign: "left", width: "100%", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-              padding: "11px 13px",
-              background: on ? "#FBF6F1" : "var(--card)",
-              border: `1px solid ${on ? "#EBD8C8" : "var(--line)"}`,
-              borderLeft: `3px solid ${on ? "var(--accent)" : "transparent"}`,
-              borderRadius: 10,
-            }}
-          >
-            <span style={{ minWidth: 0, flex: 1 }}>
-              <span
-                className="indic"
-                style={{
-                  display: "block", fontSize: 13.5, fontWeight: 500, color: "var(--ink)",
-                  lineHeight: 1.45,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}
-              >
-                {it.title || it.url}
-              </span>
-              <span style={{ display: "block", fontSize: 11.5, color: "var(--ink-mute)", marginTop: 3 }}>
-                {new Date(it.created_at).toLocaleDateString()} · {it.language_label || "—"}
-              </span>
-            </span>
-            <StatusTag status={it.status} />
-          </button>
-        );
-      })}
     </div>
   );
 }
@@ -407,7 +673,7 @@ function StatusTag({ status }) {
   return (
     <span
       style={{
-        fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 999,
+        fontSize: 10.5, fontWeight: 600, padding: "2px 7px", borderRadius: 999,
         color: s.color, background: s.bg, border: `1px solid ${s.border}`,
         whiteSpace: "nowrap", flexShrink: 0,
       }}
