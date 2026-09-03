@@ -25,7 +25,7 @@ const PORT = parseInt(process.env.PORT || "8001", 10);
 // as if they were one person.
 app.set("trust proxy", 1);
 
-const allowedOrigins = String(process.env.CORS_ORIGINS || "http://localhost:3000")
+const allowedOrigins = String(process.env.CORS_ORIGINS || "http://localhost:4800")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
