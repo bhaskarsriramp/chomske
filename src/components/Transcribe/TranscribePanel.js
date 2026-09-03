@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
+import Skeleton from "../Shell/Skeleton";
 
 /**
  * My voice — the videos that teach us how this creator talks.
@@ -193,6 +194,16 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
             {submitting ? "Adding…" : "Add video"}
           </button>
         </form>
+
+        {/* Held back until the real count arrives. Rendering five empty dots and
+            "0 of 5 added" while the request is in flight tells someone who has
+            four videos that they have none. */}
+        {!meta?.slots && (
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 9 }}>
+            <Skeleton variant="rectangular" width={63} height={7} style={{ borderRadius: 99 }} />
+            <Skeleton variant="text" width={104} height={10} />
+          </div>
+        )}
 
         {meta?.slots && (
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>

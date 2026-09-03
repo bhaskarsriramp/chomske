@@ -6,6 +6,7 @@ import NewsFeed from "../News/NewsFeed";
 import TranscribePanel from "../Transcribe/TranscribePanel";
 import DashboardHome from "./DashboardHome";
 import ProfilePanel from "../Profile/ProfilePanel";
+import ScriptsPanel from "../Scripts/ScriptsPanel";
 import Logo from "../Shell/Logo";
 
 /**
@@ -22,7 +23,7 @@ import Logo from "../Shell/Logo";
  * opened and then stays mounted, hidden. Dashboard is the exception — it holds no
  * in-flight work and its numbers should be fresh on every visit, so it remounts.
  */
-export const TAB_IDS = ["topics", "voice", "dashboard", "profile"];
+export const TAB_IDS = ["topics", "voice", "scripts", "dashboard", "profile"];
 
 export default function Dashboard({ user, onSignOut, onUserChange }) {
   const isNarrow = useIsMobile(900);
@@ -147,12 +148,24 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
             </div>
           )}
 
+          {/* Remounted on each visit, like the dashboard: a list of scripts is a
+              record, and a stale one is a record that has silently stopped being
+              true the moment another script finishes writing. */}
+          {tab === "scripts" && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+              <ScriptsPanel onGoTopics={() => openTab("topics")} />
+            </div>
+          )}
+
           {/* Remounted on each visit on purpose: it holds no polling work, and a
               dashboard showing numbers cached from an hour ago is worse than one
               that takes a moment to load. */}
           {tab === "dashboard" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <DashboardHome onGoTranscribe={() => openTab("voice")} />
+              <DashboardHome
+                onGoTranscribe={() => openTab("voice")}
+                onGoScripts={() => openTab("scripts")}
+              />
             </div>
           )}
 

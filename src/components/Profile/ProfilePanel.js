@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import { categoryColor } from "../../theme";
+import Skeleton from "../Shell/Skeleton";
 
 /**
  * Profile — the connected account, and the way out.
@@ -206,7 +207,31 @@ function CategoriesSection({ user, onUserChange, isPhone }) {
     }
   }
 
-  if (!cats.length) return null;
+  // A section that appears out of nowhere a second after the page settles makes
+  // everything below it jump. Reserve the space it will occupy.
+  if (!cats.length) {
+    return (
+      <section
+        style={{
+          marginTop: 16, padding: isPhone ? 18 : 22, borderRadius: "var(--radius)",
+          background: "var(--card)", border: "1px solid var(--line)",
+        }}
+      >
+        <Skeleton variant="text" width={128} height={14} />
+        <div style={{ height: 10 }} />
+        <Skeleton variant="text" width="78%" height={10} />
+        <div style={{ height: 16 }} />
+        <div
+          style={{
+            display: "grid", gap: 9,
+            gridTemplateColumns: isPhone ? "1fr" : "repeat(auto-fit, minmax(220px, 1fr))",
+          }}
+        >
+          {[0, 1, 2, 3].map((i) => <Skeleton key={i} variant="rectangular" height={62} />)}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section

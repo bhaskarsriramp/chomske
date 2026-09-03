@@ -15,6 +15,7 @@
 import { GoogleGenAI } from "@google/genai";
 import Transcript from "../models/Transcript.js";
 import VoiceProfile from "../models/VoiceProfile.js";
+import { measureVoice, metricsBlock } from "./voiceMetrics.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
@@ -295,6 +296,7 @@ export async function buildVoiceProfile(userId) {
     language_label: languageLabel,
     confidence,
     usage,
+    metrics,
     built_at: new Date(),
   };
 

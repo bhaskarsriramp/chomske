@@ -19,6 +19,7 @@
  */
 import { GoogleGenAI } from "@google/genai";
 import NewsItem from "../models/NewsItem.js";
+import { metricsBlock, gradeDraft } from "./voiceMetrics.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
@@ -86,6 +87,10 @@ export async function writeScript({ profile, item }) {
 
 ════════ THE CREATOR'S VOICE ════════
 ${profile.style_brief || "(no brief available)"}
+${profile.metrics ? `
+MEASURED FROM THEIR OWN VIDEOS — match these, they are not suggestions:
+${metricsBlock(profile.metrics)}
+` : ""}
 
 They speak: ${language}${profile.language ? ` (${profile.language})` : ""}
 Their usual stance: ${profile.sentiment || "unknown"}
@@ -147,54 +152,106 @@ Return STRICT JSON only:
   "title_suggestions": ["3 video titles in their language, in their style"]
 }`;
 
-  let res;
-  try {
-    res = await client().models.generateContent({
-      model: MODEL,
-      contents: prompt,
-      config: {
-        // Higher than the analysis passes: this is writing, and a near-zero
-        // temperature here produces flat, safe copy that reads as generic.
-        temperature: 0.9,
-        responseMimeType: "application/json",
-        maxOutputTokens: 8192,
-        // Thinking off by default, matching the measured finding elsewhere in this
-        // codebase. Script quality is the one place it might genuinely pay for
-        // itself — set GEMINI_SCRIPT_THINKING to a budget and compare output
-        // side by side before leaving it on, because it bills at the output rate.
-        thinkingConfig: {
-          thinkingBudget: parseInt(process.env.GEMINI_SCRIPT_THINKING || "0", 10),
-        },
-      },
-    });
-  } catch (err) {
-    console.error("[script] Gemini call failed:", err.message);
-    const e = new Error(err.message);
-    e.userMessage = "Couldn't write the script right now. Please try again.";
-    throw e;
-  }
+  // ── Write, grade, and correct ───────────────────────────────────────────
+  //
+  // The grader is the reason this is more than a good prompt. A draft is
+  // measured on the same axes the profile was measured on — how much English is
+  // in it, how long the sentences run, whether it asks the viewer anything — and
+  // compared to the creator's own numbers. Where it has drifted, the specific
+  // gap is handed back and the draft is rewritten once.
+  //
+  // This catches the failure that is hardest to see and most damaging: a script
+  // that is fluent, accurate, on-topic, and sounds like a different person. No
+  // human is checking every generation, and "match their style" in a prompt is
+  // unfalsifiable. A number is not.
+  let attempt = 0;
+  let correction = "";
+  let parsed = null;
+  let text = "";
+  let res = null;
+  let usage = { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, total_tokens: 0, usd: 0 };
+  let drift = [];
 
-  const raw = res?.text || "";
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // Same salvage logic as transcription: a long generation that stops mid-JSON
-    // still contains a usable script, and throwing it away bills the user twice.
-    const salvaged = raw.match(/"script"\s*:\s*"([\s\S]*)$/);
-    if (!salvaged) {
-      const e = new Error("Unparseable script response");
-      e.userMessage = "The script came back malformed. Please try again.";
+  while (attempt < 2) {
+    attempt++;
+
+    try {
+      res = await client().models.generateContent({
+        model: MODEL,
+        contents: correction ? `${prompt}\n\n${correction}` : prompt,
+        config: {
+          // Higher than the analysis passes: this is writing, and a near-zero
+          // temperature here produces flat, safe copy that reads as generic.
+          temperature: 0.9,
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192,
+          // Thinking off by default, matching the measured finding elsewhere in
+          // this codebase. Script quality is the one place it might genuinely pay
+          // for itself — set GEMINI_SCRIPT_THINKING to a budget and compare
+          // output side by side before leaving it on, because it bills at the
+          // output rate.
+          thinkingConfig: {
+            thinkingBudget: parseInt(process.env.GEMINI_SCRIPT_THINKING || "0", 10),
+          },
+        },
+      });
+    } catch (err) {
+      console.error("[script] Gemini call failed:", err.message);
+      const e = new Error(err.message);
+      e.userMessage = "Couldn't write the script right now. Please try again.";
       throw e;
     }
-    parsed = { script: unescapeJsonish(salvaged[1]), hook: "", title_suggestions: [] };
-  }
 
-  const text = String(parsed.script || "").trim();
-  if (!text) {
-    const e = new Error("Empty script");
-    e.userMessage = "The model returned an empty script. Please try again.";
-    throw e;
+    const u = readUsage(res);
+    for (const k of Object.keys(usage)) usage[k] += u[k] || 0;
+
+    const raw = res?.text || "";
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Same salvage logic as transcription: a long generation that stops
+      // mid-JSON still contains a usable script, and throwing it away bills the
+      // user twice.
+      const salvaged = raw.match(/"script"\s*:\s*"([\s\S]*)$/);
+      if (!salvaged) {
+        const e = new Error("Unparseable script response");
+        e.userMessage = "The script came back malformed. Please try again.";
+        throw e;
+      }
+      parsed = { script: unescapeJsonish(salvaged[1]), hook: "", title_suggestions: [] };
+    }
+
+    text = String(parsed.script || "").trim();
+    if (!text) {
+      const e = new Error("Empty script");
+      e.userMessage = "The model returned an empty script. Please try again.";
+      throw e;
+    }
+
+    // Nothing to grade against on a profile built before metrics existed.
+    if (!profile.metrics) break;
+
+    const grade = gradeDraft(text, profile.metrics);
+    drift = grade.drift;
+    if (grade.ok) break;
+
+    if (attempt >= 2) {
+      // Kept anyway. A script that drifts on one axis is still usable, and a
+      // second failed rewrite means the creator waits twice as long for nothing.
+      console.warn(`[script] style drift persisted after retry: ${drift.join(" / ")}`);
+      break;
+    }
+
+    console.log(`[script] rewriting once — ${drift.length} style gap(s)`);
+    correction = [
+      "════════ THAT DRAFT MISSED THEIR VOICE ════════",
+      "You already wrote this once and it did not match how this person actually",
+      "talks. Measured against their own videos:",
+      "",
+      ...drift.map((d) => `- ${d}`),
+      "",
+      "Write it again, same facts, same angle, fixing exactly these. Change nothing else.",
+    ].join("\n");
   }
 
   return {
@@ -206,7 +263,10 @@ Return STRICT JSON only:
     language: profile.language || "",
     language_label: profile.language_label || "",
     sources_used: coverage.map((c) => c.url).filter(Boolean),
-    usage: readUsage(res),
+    // Accumulated across attempts, so a rewrite is visible in the bill rather
+    // than reported as though it were a single call.
+    usage,
+    style_drift: drift,
   };
 }
 

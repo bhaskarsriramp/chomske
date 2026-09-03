@@ -12,6 +12,7 @@ import NewsItem from "../models/NewsItem.js";
 import Script from "../models/Script.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 import { writeScript } from "../services/scriptWriterService.js";
+import { getCategory } from "../services/categories.js";
 import { buildVoiceProfile, getUsableProfile, profileStatus } from "../services/voiceProfileService.js";
 
 const router = express.Router();
@@ -124,6 +125,89 @@ router.post("/", authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("[script] POST failed:", err);
     return res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+});
+
+/**
+ * GET /script — everything this creator has written, newest first.
+ *
+ * Each row carries the topic it came from, not just the headline stored on the
+ * script. A script read back a week later is unusable without the story behind
+ * it: the whole promise is "check the facts before you say them", and a list of
+ * bare headlines cannot be checked against anything.
+ *
+ *   ?limit=20     rows per page (max 50)
+ *   ?before=ISO   cursor: created_at strictly older than this
+ */
+router.get("/", authenticateToken, async (req, res) => {
+  try {
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+
+    const q = { user: req.user.id };
+    if (req.query.before) {
+      const before = new Date(String(req.query.before));
+      if (!isNaN(before)) q.created_at = { $lt: before };
+    }
+
+    // One extra row tells us whether another page exists without a count query.
+    const docs = await Script.find(q).sort({ created_at: -1 }).limit(limit + 1).lean();
+    const hasMore = docs.length > limit;
+    if (hasMore) docs.length = limit;
+
+    // The topics, in one query rather than one per script.
+    const itemIds = [...new Set(docs.map((d) => d.news_item).filter(Boolean).map(String))];
+    const items = itemIds.length
+      ? await NewsItem.find({ _id: { $in: itemIds } })
+          .select("title summary brief category cluster_id ai_angle ai_score first_seen_at")
+          .lean()
+      : [];
+    const byItem = new Map(items.map((i) => [String(i._id), i]));
+
+    // Real names for the source links. sources_used holds bare URLs, and a list
+    // of raw hrefs is something a creator has to hover to read — these are the
+    // rows those URLs came from, so the outlet and its headline come free.
+    const urls = [...new Set(docs.flatMap((d) => d.sources_used || []))];
+    const srcRows = urls.length
+      ? await NewsItem.find({ url: { $in: urls } }).select("url source title published_at").lean()
+      : [];
+    const bySrc = new Map(srcRows.map((s) => [s.url, s]));
+
+    return res.json({
+      success: true,
+      count: docs.length,
+      has_more: hasMore,
+      next_before: hasMore && docs.length ? docs[docs.length - 1].created_at : null,
+      scripts: docs.map((d) => {
+        const topic = byItem.get(String(d.news_item)) || null;
+        return {
+          ...shape(d),
+          topic: topic
+            ? {
+                id: String(topic._id),
+                title: topic.title,
+                // The 100-120 word read, falling back to the collected summary.
+                brief: topic.brief || topic.summary || "",
+                angle: topic.ai_angle || "",
+                category: topic.category || "",
+                category_label: getCategory(topic.category)?.label || "",
+                first_seen_at: topic.first_seen_at,
+              }
+            : null,
+          sources: (d.sources_used || []).map((url) => {
+            const s = bySrc.get(url);
+            return {
+              url,
+              source: s?.source || "",
+              title: s?.title || "",
+              published_at: s?.published_at || null,
+            };
+          }),
+        };
+      }),
+    });
+  } catch (err) {
+    console.error("[script] GET / failed:", err);
+    return res.status(500).json({ success: false, message: "Couldn't load your scripts." });
   }
 });
 

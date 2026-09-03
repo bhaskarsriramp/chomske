@@ -60,6 +60,13 @@ const VoiceProfileSchema = new Schema({
   // re-derive the style every time.
   style_brief: { type: String, default: "" },
 
+  // Counted, not described. Code-mixing ratio, sentence lengths, question rate,
+  // the English words they actually keep, the phrases repeated across videos.
+  // Computed by services/voiceMetrics.js with no model involved, which is why
+  // these are the only fields here that cannot be hallucinated — and why the
+  // script writer can be held to them numerically instead of asked nicely.
+  metrics: { type: mongoose.Schema.Types.Mixed, default: null },
+
   // How much to trust this. One video is a hint; five is a voice. Surfaced in the
   // UI so a thin profile never silently passes for a good one.
   confidence: { type: String, enum: ["thin", "fair", "good"], default: "thin" },

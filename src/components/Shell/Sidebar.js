@@ -24,6 +24,7 @@ const SECTIONS = [
     items: [
       { id: "topics", label: "Topics", icon: TargetIcon },
       { id: "voice", label: "My voice", icon: WaveIcon },
+      { id: "scripts", label: "My scripts", icon: ScriptIcon },
     ],
   },
   {
@@ -154,6 +155,16 @@ function WaveIcon() {
   return (
     <svg {...svg} aria-hidden="true">
       <path d="M4 11v2M8 7.5v9M12 4.5v15M16 8.5v7M20 11v2" />
+    </svg>
+  );
+}
+
+function ScriptIcon() {
+  return (
+    <svg {...svg} aria-hidden="true">
+      <path d="M6 3.5h8.5L19 8v12.5H6z" />
+      <path d="M14 3.5V8h5" />
+      <path d="M9 12.5h7M9 16h4.5" />
     </svg>
   );
 }

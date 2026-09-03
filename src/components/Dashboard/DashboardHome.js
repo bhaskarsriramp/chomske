@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
+import Skeleton from "../Shell/Skeleton";
 
 /**
  * The Dashboard: how much voice we have, and how much you've made with it.
@@ -17,7 +18,7 @@ const RANGES = [
   { key: "custom", label: "Custom" },
 ];
 
-export default function DashboardHome({ onGoTranscribe }) {
+export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
   const isPhone = useIsMobile(680);
 
   const [range, setRange] = useState("7d");
@@ -128,7 +129,8 @@ export default function DashboardHome({ onGoTranscribe }) {
       >
         <Stat
           label="Videos teaching your voice"
-          value={data ? `${data.videos.used}` : "—"}
+          loading={!data}
+          value={data ? `${data.videos.used}` : ""}
           suffix={data ? `of ${data.videos.max}` : ""}
           note={
             data
@@ -137,37 +139,46 @@ export default function DashboardHome({ onGoTranscribe }) {
                 : "All slots used · not affected by the date filter"
               : ""
           }
-          action={data && data.videos.used < data.videos.max ? { label: "Add a video", onClick: onGoTranscribe } : null}
-          // Five pips beat a progress bar here: the number is five, so the
-          // filled ones ARE the count and the empty ones are the invitation.
+          // The whole card is the link, not a button inside it. A number that
+          // means "your voice" and a screen called My voice are the same thing;
+          // making the reader hunt for a small button to connect them is a step
+          // that exists only because the markup happened that way.
+          onClick={onGoTranscribe}
+          actionLabel="Add or manage videos"
           meter={data ? { used: data.videos.used, max: data.videos.max } : null}
         />
 
         <Stat
           label="Scripts generated"
-          value={data ? `${data.scripts.in_range}` : "—"}
+          loading={!data}
+          value={data ? `${data.scripts.in_range}` : ""}
           suffix={data ? data.range.label.toLowerCase() : ""}
           note={data ? `${data.scripts.all_time} all time` : ""}
+          onClick={onGoScripts}
+          actionLabel="Read them"
           tone="made"
         />
 
         <Stat
           label="Voice profile"
-          value={data?.voice ? confidenceLabel(data.voice.confidence) : "Not built"}
+          loading={!data}
+          value={data?.voice ? confidenceLabel(data.voice.confidence) : data ? "Not built" : ""}
           suffix={data?.voice?.language_label || ""}
           note={
             data?.voice
               ? data.voice.stale
                 ? "Out of date. Re-analyse to pick up your latest videos."
                 : `Learned from ${data.voice.transcript_count} video${data.voice.transcript_count === 1 ? "" : "s"}`
-              : "Add videos, then analyse your voice"
+              : data ? "Add videos, then analyse your voice" : ""
           }
-          action={!data?.voice || data?.voice?.stale ? { label: "Go to My voice", onClick: onGoTranscribe } : null}
+          onClick={onGoTranscribe}
+          actionLabel={!data?.voice || data?.voice?.stale ? "Analyse my voice" : "See what we learned"}
           // The card's colour is the confidence itself. A thin profile looking
           // exactly like a good one is how someone ships a script that doesn't
           // sound like them and blames the product.
           tone={
-            data?.voice?.stale ? "warn"
+            !data ? "normal"
+              : data?.voice?.stale ? "warn"
               : !data?.voice ? "normal"
               : data.voice.confidence === "good" ? "good"
               : data.voice.confidence === "fair" ? "fair"
@@ -175,6 +186,14 @@ export default function DashboardHome({ onGoTranscribe }) {
           }
         />
       </div>
+
+      {!data && (
+        <section style={{ marginTop: 34 }}>
+          <Skeleton variant="text" width={150} height={10} />
+          <div style={{ height: 12 }} />
+          <Skeleton variant="rectangular" height={110} />
+        </section>
+      )}
 
       {data?.by_day?.length > 0 && (
         <Activity days={data.by_day} label={data.range.label} isPhone={isPhone} />
@@ -229,59 +248,87 @@ const TONES = {
   warn:   { tint: "#FCF0F2", line: "#F3D3D8", ink: "#AB2C41" },
 };
 
-function Stat({ label, value, suffix, note, action, tone = "normal", meter }) {
+function Stat({ label, value, suffix, note, onClick, actionLabel, tone = "normal", meter, loading }) {
   const t = TONES[tone] || TONES.normal;
   const plain = tone === "normal";
-  return (
-    <div
-      style={{
-        padding: 18, borderRadius: "var(--radius)",
-        background: plain ? "var(--card)" : `linear-gradient(170deg, ${t.tint} 0%, var(--card) 68%)`,
-        border: `1px solid ${t.line}`,
-      }}
-    >
+
+  const body = (
+    <>
       <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-mute)", marginBottom: 10 }}>
         {label}
       </div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 28, fontWeight: 750, letterSpacing: "-0.03em", color: t.ink, lineHeight: 1 }}>
-          {value}
-        </span>
-        {suffix && <span style={{ fontSize: 13, color: "var(--ink-mute)" }}>{suffix}</span>}
-      </div>
-      {meter && (
-        <div style={{ display: "flex", gap: 5, marginTop: 12 }}>
-          {Array.from({ length: meter.max }, (_, i) => (
-            <span
-              key={i}
-              aria-hidden="true"
+
+      {/* Never a dash, never a zero. The old version rendered "—" until the
+          request landed, and for that moment it was a claim someone could read
+          and believe. A skeleton cannot be mistaken for a value. */}
+      {loading ? (
+        <>
+          <Skeleton variant="text" width={72} height={26} />
+          <div style={{ height: 12 }} />
+          <Skeleton variant="text" width="86%" height={10} />
+          <div style={{ height: 6 }} />
+          <Skeleton variant="text" width="54%" height={10} />
+        </>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 28, fontWeight: 750, letterSpacing: "-0.03em", color: t.ink, lineHeight: 1 }}>
+              {value}
+            </span>
+            {suffix && <span style={{ fontSize: 13, color: "var(--ink-mute)" }}>{suffix}</span>}
+          </div>
+
+          {meter && (
+            <div style={{ display: "flex", gap: 5, marginTop: 12 }}>
+              {Array.from({ length: meter.max }, (_, i) => (
+                <span
+                  key={i}
+                  aria-hidden="true"
+                  style={{
+                    height: 5, flex: 1, borderRadius: 99,
+                    background: i < meter.used ? "var(--made)" : "#E8E8E8",
+                  }}
+                />
+              ))}
+            </div>
+          )}
+
+          {note && (
+            <div style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", marginTop: 9 }}>
+              {note}
+            </div>
+          )}
+
+          {onClick && actionLabel && (
+            <div
               style={{
-                height: 5, flex: 1, borderRadius: 99,
-                background: i < meter.used ? "var(--made)" : "#E8E8E8",
+                marginTop: 12, fontSize: 12.5, fontWeight: 600, color: "var(--ink-body)",
+                display: "flex", alignItems: "center", gap: 5,
               }}
-            />
-          ))}
-        </div>
+            >
+              {actionLabel}
+              <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>›</span>
+            </div>
+          )}
+        </>
       )}
-      {note && (
-        <div style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", marginTop: 9 }}>
-          {note}
-        </div>
-      )}
-      {action && (
-        <button
-          onClick={action.onClick}
-          className="hg-btn-ghost"
-          style={{
-            marginTop: 12, fontSize: 12.5, fontWeight: 600, padding: "7px 13px",
-            borderRadius: 9, border: "1px solid var(--line)", background: "var(--card)",
-            color: "var(--ink-body)", cursor: "pointer",
-          }}
-        >
-          {action.label}
-        </button>
-      )}
-    </div>
+    </>
+  );
+
+  const style = {
+    padding: 18, borderRadius: "var(--radius)", textAlign: "left", width: "100%",
+    background: plain ? "var(--card)" : `linear-gradient(170deg, ${t.tint} 0%, var(--card) 68%)`,
+    border: `1px solid ${t.line}`,
+  };
+
+  // A div while loading: a button that navigates before its own label exists is
+  // a target someone can hit without knowing what they hit.
+  if (!onClick || loading) return <div style={style}>{body}</div>;
+
+  return (
+    <button type="button" onClick={onClick} className="hg-row" style={{ ...style, cursor: "pointer", font: "inherit" }}>
+      {body}
+    </button>
   );
 }
 
