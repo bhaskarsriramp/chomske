@@ -13,6 +13,7 @@ import User from "../models/User.js";
 import { isValidCategory, DEFAULT_CATEGORY, getCategory } from "../services/categories.js";
 import { ensureBrief } from "../services/newsBriefService.js";
 import { lastCheckedAt, touchSeen } from "../services/newsCadence.js";
+import { ensureRanked } from "../services/newsScheduler.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
@@ -101,6 +102,52 @@ router.get("/", authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("[news] GET / failed:", err);
     return res.status(500).json({ success: false, message: "Couldn't load the feed." });
+  }
+});
+
+/**
+ * POST /news/refresh  { category? }
+ *
+ * Score whatever the collector has brought in since the last time anyone looked.
+ *
+ * ── WHY THIS DOES NOT COLLECT ────────────────────────────────────────────────
+ * A full collection is over a minute of fan-out across a dozen sources, which is
+ * far too long to hold a button press open — and it is unnecessary, because the
+ * collector is already running every fifteen minutes on its own clock. What a
+ * refresh actually does is pay to JUDGE the items that arrived since last time.
+ * That is a few seconds.
+ *
+ * Throttled per category, not per user: three presses, ten page loads and four
+ * different people sharing a category have to add up to one paid pass. Coming
+ * back inside the cooldown is not an error — it means the feed is already
+ * current, so it returns success with ranked: 0.
+ */
+router.post("/refresh", authenticateToken, async (req, res) => {
+  try {
+    const me = await User.findById(req.user.id).select("categories").lean();
+    let mine = (me?.categories || []).filter(isValidCategory);
+    if (!mine.length) mine = [DEFAULT_CATEGORY];
+
+    const asked = String(req.body?.category || "");
+    const cats = asked && mine.includes(asked) ? [asked] : mine;
+
+    let ranked = 0;
+    let briefs = 0;
+    let paid = false;
+
+    for (const cat of cats) {
+      const out = await ensureRanked(cat);
+      ranked += out.ranked || 0;
+      briefs += out.briefs || 0;
+      if (!out.skipped) paid = true;
+    }
+
+    return res.json({ success: true, ranked, briefs, refreshed: paid });
+  } catch (err) {
+    console.error("[news] POST /refresh failed:", err);
+    // The feed still renders from what is already ranked, so this is never worth
+    // showing a creator an error over.
+    return res.json({ success: true, ranked: 0, briefs: 0, refreshed: false });
   }
 });
 

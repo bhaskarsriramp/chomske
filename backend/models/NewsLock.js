@@ -21,6 +21,13 @@ const NewsLockSchema = new mongoose.Schema({
   last_run_at: Date,
   last_result: mongoose.Schema.Types.Mixed,
   checked: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+  // Per-category "last time we spent money ranking this". The Redis guard is the
+  // fast path; this is the one that still works when Redis is unreachable, which
+  // matters more here than it does for `checked`: without a working throttle the
+  // choice is between ranking on every page load and never ranking at all, and
+  // both of those are bad in a way a stale timestamp is not.
+  ranked: { type: mongoose.Schema.Types.Mixed, default: {} },
 });
 
 export const LOCK_ID = "news-poll";

@@ -1,5 +1,17 @@
 /**
- * newsScheduler.js — run collection + ranking on a loop.
+ * newsScheduler.js — keep the news coming in, and rank it when someone looks.
+ *
+ * ── WHAT RUNS ON THE CLOCK, AND WHAT DOES NOT ────────────────────────────────
+ * Collection does. It is free, and it is lossy to skip: Google News serves only
+ * `when:1d` and HN Algolia reaches back 36 hours, so an unpolled window is gone
+ * for good. It also owns `first_seen_at`, the clock behind "you are early on
+ * this" — collect only when a user logs in and that timestamp starts recording
+ * when somebody happened to open the app instead of when the story broke.
+ *
+ * Ranking does not. It costs money, and running it ninety-six times a day per
+ * category meant paying to judge stories for an empty room. It now fires from
+ * ensureRanked() on sign-in, on opening Topics and on Refresh, behind a
+ * ten-minute per-category throttle.
  *
  * ── WHY THERE'S A DATABASE CLAIM AND NOT JUST setInterval ────────────────────
  * Cloud Run (and anything else that autoscales) can run several instances of
@@ -16,7 +28,10 @@ import { collectNews } from "./newsCollector.js";
 import { rankNews } from "./newsRanker.js";
 import { backfillBriefs } from "./newsBriefService.js";
 import { getCategory } from "./categories.js";
-import { categoryPlan, claimPoll, markChecked, claimKickoff, wakeCategories } from "./newsCadence.js";
+import {
+  categoryPlan, claimPoll, markChecked, claimKickoff, claimRank,
+  isFreshlyCollected, wakeCategories,
+} from "./newsCadence.js";
 
 const INTERVAL_MIN = parseInt(process.env.NEWS_POLL_MINUTES || "15", 10);
 
@@ -25,6 +40,13 @@ const INTERVAL_MIN = parseInt(process.env.NEWS_POLL_MINUTES || "15", 10);
 // produces — so in practice it is a ceiling that never binds, and on the day a
 // category does go wild it is the thing that stops the bill going with it.
 const BRIEF_LIMIT = parseInt(process.env.NEWS_BRIEF_LIMIT || "6", 10);
+
+// Ranking is demand-driven now: it runs when somebody signs in, opens Topics or
+// presses Refresh, not on the collector's clock. Flip this to put the old
+// behaviour back without a deploy, if the feed ever needs to be warm for
+// somebody who is not the one asking for it.
+const RANK_ON_SCHEDULE =
+  String(process.env.NEWS_RANK_ON_SCHEDULE || "false").toLowerCase() === "true";
 
 /**
  * Try to claim the next run. Atomic: the update only matches when the existing
@@ -52,32 +74,56 @@ async function claim(leaseMs) {
 }
 
 /**
- * Do one category: collect, rank what is new, write the briefs the feed will
- * need. Shared by the scheduled pass and by the wake-up a returning user
- * triggers, so both paths do exactly the same work in the same order.
+ * Collect one category. Free, and the half that must never be skipped.
+ *
+ * Google News only serves `when:1d` and HN Algolia only reaches back 36 hours,
+ * so a window we do not poll is gone permanently — there is no way to ask for
+ * yesterday later. That is why collection stayed on a clock when ranking moved
+ * off it: skipping a paid pass costs nothing but a few seconds of staleness,
+ * while skipping a free one loses stories that cannot be recovered at any price.
  */
-async function runCategory(cat) {
+async function collectCategory(cat) {
   const collected = await collectNews(cat);
 
   // Stamped after collection, not after ranking: this is what the feed shows as
   // "checked N minutes ago", and the honest answer to that is when we last went
   // and looked, whether or not there turned out to be anything to judge.
   await markChecked(cat);
+  return collected;
+}
 
-  // Rank only when something new arrived. A pass with nothing new has nothing
-  // to judge, and skipping it is the difference between paying once a day and
-  // paying every 15 minutes, per category.
-  let ranked = { ranked: 0, detailed: 0, usd: 0 };
-  if (collected.inserted > 0) {
-    ranked = await rankNews(cat);
-  } else {
-    console.log(`[news:${cat}] nothing new — skipping the ranking call`);
+/**
+ * Score what has been collected but not yet judged, then write the briefs the
+ * feed will need. This is the part that costs money.
+ *
+ * ── WHY THIS IS NOT ON THE CLOCK ─────────────────────────────────────────────
+ * It used to run after every collection, ninety-six times a day per category,
+ * whether or not a single person opened the app. That is roughly $7 a month per
+ * category spent ranking stories for an empty room. Now it runs when somebody is
+ * actually about to read the feed: on sign-in, on opening Topics, and on
+ * Refresh. Cost follows use instead of following the clock.
+ *
+ * The backlog cannot pile up: the ranker takes at most one batch from a
+ * 36-hour window, so returning after a week is one ordinary call, not a bill.
+ *
+ * @returns {{ ranked, detailed, briefs, usd, skipped }}
+ */
+export async function ensureRanked(cat, { force = false } = {}) {
+  if (!getCategory(cat)) return { skipped: true, reason: "unknown_category" };
+
+  // The throttle the whole on-demand model rests on. Ten page loads, three
+  // refreshes and four users all arriving at once must add up to one paid pass.
+  if (!force && !(await claimRank(cat))) {
+    return { ranked: 0, detailed: 0, briefs: 0, usd: 0, skipped: true, reason: "cooldown" };
   }
 
-  // Write the reading briefs for whatever now qualifies for the feed. Done here
-  // rather than when a story is opened because the alternative is a creator
-  // arrowing down the list and firing a generation per row. Capped, so a heavy
-  // news day costs more time, never unbounded money.
+  let ranked = { ranked: 0, detailed: 0, usd: 0 };
+  try {
+    ranked = await rankNews(cat);
+  } catch (err) {
+    console.error(`[news:${cat}] ranking failed:`, err.message);
+  }
+
   let briefs = 0;
   try {
     briefs = await backfillBriefs(cat, { limit: BRIEF_LIMIT });
@@ -85,7 +131,28 @@ async function runCategory(cat) {
     console.error(`[news:${cat}] brief pass failed:`, err.message);
   }
 
-  return { category: cat, inserted: collected.inserted, ranked: ranked.ranked, detailed: ranked.detailed, briefs, usd: ranked.usd };
+  return {
+    ranked: ranked.ranked || 0,
+    detailed: ranked.detailed || 0,
+    briefs,
+    usd: ranked.usd || 0,
+    skipped: false,
+  };
+}
+
+/**
+ * Everything for one category, used by the wake-up path where a returning
+ * creator needs both halves done before they look at anything.
+ */
+async function runCategory(cat) {
+  // Skips the network entirely when the scheduled collector has been here
+  // recently — collection is over a minute of fan-out across a dozen sources,
+  // and repeating it because somebody signed in gains nothing.
+  const fresh = await isFreshlyCollected(cat);
+  const collected = fresh ? { inserted: 0, skipped: true } : await collectCategory(cat);
+
+  const out = await ensureRanked(cat);
+  return { category: cat, inserted: collected.inserted, ...out };
 }
 
 async function runOnce() {
@@ -112,7 +179,17 @@ async function runOnce() {
     }
 
     try {
-      const row = await runCategory(cat);
+      // COLLECTION ONLY. The scheduled pass deliberately does not rank: that is
+      // the paid half, and it now happens when somebody is about to read the
+      // feed rather than on a timer nobody is watching. Set
+      // NEWS_RANK_ON_SCHEDULE=true to put it back without a deploy.
+      const collected = await collectCategory(cat);
+
+      let row = { category: cat, inserted: collected.inserted, usd: 0 };
+      if (RANK_ON_SCHEDULE && collected.inserted > 0) {
+        row = { ...row, ...(await ensureRanked(cat)) };
+      }
+
       totalUsd += row.usd || 0;
       summary.push({ ...row, tier });
     } catch (err) {
@@ -125,7 +202,11 @@ async function runOnce() {
 
   if (skipped) console.log(`[news] ${skipped} warm categor${skipped === 1 ? "y" : "ies"} not due this tick`);
 
-  if (totalUsd > 0) console.log(`[news] pass complete · $${totalUsd.toFixed(4)}`);
+  const gathered = summary.reduce((n, r) => n + (r.inserted || 0), 0);
+  console.log(
+    `[news] collected ${gathered} new item(s)` +
+    (totalUsd > 0 ? ` · $${totalUsd.toFixed(4)}` : " · no ranking (on demand)")
+  );
 
   await NewsLock.updateOne(
     { _id: LOCK_ID },

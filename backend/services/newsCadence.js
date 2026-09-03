@@ -41,9 +41,15 @@ const HOT_DAYS = parseInt(process.env.NEWS_HOT_DAYS || "2", 10);
 const WARM_DAYS = parseInt(process.env.NEWS_WARM_DAYS || "14", 10);
 const WARM_CADENCE_MIN = parseInt(process.env.NEWS_WARM_CADENCE_MIN || "60", 10);
 
+// How long one paid ranking pass covers a category. Ten minutes is shorter than
+// the collector's own 15-minute cycle, so a refresh can never be told "too soon"
+// for stories that have actually arrived since the last one.
+const RANK_COOLDOWN_SEC = parseInt(process.env.NEWS_RANK_COOLDOWN_SEC || "600", 10);
+
 const K_POLL = (cat) => `hg:news:poll:${cat}`;
 const K_CHECKED = "hg:news:checked";
 const K_KICK = (cat) => `hg:news:kick:${cat}`;
+const K_RANK = (cat) => `hg:news:rank:${cat}`;
 
 // Redis is shared with betaFounderProduction, so nothing here may be written
 // without the hg: prefix. See redis.js.
@@ -236,6 +242,69 @@ export async function wakeCategories(cats) {
 }
 
 /**
+ * Take the right to SPEND MONEY ranking one category.
+ *
+ * This is the throttle the whole on-demand model rests on. Ranking now fires
+ * from user actions — opening Topics, pressing Refresh, signing in — and those
+ * are things a person does repeatedly and several people do at once. Without a
+ * guard, three refreshes are three ranking calls, and ten users sharing a
+ * category multiply that again.
+ *
+ * Unlike everything else in this file it does NOT simply fail open, because
+ * failing open here means unbounded spend. Redis is the fast path; when it is
+ * unreachable the same decision is made with one atomic Mongo update, which is
+ * affordable because this runs on refreshes rather than on every page view.
+ *
+ * @returns {Promise<boolean>} true when the caller should do the ranking
+ */
+export async function claimRank(cat, seconds = RANK_COOLDOWN_SEC) {
+  if (redis) {
+    try {
+      return (await redis.set(K_RANK(cat), "1", "EX", seconds, "NX")) === "OK";
+    } catch { /* fall through to the database guard */ }
+  }
+
+  // Matches only when this category has never been ranked, or was ranked longer
+  // ago than the cooldown. One round trip, and atomic, so two instances racing
+  // on the same refresh cannot both win.
+  const cutoff = new Date(Date.now() - seconds * 1000);
+  try {
+    const r = await NewsLock.findOneAndUpdate(
+      {
+        _id: LOCK_ID,
+        $or: [
+          { [`ranked.${cat}`]: { $exists: false } },
+          { [`ranked.${cat}`]: null },
+          { [`ranked.${cat}`]: { $lt: cutoff } },
+        ],
+      },
+      { $set: { [`ranked.${cat}`]: new Date() } },
+      { upsert: true, new: false }
+    );
+    return r === null || !r.ranked?.[cat] || new Date(r.ranked[cat]) < cutoff;
+  } catch (err) {
+    // Upsert race: the other instance created the row microseconds earlier.
+    if (err?.code === 11000) return false;
+    console.error(`[news] rank guard failed for ${cat}:`, err.message);
+    return false;   // deliberately closed: an unknown state must not bill
+  }
+}
+
+/**
+ * Has this category been collected recently enough that a refresh does not need
+ * to go out to the sources again?
+ *
+ * Collection is free but slow — a full multi-source pass is over a minute, which
+ * is far too long to hold a button press open. The scheduled collector runs
+ * every 15 minutes, so a refresh almost never needs to collect; it needs to RANK
+ * what the collector already brought in.
+ */
+export async function isFreshlyCollected(cat, withinMin = 20) {
+  const at = await lastCheckedAt([cat]);
+  return !!at && Date.now() - at.getTime() < withinMin * 60000;
+}
+
+/**
  * Take the right to run an out-of-band pass for one category.
  *
  * Fifty people returning at once must not become fifty collections. Without
@@ -252,4 +321,7 @@ export async function claimKickoff(cat, seconds = 300) {
   }
 }
 
-export default { categoryPlan, claimPoll, markChecked, lastCheckedAt, wakeCategories, claimKickoff, touchSeen };
+export default {
+  categoryPlan, claimPoll, markChecked, lastCheckedAt,
+  wakeCategories, claimKickoff, claimRank, isFreshlyCollected, touchSeen,
+};

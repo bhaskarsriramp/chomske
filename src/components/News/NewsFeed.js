@@ -67,6 +67,8 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
   const [openId, setOpenId] = useState(null);
   const [voice, setVoice] = useState(null);
   const [refreshes, setRefreshes] = useState(0);
+  const [ranking, setRanking] = useState(false);
+  const [emptyTries, setEmptyTries] = useState(0);
 
   const selectedRef = useRef(null);
   const selected = items.find((i) => i.id === openId) || null;
@@ -87,10 +89,28 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
 
   // Nothing polls here: the collector runs on its own 15-minute clock, so a
   // client-side interval would re-read identical rows and add load for nothing.
-  const load = useCallback(async () => {
+  //
+  // `refresh` asks the server to SCORE whatever the collector has brought in
+  // since anyone last looked. Ranking is the paid half and no longer runs on a
+  // timer, so this is what actually surfaces new stories. It is throttled per
+  // category server-side, which is why it is safe to call on every open: inside
+  // the cooldown it returns in about a millisecond having spent nothing.
+  const load = useCallback(async ({ refresh = false } = {}) => {
     setBusy(true);
     setError("");
     try {
+      if (refresh) {
+        setRanking(true);
+        try {
+          await api.post("/news/refresh", cat ? { category: cat } : {});
+        } catch {
+          // The feed still renders everything already ranked. A failed refresh
+          // is a missing update, not a broken screen.
+        } finally {
+          setRanking(false);
+        }
+      }
+
       const base = { limit: 40 };
       if (cat) base.category = cat;
 
@@ -125,10 +145,32 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
   // categories from the session, so the request body never changes. It belongs
   // on the effect rather than in load()'s deps — without it, saving a new
   // selection in Profile leaves Topics serving the previous categories.
-  useEffect(() => { load(); }, [load, categoriesKey]);
+  // Opening Topics is the main trigger. Switching category re-fires it for the
+  // new one, which is correct: each category has its own backlog and its own
+  // cooldown.
+  useEffect(() => { load({ refresh: true }); }, [load, categoriesKey]);
 
   // A different category is a different feed, so it gets its own refresh budget.
-  useEffect(() => { setRefreshes(0); }, [cat]);
+  useEffect(() => { setRefreshes(0); setEmptyTries(0); }, [cat]);
+
+  /**
+   * An empty feed right after signing up is usually work still in flight, not an
+   * empty product: choosing categories fires a collection, that takes about a
+   * minute and a half, and it holds the ranking slot while it runs — so the
+   * refresh this pane just asked for was correctly told "already in hand".
+   *
+   * So look again a few times before believing the emptiness. Deliberately a
+   * plain GET and never the refresh POST: a retry that re-triggered the paid
+   * work would be a loop that pays for its own reason to run again.
+   */
+  useEffect(() => {
+    if (!loadedOnce || items.length || error || emptyTries >= 3) return;
+    const t = setTimeout(() => {
+      setEmptyTries((n) => n + 1);
+      load();
+    }, 10000);
+    return () => clearTimeout(t);
+  }, [loadedOnce, items.length, error, emptyTries, load]);
 
   // Their selection can change in Profile. If the category being viewed is no
   // longer one of theirs, fall back to the first that is.
@@ -206,7 +248,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
             <RefreshButton
               busy={busy}
               spent={refreshes >= MAX_REFRESHES}
-              onRefresh={() => { setRefreshes((n) => n + 1); load(); }}
+              onRefresh={() => { setRefreshes((n) => n + 1); load({ refresh: true }); }}
             />
           </div>
 
@@ -235,9 +277,18 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
             </div>
           )}
 
-          {!loadedOnce && busy && <FeedSkeleton />}
+          {!loadedOnce && busy && (
+            <>
+              {ranking && (
+                <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "var(--ink-mute)" }}>
+                  Reading what came in since you were last here…
+                </p>
+              )}
+              <FeedSkeleton />
+            </>
+          )}
 
-          {loadedOnce && !items.length && !error && <EmptyState />}
+          {loadedOnce && !items.length && !error && <EmptyState settling={emptyTries < 3} />}
 
           {items.length > 0 && (
             <>
@@ -557,7 +608,26 @@ function FeedSkeleton() {
  * widening already happened automatically before this rendered — offering it
  * again would be a button that does what was just done.
  */
-function EmptyState() {
+function EmptyState({ settling }) {
+  if (settling) {
+    return (
+      <div
+        style={{
+          padding: "30px 24px", textAlign: "center",
+          background: "var(--card)", border: "1px dashed var(--line)", borderRadius: "var(--radius)",
+        }}
+      >
+        <div style={{ fontSize: 15.5, fontWeight: 600, color: "var(--ink)", marginBottom: 7 }}>
+          Gathering your first stories
+        </div>
+        <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)", margin: 0 }}>
+          Reading the sources for what you picked. This takes a minute or two the
+          very first time, then it is already done every morning after.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
