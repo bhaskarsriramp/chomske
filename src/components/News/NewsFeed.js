@@ -36,7 +36,7 @@ const BARS = [
   { key: 8, label: "Major only" },
 ];
 
-export default function NewsFeed() {
+export default function NewsFeed({ onGoTranscribe }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
@@ -47,9 +47,21 @@ export default function NewsFeed() {
   const [busy, setBusy] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [openId, setOpenId] = useState(null);
+  const [voice, setVoice] = useState(null);
 
   const selectedRef = useRef(null);
   const selected = items.find((i) => i.id === openId) || null;
+
+  // Fetched once here rather than inside each story: the profile is per-user, not
+  // per-story, and re-requesting it on every click would be a call per selection.
+  const loadVoice = useCallback(async () => {
+    try {
+      const { data } = await api.get("/script/voice");
+      setVoice(data);
+    } catch { /* the panel degrades to "transcribe first" — never block the feed */ }
+  }, []);
+
+  useEffect(() => { loadVoice(); }, [loadVoice]);
 
   // Nothing polls here: the collector runs on its own 15-minute clock, so a
   // client-side interval would re-read identical rows and add load for nothing.
@@ -213,7 +225,15 @@ export default function NewsFeed() {
           }}
         >
           {selected
-            ? <StoryDetail key={selected.id} id={selected.id} preview={selected} mode="pane" />
+            ? <StoryDetail
+                key={selected.id}
+                id={selected.id}
+                preview={selected}
+                mode="pane"
+                voice={voice}
+                onVoiceChange={loadVoice}
+                onGoTranscribe={onGoTranscribe}
+              />
             : <PanePlaceholder loading={busy && !loadedOnce} />}
         </section>
       )}
@@ -225,6 +245,9 @@ export default function NewsFeed() {
           preview={selected}
           mode="sheet"
           onClose={() => setOpenId(null)}
+          voice={voice}
+          onVoiceChange={loadVoice}
+          onGoTranscribe={onGoTranscribe}
         />
       )}
     </div>

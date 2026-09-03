@@ -119,7 +119,9 @@ export default function Dashboard({ user, onSignOut }) {
       <main style={{ flex: 1, minHeight: 0, display: "flex" }}>
         {mounted.topics && (
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "topics" ? "flex" : "none" }}>
-            <NewsFeed />
+            {/* A creator with no transcripts can't have a voice yet — the script
+                panel sends them here rather than dead-ending. */}
+            <NewsFeed onGoTranscribe={() => openTab("transcribe")} />
           </div>
         )}
         {mounted.transcribe && (

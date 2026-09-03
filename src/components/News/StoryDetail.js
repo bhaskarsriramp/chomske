@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import api, { errorMessage } from "../../api";
+import ScriptPanel from "./ScriptPanel";
 import { sourceLabel, timeAgo, scoreStyle, buildBrief } from "./newsUtils";
 
 /**
@@ -14,7 +15,7 @@ import { sourceLabel, timeAgo, scoreStyle, buildBrief } from "./newsUtils";
  *   pane  — the right half of the desktop split, always on screen
  *   sheet — a full-screen layer on phones, where a split has nowhere to go
  */
-export default function StoryDetail({ id, preview, mode = "pane", onClose }) {
+export default function StoryDetail({ id, preview, mode = "pane", onClose, voice, onVoiceChange, onGoTranscribe }) {
   // Seeded from the feed row so the header paints immediately; the request only
   // fills in coverage. Selecting a story should never flash an empty pane.
   const [item, setItem] = useState(preview || null);
@@ -76,6 +77,9 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose }) {
       onCopy={copyBrief}
       onClose={mode === "sheet" ? onClose : null}
       compact={mode === "sheet"}
+      voice={voice}
+      onVoiceChange={onVoiceChange}
+      onGoTranscribe={onGoTranscribe}
     />
   );
 
@@ -101,7 +105,7 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose }) {
 
 /* ── Content ───────────────────────────────────────────────────────────── */
 
-function Body({ item, coverage, loading, error, copied, onCopy, onClose, compact }) {
+function Body({ item, coverage, loading, error, copied, onCopy, onClose, compact, voice, onVoiceChange, onGoTranscribe }) {
   const links = coverage.length
     ? coverage
     : [{ source: item.source, title: item.title, url: item.url, published_at: item.published_at }];
@@ -204,10 +208,22 @@ function Body({ item, coverage, loading, error, copied, onCopy, onClose, compact
           </p>
         )}
 
+        {/* The deliverable comes before the evidence: writing is why anyone opened
+            this story, and burying the button under eight coverage links would put
+            the product's whole point below the fold. */}
+        <ScriptPanel
+          storyId={String(item.id)}
+          voice={voice}
+          onVoiceChange={onVoiceChange}
+          onGoTranscribe={onGoTranscribe}
+          compact={compact}
+        />
+
         <div
           style={{
             display: "flex", alignItems: "baseline", justifyContent: "space-between",
-            gap: 12, paddingBottom: 10, borderBottom: "1px solid var(--line)", marginBottom: 12,
+            gap: 12, marginTop: 32,
+            paddingBottom: 10, borderBottom: "1px solid var(--line)", marginBottom: 12,
           }}
         >
           <h3

@@ -15,6 +15,7 @@ import connectToMongo from "./db.js";
 import authRoutes from "./routes/auth.js";
 import transcribeRoutes from "./routes/transcribe.js";
 import newsRoutes from "./routes/news.js";
+import scriptRoutes from "./routes/script.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
 
 const app = express();
@@ -69,6 +70,13 @@ app.use(
 // Reads only — the collection/ranking cost is on the scheduler's clock, not the
 // caller's, so this needs no per-user cap beyond the global limiter.
 app.use("/news", newsRoutes);
+app.use(
+  "/script",
+  // Generation costs real money per call, so it gets its own ceiling on top of
+  // the per-user daily cap inside the route.
+  rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
+  scriptRoutes
+);
 
 // 404 + error handler. Errors are logged in full and answered generically —
 // stack traces and provider messages must never reach the browser.
