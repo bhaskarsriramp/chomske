@@ -23,6 +23,10 @@ const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL ||
 // small and the input cost is not.
 const MAX_TRANSCRIPTS = parseInt(process.env.VOICE_MAX_TRANSCRIPTS || "8", 10);
 
+// How long a failed automatic rebuild is left alone before it is worth trying
+// again. Only affects the silent path; pressing "Analyse my voice" always runs.
+const REBUILD_COOLDOWN_MS = parseInt(process.env.VOICE_REBUILD_COOLDOWN_MIN || "60", 10) * 60000;
+
 const HEAD_CHARS = 900;   // the hook, plus how they get into the topic
 const MID_CHARS = 600;    // how they explain something mid-flow
 const TAIL_CHARS = 700;   // the close and call to action
@@ -298,6 +302,7 @@ export async function buildVoiceProfile(userId) {
     usage,
     metrics,
     built_at: new Date(),
+    build_failed_at: null,
   };
 
   // Written only when this pass actually produced something.
@@ -360,8 +365,26 @@ export async function getUsableProfile(userId, { autoBuild = true } = {}) {
     // past the cap — otherwise every new video past the eighth triggers a rebuild
     // that reads the same eight transcripts.
     if (total > seen && seen < MAX_TRANSCRIPTS) {
-      const { profile } = await buildVoiceProfile(userId);
-      return profile || existing;
+      // A rebuild that failed a minute ago will fail again now: same transcripts,
+      // same prompt, same outcome, same bill. Before this, a profile the analyser
+      // could not parse meant EVERY subsequent script generation paid for two
+      // more analysis calls and still produced nothing.
+      const failedAt = existing.build_failed_at ? new Date(existing.build_failed_at).getTime() : 0;
+      if (Date.now() - failedAt < REBUILD_COOLDOWN_MS) return existing;
+
+      try {
+        const { profile } = await buildVoiceProfile(userId);
+        return profile || existing;
+      } catch (err) {
+        console.error("[voice] auto-rebuild failed, writing with the existing profile:", err.message);
+        await VoiceProfile.updateOne(
+          { user: userId },
+          { $set: { build_failed_at: new Date() } }
+        ).catch(() => {});
+        // A slightly out-of-date voice beats no script at all. The explicit
+        // "Analyse my voice" button is still there and still reports failures.
+        return existing;
+      }
     }
   }
 

@@ -79,6 +79,12 @@ const VoiceProfileSchema = new Schema({
     usd:             { type: Number, default: 0 },
   },
 
+  // When an automatic rebuild last failed. The inputs do not change between one
+  // script and the next, so a rebuild that just failed will fail again for the
+  // same reason and at the same price — this is what stops every press of
+  // "Write this in my voice" paying for the identical doomed analysis.
+  build_failed_at: { type: Date, default: null },
+
   built_at:   { type: Date, default: Date.now },
   created_at: { type: Date, default: Date.now },
 });

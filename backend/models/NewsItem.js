@@ -64,6 +64,11 @@ const NewsItemSchema = new Schema({
   // reconsidered on every open.
   brief:    { type: String, default: "" },
   brief_at: { type: Date, default: null },
+  // How many times we have TRIED to write one. Without this, a story the model
+  // keeps failing on is picked up again by every collector pass and by every
+  // reader who opens it, forever — a permanent failure retried on a timer is
+  // the most expensive shape a bug can take against a metered API.
+  brief_tries: { type: Number, default: 0 },
 
   created_at: { type: Date, default: Date.now },
 });

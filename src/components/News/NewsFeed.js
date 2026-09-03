@@ -69,6 +69,9 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
   const [refreshes, setRefreshes] = useState(0);
   const [ranking, setRanking] = useState(false);
   const [emptyTries, setEmptyTries] = useState(0);
+  // What the last fetch produced, so the button can report back instead of
+  // going quiet and leaving the reader to guess whether it did anything.
+  const [fetched, setFetched] = useState(null);   // null | number of new stories
 
   const selectedRef = useRef(null);
   const selected = items.find((i) => i.id === openId) || null;
@@ -128,13 +131,16 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
         if ((retry.data.items || []).length) { data = retry.data; wide = true; }
       }
 
-      setItems(data.items || []);
+      const next = data.items || [];
+      setItems(next);
       setWidened(wide);
       setCheckedAt(data.checked_at || null);
       setFeedCats(data.categories || []);
+      return next;
     } catch (err) {
       setError(errorMessage(err, "Couldn't load today's topics."));
       setItems([]);
+      return [];
     } finally {
       setBusy(false);
       setLoadedOnce(true);
@@ -145,10 +151,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
   // categories from the session, so the request body never changes. It belongs
   // on the effect rather than in load()'s deps — without it, saving a new
   // selection in Profile leaves Topics serving the previous categories.
-  // Opening Topics is the main trigger. Switching category re-fires it for the
-  // new one, which is correct: each category has its own backlog and its own
-  // cooldown.
-  useEffect(() => { load({ refresh: true }); }, [load, categoriesKey]);
+  // A plain read. Opening Topics deliberately does NOT rank any more: ranking is
+  // the paid half, and work that costs money should be something a creator asks
+  // for and can see happening, not something that fires behind them every time
+  // they glance at the page. The button below is that ask.
+  useEffect(() => { load(); }, [load, categoriesKey]);
 
   // A different category is a different feed, so it gets its own refresh budget.
   useEffect(() => { setRefreshes(0); setEmptyTries(0); }, [cat]);
@@ -245,10 +252,22 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
             >
               What to cover today
             </h1>
-            <RefreshButton
+            <FetchButton
               busy={busy}
+              running={ranking}
               spent={refreshes >= MAX_REFRESHES}
-              onRefresh={() => { setRefreshes((n) => n + 1); load({ refresh: true }); }}
+              fetched={fetched}
+              onFetch={async () => {
+                setRefreshes((n) => n + 1);
+                setFetched(null);
+                // Counted here rather than taken from the server: the endpoint
+                // knows how many stories it SCORED, which is not the same as how
+                // many reached this feed — most score too low to appear, and
+                // reporting those as new would be a number that flatters itself.
+                const before = new Set(items.map((i) => i.id));
+                const next = await load({ refresh: true });
+                setFetched((next || []).filter((i) => !before.has(i.id)).length);
+              }}
             />
           </div>
 
@@ -277,16 +296,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
             </div>
           )}
 
-          {!loadedOnce && busy && (
-            <>
-              {ranking && (
-                <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "var(--ink-mute)" }}>
-                  Reading what came in since you were last here…
-                </p>
-              )}
-              <FeedSkeleton />
-            </>
-          )}
+          {!loadedOnce && busy && <FeedSkeleton />}
 
           {loadedOnce && !items.length && !error && <EmptyState settling={emptyTries < 3} />}
 
@@ -363,7 +373,19 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
 /* ── Pieces ────────────────────────────────────────────────────────────── */
 
 /**
- * Refresh, with a budget.
+ * Fetch new topics.
+ *
+ * ── WHY THIS IS A NAMED ACTION AND NOT "REFRESH" ─────────────────────────────
+ * It used to say Refresh, and refresh means "redraw what you already have" —
+ * free, instant, expected. This is not that. Pressing it asks the ranker to read
+ * everything the collector has gathered since anyone last looked and decide what
+ * deserves a video, which takes a few seconds and costs real money. Naming it
+ * for what it does makes the wait make sense and makes the cost the creator's
+ * choice rather than something the page does behind them.
+ *
+ * It also reports back. A button that runs for six seconds and then looks
+ * exactly as it did before teaches people to press it again, which is precisely
+ * the behaviour the budget exists to stop.
  *
  * Once spent it is NOT given the `disabled` attribute, deliberately: a disabled
  * button fires no mouse events in Chrome, so hovering it would say nothing and
@@ -371,11 +393,21 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
  * explains itself — on hover for a pointer, on tap for a thumb, since a phone
  * has no hover to explain anything with.
  */
-function RefreshButton({ busy, spent, onRefresh }) {
+function FetchButton({ busy, running, spent, fetched, onFetch }) {
   const [showing, setShowing] = useState(false);
+  const [report, setReport] = useState(null);
   const timer = useRef(null);
+  const reportTimer = useRef(null);
 
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => () => { clearTimeout(timer.current); clearTimeout(reportTimer.current); }, []);
+
+  // Show the outcome briefly, then go back to being an offer.
+  useEffect(() => {
+    if (fetched === null) return;
+    setReport(fetched);
+    clearTimeout(reportTimer.current);
+    reportTimer.current = setTimeout(() => setReport(null), 4500);
+  }, [fetched]);
 
   function explain() {
     setShowing(true);
@@ -383,28 +415,56 @@ function RefreshButton({ busy, spent, onRefresh }) {
     timer.current = setTimeout(() => setShowing(false), 2600);
   }
 
+  const label = running
+    ? "Fetching…"
+    : report !== null
+    ? report > 0
+      ? `${report} new`
+      : "Up to date"
+    : "Fetch new topics";
+
+  const idle = !running && report === null;
+
   return (
     <span style={{ position: "relative", flexShrink: 0 }}>
       <button
         onClick={() => {
-          if (busy) return;              // mid-fetch: a second press buys nothing
+          if (busy || running) return;
           if (spent) explain();
-          else onRefresh();
+          else onFetch();
         }}
-        aria-disabled={spent || busy}
-        onMouseEnter={() => spent && setShowing(true)}
+        aria-disabled={spent || busy || running}
+        aria-live="polite"
+        onMouseEnter={() => spent && idle && setShowing(true)}
         onMouseLeave={() => { clearTimeout(timer.current); setShowing(false); }}
-        className={spent || busy ? undefined : "hg-btn-ghost"}
+        className={spent || busy || running ? undefined : "hg-btn-ghost"}
         style={{
-          fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-          border: "1px solid var(--line)", background: "var(--card)",
-          color: "var(--ink-mute)",
-          cursor: busy ? "default" : spent ? "default" : "pointer",
-          opacity: busy ? 0.55 : spent ? 0.5 : 1,
+          display: "inline-flex", alignItems: "center", gap: 7,
+          fontSize: 12.5, fontWeight: 600, padding: "6px 13px", borderRadius: 999,
+          border: `1px solid ${report > 0 ? "var(--made-line)" : "var(--line)"}`,
+          background: report > 0 ? "var(--made-tint)" : "var(--card)",
+          color: report > 0 ? "var(--made)" : "var(--ink-mute)",
+          cursor: busy || running || spent ? "default" : "pointer",
+          opacity: busy && !running ? 0.55 : spent && idle ? 0.5 : 1,
           whiteSpace: "nowrap",
+          transition: "background .15s ease, border-color .15s ease, color .15s ease",
         }}
       >
-        {busy ? "Loading" : "Refresh"}
+        {running ? (
+          <span
+            aria-hidden="true"
+            style={{
+              width: 11, height: 11, borderRadius: "50%", flexShrink: 0,
+              border: "2px solid var(--line)", borderTopColor: "var(--made)",
+              animation: "hg-spin .8s linear infinite",
+            }}
+          />
+        ) : (
+          <span aria-hidden="true" style={{ fontSize: 13, lineHeight: 1 }}>
+            {report !== null ? "✓" : "↻"}
+          </span>
+        )}
+        {label}
       </button>
 
       {showing && (

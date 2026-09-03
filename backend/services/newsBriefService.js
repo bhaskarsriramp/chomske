@@ -33,6 +33,12 @@ const MODEL = process.env.GEMINI_BRIEF_MODEL || process.env.GEMINI_TEXT_MODEL ||
 // falls back to showing the summary it does have.
 const MIN_SOURCE_CHARS = 180;
 
+// A story gets this many attempts, ever. Two is enough to ride out a blip and
+// few enough that a story the model simply cannot summarise stops costing money
+// after the second try. The reader loses nothing: the pane falls back to the
+// collected summary, which is what it shows for thin stories anyway.
+const MAX_TRIES = parseInt(process.env.NEWS_BRIEF_MAX_TRIES || "2", 10);
+
 let _client = null;
 function client() {
   if (_client) return _client;
@@ -114,7 +120,9 @@ export async function ensureBrief(item) {
   // Already decided and came back empty. brief_at is the stamp that says so, and
   // without this check a story with too little source text would be re-examined
   // on every single open — the exact "" it returned last time, paid for again.
-  if (item.brief_at) return "";
+  // Out of attempts. One rule, and it covers every way a story ends up without
+  // a brief: too little source text, a model failure, an unparseable reply.
+  if ((item.brief_tries || 0) >= MAX_TRIES) return "";
 
   const key = keyOf(item);
   if (inFlight.has(key)) return inFlight.get(key);
@@ -145,24 +153,34 @@ async function generate(item) {
         // sentence shapes for every story in the feed.
         temperature: 0.3,
         responseMimeType: "application/json",
-        maxOutputTokens: 1024,
+        // 1024 was tight enough that a brief running slightly long came back as
+        // truncated JSON, failed to parse, and — before the attempt counter
+        // above — was retried forever. Headroom is free: only what is actually
+        // generated is billed.
+        maxOutputTokens: 4096,
         thinkingConfig: { thinkingBudget: 0 },
       },
     });
   } catch (err) {
     console.error(`[news-brief] Gemini call failed for ${item._id}:`, err.message);
-    return "";   // not stamped: a transient failure should be retried later
+    await stamp(item, "", { failed: true });
+    return "";
   }
 
   let brief = "";
   try {
     brief = String(JSON.parse(res.text || "{}").brief || "").trim();
   } catch {
-    console.error(`[news-brief] unparseable response for ${item._id}`);
+    const finish = res?.candidates?.[0]?.finishReason || "unknown";
+    console.error(`[news-brief] unparseable response for ${item._id} · finishReason=${finish}`);
+    await stamp(item, "", { failed: true });
     return "";
   }
 
-  if (!brief) return "";
+  if (!brief) {
+    await stamp(item, "", { failed: true });
+    return "";
+  }
   brief = brief.slice(0, 1200);
 
   await stamp(item, brief);
@@ -176,12 +194,23 @@ async function generate(item) {
   return brief;
 }
 
-/** Written to every row in the cluster, so whichever one represents the story serves it. */
-async function stamp(item, brief) {
+/**
+ * Record the outcome on every row in the cluster, so whichever one represents
+ * the story serves it — and so a failure is remembered rather than rediscovered.
+ *
+ * The attempt counter increments whether or not there is anything to show. That
+ * is the whole point: an unrecorded failure is indistinguishable from never
+ * having tried, which is what turned one broken story into a permanent line item.
+ */
+async function stamp(item, brief, { failed = false } = {}) {
   const filter = item.cluster_id
     ? { category: item.category, cluster_id: item.cluster_id }
     : { _id: item._id };
-  await NewsItem.updateMany(filter, { $set: { brief, brief_at: new Date() } }).catch(() => {});
+  await NewsItem.updateMany(filter, {
+    $set: { brief, brief_at: new Date() },
+    $inc: { brief_tries: 1 },
+  }).catch(() => {});
+  if (failed) console.warn(`[news-brief] attempt recorded as failed for ${item._id}`);
 }
 
 /**
@@ -201,7 +230,11 @@ export async function backfillBriefs(categoryId, { limit = 8, minScore = 6, hour
     first_seen_at: { $gte: since },
     ai_score: { $gte: minScore },
     $or: [{ brief: { $exists: false } }, { brief: "" }],
-    brief_at: null,
+    // Never re-pick a story that has already used its attempts. This was
+    // `brief_at: null`, which excluded successes but not failures — so every
+    // story the model choked on came back round on the next pass, and the one
+    // after that, at six per category per pass, indefinitely.
+    $and: [{ $or: [{ brief_tries: { $exists: false } }, { brief_tries: { $lt: MAX_TRIES } }] }],
   })
     .sort({ ai_score: -1, first_seen_at: -1 })
     .limit(limit * 3)          // room to skip duplicate cluster members
