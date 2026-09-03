@@ -8,7 +8,14 @@
  *
  * Below the split point it becomes an overlay drawer rather than shrinking: a
  * 240px rail on a phone leaves nothing for the content it is navigating to.
+ * The drawer enters from the RIGHT, under the hamburger that opened it, and sits
+ * below the app header so the logo and close control stay put — same arrangement
+ * as the reference project.
  */
+
+// Matches the mobile header height in Dashboard.js. The drawer hangs below it
+// rather than covering it, so the header's own close button stays reachable.
+export const MOBILE_HEADER_H = 54;
 
 const SECTIONS = [
   {
@@ -31,28 +38,37 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, user }) {
   const nav = (
     <nav
       style={{
-        width: 240, flexShrink: 0, height: "100%",
+        width: isNarrow ? "100%" : 240, flexShrink: 0, height: "100%",
         display: "flex", flexDirection: "column",
-        background: "var(--card)", borderRight: "1px solid var(--line)",
+        background: "var(--card)",
+        // On desktop the rail is the left edge of the app; in the drawer it is
+        // the right edge, so the border has to swap sides or it draws a line
+        // down the middle of the screen.
+        borderRight: isNarrow ? "none" : "1px solid var(--line)",
+        borderLeft: isNarrow ? "1px solid var(--line)" : "none",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "16px 18px 18px" }}>
-        <span
-          aria-hidden="true"
-          style={{
-            width: 28, height: 28, borderRadius: 8, background: "var(--ink)", color: "#fff",
-            display: "grid", placeItems: "center", fontSize: 15, fontWeight: 700,
-            fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
-          }}
-        >
-          ह
-        </span>
-        <span style={{ fontWeight: 700, fontSize: 16, color: "var(--ink)", letterSpacing: "-0.02em" }}>
-          Hinglish
-        </span>
-      </div>
+      {/* The app header already shows the wordmark on mobile — repeating it at
+          the top of the drawer just pushes the nav down. */}
+      {!isNarrow && (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "16px 18px 18px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 28, height: 28, borderRadius: 8, background: "var(--ink)", color: "#fff",
+              display: "grid", placeItems: "center", fontSize: 15, fontWeight: 700,
+              fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
+            }}
+          >
+            ह
+          </span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: "var(--ink)", letterSpacing: "-0.02em" }}>
+            Hinglish
+          </span>
+        </div>
+      )}
 
-      <div className="hg-scroll" style={{ flex: 1, minHeight: 0, padding: "0 12px 16px" }}>
+      <div className="hg-scroll" style={{ flex: 1, minHeight: 0, padding: `${isNarrow ? 16 : 0}px 12px 16px` }}>
         {SECTIONS.map((section) => (
           <div key={section.label} style={{ marginBottom: 20 }}>
             <div
@@ -139,14 +155,24 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, user }) {
       <div
         onClick={onClose}
         className="hg-fade"
-        style={{ position: "fixed", inset: 0, background: "rgba(18,16,13,.32)", zIndex: 50 }}
+        style={{
+          position: "fixed", top: MOBILE_HEADER_H, left: 0, right: 0, bottom: 0,
+          background: "rgba(18,16,13,.32)", zIndex: 50,
+        }}
       />
-      <div
-        className="hg-slide-right"
-        style={{ position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 51 }}
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="Menu"
+        className="hg-drawer-in"
+        style={{
+          position: "fixed", top: MOBILE_HEADER_H, right: 0, bottom: 0, zIndex: 51,
+          width: "min(84vw, 320px)",
+          boxShadow: "-20px 0 50px -30px rgba(18,16,13,.45)",
+        }}
       >
         {nav}
-      </div>
+      </aside>
     </>
   );
 }
