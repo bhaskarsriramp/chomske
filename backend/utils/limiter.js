@@ -1,49 +1,19 @@
 /**
  * limiter.js — concurrency slots and cooldowns for external API keys.
  *
- * ── WHY THIS IS IN-PROCESS BY DEFAULT, NOT REDIS ─────────────────────────────
- * The reference project coordinates through Redis because it runs several pods
- * and a shared counter is the only way they can respect "3 concurrent per key".
- * Hinglish runs as ONE pm2 process on one VM, so an in-process counter is exactly
- * as correct and has no infrastructure to be down.
+ * Backed by the shared Redis client (backend/redis.js) so limits hold across
+ * processes, exactly as the reference project's apiRateLimiter.js does. Redis is
+ * imported once from that module rather than connected here — one connection for
+ * the process, one place that knows the host.
  *
- * It also cannot hang. That project's Redis lives on a hardcoded GCP Memorystore
- * private IP, and an unreachable Redis makes ioredis wait rather than fail — the
- * documented reason its clients hang instead of erroring outside that VPC. A
- * shared counter is not worth turning every duration check into a 30-second stall.
- *
- * REDIS_URL is the upgrade path. Set it and this switches to a Redis-backed
- * counter that works across pods; leave it unset and ioredis is never imported,
- * so a missing or unreachable Redis cannot affect anything.
+ * ── REDIS DOWN MEANS DEGRADED, NEVER BROKEN ──────────────────────────────────
+ * Every Redis call below is wrapped and falls through to an in-process counter on
+ * failure. That matters because these limits guard a paid API: if Redis is
+ * unreachable the correct behaviour is to keep serving with slightly weaker
+ * coordination, not to fail every request. With one server the in-process path is
+ * exactly as correct anyway — Redis only starts earning its place at two.
  */
-
-const REDIS_URL = String(process.env.REDIS_URL || "").trim();
-
-let _redis = null;
-let _redisTried = false;
-
-/** Lazily connect, and only when explicitly configured. Never throws. */
-async function redis() {
-  if (!REDIS_URL) return null;
-  if (_redisTried) return _redis;
-  _redisTried = true;
-  try {
-    const { default: Redis } = await import("ioredis");
-    _redis = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 2,
-      // Fail fast rather than queueing forever — the whole point of the fallback.
-      connectTimeout: 3000,
-      enableOfflineQueue: false,
-      lazyConnect: false,
-    });
-    _redis.on("error", (err) => console.error("[limiter] redis error:", err.message));
-    console.log("[limiter] using Redis for cross-process limits");
-  } catch (err) {
-    console.error("[limiter] Redis unavailable, falling back in-process:", err.message);
-    _redis = null;
-  }
-  return _redis;
-}
+import redis, { isRedisEnabled } from "../redis.js";
 
 // ── Cooldowns ────────────────────────────────────────────────────────────────
 // A cooled key is skipped by rotation until its deadline passes.
@@ -51,19 +21,28 @@ async function redis() {
 const _cooldowns = new Map(); // key -> epoch ms when it expires
 
 export async function setCooldown(service, keyId, ms) {
-  const k = `cooldown:${service}:${keyId}`;
-  const until = Date.now() + Math.max(0, ms);
-  _cooldowns.set(k, until);
-  const r = await redis();
-  if (r) await r.set(k, "1", "PX", Math.max(1, ms)).catch(() => {});
+  const k = `hg:cooldown:${service}:${keyId}`;
+  _cooldowns.set(k, Date.now() + Math.max(0, ms));   // always kept locally too
+  if (!isRedisEnabled()) return;
+  try {
+    await redis.set(k, "1", "PX", Math.max(1, ms));
+  } catch (err) {
+    console.warn("[limiter] redis setCooldown failed, using in-process:", err.message);
+  }
 }
 
 export async function cooldownRemainingMs(service, keyId) {
-  const k = `cooldown:${service}:${keyId}`;
-  const r = await redis();
-  if (r) {
-    const ttl = await r.pttl(k).catch(() => -2);
-    if (ttl > 0) return ttl;
+  const k = `hg:cooldown:${service}:${keyId}`;
+  if (isRedisEnabled()) {
+    try {
+      const ttl = await redis.pttl(k);
+      if (ttl > 0) return ttl;
+      // -2 = no such key. Trust that over the local map so a cooldown cleared in
+      // Redis isn't kept alive by this process's stale copy.
+      if (ttl === -2) { _cooldowns.delete(k); return 0; }
+    } catch (err) {
+      console.warn("[limiter] redis pttl failed, using in-process:", err.message);
+    }
   }
   const until = _cooldowns.get(k) || 0;
   const left = until - Date.now();
@@ -84,32 +63,7 @@ export class NoSlotError extends Error {
   }
 }
 
-/**
- * Take one slot, or throw NoSlotError immediately when the cap is reached.
- * Callers rotate to another key rather than queueing, which is why this does not
- * wait: waiting on a busy key while an idle key exists is strictly worse.
- *
- * @returns {{ release: () => Promise<void> }}
- */
-export async function acquireSlot(service, max) {
-  const r = await redis();
-  if (r) {
-    const n = await r.incr(`conc:${service}`).catch(() => 0);
-    if (n === 1) await r.expire(`conc:${service}`, 60).catch(() => {});
-    if (n > max) {
-      await r.decr(`conc:${service}`).catch(() => {});
-      throw new NoSlotError(service);
-    }
-    let released = false;
-    return {
-      release: async () => {
-        if (released) return;
-        released = true;
-        await r.decr(`conc:${service}`).catch(() => {});
-      },
-    };
-  }
-
+function takeLocal(service, max) {
   const cur = _inflight.get(service) || 0;
   if (cur >= max) throw new NoSlotError(service);
   _inflight.set(service, cur + 1);
@@ -119,6 +73,44 @@ export async function acquireSlot(service, max) {
       if (released) return;
       released = true;
       _inflight.set(service, Math.max(0, (_inflight.get(service) || 1) - 1));
+    },
+  };
+}
+
+/**
+ * Take one slot, or throw NoSlotError immediately when the cap is reached.
+ * Deliberately does not wait: callers rotate to a different key, and queueing on
+ * a busy key while an idle key exists is strictly worse.
+ *
+ * @returns {{ release: () => Promise<void> }}
+ */
+export async function acquireSlot(service, max) {
+  if (!isRedisEnabled()) return takeLocal(service, max);
+
+  const k = `hg:conc:${service}`;
+  let n;
+  try {
+    n = await redis.incr(k);
+    // TTL every time, not just on the first increment: without it a counter
+    // orphaned by a crash between INCR and EXPIRE would never expire, and that
+    // key's slots would be permanently consumed.
+    await redis.expire(k, 60);
+  } catch (err) {
+    console.warn("[limiter] redis incr failed, using in-process:", err.message);
+    return takeLocal(service, max);
+  }
+
+  if (n > max) {
+    await redis.decr(k).catch(() => {});
+    throw new NoSlotError(service);
+  }
+
+  let released = false;
+  return {
+    release: async () => {
+      if (released) return;
+      released = true;
+      await redis.decr(k).catch(() => {});
     },
   };
 }
