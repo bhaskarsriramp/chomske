@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import api, { errorMessage } from "../../api";
 import ScriptPanel from "./ScriptPanel";
-import { sourceLabel, timeAgo, scoreStyle, buildBrief } from "./newsUtils";
+import { sourceLabel, timeAgo, scoreStyle } from "./newsUtils";
 
 /**
  * One story: what happened, the hook, and every outlet that carried it.
@@ -22,13 +22,11 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
   const [coverage, setCoverage] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
-    setCopied(false);
     if (preview) setItem(preview);
 
     (async () => {
@@ -57,14 +55,6 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
     return () => window.removeEventListener("keydown", onKey);
   }, [mode, onClose]);
 
-  const copyBrief = useCallback(() => {
-    if (!item) return;
-    navigator.clipboard.writeText(buildBrief(item, coverage)).then(
-      () => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
-      () => setError("Couldn't copy — select the text and copy it manually.")
-    );
-  }, [item, coverage]);
-
   if (!item) return null;
 
   const body = (
@@ -73,8 +63,6 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
       coverage={coverage}
       loading={loading}
       error={error}
-      copied={copied}
-      onCopy={copyBrief}
       onClose={mode === "sheet" ? onClose : null}
       compact={mode === "sheet"}
       voice={voice}
@@ -105,7 +93,7 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
 
 /* ── Content ───────────────────────────────────────────────────────────── */
 
-function Body({ item, coverage, loading, error, copied, onCopy, onClose, compact, voice, onVoiceChange, onGoTranscribe }) {
+function Body({ item, coverage, loading, error, onClose, compact, voice, onVoiceChange, onGoTranscribe }) {
   const links = coverage.length
     ? coverage
     : [{ source: item.source, title: item.title, url: item.url, published_at: item.published_at }];
@@ -133,17 +121,6 @@ function Body({ item, coverage, loading, error, copied, onCopy, onClose, compact
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <button
-            onClick={onCopy}
-            className="hg-btn-ghost"
-            style={{
-              fontSize: 13, fontWeight: 600, padding: "7px 13px", borderRadius: 9,
-              border: "1px solid var(--line)", background: "var(--card)",
-              color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer", whiteSpace: "nowrap",
-            }}
-          >
-            {copied ? "Copied" : "Copy brief"}
-          </button>
           {onClose && (
             <button
               onClick={onClose}
@@ -167,32 +144,22 @@ function Body({ item, coverage, loading, error, copied, onCopy, onClose, compact
       >
         <h2
           style={{
-            fontSize: compact ? 20 : 24, fontWeight: 700, lineHeight: 1.3,
-            letterSpacing: "-0.025em", color: "var(--ink)", margin: "0 0 16px",
+            fontSize: compact ? 21 : 27, fontWeight: 700, lineHeight: 1.24,
+            letterSpacing: "-0.022em", color: "var(--ink)", margin: "0 0 12px",
           }}
         >
           {item.title}
         </h2>
 
         {item.angle && (
-          <div
+          <p
             style={{
-              padding: "15px 17px", borderRadius: 12,
-              background: "var(--accent-soft)", border: "1px solid #F6DDCE", marginBottom: 16,
+              fontSize: compact ? 16 : 17.5, lineHeight: 1.55, fontWeight: 500,
+              color: "var(--ink-body)", margin: "0 0 18px",
             }}
           >
-            <div
-              style={{
-                fontSize: 10.5, fontWeight: 700, letterSpacing: "0.13em",
-                textTransform: "uppercase", color: "var(--accent)", marginBottom: 7,
-              }}
-            >
-              The angle
-            </div>
-            <div style={{ fontSize: compact ? 15 : 16, lineHeight: 1.6, color: "var(--ink)" }}>
-              {item.angle}
-            </div>
-          </div>
+            {item.angle}
+          </p>
         )}
 
         {item.summary && (
@@ -203,7 +170,7 @@ function Body({ item, coverage, loading, error, copied, onCopy, onClose, compact
 
         {item.why && (
           <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-mute)", margin: "0 0 26px" }}>
-            <strong style={{ fontWeight: 600, color: "var(--ink-body)" }}>Scored {item.score}: </strong>
+            <strong style={{ fontWeight: 600, color: "var(--ink-body)" }}>Why {item.score}/10 — </strong>
             {item.why}
           </p>
         )}
@@ -264,15 +231,11 @@ function Body({ item, coverage, loading, error, copied, onCopy, onClose, compact
                     {sourceLabel(c.source)}
                   </span>
                   {/* The API sorts by published_at ascending, so row zero broke it. */}
+                  {/* Plain text, not a badge. It is a footnote about ordering,
+                      not a status worth a coloured chip of its own. */}
                   {i === 0 && links.length > 1 && (
-                    <span
-                      style={{
-                        fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
-                        textTransform: "uppercase", padding: "2px 7px", borderRadius: 999,
-                        color: "var(--ok)", background: "#EDF7F1", border: "1px solid #CFE8DA",
-                      }}
-                    >
-                      Broke it
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ok)" }}>
+                      broke it
                     </span>
                   )}
                   <span style={{ fontSize: 11.5, color: "var(--ink-mute)" }}>{timeAgo(c.published_at)}</span>
@@ -293,7 +256,8 @@ function ScorePill({ score }) {
     <span
       title={`${score} out of 10 for how much this deserves a video today`}
       style={{
-        fontSize: 12.5, fontWeight: 700, padding: "4px 10px", borderRadius: 999,
+        fontSize: 12.5, fontWeight: 700, padding: "3px 8px", borderRadius: 6,
+        fontVariantNumeric: "tabular-nums",
         border: `1px solid ${s.borderColor}`, color: s.color, background: s.background,
         whiteSpace: "nowrap", flexShrink: 0,
       }}
@@ -307,13 +271,7 @@ function SourceSkeleton() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
       {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          style={{
-            height: 60, borderRadius: 10, border: "1px solid var(--line)",
-            background: "#FCFBF9", opacity: 1 - i * 0.24,
-          }}
-        />
+        <div key={i} className="hg-skel" style={{ height: 56 }} />
       ))}
     </div>
   );

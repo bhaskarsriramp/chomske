@@ -51,7 +51,7 @@ export default function ProfilePanel({ user, onSignOut, onUserChange }) {
               aria-hidden="true"
               style={{
                 width: 46, height: 46, borderRadius: "50%", flexShrink: 0,
-                background: "#F2EFE9", border: "1px solid var(--line)",
+                background: "#F2F2F2", border: "1px solid var(--line)",
                 display: "grid", placeItems: "center", fontSize: 18, fontWeight: 700, color: "var(--ink-mute)",
               }}
             >
@@ -265,7 +265,7 @@ function CategoriesSection({ user, onUserChange, isPhone }) {
           className={!dirty || !picked.length || saving ? undefined : "hg-btn-primary"}
           style={{
             fontSize: 13.5, fontWeight: 600, padding: "10px 18px", borderRadius: 10, border: "none",
-            background: !dirty || !picked.length || saving ? "#E9E4DB" : "var(--accent)",
+            background: !dirty || !picked.length || saving ? "#E5E5E5" : "var(--primary)",
             color: !dirty || !picked.length || saving ? "var(--ink-mute)" : "#fff",
             cursor: !dirty || !picked.length || saving ? "default" : "pointer",
           }}

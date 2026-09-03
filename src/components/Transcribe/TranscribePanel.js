@@ -175,7 +175,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
             style={{
               flex: 1, minWidth: 0, fontSize: 14.5, padding: "13px 15px",
               border: "1px solid var(--line)", borderRadius: 11,
-              background: full ? "#F7F5F1" : "var(--card)",
+              background: full ? "#F2F2F2" : "var(--card)",
               color: "var(--ink)", outline: "none",
             }}
           />
@@ -185,7 +185,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
             disabled={submitting || full}
             style={{
               fontSize: 14.5, fontWeight: 600, padding: "13px 22px", borderRadius: 11,
-              border: "none", background: "var(--accent)", color: "#fff",
+              border: "none", background: "var(--primary)", color: "#fff",
               cursor: submitting || full ? "default" : "pointer",
               opacity: submitting || full ? 0.55 : 1, whiteSpace: "nowrap",
             }}
@@ -210,7 +210,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
             role="alert"
             style={{
               marginTop: 13, padding: "12px 14px", borderRadius: 10,
-              background: "#FDF1EE", border: "1px solid #F3D6CE",
+              background: "#FCE8E6", border: "1px solid #F5C7C3",
               color: "var(--bad)", fontSize: 13.5, lineHeight: 1.55,
             }}
           >
@@ -222,7 +222,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
           <div
             style={{
               marginTop: 13, padding: "12px 14px", borderRadius: 10,
-              background: "var(--accent-soft)", border: "1px solid #F6DDCE",
+              background: "var(--accent-soft)", border: "1px solid #F7CFCF",
               fontSize: 13, lineHeight: 1.6, color: "var(--ink-body)",
             }}
           >
@@ -301,7 +301,7 @@ function SlotDots({ used, max }) {
           key={i}
           style={{
             width: 7, height: 7, borderRadius: "50%",
-            background: i < used ? "var(--accent)" : "#E2DCD3",
+            background: i < used ? "var(--accent)" : "#D9D9D9",
           }}
         />
       ))}
@@ -320,7 +320,7 @@ function AnalyseBlock({ voice, canAnalyse, readyCount, analysing, analysed, onAn
       style={{
         marginTop: 22, padding: 18, borderRadius: "var(--radius)",
         background: "var(--card)",
-        border: `1px solid ${stale ? "#F6DDCE" : "var(--line)"}`,
+        border: `1px solid ${stale ? "#F7CFCF" : "var(--line)"}`,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -352,7 +352,7 @@ function AnalyseBlock({ voice, canAnalyse, readyCount, analysing, analysed, onAn
           style={{
             fontSize: 14, fontWeight: 600, padding: "11px 18px", borderRadius: 11,
             border: "none", flexShrink: 0,
-            background: !canAnalyse || analysing ? "#E9E4DB" : "var(--accent)",
+            background: !canAnalyse || analysing ? "#E5E5E5" : "var(--primary)",
             color: !canAnalyse || analysing ? "var(--ink-mute)" : "#fff",
             cursor: !canAnalyse || analysing ? "default" : "pointer",
           }}
@@ -403,7 +403,7 @@ function ConfirmDialog({ item, busy, onCancel, onConfirm }) {
       <div
         onClick={busy ? undefined : onCancel}
         className="hg-fade"
-        style={{ position: "fixed", inset: 0, background: "rgba(18,16,13,.4)", zIndex: 70 }}
+        style={{ position: "fixed", inset: 0, background: "rgba(15,15,15,.4)", zIndex: 70 }}
       />
       <div
         role="dialog"
@@ -415,7 +415,7 @@ function ConfirmDialog({ item, busy, onCancel, onConfirm }) {
           zIndex: 71, width: "min(420px, calc(100vw - 32px))",
           background: "var(--card)", border: "1px solid var(--line)",
           borderRadius: "var(--radius)", padding: 22,
-          boxShadow: "0 30px 70px -30px rgba(18,16,13,.5)",
+          boxShadow: "0 30px 70px -30px rgba(15,15,15,.5)",
         }}
       >
         <div style={{ fontSize: 17, fontWeight: 700, color: "var(--ink)", marginBottom: 8, letterSpacing: "-0.02em" }}>
@@ -484,9 +484,8 @@ function VideoList({ items, activeId, onOpen, onDelete }) {
             className={on ? undefined : "hg-row"}
             style={{
               display: "flex", alignItems: "center", gap: 8, padding: "10px 10px 10px 12px",
-              background: on ? "#FBF6F1" : "var(--card)",
-              border: `1px solid ${on ? "#EBD8C8" : "var(--line)"}`,
-              borderLeft: `3px solid ${on ? "var(--accent)" : "transparent"}`,
+              background: on ? "#F2F2F2" : "var(--card)",
+              border: `1px solid ${on ? "#D0D0D0" : "var(--line)"}`,
               borderRadius: 10,
             }}
           >
@@ -541,7 +540,7 @@ function Result({ t, isPhone, onCopy, copied, onRetry }) {
 
   if (t.status === "failed") {
     return (
-      <div style={{ marginTop: 22, padding: 19, borderRadius: "var(--radius)", background: "#FDF1EE", border: "1px solid #F3D6CE" }}>
+      <div style={{ marginTop: 22, padding: 19, borderRadius: "var(--radius)", background: "#FCE8E6", border: "1px solid #F5C7C3" }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--bad)", marginBottom: 6 }}>
           Couldn't read this video
         </div>
@@ -575,7 +574,7 @@ function Result({ t, isPhone, onCopy, copied, onRetry }) {
         style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
           gap: 12, flexWrap: "wrap", padding: "13px 17px",
-          borderBottom: "1px solid var(--line)", background: "#FCFBF9",
+          borderBottom: "1px solid var(--line)", background: "#F9F9F9",
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -595,7 +594,7 @@ function Result({ t, isPhone, onCopy, copied, onRetry }) {
               <span
                 style={{
                   fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
-                  color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid #F6DDCE",
+                  color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid #F7CFCF",
                 }}
               >
                 {t.language_label}
@@ -665,9 +664,9 @@ function Processing() {
 
 function StatusTag({ status }) {
   const map = {
-    done:       { label: "Ready",   color: "var(--ok)",     bg: "#EDF7F1",            border: "#CFE8DA" },
-    processing: { label: "Working", color: "var(--accent)", bg: "var(--accent-soft)", border: "#F6DDCE" },
-    failed:     { label: "Failed",  color: "var(--bad)",    bg: "#FDF1EE",            border: "#F3D6CE" },
+    done:       { label: "Ready",   color: "var(--ok)",     bg: "#E6F4EA",            border: "#B7E1C4" },
+    processing: { label: "Working", color: "var(--accent)", bg: "var(--accent-soft)", border: "#F7CFCF" },
+    failed:     { label: "Failed",  color: "var(--bad)",    bg: "#FCE8E6",            border: "#F5C7C3" },
   };
   const s = map[status] || map.processing;
   return (

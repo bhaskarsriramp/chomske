@@ -22,7 +22,7 @@ const SECTIONS = [
     label: "Studio",
     items: [
       { id: "topics", label: "Topics", icon: TargetIcon },
-      { id: "transcribe", label: "My voice", icon: WaveIcon },
+      { id: "voice", label: "My voice", icon: WaveIcon },
     ],
   },
   {
@@ -157,7 +157,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, user }) {
         className="hg-fade"
         style={{
           position: "fixed", top: MOBILE_HEADER_H, left: 0, right: 0, bottom: 0,
-          background: "rgba(18,16,13,.32)", zIndex: 50,
+          background: "rgba(15,15,15,.32)", zIndex: 50,
         }}
       />
       <aside
@@ -168,7 +168,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, user }) {
         style={{
           position: "fixed", top: MOBILE_HEADER_H, right: 0, bottom: 0, zIndex: 51,
           width: "min(84vw, 320px)",
-          boxShadow: "-20px 0 50px -30px rgba(18,16,13,.45)",
+          boxShadow: "-20px 0 50px -30px rgba(15,15,15,.45)",
         }}
       >
         {nav}

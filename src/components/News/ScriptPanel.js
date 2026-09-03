@@ -108,7 +108,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
           role="alert"
           style={{
             padding: "12px 14px", borderRadius: 10, marginBottom: 12,
-            background: "#FDF1EE", border: "1px solid #F3D6CE",
+            background: "#FCE8E6", border: "1px solid #F5C7C3",
             color: "var(--bad)", fontSize: 13.5, lineHeight: 1.55,
           }}
         >
@@ -129,7 +129,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
             className="hg-btn-primary"
             style={{
               fontSize: 14, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
-              border: "none", background: "var(--accent)", color: "#fff",
+              border: "none", background: "var(--primary)", color: "#fff",
               cursor: busy ? "default" : "pointer", opacity: busy ? 0.65 : 1,
             }}
           >
@@ -149,7 +149,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
         <div
           style={{
             padding: 16, borderRadius: 12,
-            background: "#FDF1EE", border: "1px solid #F3D6CE",
+            background: "#FCE8E6", border: "1px solid #F5C7C3",
           }}
         >
           <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--bad)", marginBottom: 5 }}>
@@ -193,10 +193,10 @@ function VoiceChip({ voice }) {
   const n = p.transcript_count || 0;
   const tone =
     p.confidence === "good"
-      ? { color: "var(--ok)", bg: "#EDF7F1", border: "#CFE8DA" }
+      ? { color: "var(--ok)", bg: "#E6F4EA", border: "#B7E1C4" }
       : p.confidence === "fair"
-      ? { color: "var(--accent)", bg: "var(--accent-soft)", border: "#F6DDCE" }
-      : { color: "var(--ink-mute)", bg: "#F5F2ED", border: "var(--line)" };
+      ? { color: "var(--accent)", bg: "var(--accent-soft)", border: "#F7CFCF" }
+      : { color: "var(--ink-mute)", bg: "#F2F2F2", border: "var(--line)" };
 
   return (
     <span
@@ -217,7 +217,7 @@ function NeedsVoice({ onGoTranscribe }) {
     <div
       style={{
         padding: "20px 18px", borderRadius: 12,
-        background: "#FCFBF9", border: "1px dashed var(--line)",
+        background: "#F9F9F9", border: "1px dashed var(--line)",
       }}
     >
       <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--ink)", marginBottom: 6 }}>
@@ -281,7 +281,7 @@ function Result({ script, compact, copied, onCopy, onRegenerate, busy }) {
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             gap: 10, flexWrap: "wrap", padding: "11px 15px",
-            borderBottom: "1px solid var(--line)", background: "#FCFBF9",
+            borderBottom: "1px solid var(--line)", background: "#F9F9F9",
           }}
         >
           <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>

@@ -66,7 +66,7 @@ export default function DashboardHome({ onGoTranscribe }) {
             aria-label="Date range"
             style={{
               display: "inline-flex", padding: 3, gap: 2,
-              background: "#F2EFE9", border: "1px solid var(--line)", borderRadius: 10,
+              background: "#F2F2F2", border: "1px solid var(--line)", borderRadius: 10,
             }}
           >
             {RANGES.map((r) => {
@@ -81,7 +81,7 @@ export default function DashboardHome({ onGoTranscribe }) {
                     borderRadius: 8, border: "none", cursor: "pointer", whiteSpace: "nowrap",
                     background: on ? "var(--card)" : "transparent",
                     color: on ? "var(--ink)" : "var(--ink-mute)",
-                    boxShadow: on ? "0 1px 2px rgba(18,16,13,.09)" : "none",
+                    boxShadow: on ? "0 1px 2px rgba(15,15,15,.09)" : "none",
                   }}
                 >
                   {r.label}
@@ -91,7 +91,7 @@ export default function DashboardHome({ onGoTranscribe }) {
           </div>
 
           {range === "custom" && (
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <DateInput value={custom.from} onChange={(v) => setCustom((c) => ({ ...c, from: v }))} label="From" />
               <span style={{ fontSize: 13, color: "var(--ink-mute)" }}>to</span>
               <DateInput value={custom.to} onChange={(v) => setCustom((c) => ({ ...c, to: v }))} label="To" />
@@ -105,7 +105,7 @@ export default function DashboardHome({ onGoTranscribe }) {
           role="alert"
           style={{
             marginTop: 18, padding: "12px 14px", borderRadius: 10,
-            background: "#FDF1EE", border: "1px solid #F3D6CE",
+            background: "#FCE8E6", border: "1px solid #F5C7C3",
             color: "var(--bad)", fontSize: 13.5,
           }}
         >
@@ -209,7 +209,7 @@ function Stat({ label, value, suffix, note, action, tone }) {
     <div
       style={{
         padding: 18, borderRadius: "var(--radius)", background: "var(--card)",
-        border: `1px solid ${tone === "warn" ? "#F6DDCE" : "var(--line)"}`,
+        border: `1px solid ${tone === "warn" ? "#F7CFCF" : "var(--line)"}`,
       }}
     >
       <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-mute)", marginBottom: 10 }}>
@@ -294,9 +294,12 @@ function DateInput({ value, onChange, label }) {
       aria-label={label}
       onChange={(e) => onChange(e.target.value)}
       style={{
-        fontSize: 12.5, padding: "7px 10px", borderRadius: 9,
+        fontSize: 12.5, padding: "7px 10px", borderRadius: 8,
         border: "1px solid var(--line)", background: "var(--card)",
         color: "var(--ink)", outline: "none", fontFamily: "inherit",
+        // iOS forces these to 16px (see index.css). Without a shrink floor, two
+        // date fields plus "to" overflow a 360px screen.
+        minWidth: 0, flex: "1 1 130px",
       }}
     />
   );

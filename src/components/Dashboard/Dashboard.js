@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { useParams, useNavigate, Navigate } from "react-router-dom";
 import useIsMobile from "../../hooks/useIsMobile";
 import Sidebar, { MOBILE_HEADER_H } from "../Shell/Sidebar";
 import NewsFeed from "../News/NewsFeed";
@@ -20,11 +21,17 @@ import ProfilePanel from "../Profile/ProfilePanel";
  * opened and then stays mounted, hidden. Dashboard is the exception — it holds no
  * in-flight work and its numbers should be fresh on every visit, so it remounts.
  */
+export const TAB_IDS = ["topics", "voice", "dashboard", "profile"];
+
 export default function Dashboard({ user, onSignOut, onUserChange }) {
   const isNarrow = useIsMobile(900);
+  const { tab: tabParam } = useParams();
+  const navigate = useNavigate();
 
-  const [tab, setTab] = useState("topics");
-  const [mounted, setMounted] = useState({ topics: true });
+  // The URL is the source of truth for which screen is open, so browser back
+  // and a page refresh both land where the user actually was.
+  const tab = tabParam;
+  const [mounted, setMounted] = useState({ [tabParam]: true });
   const [drawer, setDrawer] = useState(false);
   const [quota, setQuota] = useState(null);
   // Bumped whenever the voice set changes, so the script panel re-reads the
@@ -32,10 +39,16 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
   const [voiceRev, setVoiceRev] = useState(0);
 
   const openTab = useCallback((id) => {
-    setTab(id);
-    setMounted((m) => (m[id] ? m : { ...m, [id]: true }));
+    navigate(`/app/${id}`);
     setDrawer(false);
-  }, []);
+  }, [navigate]);
+
+  // Panels are kept mounted once visited (see the note above), and the URL can
+  // now arrive from a link or the back button rather than only from openTab —
+  // so registration happens here, on whatever tab is current.
+  useEffect(() => {
+    setMounted((m) => (m[tab] ? m : { ...m, [tab]: true }));
+  }, [tab]);
 
   const bumpVoice = useCallback(() => setVoiceRev((n) => n + 1), []);
 
@@ -50,6 +63,9 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
   }, [drawer]);
 
   useEffect(() => { if (!isNarrow) setDrawer(false); }, [isNarrow]);
+
+  // A typo or a stale bookmark shouldn't render an empty shell.
+  if (!TAB_IDS.includes(tabParam)) return <Navigate to="/app/topics" replace />;
 
   return (
     <div className="hg-app" style={{ display: "flex", background: "var(--paper)" }}>
@@ -127,13 +143,13 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
               <NewsFeed
                 voiceRev={voiceRev}
                 categoriesKey={(user?.categories || []).join(",")}
-                onGoTranscribe={() => openTab("transcribe")}
+                onGoTranscribe={() => openTab("voice")}
               />
             </div>
           )}
 
-          {mounted.transcribe && (
-            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "transcribe" ? "flex" : "none" }}>
+          {mounted.voice && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "voice" ? "flex" : "none" }}>
               {/* setQuota is a stable setState reference — an inline arrow would
                   change identity every render and re-fire the panel's fetch. */}
               <TranscribePanel onQuota={setQuota} onVoiceChange={bumpVoice} />
@@ -145,7 +161,7 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
               that takes a moment to load. */}
           {tab === "dashboard" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <DashboardHome onGoTranscribe={() => openTab("transcribe")} />
+              <DashboardHome onGoTranscribe={() => openTab("voice")} />
             </div>
           )}
 

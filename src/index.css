@@ -2,17 +2,24 @@
    keyframes, media queries). Everything else lives beside its component. */
 
 :root {
-  --ink: #12100D;        /* headlines */
-  --ink-body: #3D3730;   /* paragraphs */
-  --ink-mute: #857C71;   /* labels, captions */
-  --line: #E7E2DA;       /* hairlines */
-  --paper: #FBFAF7;      /* page */
+  --ink: #0F0F0F;        /* headlines */
+  --ink-body: #383838;   /* paragraphs */
+  --ink-mute: #606060;   /* labels, captions */
+  --line: #E3E3E3;       /* hairlines */
+  --paper: #F9F9F9;      /* page */
   --card: #FFFFFF;
-  --accent: #C2410C;     /* burnt orange — used sparingly, never as a gradient */
-  --accent-soft: #FFF3EC;
-  --ok: #0F7B4F;
-  --bad: #B4341E;
-  --radius: 14px;
+  /* Filled primary actions. Deliberately NOT the accent: red is the destructive
+     colour too, and "Add video" sitting next to "Delete" in the same red gives a
+     creator no way to tell them apart. Black-filled primaries are also what
+     Instagram and YouTube Studio actually use. */
+  --primary: #0F0F0F;
+  --primary-hover: #2E2E2E;
+  /* Signal only — scores, the breaking dot, filled slots. Never a button. */
+  --accent: #CC0000;
+  --accent-soft: #FDECEC;
+  --ok: #0D8A4F;
+  --bad: #C5221F;
+  --radius: 12px;
 }
 
 * { box-sizing: border-box; }
@@ -40,8 +47,26 @@ body {
 button { font-family: inherit; }
 a { color: inherit; }
 
+input, textarea, select { font-family: inherit; color: inherit; }
+
+/* ── iOS ZOOM ────────────────────────────────────────────────────────────────
+   Safari on iPhone zooms the whole page when a focused field's text is under
+   16px, and it does NOT zoom back out — the user is left scrolled sideways in a
+   layout they now have to pinch out of. 16px is the exact threshold, so every
+   field goes to 16px on small screens regardless of what it renders at on
+   desktop. !important is required, not lazy: these sizes are set inline on the
+   elements, and an inline style beats a plain stylesheet rule. */
+@media (max-width: 820px) {
+  input, textarea, select { font-size: 16px !important; }
+}
+
 /* Focus ring: visible for keyboard users, absent for mouse clicks. */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Text fields get a real focus state rather than only the keyboard ring —
+   clicking into a box should visibly claim it. */
+input:focus, textarea:focus { border-color: var(--ink) !important; outline: none; }
+input::placeholder, textarea::placeholder { color: #9A9A9A; }
 
 @keyframes hg-spin { to { transform: rotate(360deg); } }
 @keyframes hg-rise {
@@ -64,14 +89,14 @@ a { color: inherit; }
 
 /* Inactive nav rows warm on hover; the active one is already solid. */
 .hg-nav-item { transition: background .12s ease; }
-.hg-nav-item:hover { background: #F5F1EB !important; }
+.hg-nav-item:hover { background: #F2F2F2 !important; }
 
 /* Destructive icon buttons stay quiet until pointed at — a row of red bins
    reads as a warning screen rather than a list. */
 .hg-icon-btn { transition: background .12s ease, color .12s ease, border-color .12s ease; }
 .hg-icon-btn:hover {
-  background: #FDF1EE !important;
-  border-color: #F3D6CE !important;
+  background: #FCE8E6 !important;
+  border-color: #F5C7C3 !important;
   color: var(--bad) !important;
 }
 .hg-rise { animation: hg-rise .45s cubic-bezier(.2,.7,.3,1) both; }
@@ -87,25 +112,39 @@ a { color: inherit; }
 .hg-app { height: 100vh; height: 100dvh; }
 
 /* Scoped hover states — inline styles can't do :hover. */
-.hg-btn-primary:hover { background: #A9370A !important; }
-.hg-btn-ghost:hover { border-color: var(--ink) !important; color: var(--ink) !important; }
-.hg-card-lift { transition: transform .18s ease, box-shadow .18s ease; }
-.hg-card-lift:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -18px rgba(18,16,13,.35); }
+.hg-btn-primary:hover { background: var(--primary-hover) !important; }
+.hg-btn-ghost:hover { border-color: #A6A6A6 !important; background: #F9F9F9 !important; }
 
-/* Rows in a dense list shouldn't lift and cast shadows on hover — at this
-   density it reads as jitter. They warm instead. */
-.hg-row { transition: background .13s ease, border-color .13s ease; }
-.hg-row:hover { background: #FCFAF7 !important; border-color: #DED6CB !important; }
+/* ── NOTHING LIFTS ON HOVER ──────────────────────────────────────────────────
+   A card that floats up 2px with a soft shadow is the single most recognisable
+   generated-UI gesture, and creators live in YouTube Studio, which never does
+   it. Rows here change fill and border only. It also stops a list of forty
+   items twitching as the cursor crosses it. */
+.hg-row { transition: background .12s ease, border-color .12s ease; }
+.hg-row:hover { background: #F9F9F9 !important; border-color: #D0D0D0 !important; }
 
-/* Panes scroll a lot; the default Windows scrollbar is a grey slab that fights
-   the paper palette. */
-.hg-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #DCD5CA transparent; }
+/* Selectable cards (onboarding, category editing) — same idea, no motion. */
+.hg-pick { transition: background .12s ease, border-color .12s ease; }
+.hg-pick:hover { border-color: #A6A6A6 !important; }
+
+/* ── SKELETONS ───────────────────────────────────────────────────────────────
+   One quiet pulse, not a staircase of fading opacities. A ladder of
+   progressively transparent boxes is decoration pretending to be a loading
+   state; a real skeleton is the same grey everywhere and simply breathes. */
+@keyframes hg-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+.hg-skel {
+  background: #EDEDED; border-radius: 8px;
+  animation: hg-pulse 1.5s ease-in-out infinite;
+}
+
+/* Panes scroll a lot, and the default Windows scrollbar is a heavy slab. */
+.hg-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #C6C6C6 transparent; }
 .hg-scroll::-webkit-scrollbar { width: 10px; }
 .hg-scroll::-webkit-scrollbar-track { background: transparent; }
 .hg-scroll::-webkit-scrollbar-thumb {
-  background: #DCD5CA; border-radius: 99px;
+  background: #C6C6C6; border-radius: 99px;
   border: 3px solid var(--paper); background-clip: padding-box;
 }
-.hg-scroll::-webkit-scrollbar-thumb:hover { background: #C7BEB0; background-clip: padding-box; }
+.hg-scroll::-webkit-scrollbar-thumb:hover { background: #ABABAB; background-clip: padding-box; }
 
-::selection { background: #FCE3D4; color: var(--ink); }
+::selection { background: #FFDAD6; color: var(--ink); }

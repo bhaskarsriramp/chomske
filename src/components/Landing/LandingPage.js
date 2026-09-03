@@ -200,7 +200,7 @@ function Eyebrow({ children }) {
         textTransform: "uppercase",
         color: "var(--accent)",
         background: "var(--accent-soft)",
-        border: "1px solid #F6DDCE",
+        border: "1px solid #F7CFCF",
         borderRadius: 999,
         padding: "6px 12px",
       }}
@@ -237,7 +237,7 @@ function TranscriptPreview({ compact = false }) {
         background: "var(--card)",
         border: "1px solid var(--line)",
         borderRadius: 18,
-        boxShadow: "0 24px 60px -34px rgba(18,16,13,.4)",
+        boxShadow: "0 24px 60px -34px rgba(15,15,15,.4)",
         overflow: "hidden",
       }}
     >
@@ -248,7 +248,7 @@ function TranscriptPreview({ compact = false }) {
           gap: 8,
           padding: "12px 16px",
           borderBottom: "1px solid var(--line)",
-          background: "#FCFBF9",
+          background: "#F9F9F9",
         }}
       >
         <Dot /><Dot /><Dot />
@@ -293,7 +293,7 @@ function TranscriptPreview({ compact = false }) {
 }
 
 function Dot() {
-  return <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#E2DCD3" }} />;
+  return <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#D9D9D9" }} />;
 }
 
 function Pill({ children, subtle }) {
@@ -305,8 +305,8 @@ function Pill({ children, subtle }) {
         padding: "5px 10px",
         borderRadius: 999,
         color: subtle ? "var(--ink-mute)" : "var(--accent)",
-        background: subtle ? "#F5F2ED" : "var(--accent-soft)",
-        border: `1px solid ${subtle ? "var(--line)" : "#F6DDCE"}`,
+        background: subtle ? "#F2F2F2" : "var(--accent-soft)",
+        border: `1px solid ${subtle ? "var(--line)" : "#F7CFCF"}`,
       }}
     >
       {children}
@@ -359,7 +359,7 @@ function Features({ isMobile, pad }) {
           {items.map((f) => (
             <div
               key={f.t}
-              className="hg-card-lift"
+              className="hg-row"
               style={{
                 background: "var(--card)",
                 border: "1px solid var(--line)",
@@ -389,7 +389,7 @@ function HowItWorks({ isMobile, pad }) {
   return (
     <section
       id="how"
-      style={{ padding: `${isMobile ? 46 : 76}px ${pad}`, borderTop: "1px solid var(--line)", background: "#F7F5F1" }}
+      style={{ padding: `${isMobile ? 46 : 76}px ${pad}`, borderTop: "1px solid var(--line)", background: "#F2F2F2" }}
     >
       <div>
         <h2

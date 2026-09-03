@@ -124,7 +124,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
           role="alert"
           style={{
             padding: "12px 14px", borderRadius: 10, marginBottom: 18,
-            background: "#FDF1EE", border: "1px solid #F3D6CE",
+            background: "#FCE8E6", border: "1px solid #F5C7C3",
             color: "var(--bad)", fontSize: 14,
           }}
         >
@@ -154,7 +154,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
                 onClick={() => toggle(c.id)}
                 aria-pressed={on}
                 disabled={blocked}
-                className={on || blocked ? undefined : "hg-card-lift"}
+                className={on || blocked ? undefined : "hg-pick"}
                 style={{
                   position: "relative", textAlign: "left",
                   padding: isPhone ? "16px 16px" : "19px 18px",
@@ -220,7 +220,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
           style={{
             fontSize: 15, fontWeight: 600, padding: "13px 28px", borderRadius: 11,
             border: "none", flexShrink: 0,
-            background: !picked.length || saving ? "#E9E4DB" : "var(--accent)",
+            background: !picked.length || saving ? "#E5E5E5" : "var(--primary)",
             color: !picked.length || saving ? "var(--ink-mute)" : "#fff",
             cursor: !picked.length || saving ? "default" : "pointer",
           }}
@@ -240,7 +240,7 @@ function Check({ on }) {
         flexShrink: 0, width: 21, height: 21, borderRadius: "50%",
         display: "grid", placeItems: "center",
         background: on ? "var(--accent)" : "transparent",
-        border: `1.5px solid ${on ? "var(--accent)" : "#DDD6CB"}`,
+        border: `1.5px solid ${on ? "var(--accent)" : "#D9D9D9"}`,
         transition: "background .13s ease, border-color .13s ease",
       }}
     >
@@ -262,13 +262,7 @@ function SkeletonGrid({ isPhone }) {
       }}
     >
       {[0, 1, 2, 3, 4, 5].map((i) => (
-        <div
-          key={i}
-          style={{
-            height: 96, borderRadius: 14, border: "1px solid var(--line)",
-            background: "var(--card)", opacity: 1 - i * 0.13,
-          }}
-        />
+        <div key={i} className="hg-skel" style={{ height: 92, borderRadius: 12 }} />
       ))}
     </div>
   );

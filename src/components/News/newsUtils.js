@@ -74,7 +74,7 @@ export function scoreStyle(score) {
     return { color: "#fff", background: "var(--accent)", borderColor: "var(--accent)" };
   }
   if (score >= 6) {
-    return { color: "var(--accent)", background: "var(--accent-soft)", borderColor: "#F6DDCE" };
+    return { color: "var(--accent)", background: "var(--accent-soft)", borderColor: "#F7CFCF" };
   }
   return { color: "var(--ink-mute)", background: "var(--card)", borderColor: "var(--line)" };
 }
@@ -90,23 +90,3 @@ export function isFresh(firstSeenAt, withinHours = 3) {
   return !Number.isNaN(ms) && ms >= 0 && ms < withinHours * 3600000;
 }
 
-/**
- * The text a creator takes into a script: what happened, the hook, and every
- * link they'd open to check facts and grab screenshots.
- */
-export function buildBrief(item, coverage = []) {
-  const lines = [item.title];
-
-  if (item.angle) lines.push("", `Angle: ${item.angle}`);
-  if (item.why) lines.push(`Why it matters: ${item.why}`);
-  if (item.summary) lines.push("", item.summary);
-
-  const links = coverage.length
-    ? coverage
-    : [{ source: item.source, title: item.title, url: item.url }];
-
-  lines.push("", `Sources (${links.length}):`);
-  for (const c of links) lines.push(`- ${sourceLabel(c.source)} — ${c.title}\n  ${c.url}`);
-
-  return lines.join("\n");
-}

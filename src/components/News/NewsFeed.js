@@ -182,7 +182,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
               role="alert"
               style={{
                 padding: "12px 14px", borderRadius: 10, marginBottom: 12,
-                background: "#FDF1EE", border: "1px solid #F3D6CE",
+                background: "#FCE8E6", border: "1px solid #F5C7C3",
                 color: "var(--bad)", fontSize: 13.5, lineHeight: 1.55,
               }}
             >
@@ -270,7 +270,7 @@ function ChipGroup({ label, options, value, onChange }) {
       aria-label={label}
       style={{
         display: "inline-flex", padding: 3, gap: 2,
-        background: "#F2EFE9", border: "1px solid var(--line)", borderRadius: 10,
+        background: "#F2F2F2", border: "1px solid var(--line)", borderRadius: 10,
       }}
     >
       {options.map((o) => {
@@ -285,7 +285,7 @@ function ChipGroup({ label, options, value, onChange }) {
               padding: "6px 11px", borderRadius: 8, border: "none",
               background: on ? "var(--card)" : "transparent",
               color: on ? "var(--ink)" : "var(--ink-mute)",
-              boxShadow: on ? "0 1px 2px rgba(18,16,13,.09)" : "none",
+              boxShadow: on ? "0 1px 2px rgba(15,15,15,.09)" : "none",
               cursor: "pointer", whiteSpace: "nowrap",
             }}
           >
@@ -306,6 +306,16 @@ function StoryRow({ item, isPhone, active, rowRef, onOpen }) {
   const names = (item.sources || []).slice(0, 2).map(sourceLabel).join(", ");
   const more = (item.sources || []).length - 2;
 
+  // One muted line, joined with middots. Metadata as separate coloured chips is
+  // how a rundown turns into a sticker album — a creator scans this line, they
+  // don't read it, and every badge added is one more thing to look past.
+  const meta = [
+    item.source_count > 1 ? `${item.source_count} sources` : null,
+    names ? `${names}${more > 0 ? ` +${more}` : ""}` : null,
+    timeAgo(item.first_seen_at),
+    item.points ? `${item.points} pts` : null,
+  ].filter(Boolean).join("  ·  ");
+
   return (
     <button
       ref={rowRef}
@@ -313,19 +323,19 @@ function StoryRow({ item, isPhone, active, rowRef, onOpen }) {
       className={active ? undefined : "hg-row"}
       style={{
         textAlign: "left", width: "100%", cursor: "pointer",
-        display: "flex", alignItems: "flex-start", gap: 13,
-        padding: isPhone ? "13px 14px" : "14px 15px",
-        background: active ? "#FBF6F1" : "var(--card)",
-        border: `1px solid ${active ? "#EBD8C8" : "var(--line)"}`,
-        borderLeft: `3px solid ${active ? "var(--accent)" : "transparent"}`,
-        borderRadius: 11,
+        display: "flex", alignItems: "flex-start", gap: 12,
+        padding: isPhone ? "12px 13px" : "13px 14px",
+        background: active ? "#F2F2F2" : "var(--card)",
+        border: `1px solid ${active ? "#D0D0D0" : "var(--line)"}`,
+        borderRadius: 10,
       }}
     >
       <span
         aria-hidden="true"
         style={{
-          flexShrink: 0, width: 32, height: 32, borderRadius: 9,
-          display: "grid", placeItems: "center", fontSize: 13.5, fontWeight: 700,
+          flexShrink: 0, width: 28, height: 28, borderRadius: 7,
+          display: "grid", placeItems: "center",
+          fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums",
           border: `1px solid ${s.borderColor}`, color: s.color, background: s.background,
         }}
       >
@@ -333,19 +343,33 @@ function StoryRow({ item, isPhone, active, rowRef, onOpen }) {
       </span>
 
       <span style={{ minWidth: 0, flex: 1 }}>
-        <span
-          style={{
-            display: "block", fontSize: isPhone ? 15 : 15.5, fontWeight: 600,
-            lineHeight: 1.4, letterSpacing: "-0.011em", color: "var(--ink)",
-          }}
-        >
-          {item.title}
+        <span style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+          {/* A small red dot, not a pill. It reads at a glance in a list of
+              forty and takes none of the row's width. */}
+          {fresh && (
+            <span
+              aria-label="Breaking"
+              title="First seen in the last 3 hours"
+              style={{
+                flexShrink: 0, width: 6, height: 6, borderRadius: "50%",
+                background: "var(--accent)", transform: "translateY(-2px)",
+              }}
+            />
+          )}
+          <span
+            style={{
+              fontSize: isPhone ? 14.5 : 15, fontWeight: 600,
+              lineHeight: 1.38, letterSpacing: "-0.008em", color: "var(--ink)",
+            }}
+          >
+            {item.title}
+          </span>
         </span>
 
         {item.angle && (
           <span
             style={{
-              marginTop: 5, fontSize: 13.5, lineHeight: 1.55, color: "var(--ink-body)",
+              marginTop: 4, fontSize: 13, lineHeight: 1.5, color: "var(--ink-mute)",
               // Two lines is enough to judge the hook; the full angle is one
               // click away, and ragged card heights make a list hard to scan.
               display: "-webkit-box", overflow: "hidden",
@@ -358,30 +382,11 @@ function StoryRow({ item, isPhone, active, rowRef, onOpen }) {
 
         <span
           style={{
-            display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
-            marginTop: 8, fontSize: 11.5, color: "var(--ink-mute)",
+            display: "block", marginTop: 7, fontSize: 11.5, color: "#8A8A8A",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}
         >
-          {fresh && (
-            <span
-              style={{
-                fontSize: 9.5, fontWeight: 700, letterSpacing: "0.09em",
-                textTransform: "uppercase", padding: "2px 6px", borderRadius: 999,
-                color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid #F6DDCE",
-              }}
-            >
-              Breaking
-            </span>
-          )}
-          {item.source_kind === "primary" && (
-            <span style={{ fontWeight: 600, color: "var(--ok)" }}>Announcement</span>
-          )}
-          <span>
-            {item.source_count > 1 ? `${item.source_count} sources · ` : ""}
-            {names}{more > 0 ? ` +${more}` : ""}
-          </span>
-          <span>· {timeAgo(item.first_seen_at)}</span>
-          {item.points ? <span>· {item.points} pts</span> : null}
+          {meta}
         </span>
       </span>
     </button>
@@ -402,13 +407,7 @@ function FeedSkeleton() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
       {[0, 1, 2, 3, 4, 5].map((i) => (
-        <div
-          key={i}
-          style={{
-            height: 96, borderRadius: 11, border: "1px solid var(--line)",
-            background: "var(--card)", opacity: 1 - i * 0.14,
-          }}
-        />
+        <div key={i} className="hg-skel" style={{ height: 88 }} />
       ))}
     </div>
   );
