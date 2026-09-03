@@ -1,221 +1,104 @@
-import express from 'express';
-import http from 'http';
-import fs from 'fs';
-import path from 'path';
-import dbConnection from "./db.js";
-import bodyParser from "body-parser";
-import cors from 'cors';
-import usersOnBoard from "./routes/usersOn.js";
-import mongoose from 'mongoose';
-import  socketServer  from "../src/realtime/socketServer.js";
-import agenda from './utils/agenda.js';
-import { defineProcessActionLockJob } from './jobs/processActionLockJob.js';
-import { defineSendWhatsAppAlertJob } from './jobs/sendWhatsAppAlertJob.js';
-const { initSocketServer } = socketServer;
+/**
+ * server.js — Hinglish API.
+ *
+ * Deliberately small: auth, transcribe, health. Everything expensive lives behind
+ * a signed-in user and a daily cap, because reading a video is the only real cost
+ * in this product and an open endpoint would be someone else's free GPU.
+ */
+import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import rateLimit from "express-rate-limit";
 
-defineProcessActionLockJob(agenda);
-defineSendWhatsAppAlertJob(agenda);
+import connectToMongo from "./db.js";
+import authRoutes from "./routes/auth.js";
+import transcribeRoutes from "./routes/transcribe.js";
+import newsRoutes from "./routes/news.js";
+import { startNewsScheduler } from "./services/newsScheduler.js";
 
-
-dbConnection();
 const app = express();
-app.use(express.json());
-app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
+const PORT = parseInt(process.env.PORT || "8001", 10);
 
-app.use((req, res, next) => {
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-  next();
+// Behind Cloud Run / nginx / Cloudflare the client IP arrives in X-Forwarded-For.
+// Without this, express-rate-limit sees the proxy's IP and rate-limits everyone
+// as if they were one person.
+app.set("trust proxy", 1);
+
+const allowedOrigins = String(process.env.CORS_ORIGINS || "http://localhost:3000")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, cb) {
+      // No Origin header = same-origin, curl, or a health checker. Allow those;
+      // the cookie is what actually guards the endpoints.
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+    credentials: true, // required for the session cookie to cross origins
+  })
+);
+
+app.use(express.json({ limit: "1mb" }));
+app.use(cookieParser());
+
+// Blunt global ceiling. The real spend control is the per-user daily cap in
+// routes/transcribe.js; this just keeps a loop from hammering the process.
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+  })
+);
+
+app.get("/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+app.use("/auth", authRoutes);
+app.use(
+  "/transcribe",
+  // Tighter limit on the expensive path, on top of the per-user daily cap.
+  rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
+  transcribeRoutes
+);
+// Reads only — the collection/ranking cost is on the scheduler's clock, not the
+// caller's, so this needs no per-user cap beyond the global limiter.
+app.use("/news", newsRoutes);
+
+// 404 + error handler. Errors are logged in full and answered generically —
+// stack traces and provider messages must never reach the browser.
+app.use((req, res) => res.status(404).json({ success: false, message: "Not found" }));
+app.use((err, req, res, _next) => {
+  console.error("[server] unhandled:", err);
+  const status = /not allowed by CORS/.test(err?.message || "") ? 403 : 500;
+  res.status(status).json({ success: false, message: status === 403 ? "Origin not allowed" : "Server error" });
 });
 
-
-// 1) Single source of truth for CORS check
-function isAllowedOrigin(origin) {
-  if (!origin) return true; // curl, native apps
-
-  try {
-    const url = new URL(origin);
-
-    // allow http(s) only
-    if (!["http:", "https:"].includes(url.protocol)) return false;
-
-    // localhost dev
-    if (origin === "http://localhost:4800") return true;
-
-    // apex domain
-    if (url.hostname === "chomske.com") return true;
-
-    // all subdomains
-    if (url.hostname.endsWith(".chomske.com")) return true;
-
-    return false;
-  } catch {
-    return false;
+// Fail fast and loudly on missing config rather than 500ing at the first request.
+function assertConfig() {
+  const required = ["JWT_SECRET", "GOOGLE_CLIENT_ID", "AISTUDIO_KEY"];
+  const missing = required.filter((k) => !String(process.env[k] || "").trim());
+  if (missing.length) {
+    throw new Error(`Missing required env: ${missing.join(", ")}. Copy .env.example to .env and fill it in.`);
   }
 }
 
-
-const corsOptions = {
-  origin(origin, cb) {
-    if (isAllowedOrigin(origin)) return cb(null, true);
-    console.error("❌ CORS blocked Origin:", origin); // <— keep for PM2 logs
-    return cb(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"],
-};
-
-// 2) Put cors BEFORE any routes
-app.use(cors(corsOptions));
-
-// 3) Preflight must use the SAME options
-app.options("*", cors(corsOptions));
-
-
-app.use("/usersOn", usersOnBoard);
-
-// --- Simple helper: extract subdomain from Host header
-function extractSubdomain(hostname = '') {
-  if (!hostname) return null;
-  const host = hostname.split(':')[0].toLowerCase();
-  const parts = host.split('.');
-  if (parts.length <= 2) return null;        // chomske.com -> no subdomain
-  if (parts[0] === 'www') return null;       // ignore www
-  return parts.slice(0, parts.length - 2).join('.'); // a.b.chomske.com -> 'a.b'
-}
-
-
-
-
-// --- Serve static build and meta-inject index.html for SPA routes
-const BUILD_DIR = path.join(process.cwd(), 'build');
-const INDEX_HTML = path.join(BUILD_DIR, 'index.html');
-
-let TEMPLATE_HTML = null;
-try {
-  TEMPLATE_HTML = fs.readFileSync(INDEX_HTML, 'utf8');
-} catch (err) {
-  console.warn('Warning: build/index.html not found. Make sure you run `npm run build` before using server to serve static files.');
-  TEMPLATE_HTML = null;
-}
-
-// Serve static assets (JS/CSS/images)
-if (fs.existsSync(BUILD_DIR)) {
-  app.use(express.static(BUILD_DIR, { index: false }));
-}
-
-// Helper to build meta tags and inject initial profile
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function buildMetaTags(meta) {
-  const tags = [];
-  if (meta.title) tags.push(`<title>${escapeHtml(meta.title)}</title>`);
-  if (meta.description) tags.push(`<meta name="description" content="${escapeHtml(meta.description)}">`);
-  if (meta.url) tags.push(`<link rel="canonical" href="${escapeHtml(meta.url)}">`);
-
-  // Open Graph
-  if (meta.title) tags.push(`<meta property="og:title" content="${escapeHtml(meta.title)}">`);
-  if (meta.description) tags.push(`<meta property="og:description" content="${escapeHtml(meta.description)}">`);
-  if (meta.image) tags.push(`<meta property="og:image" content="${escapeHtml(meta.image)}">`);
-  if (meta.url) tags.push(`<meta property="og:url" content="${escapeHtml(meta.url)}">`);
-
-  // Twitter
-  if (meta.title) tags.push(`<meta name="twitter:title" content="${escapeHtml(meta.title)}">`);
-  if (meta.description) tags.push(`<meta name="twitter:description" content="${escapeHtml(meta.description)}">`);
-  if (meta.image) tags.push(`<meta name="twitter:image" content="${escapeHtml(meta.image)}">`);
-
-  return tags.join('\n');
-}
-
-// catch-all for client-side routes: inject meta & initial profile for subdomain requests
-app.get('*', async (req, res, next) => {
+(async () => {
   try {
-
-    if (req.path === '/socket.io' || req.path.startsWith('/socket.io/')) {
-  return next(); // let Engine.IO handle it
- }
-  if (req.path.startsWith('/api/')) {
-    return next(); // not SPA
-  }
-
-
-    // If the request matches an existing static file, let express.static have handled it.
-    // If template not loaded, fallback to next middleware (or 404).
-    if (!TEMPLATE_HTML) return next();
-
-    const host = req.headers.host || '';
-    const subdomain = extractSubdomain(host);
-    // const subdomain = 'sid4real';
-
-
-    // If no subdomain, just serve normal index.html (no injection)
-    if (!subdomain) {
-      return res.type('html').send(TEMPLATE_HTML);
-    }
-
-    // Try to fetch profile from DB
-    const profilesColl = mongoose.connection.collection('users');
-    const profile = await profilesColl.findOne({ handleUserName: subdomain.toLowerCase() });
-
-    // If no profile, serve default index and let client show 404/notfound UI
-    if (!profile) {
-      return res.type('html').send(TEMPLATE_HTML);
-    }
-
-    // Build meta and initial profile script
-    const meta = {
-      title: profile.displayName ? `${profile.displayName} — MyHandle` : `${subdomain} — MyHandle`,
-      description: profile.bio || profile.shortBio || `View ${profile.displayName || subdomain} on MyHandle`,
-      image: profile.ogImage || profile.avatarUrl || `https://chomske.com/static/default-og.png`,
-      url: `https://${host}${req.originalUrl}`
-    };
-
-    const metaTags = buildMetaTags(meta);
-
-    // Safe JSON for injection (escape < to avoid XSS ending script blocks)
-    const safeJson = JSON.stringify(profile).replace(/</g, '\\u003c');
-
-    const initialProfileScript = `<script>window.__INITIAL_PROFILE__ = ${safeJson};</script>`;
-
-    // inject before </head>
-    const html = TEMPLATE_HTML.replace(/<\/head>/i, `${metaTags}\n${initialProfileScript}\n</head>`);
-    // Cache if you want (not included here)
-
-    return res.type('html').send(html);
+    assertConfig();
+    await connectToMongo();
+    app.listen(PORT, () => {
+      console.log(`[server] Hinglish API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
+      console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);
+      startNewsScheduler();
+    });
   } catch (err) {
-    console.error('Error in meta-injection handler:', err);
-    // fallback to default index
-    if (TEMPLATE_HTML) return res.type('html').send(TEMPLATE_HTML);
-    return next(err);
+    console.error("[server] failed to start:", err.message);
+    process.exit(1);
   }
-});
-
-
-
-const server = http.createServer(app);
-initSocketServer(server);
-
-// const io = attachSocket(server, app);
-// app.set('io', io);
-
-
-server.listen(8001, () => {
-  console.log('Server is running on port 8001');
-});
-
-agenda.on("ready", () => {
-  agenda.start();
-  console.log("✅ Agenda started");
-});
-
-
-
-
-
+})();

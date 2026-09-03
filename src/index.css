@@ -1,13 +1,90 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* Design tokens + the few things inline styles can't express (pseudo-classes,
+   keyframes, media queries). Everything else lives beside its component. */
+
+:root {
+  --ink: #12100D;        /* headlines */
+  --ink-body: #3D3730;   /* paragraphs */
+  --ink-mute: #857C71;   /* labels, captions */
+  --line: #E7E2DA;       /* hairlines */
+  --paper: #FBFAF7;      /* page */
+  --card: #FFFFFF;
+  --accent: #C2410C;     /* burnt orange — used sparingly, never as a gradient */
+  --accent-soft: #FFF3EC;
+  --ok: #0F7B4F;
+  --bad: #B4341E;
+  --radius: 14px;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink-body);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+/* Indic transcripts need their own stack, or Windows renders tofu boxes for
+   Telugu and Bengali. Devanagari first, then the others, then a Latin fallback
+   so code-mixed English inside a Hindi sentence still looks right. */
+.indic {
+  font-family: "Noto Sans Devanagari", "Noto Sans Telugu", "Noto Sans Bengali",
+    Inter, system-ui, sans-serif;
+  line-height: 1.85;
+}
+
+button { font-family: inherit; }
+a { color: inherit; }
+
+/* Focus ring: visible for keyboard users, absent for mouse clicks. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@keyframes hg-spin { to { transform: rotate(360deg); } }
+@keyframes hg-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes hg-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes hg-sheet-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: none; }
+}
+.hg-rise { animation: hg-rise .45s cubic-bezier(.2,.7,.3,1) both; }
+.hg-fade { animation: hg-fade .18s ease both; }
+.hg-sheet-up { animation: hg-sheet-up .26s cubic-bezier(.2,.7,.3,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* The app shell owns the viewport: header fixed, panes scroll independently.
+   dvh second so mobile browser chrome doesn't cut off the last row. */
+.hg-app { height: 100vh; height: 100dvh; }
+
+/* Scoped hover states — inline styles can't do :hover. */
+.hg-btn-primary:hover { background: #A9370A !important; }
+.hg-btn-ghost:hover { border-color: var(--ink) !important; color: var(--ink) !important; }
+.hg-card-lift { transition: transform .18s ease, box-shadow .18s ease; }
+.hg-card-lift:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -18px rgba(18,16,13,.35); }
+
+/* Rows in a dense list shouldn't lift and cast shadows on hover — at this
+   density it reads as jitter. They warm instead. */
+.hg-row { transition: background .13s ease, border-color .13s ease; }
+.hg-row:hover { background: #FCFAF7 !important; border-color: #DED6CB !important; }
+
+/* Panes scroll a lot; the default Windows scrollbar is a grey slab that fights
+   the paper palette. */
+.hg-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #DCD5CA transparent; }
+.hg-scroll::-webkit-scrollbar { width: 10px; }
+.hg-scroll::-webkit-scrollbar-track { background: transparent; }
+.hg-scroll::-webkit-scrollbar-thumb {
+  background: #DCD5CA; border-radius: 99px;
+  border: 3px solid var(--paper); background-clip: padding-box;
+}
+.hg-scroll::-webkit-scrollbar-thumb:hover { background: #C7BEB0; background-clip: padding-box; }
+
+::selection { background: #FCE3D4; color: var(--ink); }

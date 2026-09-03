@@ -1,70 +1,164 @@
-# Getting Started with Create React App
+# Hinglish
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Paste a YouTube link, get the transcript **in the language it was spoken in**.
+Hindi comes back in Devanagari, Telugu in Telugu script, and Hinglish keeps its
+code-mixing exactly as said — no translation, no romanisation.
 
-## Available Scripts
+Production domain: **chomske.com**
 
-In the project directory, you can run:
+---
 
-### `npm start`
+## What's here
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+```
+Hinglish/
+├── backend/            Node + Express + Mongoose API
+│   ├── server.js       boot, CORS, rate limits, config assertions
+│   ├── db.js           Mongo connection + the database-separation guard
+│   ├── models/         User, Transcript
+│   ├── middleware/     session cookie auth
+│   ├── routes/         auth (Google), transcribe
+│   ├── services/       geminiClient — the actual video read
+│   └── utils/          YouTube URL parsing
+└── src/                React frontend (CRA)
+    ├── components/Landing/     marketing page
+    └── components/Dashboard/   the app
+```
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+---
 
-### `npm test`
+## Setup
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### 1. Backend
 
-### `npm run build`
+```bash
+cd backend
+npm install
+cp .env.example .env      # then fill it in — see below
+npm start                 # http://localhost:5000
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+You must fill three things in `backend/.env`:
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+| Key | Where to get it |
+|---|---|
+| `MONGODB_PASSWORD` | Same Atlas password as betaFounderProduction |
+| `AISTUDIO_KEY` | [aistudio.google.com](https://aistudio.google.com/apikey) → Get API key. Comma-separate several to spread rate limits. |
+| `GOOGLE_CLIENT_ID` | Google Cloud Console → Credentials → OAuth 2.0 Client ID (Web application) |
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+`JWT_SECRET` is already generated in the committed-locally `.env`; regenerate any time with:
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
 
-### `npm run eject`
+### 2. Frontend
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+```bash
+npm install
+cp .env.example .env      # set REACT_APP_GOOGLE_CLIENT_ID + REACT_APP_API_URL
+npm start                 # http://localhost:3000
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+`REACT_APP_GOOGLE_CLIENT_ID` **must be the same client id** as the backend's
+`GOOGLE_CLIENT_ID`, or the backend's audience check rejects every login.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+### 3. Google OAuth setup
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+In Google Cloud Console → Credentials → your OAuth client, add:
 
-## Learn More
+- **Authorised JavaScript origins**: `http://localhost:3000`, `https://chomske.com`
+- **Authorised redirect URIs**: not needed — `@react-oauth/google` uses the
+  popup/ID-token flow, not a redirect.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+---
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+## Two things worth knowing before you change anything
 
-### Code Splitting
+### The database is deliberately separate
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+This connects to the **same Atlas cluster** as betaFounderProduction but its own
+database (`hinglish`). That's not a style choice: betaFounderProduction connects
+with no database in its URI, so it lands in the cluster's default database, and
+its `User` model writes to a collection called `users` — the same name this
+project uses. One shared database would mean Hinglish signups landing in
+betaFounder's live user table.
 
-### Analyzing the Bundle Size
+`db.js` refuses to start if that's ever misconfigured. Both guards are tested:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+```
+MONGODB_DB=test          → Refusing to run against database "test" …
+MONGODB_URI without /db  → MONGODB_URI has no database name in it …
+```
 
-### Making a Progressive Web App
+### Gemini's YouTube constraints are user-facing
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+The video is read straight from its URL — no download, no ffmpeg, no storage.
+The limits that come with that surface as real error messages:
 
-### Advanced Configuration
+- **Public videos only.** Unlisted and private both fail.
+- **Free tier caps at ~8 hours of video per day**, per API key — a per-key
+  ceiling, not per-user. Add more keys to `AISTUDIO_KEY` to raise it.
+- Long videos take minutes, which is why transcription is asynchronous: `POST
+  /transcribe` returns a row immediately and the client polls it. Don't "simplify"
+  that into one blocking request — it dies on proxy idle timeouts.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+---
 
-### Deployment
+## Cost control
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+Reading a video is the only real cost in this product, so it's gated three ways:
 
-### `npm run build` fails to minify
+1. Sign-in required on every `/transcribe` route
+2. `DAILY_TRANSCRIBE_LIMIT` per user per rolling 24h (default 10)
+3. A unique index on `(user, video_id)` — the same video is never paid for twice,
+   enforced by the database rather than by application logic that a double-click
+   can race
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+---
+
+## API
+
+| Method | Route | Notes |
+|---|---|---|
+| `POST` | `/auth/google` | Body `{ credential }` — the Google ID token. Verified server-side. |
+| `GET` | `/auth/me` | Current user, or 401 |
+| `POST` | `/auth/logout` | Clears the cookie |
+| `POST` | `/transcribe` | Body `{ url }`. Returns `202` + a `processing` row, or the cached one |
+| `GET` | `/transcribe/:id` | Poll target |
+| `GET` | `/transcribe` | History + today's quota |
+| `GET` | `/health` | Uptime check |
+
+---
+
+## Verified working
+
+- Backend: all modules import, server boots, Mongo connects to `hinglish`
+- Both database-separation guards fire correctly
+- Auth and transcribe correctly return 401 when signed out
+- YouTube parser: 14/14 cases (watch, youtu.be, Shorts, live, embed, m., bare id,
+  playlist/timestamp params, and correct rejection of non-YouTube URLs)
+- Frontend: production build compiles clean (85 kB gzipped)
+- **End-to-end transcription, on a real video** — `youtube.com/shorts/re5iwZ5tigw`,
+  a Hindi tech Short. 11.4s, 1,988 chars, detected as `hi-en` / "Hinglish
+  (Hindi-English)". Hindi returned in Devanagari; `AI`, `Nvidia`, `GPUs`,
+  `Colossus`, `SMIC`, `Huawei` and a whole English sentence stayed in English,
+  exactly as spoken. Neither failure mode (translating to English, romanising to
+  Latin letters) occurred.
+
+### A note on the model name
+
+The Gemini docs reference `gemini-3.8-flash`, **which does not exist** on a
+current AI Studio key. Listing the key's models returns `gemini-2.5-flash`,
+`gemini-3.5-flash`, `gemini-3-flash-preview`, `gemini-3.1-flash-lite` and others.
+The shipped default is now `gemini-3.5-flash` (tested, works).
+
+If transcription starts failing with a model error, list what your key can
+actually reach rather than guessing:
+
+```bash
+curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$AISTUDIO_KEY" \
+  | grep -o '"models/[^"]*"'
+```
+
+then change `GEMINI_VIDEO_MODEL` in `.env`. It's config, not code, for exactly
+this reason.

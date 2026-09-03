@@ -3,101 +3,34 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0F0E0C" />
+    <title>Hinglish — hear what they actually said</title>
+    <meta
+      name="description"
+      content="Paste a YouTube link and get the transcript in the language it was spoken in. Hindi stays Hindi. Hinglish stays Hinglish. Nothing gets translated."
+    />
 
-    <!-- Favicon & Apple Touch -->
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-    
+    <meta property="og:title" content="Hinglish — hear what they actually said" />
+    <meta
+      property="og:description"
+      content="Transcripts in the language it was spoken in. Hindi stays Hindi, Telugu stays Telugu, and code-mixing stays exactly as said."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://chomske.com" />
+    <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- ✅ Preload Logo (for LCP logo elements) -->
-    <link rel="preload" as="image" href="%PUBLIC_URL%/logo192.png" />
-
-    <link rel="preload" as="image" href="/myhandle_logo.svg" type="image/svg+xml">
-    
-
-    <!-- ✅ Preconnect to Google Fonts for DNS/TLS -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-
-    <!-- ✅ Preload and async load Google Fonts -->
+    <!-- Noto Sans Devanagari/Telugu/Bengali: without these, transcripts render as
+         tofu boxes on machines with no Indic fonts installed — which is most
+         Windows defaults for Telugu and Bengali. -->
     <link
-      rel="preload"
-      as="style"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
-      onload="this.onload=null;this.rel='stylesheet'"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;500;600&family=Noto+Sans+Telugu:wght@400;500&family=Noto+Sans+Bengali:wght@400;500&display=swap"
+      rel="stylesheet"
     />
-    <noscript>
-      <link
-        rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
-      />
-    </noscript>
-
-
-    <!-- Manifest -->
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-
-
-<!-- Google tag (gtag.js) -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-7YCB9J8HTQ"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-7YCB9J8HTQ');
-    </script>
-
-
-   <title>MyHandle | Instant WhatsApp Alerts for Server Downtime &amp; Failed Payments</title>
-    <meta name="description" content="Get WhatsApp alerts the moment your server goes down, a payment fails, or a critical event fires. Connect Stripe, Vercel, Sentry &amp; more in 5 minutes. No WhatsApp API required. From $9/mo." />
-    <meta name="google-site-verification" content="cxDRaxb_bz9RKAx7mVF6B06nd2zDGmOGjleLnFsDb2M" />
-
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://myhandle.in/" />
-    <meta property="og:title" content="MyHandle — Paste One Webhook. Get WhatsApp Alerts. Sleep Soundly." />
-    <meta property="og:description" content="Turn any webhook into a WhatsApp ping. Server down, payment failed, deploy error — know in seconds, not hours. No Meta API. No setup headaches. $9/mo." />
-    <meta property="og:image" content="https://storage.googleapis.com/myhandlewebbucket/landingpage_imgs/final_hero_socialbanner.png" />
-
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="MyHandle — Paste One Webhook. Get WhatsApp Alerts. Sleep Soundly." />
-    <meta name="twitter:description" content="Turn any webhook into a WhatsApp ping. Server down, payment failed, deploy error — know in seconds, not hours. No Meta API. No setup headaches. $9/mo." />
-    <meta name="twitter:image" content="https://storage.googleapis.com/myhandlewebbucket/landingpage_imgs/final_hero_socialbanner.png" />
-
-
-    <!-- Inline critical CSS for placeholder — in <head> so it paints before any blocking CSS loads -->
-    <style>
-      #_plh{position:fixed;inset:0;z-index:9000;background:#020617;display:flex;align-items:center;justify-content:center;padding:0 20px;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;transition:opacity 0.15s ease}
-      #_plh h1{font-size:clamp(2.6rem,3.8vw,3.8rem);font-weight:800;letter-spacing:-0.03em;color:#F8FAFC;margin:0 0 18px;line-height:1.15}
-      #_plh p{font-size:clamp(0.95rem,1.3vw,1.05rem);line-height:1.75;color:#64748B;font-weight:500;margin:0 0 32px}
-      #_plh button{background:#25D366;color:#fff;font-size:17px;font-weight:700;padding:18px 42px;border-radius:14px;border:none;cursor:pointer}
-      @media(max-width:900px){#_plh h1{font-size:clamp(2.2rem,9vw,2.8rem)}#_plh button{font-size:15px;padding:14px 26px;width:100%;max-width:360px}}
-    </style>
-
   </head>
   <body>
-    <div id="_plh" aria-hidden="true">
-      <div style="max-width:520px;width:100%">
-        <h1>Your server is down.<br><span style="color:#25D366">Does WhatsApp know yet?</span></h1>
-        <p>Paste one webhook. Get instant WhatsApp alerts for server downtime, failed payments, and critical events. No API required.</p>
-        <button>Get Your Webhook →</button>
-      </div>
-    </div>
-
+    <noscript>You need JavaScript enabled to run this app.</noscript>
     <div id="root"></div>
-
-    <!-- Remove placeholder as soon as React adds content to #root -->
-    <script>
-      !function(){
-        var r=document.getElementById('root'),p=document.getElementById('_plh');
-        if(!r||!p)return;
-        var o=new MutationObserver(function(){
-          if(r.hasChildNodes()){
-            o.disconnect();
-            requestAnimationFrame(function(){p.style.opacity='0';setTimeout(function(){p.remove();},160);});
-          }
-        });
-        o.observe(r,{childList:true});
-      }();
-    </script>
   </body>
 </html>
