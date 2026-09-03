@@ -40,7 +40,15 @@ app.use(
       // the cookie is what actually guards the endpoints.
       if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error(`Origin ${origin} not allowed by CORS`));
+
+      // Refused by omitting the CORS headers, NOT by throwing. Passing an Error
+      // here makes the cors middleware hand it to Express, which turns a browser
+      // on the wrong origin into a 500 plus a ten-line stack trace in the logs.
+      // The browser blocks the response either way, so the Error bought nothing
+      // and cost the ability to read the log: these traces were interleaved with
+      // a real failure and made it look like part of it.
+      console.warn(`[cors] refused origin ${origin}`);
+      return cb(null, false);
     },
     credentials: true, // required for the session cookie to cross origins
   })

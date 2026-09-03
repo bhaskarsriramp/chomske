@@ -69,12 +69,12 @@ Return STRICT JSON only:
   "language": "BCP-47-ish code of how they speak — hi-en for Hinglish, te-en, hi, en",
   "language_label": "human-readable, e.g. Hinglish (Hindi-English)",
   "opening_patterns": ["how they start, described concretely — 2 to 4 items"],
-  "sample_openings": ["VERBATIM first sentence(s) from each transcript, original script"],
+  "sample_openings": ["ONE verbatim opening sentence per transcript, original script, at most 25 words each"],
   "narration_arc": "how they move through a topic start to finish, in 2-3 sentences",
   "recurring_moves": ["rhetorical devices they reuse — 3 to 6 items"],
   "closing_patterns": ["how they end, described concretely"],
-  "sample_closings": ["VERBATIM final sentence(s), original script"],
-  "signature_phrases": ["VERBATIM catchphrases, fillers and connectors they repeat"],
+  "sample_closings": ["ONE verbatim closing sentence per transcript, original script, at most 25 words each"],
+  "signature_phrases": ["VERBATIM catchphrases, fillers and connectors they repeat — up to 10"],
   "vocabulary_notes": "which words stay English vs the base language, with real examples",
   "sentiment": "their habitual stance — skeptical, hyped, contrarian, explanatory, alarmed",
   "pacing": "sentence length, rhythm, use of questions, how they address the viewer",
@@ -85,6 +85,155 @@ Return STRICT JSON only:
 }
 
 TRANSCRIPTS:`;
+
+/**
+ * The retry schema. Same analysis, none of the long-form fields.
+ *
+ * style_brief is the field the script writer actually leans on, so it survives;
+ * what goes is the descriptive prose that a ghostwriter could infer from the
+ * brief anyway. Roughly a third of the output tokens of the full form, which is
+ * the point: this exists for the case where the full form did not fit.
+ */
+const PROMPT_COMPACT = `You are a voice analyst. Below are transcripts from ONE creator's videos, in the language they actually speak.
+
+Describe how THIS SPECIFIC PERSON talks, precisely enough that a writer could produce a new script nobody could tell apart from theirs.
+
+Quote verbatim, in the original script. Never translate, never transliterate, never tidy up. Record which kinds of words they keep in English.
+
+Keep every field SHORT. Return STRICT JSON only, no markdown fences:
+{
+  "language": "BCP-47-ish code — hi-en, te-en, hi, en",
+  "language_label": "human-readable, e.g. Telugu-English",
+  "sample_openings": ["one verbatim opening per transcript, max 20 words each"],
+  "sample_closings": ["one verbatim closing per transcript, max 20 words each"],
+  "signature_phrases": ["up to 8 verbatim fillers and catchphrases"],
+  "vocabulary_notes": "which words stay English vs the base language, one sentence",
+  "sentiment": "their habitual stance, a few words",
+  "pacing": "rhythm and how they address the viewer, one sentence",
+  "audience": "who they are talking to, a few words",
+  "style_brief": "A dense instruction block written TO a ghostwriter: how to open, what to keep in English, tics to include, how to close, what never to do. 120-180 words. This is the most important field."
+}
+
+TRANSCRIPTS:`;
+
+/**
+ * One analysis call, with the response parsed as leniently as it can safely be.
+ *
+ * @returns {{ parsed: object|null, res: object|null }}
+ */
+async function analyse(body, compact) {
+  const head = compact ? PROMPT_COMPACT : PROMPT_HEAD;
+
+  let res;
+  try {
+    res = await client().models.generateContent({
+      model: MODEL,
+      contents: `${head}\n\n${body}`,
+      config: {
+        temperature: compact ? 0.1 : 0.3,
+        responseMimeType: "application/json",
+        // Was 8192, which is where this broke. A profile quoting Telugu or
+        // Devanagari verbatim runs several times the tokens of the same profile
+        // in English, and the overflow was silent: the model returned a JSON
+        // object cut off mid-string, JSON.parse threw, and the only thing logged
+        // was "unparseable response" with none of the evidence.
+        maxOutputTokens: 32768,
+        // Thinking off, consistent with the measured finding in geminiClient.js.
+        // This is pattern-spotting over text that is already in front of the
+        // model, not multi-step reasoning. thoughtsTokenCount is logged below so
+        // that a model quietly ignoring this is visible rather than inferred.
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+  } catch (err) {
+    console.error(`[voice] Gemini call failed (compact=${compact}):`, err.message);
+    return { parsed: null, res: null };
+  }
+
+  const raw = res?.text || "";
+  const finish = res?.candidates?.[0]?.finishReason || "unknown";
+  const u = res?.usageMetadata || {};
+
+  const parsed = parseLooseJson(raw);
+
+  if (!parsed) {
+    // Everything needed to tell truncation from a refusal from a fenced reply,
+    // without dumping a creator's transcript into the logs.
+    console.error(
+      `[voice] unparseable response (compact=${compact}) · finishReason=${finish} · ` +
+      `in=${u.promptTokenCount || 0} out=${u.candidatesTokenCount || 0} thoughts=${u.thoughtsTokenCount || 0} · ` +
+      `${raw.length} chars · starts: ${JSON.stringify(raw.slice(0, 120))} · ends: ${JSON.stringify(raw.slice(-120))}`
+    );
+  } else if (finish && finish !== "STOP") {
+    console.warn(`[voice] salvaged a ${finish} response (compact=${compact}) — ${Object.keys(parsed).length} fields recovered`);
+  }
+
+  return { parsed, res };
+}
+
+/**
+ * Parse JSON that may be fenced, prefixed with prose, or cut off mid-write.
+ *
+ * The salvage matters because the tokens are already paid for. A response that
+ * stopped at MAX_TOKENS still holds most of a usable profile, and throwing it
+ * away bills the user twice for the same analysis — the same reasoning as the
+ * transcription salvage in geminiClient.js.
+ */
+export function parseLooseJson(raw) {
+  let s = String(raw || "").trim();
+  if (!s) return null;
+
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+  const start = s.indexOf("{");
+  if (start > 0) s = s.slice(start);
+  if (start === -1) return null;
+
+  try { return JSON.parse(s); } catch { /* truncated — fall through */ }
+
+  // Walk the text tracking string state and nesting, and remember the last comma
+  // that separated two TOP-LEVEL fields. Everything before it is a run of
+  // complete key/value pairs, so cutting there and closing the brace yields
+  // valid JSON holding every field that finished writing.
+  let inStr = false, esc = false, depth = 0, lastTopComma = -1;
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") depth--;
+    else if (c === "," && depth === 1) lastTopComma = i;
+  }
+
+  if (lastTopComma === -1) return null;   // died inside the very first field
+
+  try {
+    return JSON.parse(s.slice(0, lastTopComma) + "}");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is this parse good enough to write scripts from?
+ *
+ * A salvage can succeed at the JSON level and still be worthless — recovering
+ * `{"language": "te-en"}` is valid JSON and tells a ghostwriter nothing. Storing
+ * that would be worse than failing, because the user would see a built profile
+ * and get generic scripts from it with no idea why. style_brief is what the
+ * writer actually leans on; failing that, enough raw voice to work from.
+ */
+function usable(p) {
+  if (!p) return false;
+  if (String(p.style_brief || "").trim().length >= 80) return true;
+  return (
+    Array.isArray(p.sample_openings) && p.sample_openings.length > 0 &&
+    Array.isArray(p.signature_phrases) && p.signature_phrases.length > 0
+  );
+}
 
 /**
  * Build (or rebuild) the voice profile for one user.
@@ -112,32 +261,21 @@ export async function buildVoiceProfile(userId) {
     );
   });
 
-  let res;
-  try {
-    res = await client().models.generateContent({
-      model: MODEL,
-      contents: `${PROMPT_HEAD}\n\n${blocks.join("\n\n")}`,
-      config: {
-        temperature: 0.3,
-        responseMimeType: "application/json",
-        maxOutputTokens: 8192,
-        // Thinking off, consistent with the measured finding in geminiClient.js.
-        // This is pattern-spotting over text that is already in front of the model,
-        // not multi-step reasoning. Raise deliberately and re-measure if the
-        // profiles ever come back generic.
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
-  } catch (err) {
-    console.error("[voice] Gemini call failed:", err.message);
-    throw new Error("Couldn't analyse your videos right now. Please try again.");
+  const body = blocks.join("\n\n");
+
+  let { parsed, res } = await analyse(body, false);
+
+  // One retry, and only when the first response could not be salvaged at all.
+  // Almost always a truncation: a profile full of verbatim Telugu or Devanagari
+  // is several times more output tokens than the same profile in English,
+  // because Indic scripts tokenise far denser than Latin. The retry asks for the
+  // short form, which fits comfortably even in the worst case.
+  if (!usable(parsed)) {
+    console.warn("[voice] first pass unusable — retrying with the compact schema");
+    ({ parsed, res } = await analyse(body, true));
   }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(res.text || "{}");
-  } catch {
-    console.error("[voice] unparseable response");
+  if (!usable(parsed)) {
     throw new Error("Couldn't read the voice analysis. Please try again.");
   }
 
@@ -149,34 +287,46 @@ export async function buildVoiceProfile(userId) {
   const usage = readUsage(res);
   const confidence = transcripts.length >= 5 ? "good" : transcripts.length >= 3 ? "fair" : "thin";
 
+  // Always written: these describe the build itself, not what was learned.
+  const set = {
+    built_from: transcripts.map((t) => t._id),
+    transcript_count: transcripts.length,
+    language,
+    language_label: languageLabel,
+    confidence,
+    usage,
+    built_at: new Date(),
+  };
+
+  // Written only when this pass actually produced something.
+  //
+  // A salvaged or compact result carries fewer fields than the full schema, and
+  // blindly $set-ing the missing ones to "" would let a degraded rebuild ERASE a
+  // good profile built last week. Skipping the empties means a partial result
+  // can only ever improve what is stored.
+  const learned = {
+    opening_patterns: arr(parsed.opening_patterns),
+    sample_openings: arr(parsed.sample_openings),
+    narration_arc: str(parsed.narration_arc),
+    recurring_moves: arr(parsed.recurring_moves),
+    closing_patterns: arr(parsed.closing_patterns),
+    sample_closings: arr(parsed.sample_closings),
+    signature_phrases: arr(parsed.signature_phrases),
+    vocabulary_notes: str(parsed.vocabulary_notes),
+    sentiment: str(parsed.sentiment),
+    pacing: str(parsed.pacing),
+    audience: str(parsed.audience),
+    topics: arr(parsed.topics),
+    avoid: arr(parsed.avoid),
+    style_brief: str(parsed.style_brief, 4000),
+  };
+  for (const [k, v] of Object.entries(learned)) {
+    if (Array.isArray(v) ? v.length : v) set[k] = v;
+  }
+
   const doc = await VoiceProfile.findOneAndUpdate(
     { user: userId },
-    {
-      $set: {
-        built_from: transcripts.map((t) => t._id),
-        transcript_count: transcripts.length,
-        language,
-        language_label: languageLabel,
-        opening_patterns: arr(parsed.opening_patterns),
-        sample_openings: arr(parsed.sample_openings),
-        narration_arc: str(parsed.narration_arc),
-        recurring_moves: arr(parsed.recurring_moves),
-        closing_patterns: arr(parsed.closing_patterns),
-        sample_closings: arr(parsed.sample_closings),
-        signature_phrases: arr(parsed.signature_phrases),
-        vocabulary_notes: str(parsed.vocabulary_notes),
-        sentiment: str(parsed.sentiment),
-        pacing: str(parsed.pacing),
-        audience: str(parsed.audience),
-        topics: arr(parsed.topics),
-        avoid: arr(parsed.avoid),
-        style_brief: str(parsed.style_brief, 4000),
-        confidence,
-        usage,
-        built_at: new Date(),
-      },
-      $setOnInsert: { user: userId, created_at: new Date() },
-    },
+    { $set: set, $setOnInsert: { user: userId, created_at: new Date() } },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
