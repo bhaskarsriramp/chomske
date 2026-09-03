@@ -6,6 +6,7 @@ import NewsFeed from "../News/NewsFeed";
 import TranscribePanel from "../Transcribe/TranscribePanel";
 import DashboardHome from "./DashboardHome";
 import ProfilePanel from "../Profile/ProfilePanel";
+import { BRAND_GRADIENT } from "../../theme";
 
 /**
  * The app shell.
@@ -95,7 +96,7 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
               <span
                 aria-hidden="true"
                 style={{
-                  width: 26, height: 26, borderRadius: 8, background: "var(--ink)", color: "#fff",
+                  width: 26, height: 26, borderRadius: 9, background: BRAND_GRADIENT, color: "#fff",
                   display: "grid", placeItems: "center", fontSize: 14, fontWeight: 700,
                   fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
                 }}

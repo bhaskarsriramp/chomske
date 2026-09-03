@@ -78,7 +78,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
     if (!script?.text) return;
     navigator.clipboard.writeText(script.text).then(
       () => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
-      () => setError("Couldn't copy — select the text and copy it manually.")
+      () => setError("Couldn't copy. Select the text and copy it manually.")
     );
   }
 
@@ -195,7 +195,9 @@ function VoiceChip({ voice }) {
     p.confidence === "good"
       ? { color: "var(--ok)", bg: "#E6F4EA", border: "#B7E1C4" }
       : p.confidence === "fair"
-      ? { color: "var(--accent)", bg: "var(--accent-soft)", border: "#F7CFCF" }
+      // Amber, matching the dashboard's confidence card. Red here read as an
+      // error rather than as "we could learn more from another video".
+      ? { color: "#8F5E07", bg: "#FBF5E8", border: "#EEDCB6" }
       : { color: "var(--ink-mute)", bg: "#F2F2F2", border: "var(--line)" };
 
   return (
@@ -254,7 +256,7 @@ function Writing() {
         aria-hidden="true"
         style={{
           width: 17, height: 17, borderRadius: "50%",
-          border: "2px solid var(--line)", borderTopColor: "var(--accent)",
+          border: "2px solid var(--line)", borderTopColor: "var(--made)",
           animation: "hg-spin .8s linear infinite", flexShrink: 0,
         }}
       />
@@ -281,7 +283,10 @@ function Result({ script, compact, copied, onCopy, onRegenerate, busy }) {
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             gap: 10, flexWrap: "wrap", padding: "11px 15px",
-            borderBottom: "1px solid var(--line)", background: "#F9F9F9",
+            // The one card in the app that is the finished thing. A faint wash
+            // of the "you made this" hue marks it as the payoff without turning
+            // the script itself into a coloured box.
+            borderBottom: "1px solid var(--made-line)", background: "var(--made-tint)",
           }}
         >
           <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>

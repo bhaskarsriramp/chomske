@@ -142,7 +142,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
     if (!active?.text) return;
     navigator.clipboard.writeText(active.text).then(
       () => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
-      () => setError("Couldn't copy — select the text and copy it manually.")
+      () => setError("Couldn't copy. Select the text and copy it manually.")
     );
   }
 
@@ -222,7 +222,10 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
           <div
             style={{
               marginTop: 13, padding: "12px 14px", borderRadius: 10,
-              background: "var(--accent-soft)", border: "1px solid #F7CFCF",
+              // Amber, not red. Nothing has failed here; they are being told
+              // the result will be worse than it could be, which is a different
+              // thing from the delete-failed box eleven lines up.
+              background: "#FBF5E8", border: "1px solid #EEDCB6",
               fontSize: 13, lineHeight: 1.6, color: "var(--ink-body)",
             }}
           >
@@ -301,7 +304,11 @@ function SlotDots({ used, max }) {
           key={i}
           style={{
             width: 7, height: 7, borderRadius: "50%",
-            background: i < used ? "var(--accent)" : "#D9D9D9",
+            // Not the accent. Red is breaking news, errors and Delete in this
+            // app; a filled voice slot is progress, and it reads as a warning
+            // in red. --made is the "you built something" hue, same as the
+            // scripts count on the dashboard.
+            background: i < used ? "var(--made)" : "#DCDCDC",
           }}
         />
       ))}
@@ -594,7 +601,7 @@ function Result({ t, isPhone, onCopy, copied, onRetry }) {
               <span
                 style={{
                   fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
-                  color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid #F7CFCF",
+                  color: "var(--made)", background: "var(--made-tint)", border: "1px solid var(--made-line)",
                 }}
               >
                 {t.language_label}
@@ -648,7 +655,7 @@ function Processing() {
         aria-hidden="true"
         style={{
           width: 18, height: 18, borderRadius: "50%",
-          border: "2px solid var(--line)", borderTopColor: "var(--accent)",
+          border: "2px solid var(--line)", borderTopColor: "var(--made)",
           animation: "hg-spin .8s linear infinite", flexShrink: 0,
         }}
       />
@@ -665,7 +672,9 @@ function Processing() {
 function StatusTag({ status }) {
   const map = {
     done:       { label: "Ready",   color: "var(--ok)",     bg: "#E6F4EA",            border: "#B7E1C4" },
-    processing: { label: "Working", color: "var(--accent)", bg: "var(--accent-soft)", border: "#F7CFCF" },
+    // "Working" was red, which put it in the same colour as "Failed" two rows
+    // down and made a healthy queue look like a screen full of problems.
+    processing: { label: "Working", color: "var(--made)", bg: "var(--made-tint)", border: "var(--made-line)" },
     failed:     { label: "Failed",  color: "var(--bad)",    bg: "#FCE8E6",            border: "#F5C7C3" },
   };
   const s = map[status] || map.processing;

@@ -12,6 +12,7 @@
  * below the app header so the logo and close control stay put — same arrangement
  * as the reference project.
  */
+import { BRAND_GRADIENT } from "../../theme";
 
 // Matches the mobile header height in Dashboard.js. The drawer hangs below it
 // rather than covering it, so the header's own close button stays reachable.
@@ -55,7 +56,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, user }) {
           <span
             aria-hidden="true"
             style={{
-              width: 28, height: 28, borderRadius: 8, background: "var(--ink)", color: "#fff",
+              width: 28, height: 28, borderRadius: 9, background: BRAND_GRADIENT, color: "#fff",
               display: "grid", placeItems: "center", fontSize: 15, fontWeight: 700,
               fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
             }}

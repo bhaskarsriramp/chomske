@@ -33,21 +33,6 @@ export function sourceLabel(slug) {
   );
 }
 
-/**
- * What kind of source this is. The distinction is the product's whole point:
- * an announcement is the event, coverage is a report of it written later.
- */
-const KIND_LABELS = {
-  primary: "Announcement",
-  paper: "Paper",
-  community: "Community",
-  outlet: "Coverage",
-};
-
-export function kindLabel(kind) {
-  return KIND_LABELS[kind] || "";
-}
-
 /** Compact relative time. Feeds are scanned, not read — "3h" beats a timestamp. */
 export function timeAgo(value) {
   if (!value) return "";
@@ -63,20 +48,6 @@ export function timeAgo(value) {
 
   const days = Math.round(hrs / 24);
   return days === 1 ? "yesterday" : `${days}d ago`;
-}
-
-/**
- * Accent is reserved for the stories that actually deserve a video today —
- * if every card were coloured, the colour would say nothing.
- */
-export function scoreStyle(score) {
-  if (score >= 8) {
-    return { color: "#fff", background: "var(--accent)", borderColor: "var(--accent)" };
-  }
-  if (score >= 6) {
-    return { color: "var(--accent)", background: "var(--accent-soft)", borderColor: "#F7CFCF" };
-  }
-  return { color: "var(--ink-mute)", background: "var(--card)", borderColor: "var(--line)" };
 }
 
 /**

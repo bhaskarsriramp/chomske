@@ -138,6 +138,9 @@ export default function DashboardHome({ onGoTranscribe }) {
               : ""
           }
           action={data && data.videos.used < data.videos.max ? { label: "Add a video", onClick: onGoTranscribe } : null}
+          // Five pips beat a progress bar here: the number is five, so the
+          // filled ones ARE the count and the empty ones are the invitation.
+          meter={data ? { used: data.videos.used, max: data.videos.max } : null}
         />
 
         <Stat
@@ -145,6 +148,7 @@ export default function DashboardHome({ onGoTranscribe }) {
           value={data ? `${data.scripts.in_range}` : "—"}
           suffix={data ? data.range.label.toLowerCase() : ""}
           note={data ? `${data.scripts.all_time} all time` : ""}
+          tone="made"
         />
 
         <Stat
@@ -154,12 +158,21 @@ export default function DashboardHome({ onGoTranscribe }) {
           note={
             data?.voice
               ? data.voice.stale
-                ? "Out of date — re-analyse to pick up your latest videos"
+                ? "Out of date. Re-analyse to pick up your latest videos."
                 : `Learned from ${data.voice.transcript_count} video${data.voice.transcript_count === 1 ? "" : "s"}`
               : "Add videos, then analyse your voice"
           }
           action={!data?.voice || data?.voice?.stale ? { label: "Go to My voice", onClick: onGoTranscribe } : null}
-          tone={data?.voice?.stale ? "warn" : "normal"}
+          // The card's colour is the confidence itself. A thin profile looking
+          // exactly like a good one is how someone ships a script that doesn't
+          // sound like them and blames the product.
+          tone={
+            data?.voice?.stale ? "warn"
+              : !data?.voice ? "normal"
+              : data.voice.confidence === "good" ? "good"
+              : data.voice.confidence === "fair" ? "fair"
+              : "warn"
+          }
         />
       </div>
 
@@ -204,23 +217,52 @@ export default function DashboardHome({ onGoTranscribe }) {
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */
 
-function Stat({ label, value, suffix, note, action, tone }) {
+/**
+ * Tone is state, never decoration. Each of these means something a creator can
+ * act on: your profile is thin, your profile is stale, you made this many.
+ */
+const TONES = {
+  normal: { tint: "var(--card)", line: "var(--line)", ink: "var(--ink)" },
+  made:   { tint: "var(--made-tint)", line: "var(--made-line)", ink: "var(--made)" },
+  good:   { tint: "#EDF8F1", line: "#C6E7D3", ink: "#08733E" },
+  fair:   { tint: "#FBF5E8", line: "#EEDCB6", ink: "#8F5E07" },
+  warn:   { tint: "#FCF0F2", line: "#F3D3D8", ink: "#AB2C41" },
+};
+
+function Stat({ label, value, suffix, note, action, tone = "normal", meter }) {
+  const t = TONES[tone] || TONES.normal;
+  const plain = tone === "normal";
   return (
     <div
       style={{
-        padding: 18, borderRadius: "var(--radius)", background: "var(--card)",
-        border: `1px solid ${tone === "warn" ? "#F7CFCF" : "var(--line)"}`,
+        padding: 18, borderRadius: "var(--radius)",
+        background: plain ? "var(--card)" : `linear-gradient(170deg, ${t.tint} 0%, var(--card) 68%)`,
+        border: `1px solid ${t.line}`,
       }}
     >
       <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-mute)", marginBottom: 10 }}>
         {label}
       </div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 28, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", lineHeight: 1 }}>
+        <span style={{ fontSize: 28, fontWeight: 750, letterSpacing: "-0.03em", color: t.ink, lineHeight: 1 }}>
           {value}
         </span>
         {suffix && <span style={{ fontSize: 13, color: "var(--ink-mute)" }}>{suffix}</span>}
       </div>
+      {meter && (
+        <div style={{ display: "flex", gap: 5, marginTop: 12 }}>
+          {Array.from({ length: meter.max }, (_, i) => (
+            <span
+              key={i}
+              aria-hidden="true"
+              style={{
+                height: 5, flex: 1, borderRadius: 99,
+                background: i < meter.used ? "var(--made)" : "#E8E8E8",
+              }}
+            />
+          ))}
+        </div>
+      )}
       {note && (
         <div style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", marginTop: 9 }}>
           {note}
@@ -275,7 +317,9 @@ function Activity({ days, label, isPhone }) {
             <div
               style={{
                 height: `${Math.max(4, (d.count / max) * 100)}%`,
-                background: d.count ? "var(--accent)" : "var(--line)",
+                // Same hue as the scripts count above it: one colour for the
+                // one thing this app produces.
+                background: d.count ? "var(--made)" : "#EDEDED",
                 borderRadius: 4,
               }}
             />

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
+import { categoryColor, BRAND_GRADIENT, HERO_WASH } from "../../theme";
 
 /**
  * First-run category picker.
@@ -72,10 +73,23 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
 
   return (
     <div
-      className="hg-scroll"
       style={{
         position: "fixed", inset: 0, zIndex: 100,
-        background: "var(--paper)",
+        // The one screen in the app that gets the marketing ground. It is the
+        // first thing a new account sees after the landing page, and dropping
+        // straight to flat grey here reads as though the product ended.
+        //
+        // The wash is on this fixed layer, not on the scroller inside it. A
+        // radial gradient on a scrolling box is sized to the whole scroll
+        // height, so on a phone the eight cards stretch it into visible bands
+        // that then slide past as you scroll.
+        background: HERO_WASH,
+      }}
+    >
+    <div
+      className="hg-scroll"
+      style={{
+        position: "absolute", inset: 0,
         padding: `${isPhone ? 30 : 56}px ${gut} ${isPhone ? 120 : 140}px`,
       }}
     >
@@ -83,7 +97,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
         <span
           aria-hidden="true"
           style={{
-            width: 28, height: 28, borderRadius: 8, background: "var(--ink)", color: "#fff",
+            width: 28, height: 28, borderRadius: 9, background: BRAND_GRADIENT, color: "#fff",
             display: "grid", placeItems: "center", fontSize: 15, fontWeight: 700,
             fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
           }}
@@ -148,6 +162,9 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
             // Greyed rather than removed once the cap is hit: hiding options would
             // make the screen change shape under the cursor mid-decision.
             const blocked = !on && full;
+            // Each category owns a hue from here on. Meeting it at the moment of
+            // choosing is what makes the same colour legible later on a feed row.
+            const col = categoryColor(c.id);
             return (
               <button
                 key={c.id}
@@ -159,9 +176,11 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
                   position: "relative", textAlign: "left",
                   padding: isPhone ? "16px 16px" : "19px 18px",
                   borderRadius: 14, cursor: blocked ? "not-allowed" : "pointer",
-                  background: on ? "var(--accent-soft)" : "var(--card)",
-                  border: `1.5px solid ${on ? "var(--accent)" : "var(--line)"}`,
-                  opacity: blocked ? 0.45 : 1,
+                  background: on
+                    ? col.tint
+                    : `linear-gradient(168deg, ${col.tint} 0%, var(--card) 66%)`,
+                  border: `1.5px solid ${on ? col.solid : col.line}`,
+                  opacity: blocked ? 0.42 : 1,
                   transition: "border-color .13s ease, background .13s ease, opacity .13s ease",
                 }}
               >
@@ -171,10 +190,16 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
                     gap: 10, marginBottom: 6,
                   }}
                 >
-                  <span style={{ fontSize: isPhone ? 15.5 : 16.5, fontWeight: 650, color: "var(--ink)", letterSpacing: "-0.015em" }}>
-                    {c.label}
+                  <span style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+                    <span
+                      aria-hidden="true"
+                      style={{ width: 8, height: 8, borderRadius: "50%", background: col.solid, flexShrink: 0 }}
+                    />
+                    <span style={{ fontSize: isPhone ? 15.5 : 16.5, fontWeight: 650, color: "var(--ink)", letterSpacing: "-0.015em" }}>
+                      {c.label}
+                    </span>
                   </span>
-                  <Check on={on} />
+                  <Check on={on} color={col.solid} />
                 </span>
                 <span style={{ display: "block", fontSize: 13.5, lineHeight: 1.55, color: "var(--ink-body)" }}>
                   {c.blurb}
@@ -185,8 +210,11 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
         </div>
       )}
 
+      </div>
+
       {/* Pinned so the action is reachable without scrolling back, on a phone
-          where eight cards is well past one screen. */}
+          where eight cards is well past one screen. Outside the scroller: a
+          fixed bar inside a scrolling box is a bar that fights the scrollbar. */}
       <div
         style={{
           position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 101,
@@ -232,15 +260,15 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
   );
 }
 
-function Check({ on }) {
+function Check({ on, color = "var(--ink)" }) {
   return (
     <span
       aria-hidden="true"
       style={{
         flexShrink: 0, width: 21, height: 21, borderRadius: "50%",
         display: "grid", placeItems: "center",
-        background: on ? "var(--accent)" : "transparent",
-        border: `1.5px solid ${on ? "var(--accent)" : "#D9D9D9"}`,
+        background: on ? color : "transparent",
+        border: `1.5px solid ${on ? color : "#D9D9D9"}`,
         transition: "background .13s ease, border-color .13s ease",
       }}
     >

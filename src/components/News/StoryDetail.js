@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import api, { errorMessage } from "../../api";
 import ScriptPanel from "./ScriptPanel";
-import { sourceLabel, timeAgo, scoreStyle } from "./newsUtils";
+import { sourceLabel, timeAgo } from "./newsUtils";
+import { categoryColor } from "../../theme";
 
 /**
  * One story: what happened, the hook, and every outlet that carried it.
@@ -108,7 +109,10 @@ function Body({ item, coverage, loading, error, onClose, compact, voice, onVoice
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          <ScorePill score={item.score} />
+          {/* The category, not the score. The number told a creator nothing here
+              that the sentence explaining it further down doesn't tell them
+              better, and it opened the pane with a mark out of ten. */}
+          {item.category_label && <CategoryChip id={item.category} label={item.category_label} />}
           <span
             style={{
               fontSize: 12.5, color: "var(--ink-mute)",
@@ -170,7 +174,11 @@ function Body({ item, coverage, loading, error, onClose, compact, voice, onVoice
 
         {item.why && (
           <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-mute)", margin: "0 0 26px" }}>
-            <strong style={{ fontWeight: 600, color: "var(--ink-body)" }}>Why {item.score}/10 — </strong>
+            {/* The rank, written out. It belongs in the sentence that justifies
+                it, not in a badge at the top of the pane. */}
+            <strong style={{ fontWeight: 600, color: "var(--ink-body)" }}>
+              Why it ranks {item.score} out of 10.{" "}
+            </strong>
             {item.why}
           </p>
         )}
@@ -250,19 +258,19 @@ function Body({ item, coverage, loading, error, onClose, compact, voice, onVoice
   );
 }
 
-function ScorePill({ score }) {
-  const s = scoreStyle(score);
+function CategoryChip({ id, label }) {
+  const c = categoryColor(id);
   return (
     <span
-      title={`${score} out of 10 for how much this deserves a video today`}
       style={{
-        fontSize: 12.5, fontWeight: 700, padding: "3px 8px", borderRadius: 6,
-        fontVariantNumeric: "tabular-nums",
-        border: `1px solid ${s.borderColor}`, color: s.color, background: s.background,
-        whiteSpace: "nowrap", flexShrink: 0,
+        display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0,
+        fontSize: 11.5, fontWeight: 650, padding: "4px 10px", borderRadius: 999,
+        color: c.ink, background: c.tint, border: `1px solid ${c.line}`,
+        whiteSpace: "nowrap",
       }}
     >
-      {score}/10
+      <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: c.solid }} />
+      {label}
     </span>
   );
 }

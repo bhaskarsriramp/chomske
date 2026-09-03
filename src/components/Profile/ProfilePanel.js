@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
+import { categoryColor } from "../../theme";
 
 /**
  * Profile — the connected account, and the way out.
@@ -231,22 +232,35 @@ function CategoriesSection({ user, onUserChange, isPhone }) {
         {cats.map((c) => {
           const on = picked.includes(c.id);
           const blocked = !on && picked.length >= max;
+          // Same hue the category wears on the feed, so this screen reads as the
+          // control for what they have been looking at rather than a separate list.
+          const col = categoryColor(c.id);
           return (
             <button
               key={c.id}
               onClick={() => toggle(c.id)}
               aria-pressed={on}
               disabled={blocked}
+              className={on || blocked ? undefined : "hg-pick"}
               style={{
                 textAlign: "left", padding: "12px 14px", borderRadius: 11,
                 cursor: blocked ? "not-allowed" : "pointer",
-                background: on ? "var(--accent-soft)" : "var(--card)",
-                border: `1.5px solid ${on ? "var(--accent)" : "var(--line)"}`,
-                opacity: blocked ? 0.45 : 1,
+                background: on ? col.tint : "var(--card)",
+                border: `1.5px solid ${on ? col.solid : "var(--line)"}`,
+                opacity: blocked ? 0.42 : 1,
               }}
             >
-              <span style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{c.label}</span>
-              <span style={{ display: "block", fontSize: 12, color: "var(--ink-mute)", marginTop: 3, lineHeight: 1.5 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+                    background: on ? col.solid : "#CFCFCF",
+                  }}
+                />
+                <span style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{c.label}</span>
+              </span>
+              <span style={{ display: "block", fontSize: 12, color: "var(--ink-mute)", marginTop: 4, lineHeight: 1.5 }}>
                 {c.blurb}
               </span>
             </button>
