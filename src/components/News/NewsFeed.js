@@ -35,7 +35,18 @@ import { categoryColor, cardBackground, cardTint } from "../../theme";
 // has something in it, and the ordering is by recency anyway, so anything older
 // sits at the bottom where it belongs rather than distorting the top.
 const WINDOW_HOURS = 48;
+
+// Must stay in step with NEWS_BRIEF_MIN_SCORE on the server, which decides which
+// stories get a brief written ahead of time. When these drifted apart, a story
+// scoring exactly this much appeared here and never had a brief prepared, so it
+// regenerated one every time anyone opened it.
 const MIN_SCORE = 5;
+
+// A hard ceiling, not a page size. The whole promise is "we already decided for
+// you", and forty ranked cards is a list to triage — which is the thing a
+// creator already has in four other apps. Most days genuinely have two or three
+// stories worth a video; ten leaves real choice without becoming a feed.
+const MAX_CARDS = 10;
 
 // The fallback when that comes back empty. A brand-new category has collected
 // for minutes, not days, and showing a first-time user an empty product is how
@@ -114,7 +125,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
         }
       }
 
-      const base = { limit: 40 };
+      const base = { limit: MAX_CARDS };
       if (cat) base.category = cat;
 
       let { data } = await api.get("/news", {

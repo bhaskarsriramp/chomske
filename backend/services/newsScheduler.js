@@ -35,11 +35,11 @@ import {
 
 const INTERVAL_MIN = parseInt(process.env.NEWS_POLL_MINUTES || "15", 10);
 
-// Briefs written per category per pass. At four passes an hour this is up to 24
-// stories an hour per category, which is far more than any category actually
-// produces — so in practice it is a ceiling that never binds, and on the day a
-// category does go wild it is the thing that stops the bill going with it.
-const BRIEF_LIMIT = parseInt(process.env.NEWS_BRIEF_LIMIT || "6", 10);
+// Briefs written per category per pass. Matched to the number of cards the feed
+// will actually show, so every visible story is readable the moment it is opened
+// rather than generating a brief with the reader waiting on it. Ranking is
+// on-demand now, so this fires a few times a day, not ninety-six.
+const BRIEF_LIMIT = parseInt(process.env.NEWS_BRIEF_LIMIT || "10", 10);
 
 // Ranking is demand-driven now: it runs when somebody signs in, opens Topics or
 // presses Refresh, not on the collector's clock. Flip this to put the old

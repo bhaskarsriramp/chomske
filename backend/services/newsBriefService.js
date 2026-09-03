@@ -39,6 +39,13 @@ const MIN_SOURCE_CHARS = 180;
 // collected summary, which is what it shows for thin stories anyway.
 const MAX_TRIES = parseInt(process.env.NEWS_BRIEF_MAX_TRIES || "2", 10);
 
+// The score at which a story becomes worth writing a brief for. MUST match the
+// feed's own floor (MIN_SCORE in src/components/News/NewsFeed.js). It was 6
+// while the feed showed 5, so a story scoring exactly 5 was visible to readers
+// and invisible to this — it never got a brief prepared, and generated one from
+// scratch every single time somebody opened it.
+const BRIEF_MIN_SCORE = parseInt(process.env.NEWS_BRIEF_MIN_SCORE || "5", 10);
+
 let _client = null;
 function client() {
   if (_client) return _client;
@@ -117,11 +124,10 @@ export async function ensureBrief(item) {
   if (!item) return "";
   if (item.brief) return item.brief;
 
-  // Already decided and came back empty. brief_at is the stamp that says so, and
-  // without this check a story with too little source text would be re-examined
-  // on every single open — the exact "" it returned last time, paid for again.
-  // Out of attempts. One rule, and it covers every way a story ends up without
-  // a brief: too little source text, a model failure, an unparseable reply.
+  // Out of attempts. One rule, covering every way a story ends up without a
+  // brief: too little source text, a model failure, an unparseable reply. An
+  // unrecorded failure is indistinguishable from never having tried, which is
+  // what turned one broken story into a permanent line item on the bill.
   if ((item.brief_tries || 0) >= MAX_TRIES) return "";
 
   const key = keyOf(item);
@@ -222,7 +228,7 @@ async function stamp(item, brief, { failed = false } = {}) {
  * than with a fixed batch, and an uncapped version would be the bill nobody
  * predicted on a busy news day.
  */
-export async function backfillBriefs(categoryId, { limit = 8, minScore = 6, hours = 48 } = {}) {
+export async function backfillBriefs(categoryId, { limit = 10, minScore = BRIEF_MIN_SCORE, hours = 48 } = {}) {
   const since = new Date(Date.now() - hours * 3600000);
 
   const rows = await NewsItem.find({
