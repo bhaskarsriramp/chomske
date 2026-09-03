@@ -103,7 +103,7 @@ export async function collectNews(categoryId) {
       // categories (an AI funding round is both ai_tech and business), and a
       // globally unique url_hash would let whichever category collected first
       // silently starve the other's feed of that story.
-      url_hash: urlHash(`${categoryId}|${item.url}`),
+      url_hash: urlHash(item.url, categoryId),
       title_sig: titleSignature(item.title),
       // The cluster IS the title signature. Rows are never merged or dropped —
       // five outlets covering one launch stay five rows, because that count is

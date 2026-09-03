@@ -40,8 +40,22 @@ export function canonicalUrl(input) {
   return out;
 }
 
-export function urlHash(url) {
-  return createHash("sha256").update(canonicalUrl(url)).digest("hex").slice(0, 32);
+/**
+ * Dedupe key for a URL, optionally scoped.
+ *
+ * `scope` exists so the same article can be collected under two categories: an
+ * AI funding round belongs in both ai_tech and business, and a single global key
+ * would let whichever category ran first silently starve the other's feed.
+ *
+ * The scope is joined AFTER canonicalisation, never before. Prefixing the raw
+ * string would make `new URL()` throw inside canonicalUrl, which falls back to
+ * returning the input untouched — so tracking parameters would stop being
+ * stripped and every Google News link would re-insert on each poll.
+ */
+export function urlHash(url, scope = "") {
+  const canon = canonicalUrl(url);
+  const key = scope ? `${scope}|${canon}` : canon;
+  return createHash("sha256").update(key).digest("hex").slice(0, 32);
 }
 
 // Words that carry no identifying signal in a headline. Kept deliberately short:
