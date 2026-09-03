@@ -28,7 +28,15 @@ const UserSchema = new Schema({
   // should not look identical to the onboarding gate.
   onboarded_at: { type: Date, default: null },
 
-  last_login:   { type: Date, default: Date.now },
+  last_login:   { type: Date, default: Date.now, index: true },
+
+  // Last time they actually opened the feed, which is NOT the same as last
+  // sign-in: the token lasts 14 days, so somebody using this every morning can
+  // go a fortnight without re-authenticating. The collector decides whether a
+  // category is still worth polling from this field, and reading last_login
+  // instead would let it go cold underneath a daily user. Written at most once
+  // an hour per account (services/newsCadence.js touchSeen).
+  last_seen_at: { type: Date, default: null, index: true },
   login_count:  { type: Number, default: 0 },
   created_at:   { type: Date, default: Date.now },
 });

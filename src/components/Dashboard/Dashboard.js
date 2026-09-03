@@ -6,7 +6,7 @@ import NewsFeed from "../News/NewsFeed";
 import TranscribePanel from "../Transcribe/TranscribePanel";
 import DashboardHome from "./DashboardHome";
 import ProfilePanel from "../Profile/ProfilePanel";
-import { BRAND_GRADIENT } from "../../theme";
+import Logo from "../Shell/Logo";
 
 /**
  * The app shell.
@@ -76,7 +76,6 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
         isNarrow={isNarrow}
         open={drawer}
         onClose={() => setDrawer(false)}
-        user={user}
       />
 
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -92,21 +91,7 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
               position: "relative", zIndex: 52,
             }}
           >
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 26, height: 26, borderRadius: 9, background: BRAND_GRADIENT, color: "#fff",
-                  display: "grid", placeItems: "center", fontSize: 14, fontWeight: 700,
-                  fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
-                }}
-              >
-                ह
-              </span>
-              <span style={{ fontWeight: 700, fontSize: 15.5, color: "var(--ink)", letterSpacing: "-0.02em" }}>
-                Hinglish
-              </span>
-            </span>
+            <Logo size={26} fontSize={15.5} />
 
             <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
               {quota && !drawer && (
@@ -144,6 +129,11 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
               <NewsFeed
                 voiceRev={voiceRev}
                 categoriesKey={(user?.categories || []).join(",")}
+                // Passed as well as joined so the feed can open on their first
+                // category in ONE request. Waiting for the server to name their
+                // categories back would mean loading everything, then loading
+                // again scoped — two round trips to render the first screen.
+                userCategories={user?.categories || []}
                 onGoTranscribe={() => openTab("voice")}
               />
             </div>

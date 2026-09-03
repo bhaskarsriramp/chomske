@@ -219,26 +219,30 @@ function NeedsVoice({ onGoTranscribe }) {
     <div
       style={{
         padding: "20px 18px", borderRadius: 12,
-        background: "#F9F9F9", border: "1px dashed var(--line)",
+        // Was #F9F9F9 on a white pane, which is a two-percent difference: the
+        // card had no edges and read as a paragraph nobody had styled. This is
+        // the one blocking step between a new account and the whole product, so
+        // it should look like a thing to act on, not like body copy.
+        background: "#EFEDE9", border: "1px solid #DDD9D2",
       }}
     >
       <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--ink)", marginBottom: 6 }}>
-        Transcribe a video first
+        Add a video first
       </div>
       <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)", margin: "0 0 14px" }}>
         Your voice is learned from your own videos, how you open, the words you keep in
-        English, how you sign off. Run one through Transcribe and this can write in it.
+        English, how you sign off. Add one under My voice and this can write in it.
       </p>
       <button
         onClick={onGoTranscribe}
-        className="hg-btn-ghost"
+        className="hg-btn-primary"
         style={{
-          fontSize: 13, fontWeight: 600, padding: "9px 15px", borderRadius: 10,
-          border: "1px solid var(--line)", background: "var(--card)",
-          color: "var(--ink-body)", cursor: "pointer",
+          fontSize: 13, fontWeight: 600, padding: "10px 16px", borderRadius: 10,
+          border: "none", background: "var(--primary)", color: "#fff",
+          cursor: "pointer",
         }}
       >
-        Go to Transcribe
+        Go to My voice
       </button>
     </div>
   );

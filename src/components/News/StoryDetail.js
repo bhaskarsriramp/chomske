@@ -24,6 +24,9 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [brief, setBrief] = useState(preview?.brief || "");
+  const [briefLoading, setBriefLoading] = useState(!preview?.brief);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -36,6 +39,7 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
         if (cancelled) return;
         setItem(data.item || preview || null);
         setCoverage(data.coverage || []);
+        if (data.item?.brief) { setBrief(data.item.brief); setBriefLoading(false); }
       } catch (err) {
         if (!cancelled) setError(errorMessage(err, "Couldn't load the sources for this story."));
       } finally {
@@ -46,6 +50,35 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
     // Stops a slow response for the previous story from overwriting the one the
     // user has since clicked — easy to hit when arrowing down the list.
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  /**
+   * The read on this story, fetched separately from the coverage.
+   *
+   * Its own request because writing one takes a few seconds the first time, and
+   * folded into the call above it would hold the source list back too. Delayed
+   * by 350ms because arrowing down the list selects forty stories in as many
+   * keystrokes, and each one would otherwise start a generation server-side for
+   * a story nobody stopped to look at.
+   */
+  useEffect(() => {
+    if (brief) return;
+    let cancelled = false;
+    setBriefLoading(true);
+
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get(`/news/${id}/brief`);
+        if (!cancelled) setBrief(data.brief || "");
+      } catch {
+        /* the pane falls back to the summary it already has */
+      } finally {
+        if (!cancelled) setBriefLoading(false);
+      }
+    }, 350);
+
+    return () => { cancelled = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -64,6 +97,8 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
       coverage={coverage}
       loading={loading}
       error={error}
+      brief={brief}
+      briefLoading={briefLoading}
       onClose={mode === "sheet" ? onClose : null}
       compact={mode === "sheet"}
       voice={voice}
@@ -94,7 +129,7 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
 
 /* ── Content ───────────────────────────────────────────────────────────── */
 
-function Body({ item, coverage, loading, error, onClose, compact, voice, onVoiceChange, onGoTranscribe }) {
+function Body({ item, coverage, loading, error, brief, briefLoading, onClose, compact, voice, onVoiceChange, onGoTranscribe }) {
   const links = coverage.length
     ? coverage
     : [{ source: item.source, title: item.title, url: item.url, published_at: item.published_at }];
@@ -166,19 +201,24 @@ function Body({ item, coverage, loading, error, onClose, compact, voice, onVoice
           </p>
         )}
 
-        {item.summary && (
-          <p style={{ fontSize: compact ? 14.5 : 15.5, lineHeight: 1.7, color: "var(--ink-body)", margin: "0 0 14px" }}>
-            {item.summary}
-          </p>
-        )}
+        {/* ── What actually happened ──────────────────────────────────────
+            The reason this pane exists. A headline and a one-line angle is not
+            enough to decide on, so the button underneath was being pressed
+            blind — and a script about something you did not care about is how
+            people stop trusting the button. This is 100-120 words built only
+            from the coverage listed below it. */}
+        <Brief
+          text={brief}
+          loading={briefLoading}
+          fallback={item.summary}
+          compact={compact}
+        />
 
         {item.why && (
           <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-mute)", margin: "0 0 26px" }}>
-            {/* The rank, written out. It belongs in the sentence that justifies
-                it, not in a badge at the top of the pane. */}
-            <strong style={{ fontWeight: 600, color: "var(--ink-body)" }}>
-              Why it ranks {item.score} out of 10.{" "}
-            </strong>
+            {/* No score. The number was doing nothing here that the sentence
+                after it doesn't do better. */}
+            <strong style={{ fontWeight: 600, color: "var(--ink-body)" }}>Why it ranks. </strong>
             {item.why}
           </p>
         )}
@@ -209,7 +249,6 @@ function Body({ item, coverage, loading, error, onClose, compact, voice, onVoice
           >
             {loading ? "Sources" : `Sources · ${links.length}`}
           </h3>
-          <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>oldest first</span>
         </div>
 
         {error && (
@@ -255,6 +294,47 @@ function Body({ item, coverage, loading, error, onClose, compact, voice, onVoice
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * The read on the story.
+ *
+ * Falls back to the collected summary when there was too little source text to
+ * write from. Not an error state and not a spinner that never resolves: some
+ * stories arrive as a headline and nothing else, and showing the one line we
+ * genuinely have beats an apology for the paragraph we don't.
+ */
+function Brief({ text, loading, fallback, compact }) {
+  if (loading && !text) {
+    return (
+      <div style={{ margin: "0 0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {[0, 1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className="hg-skel"
+            style={{ height: 13, borderRadius: 5, width: i === 3 ? "72%" : "100%" }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const body = text || fallback;
+  if (!body) return null;
+
+  return (
+    <div
+      style={{
+        fontSize: compact ? 14.5 : 15.5,
+        lineHeight: 1.72,
+        color: "var(--ink-body)",
+        margin: "0 0 22px",
+        whiteSpace: "pre-wrap",
+      }}
+    >
+      {body}
+    </div>
   );
 }
 

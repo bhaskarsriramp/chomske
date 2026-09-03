@@ -65,8 +65,11 @@ export async function writeScript({ profile, item }) {
 
   // Every outlet that carried this story. More angles than the one headline, and
   // the only facts the model is allowed to use.
+  // Scoped by category as well as cluster. cluster_id is the model's own story
+  // key ("openai-astra-safety-risk"), which is only unique WITHIN a category —
+  // unscoped, a finance story could pull a tech story's facts into its script.
   const coverage = item.cluster_id
-    ? await NewsItem.find({ cluster_id: item.cluster_id })
+    ? await NewsItem.find({ category: item.category, cluster_id: item.cluster_id })
         .select("source title summary url published_at")
         .sort({ published_at: 1 })
         .limit(8)
@@ -111,14 +114,30 @@ They never: ${list(profile.avoid)}
 Headline: ${item.title}
 The angle to take: ${item.ai_angle || "(pick the strongest angle from the facts)"}
 
-Facts available — these are the ONLY facts you may use:
+SOURCE MATERIAL BEGINS. This is the complete and only record of this story that
+exists for you. Anything not written between these markers did not happen.
 ${facts}
+SOURCE MATERIAL ENDS.
 
 ════════ RULES ════════
 1. LANGUAGE. Write in ${language}, in the SAME script and the SAME code-mixing as the samples above. If their openings are in Devanagari with English words mixed in, the whole script must be Devanagari with English words mixed in. Do NOT translate. Do NOT transliterate into English letters. Do NOT write a cleaner or more formal version of how they talk.
-2. FACTS. Use only the facts listed. Invent no numbers, no dates, no quotes, no benchmarks. If something is a rumour or unconfirmed in the sources, say so the way this creator would.
+2. FACTS. Every factual claim in the script must trace to a sentence in the source
+   material above. Specifically:
+   - You may not use anything you know about this topic from your training. Not
+     background, not context, not "as everyone knows", not the history of the
+     company, not what a product normally does, not what happened before this.
+     If it is not in the source material, it does not exist for this script.
+   - Invent no numbers, dates, prices, versions, percentages, benchmarks, names,
+     job titles, quotes or place names.
+   - Do not predict what happens next, do not estimate impact, do not say what
+     it "means for" anyone. Those are claims too, and they are not in the sources.
+   - If the sources are thin, write a shorter script about what IS known. A
+     creator reading an invented fact aloud to their audience is the single worst
+     thing this can do to them, and a short honest script beats a padded one.
+   - Where the sources disagree or call something unconfirmed, say so the way
+     this creator would say it.
 3. VOICE. Open the way THEY open — same energy and structure as their real openings, about today's story. Close the way THEY close. This is the whole job.
-4. LENGTH. ${TARGET_WORDS} words. A spoken script, not an article: no headings, no bullet points, no stage directions, no "[pause]".
+4. LENGTH. ${TARGET_WORDS} words, unless rule 2 forces it shorter. A spoken script, not an article: no headings, no bullet points, no stage directions, no "[pause]".
 5. ${ANTI_TELL}
 
 Return STRICT JSON only:

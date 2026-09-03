@@ -3,7 +3,7 @@ import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import StoryDetail from "./StoryDetail";
 import { sourceLabel, timeAgo, isFresh } from "./newsUtils";
-import { categoryColor } from "../../theme";
+import { categoryColor, cardBackground, cardTint } from "../../theme";
 
 /**
  * What to make a video about today.
@@ -13,44 +13,60 @@ import { categoryColor } from "../../theme";
  * launch covered by six outlets is ONE card reading "6 sources" — the count being
  * itself a signal of how big the story is, not just deduplication.
  *
+ * ── WHY THERE ARE NO FILTERS ANY MORE ────────────────────────────────────────
+ * This used to open with a time window (6h/24h/48h/72h) and a score floor
+ * (Everything / Worth covering / Major only). Seven controls above a list whose
+ * whole promise is "we already decided for you". Every one of them was a way to
+ * make the feed worse, the defaults were the right answer, and asking someone to
+ * tune a ranking they cannot see is asking them to do the product's job. The
+ * window and the bar are now constants, and the only choice left is the one that
+ * is genuinely theirs: which of their categories they are looking at.
+ *
  * ── LAYOUT ───────────────────────────────────────────────────────────────────
  * Split panes on anything desktop-sized: the ranked list on the left, the
- * selected story's sources on the right, each scrolling independently. Choosing
- * a topic means comparing candidates against their coverage, and a single column
- * with a modal on top forces that comparison through memory. Below 1100px there
- * is no room for two panes, so the story opens as a full-screen sheet instead.
+ * selected story's brief and sources on the right, each scrolling independently.
+ * Choosing a topic means comparing candidates against what they say, and a
+ * single column with a modal on top forces that comparison through memory.
+ * Below 1100px there is no room for two panes, so the story opens as a
+ * full-screen sheet instead.
  */
 
-// Freshness windows. 6h is the "am I early" view; 72h is the API's ceiling.
-const WINDOWS = [
-  { key: 6, label: "6h" },
-  { key: 24, label: "24h" },
-  { key: 48, label: "48h" },
-  { key: 72, label: "72h" },
-];
+// The feed's fixed shape. Two days is wide enough that a quiet category still
+// has something in it, and the ordering is by recency anyway, so anything older
+// sits at the bottom where it belongs rather than distorting the top.
+const WINDOW_HOURS = 48;
+const MIN_SCORE = 5;
 
-// Score floors, named for the decision rather than the number — the choice is
-// how picky to be today, not what integer to compare against.
-const BARS = [
-  { key: 3, label: "Everything" },
-  { key: 6, label: "Worth covering" },
-  { key: 8, label: "Major only" },
-];
+// The fallback when that comes back empty. A brand-new category has collected
+// for minutes, not days, and showing a first-time user an empty product is how
+// they conclude it is broken. Widening once beats making them find a control.
+const WIDE_HOURS = 72;
+const WIDE_MIN_SCORE = 3;
 
-export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey = "" }) {
+// Refresh is a courtesy, not a lever: the collector runs on its own 15-minute
+// clock, so the second press of the same minute cannot return anything the
+// first did not. Three is enough to feel responsive and few enough that nobody
+// sits there hammering it expecting different news.
+const MAX_REFRESHES = 3;
+
+export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey = "", userCategories = [] }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
-  const [hours, setHours] = useState(24);
-  const [minScore, setMinScore] = useState(6);
-  const [cat, setCat] = useState("");          // "" = every category they picked
+  // Opens on their first category rather than on everything. A mixed feed of
+  // three subjects has no shape — a creator sits down to make a markets video
+  // or a tech video, not "a video".
+  const [cat, setCat] = useState(userCategories[0] || "");
   const [feedCats, setFeedCats] = useState([]);
   const [items, setItems] = useState([]);
+  const [checkedAt, setCheckedAt] = useState(null);
+  const [widened, setWidened] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [openId, setOpenId] = useState(null);
   const [voice, setVoice] = useState(null);
+  const [refreshes, setRefreshes] = useState(0);
 
   const selectedRef = useRef(null);
   const selected = items.find((i) => i.id === openId) || null;
@@ -75,14 +91,27 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
     setBusy(true);
     setError("");
     try {
-      const params = { hours, min_score: minScore, limit: 40 };
-      if (cat) params.category = cat;
-      const { data } = await api.get("/news", { params });
+      const base = { limit: 40 };
+      if (cat) base.category = cat;
+
+      let { data } = await api.get("/news", {
+        params: { ...base, hours: WINDOW_HOURS, min_score: MIN_SCORE },
+      });
+
+      // Nothing at the normal bar. Try once with the window and the bar opened
+      // up before concluding there is nothing to cover.
+      let wide = false;
+      if (!(data.items || []).length) {
+        const retry = await api.get("/news", {
+          params: { ...base, hours: WIDE_HOURS, min_score: WIDE_MIN_SCORE },
+        });
+        if ((retry.data.items || []).length) { data = retry.data; wide = true; }
+      }
+
       setItems(data.items || []);
-      // Only refreshed on the unfiltered read: asking for one category makes the
-      // server echo back just that one, which would collapse the filter row to a
-      // single chip and strand the user inside it.
-      if (!cat) setFeedCats(data.categories || []);
+      setWidened(wide);
+      setCheckedAt(data.checked_at || null);
+      setFeedCats(data.categories || []);
     } catch (err) {
       setError(errorMessage(err, "Couldn't load today's topics."));
       setItems([]);
@@ -90,13 +119,24 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
       setBusy(false);
       setLoadedOnce(true);
     }
-  }, [hours, minScore, cat]);
+  }, [cat]);
 
   // categoriesKey is a refetch trigger, not an input: the server derives the
   // categories from the session, so the request body never changes. It belongs
   // on the effect rather than in load()'s deps — without it, saving a new
   // selection in Profile leaves Topics serving the previous categories.
   useEffect(() => { load(); }, [load, categoriesKey]);
+
+  // A different category is a different feed, so it gets its own refresh budget.
+  useEffect(() => { setRefreshes(0); }, [cat]);
+
+  // Their selection can change in Profile. If the category being viewed is no
+  // longer one of theirs, fall back to the first that is.
+  useEffect(() => {
+    const ids = (userCategories || []).filter(Boolean);
+    if (!ids.length) return;
+    if (!cat || !ids.includes(cat)) setCat(ids[0]);
+  }, [categoriesKey]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // On a split layout the right pane is always visible, so leaving it empty
   // wastes half the screen — open the top story by default, and re-open it if a
@@ -148,8 +188,13 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
           background: "var(--paper)",
         }}
       >
-        <div style={{ padding: `${isPhone ? 16 : 20}px ${gut}px 14px`, flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ padding: `${isPhone ? 16 : 20}px 0 12px`, flexShrink: 0 }}>
+          <div
+            style={{
+              display: "flex", alignItems: "baseline", justifyContent: "space-between",
+              gap: 12, padding: `0 ${gut}px`,
+            }}
+          >
             <h1
               style={{
                 fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
@@ -158,31 +203,15 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
             >
               What to cover today
             </h1>
-            <button
-              onClick={load}
-              disabled={busy}
-              className="hg-btn-ghost"
-              style={{
-                fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-                border: "1px solid var(--line)", background: "var(--card)",
-                color: "var(--ink-mute)", cursor: busy ? "default" : "pointer",
-                opacity: busy ? 0.55 : 1, whiteSpace: "nowrap", flexShrink: 0,
-              }}
-            >
-              {busy ? "Loading" : "Refresh"}
-            </button>
+            <RefreshButton
+              busy={busy}
+              spent={refreshes >= MAX_REFRESHES}
+              onRefresh={() => { setRefreshes((n) => n + 1); load(); }}
+            />
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 13 }}>
-            <ChipGroup label="Time window" options={WINDOWS} value={hours} onChange={setHours} />
-            <ChipGroup label="Score floor" options={BARS} value={minScore} onChange={setMinScore} />
-          </div>
-
-          {/* Shown only when they cover more than one thing. With a single
-              category it would be a filter with one setting, and it doubles as
-              the legend for the colour on the rows below. */}
-          {feedCats.length > 1 && (
-            <CategoryFilter cats={feedCats} value={cat} onChange={setCat} />
+          {feedCats.length > 0 && (
+            <CategoryStrip cats={feedCats} value={cat} onChange={setCat} gut={gut} />
           )}
         </div>
 
@@ -208,41 +237,41 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
 
           {!loadedOnce && busy && <FeedSkeleton />}
 
-          {loadedOnce && !items.length && !error && (
-            <EmptyState
-              hours={hours}
-              minScore={minScore}
-              onWiden={() => { setHours(72); setMinScore(3); }}
-            />
-          )}
+          {loadedOnce && !items.length && !error && <EmptyState />}
 
           {items.length > 0 && (
             <>
               <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                {items.map((it) => (
+                {items.map((it, i) => (
                   <StoryRow
                     key={it.id}
                     item={it}
+                    index={i}
                     isPhone={isPhone}
                     active={!isNarrow && it.id === openId}
                     rowRef={it.id === openId ? selectedRef : null}
                     onOpen={() => setOpenId(it.id)}
-                    // Naming the category on every row is only worth the line
-                    // when there is more than one to tell apart.
-                    showCategory={feedCats.length > 1 && !cat}
                   />
                 ))}
               </div>
+              {/* Evidence, not a promise. This used to say "Rechecked every 15
+                  minutes", which a creator looking at an eight-hour-old top card
+                  had no way to believe — they could not tell a quiet news day
+                  from a collector that had silently died. The real timestamp
+                  makes the difference visible. */}
               <p style={{ margin: "18px 2px 0", fontSize: 12, color: "var(--ink-mute)", lineHeight: 1.6 }}>
-                {items.length} {items.length === 1 ? "story" : "stories"} in the last {hours}h.
-                Rechecked every 15 minutes.
+                {items.length} {items.length === 1 ? "story" : "stories"}, newest first.
+                {widened
+                  ? " Nothing cleared the usual bar, so this reaches back further than normal."
+                  : ` From the last ${WINDOW_HOURS} hours.`}
+                {checkedAt && ` Checked ${timeAgo(checkedAt)}.`}
               </p>
             </>
           )}
         </div>
       </section>
 
-      {/* ── Sources ──────────────────────────────────────────────────────── */}
+      {/* ── The story ────────────────────────────────────────────────────── */}
       {!isNarrow && (
         <section
           style={{
@@ -282,33 +311,119 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */
 
-function ChipGroup({ label, options, value, onChange }) {
+/**
+ * Refresh, with a budget.
+ *
+ * Once spent it is NOT given the `disabled` attribute, deliberately: a disabled
+ * button fires no mouse events in Chrome, so hovering it would say nothing and
+ * the person would keep clicking a dead control. It stays live, looks spent, and
+ * explains itself — on hover for a pointer, on tap for a thumb, since a phone
+ * has no hover to explain anything with.
+ */
+function RefreshButton({ busy, spent, onRefresh }) {
+  const [showing, setShowing] = useState(false);
+  const timer = useRef(null);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  function explain() {
+    setShowing(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setShowing(false), 2600);
+  }
+
+  return (
+    <span style={{ position: "relative", flexShrink: 0 }}>
+      <button
+        onClick={() => {
+          if (busy) return;              // mid-fetch: a second press buys nothing
+          if (spent) explain();
+          else onRefresh();
+        }}
+        aria-disabled={spent || busy}
+        onMouseEnter={() => spent && setShowing(true)}
+        onMouseLeave={() => { clearTimeout(timer.current); setShowing(false); }}
+        className={spent || busy ? undefined : "hg-btn-ghost"}
+        style={{
+          fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
+          border: "1px solid var(--line)", background: "var(--card)",
+          color: "var(--ink-mute)",
+          cursor: busy ? "default" : spent ? "default" : "pointer",
+          opacity: busy ? 0.55 : spent ? 0.5 : 1,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {busy ? "Loading" : "Refresh"}
+      </button>
+
+      {showing && (
+        <span
+          role="status"
+          className="hg-fade"
+          style={{
+            position: "absolute", top: "calc(100% + 7px)", right: 0, zIndex: 5,
+            padding: "7px 11px", borderRadius: 8,
+            background: "var(--ink)", color: "#fff",
+            fontSize: 12, fontWeight: 500, lineHeight: 1.4,
+            whiteSpace: "nowrap", boxShadow: "0 6px 18px -8px rgba(15,15,15,.5)",
+          }}
+        >
+          Latest topics are already fetched.
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Which of their categories they are reading.
+ *
+ * One row that scrolls sideways rather than wrapping. Three long labels wrap to
+ * two or three lines, and a header that changes height when someone edits their
+ * categories in Profile makes the whole list jump. Scrolling keeps the header a
+ * fixed height whatever they picked. It bleeds into the gutter on purpose, so a
+ * half-visible chip at the edge shows there is more to scroll to.
+ */
+function CategoryStrip({ cats, value, onChange, gut }) {
   return (
     <div
       role="group"
-      aria-label={label}
+      aria-label="Category"
+      className="hg-strip"
       style={{
-        display: "inline-flex", padding: 3, gap: 2,
-        background: "#F2F2F2", border: "1px solid var(--line)", borderRadius: 10,
+        display: "flex", gap: 7, marginTop: 12,
+        overflowX: "auto", overflowY: "hidden",
+        padding: `2px ${gut}px`,
+        scrollbarWidth: "none",
       }}
     >
-      {options.map((o) => {
-        const on = o.key === value;
+      {cats.map((c) => {
+        const col = categoryColor(c.id);
+        const on = value === c.id;
         return (
           <button
-            key={o.key}
-            onClick={() => onChange(o.key)}
+            key={c.id}
+            onClick={() => onChange(c.id)}
             aria-pressed={on}
+            className="hg-pill"
             style={{
-              fontSize: 12.5, fontWeight: on ? 600 : 500,
-              padding: "6px 11px", borderRadius: 8, border: "none",
-              background: on ? "var(--card)" : "transparent",
-              color: on ? "var(--ink)" : "var(--ink-mute)",
-              boxShadow: on ? "0 1px 2px rgba(15,15,15,.09)" : "none",
-              cursor: "pointer", whiteSpace: "nowrap",
+              display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0,
+              fontSize: 12.5, fontWeight: on ? 650 : 550,
+              padding: "6px 12px", borderRadius: 999, cursor: "pointer",
+              background: on ? col.tint : "var(--card)",
+              color: on ? col.ink : "var(--ink-mute)",
+              border: `1px solid ${on ? col.solid : "var(--line)"}`,
+              whiteSpace: "nowrap",
             }}
           >
-            {o.label}
+            <span
+              aria-hidden="true"
+              style={{
+                width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                background: on ? col.solid : "#CFCFCF",
+              }}
+            />
+            {c.label}
           </button>
         );
       })}
@@ -320,77 +435,22 @@ function ChipGroup({ label, options, value, onChange }) {
  * One story in the list.
  *
  * ── NO SCORE NUMBER ──────────────────────────────────────────────────────────
- * There used to be a scored square at the head of every row. It was redundant
- * three ways over: the list is already sorted by that number, the chip group
- * above sets the floor for it, and the detail pane explains it in a sentence.
- * Forty rows each opening with a digit made the feed look like a spreadsheet of
- * results rather than a shortlist of things to say on camera. The ranking is
- * still doing all its work; it is expressed as position, which is how a
- * rundown has always expressed it.
+ * There used to be a scored square at the head of every row. Redundant three
+ * ways over: the list was already sorted by that number, the chips above set its
+ * floor, and the detail pane explains it in a sentence. Forty rows each opening
+ * with a digit made the feed look like a spreadsheet of results rather than a
+ * shortlist of things to say on camera.
  *
- * The colour is the category. A creator covering markets and AI at once can now
- * tell the two apart before reading, which is the only job colour has here.
+ * ── THE COLOUR MEANS NOTHING ─────────────────────────────────────────────────
+ * And that is the point. It cycles by position through twelve warm grounds, so
+ * a long list has rhythm and no two neighbours look alike. It briefly encoded
+ * the category instead, which sounds better and was worse: the feed shows one
+ * category at a time, so every card came out the same colour, and a colour that
+ * never varies has stopped carrying information anyway.
  */
-/**
- * Which of their categories to show, and the key to the colours below it.
- *
- * Not a ChipGroup: these carry a hue each, and the segmented grey track that
- * suits "6h / 24h / 48h" would put eight competing colours inside one box. Loose
- * pills read as labels, which is what they are.
- */
-function CategoryFilter({ cats, value, onChange }) {
-  return (
-    <div
-      role="group"
-      aria-label="Category"
-      style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 9 }}
-    >
-      <CategoryPill on={!value} onClick={() => onChange("")} label="All" />
-      {cats.map((c) => (
-        <CategoryPill
-          key={c.id}
-          id={c.id}
-          label={c.label}
-          on={value === c.id}
-          onClick={() => onChange(value === c.id ? "" : c.id)}
-        />
-      ))}
-    </div>
-  );
-}
-
-function CategoryPill({ id, label, on, onClick }) {
-  const c = categoryColor(id);
-  const plain = !id;
-  return (
-    <button
-      onClick={onClick}
-      aria-pressed={on}
-      className="hg-pill"
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 6,
-        fontSize: 12, fontWeight: on ? 650 : 550,
-        padding: "5px 11px", borderRadius: 999, cursor: "pointer",
-        background: on ? (plain ? "var(--ink)" : c.tint) : "var(--card)",
-        color: on ? (plain ? "#fff" : c.ink) : "var(--ink-mute)",
-        border: `1px solid ${on ? (plain ? "var(--ink)" : c.solid) : "var(--line)"}`,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {!plain && (
-        <span
-          aria-hidden="true"
-          style={{ width: 6, height: 6, borderRadius: "50%", background: c.solid, flexShrink: 0 }}
-        />
-      )}
-      {label}
-    </button>
-  );
-}
-
-function StoryRow({ item, isPhone, active, rowRef, onOpen, showCategory }) {
-  const c = categoryColor(item.category);
+function StoryRow({ item, index, isPhone, active, rowRef, onOpen }) {
   const fresh = isFresh(item.first_seen_at);
+  const tone = cardTint(index);
 
   // Up to two named sources then a count: "OpenAI, Hacker News" tells a creator
   // something a bare "4 sources" doesn't.
@@ -413,46 +473,28 @@ function StoryRow({ item, isPhone, active, rowRef, onOpen, showCategory }) {
       onClick={onOpen}
       className={active ? undefined : "hg-row"}
       style={{
-        textAlign: "left", width: "100%", cursor: "pointer",
-        display: "block",
+        textAlign: "left", width: "100%", cursor: "pointer", display: "block",
         padding: isPhone ? "12px 13px" : "13px 15px",
-        // The tint fades out before the text starts, so the row is coloured at
-        // the edge a scanning eye catches and plain white where the headline
-        // has to be read.
-        background: active
-          ? c.tint
-          : `linear-gradient(180deg, ${c.tint} 0%, var(--card) 74%)`,
-        border: `1px solid ${active ? c.solid : c.line}`,
+        background: cardBackground(index, active),
+        // Selected takes the tint's own border a shade darker rather than a
+        // different colour, so the chosen row reads as the same card, lifted.
+        border: `1px solid ${tone.line}`,
+        boxShadow: active ? `inset 0 0 0 1px ${tone.line}` : "none",
         borderRadius: 10,
       }}
     >
-      <span style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
+      {fresh && (
         <span
-          aria-hidden="true"
-          style={{ flexShrink: 0, width: 6, height: 6, borderRadius: "50%", background: c.solid }}
-        />
-        {showCategory && item.category_label && (
-          <span
-            style={{
-              fontSize: 10.5, fontWeight: 700, letterSpacing: "0.055em",
-              textTransform: "uppercase", color: c.ink,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}
-          >
-            {item.category_label}
-          </span>
-        )}
-        {/* Freshness is the one thing worth shouting: a story first seen in the
-            last three hours is the whole "post before the big channels" pitch. */}
-        {fresh && (
-          <span
-            title="First seen in the last 3 hours"
-            style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.055em", color: "var(--accent)" }}
-          >
-            NEW
-          </span>
-        )}
-      </span>
+          title="First seen in the last 3 hours"
+          style={{
+            display: "inline-block", marginBottom: 5,
+            fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em",
+            color: "var(--accent)",
+          }}
+        >
+          NEW
+        </span>
+      )}
 
       <span
         style={{
@@ -468,8 +510,8 @@ function StoryRow({ item, isPhone, active, rowRef, onOpen, showCategory }) {
         <span
           style={{
             marginTop: 5, fontSize: 13, lineHeight: 1.5, color: "var(--ink-mute)",
-            // Two lines is enough to judge the hook; the full angle is one
-            // click away, and ragged card heights make a list hard to scan.
+            // Two lines is enough to judge the hook; the full read is one click
+            // away, and ragged card heights make a list hard to scan.
             display: "-webkit-box", overflow: "hidden",
             WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
           }}
@@ -494,7 +536,7 @@ function PanePlaceholder({ loading }) {
   return (
     <div style={{ flex: 1, display: "grid", placeItems: "center", padding: 40 }}>
       <p style={{ fontSize: 13.5, color: "var(--ink-mute)", textAlign: "center", margin: 0 }}>
-        {loading ? "Reading the wires…" : "Pick a story to see who covered it."}
+        {loading ? "Reading the wires…" : "Pick a story to see what happened."}
       </p>
     </div>
   );
@@ -510,8 +552,12 @@ function FeedSkeleton() {
   );
 }
 
-function EmptyState({ hours, minScore, onWiden }) {
-  const picky = minScore >= 6;
+/**
+ * Nothing to show. There is no "widen the search" button any more because the
+ * widening already happened automatically before this rendered — offering it
+ * again would be a button that does what was just done.
+ */
+function EmptyState() {
   return (
     <div
       style={{
@@ -520,24 +566,13 @@ function EmptyState({ hours, minScore, onWiden }) {
       }}
     >
       <div style={{ fontSize: 15.5, fontWeight: 600, color: "var(--ink)", marginBottom: 7 }}>
-        Nothing clears the bar right now
+        Nothing worth covering yet
       </div>
-      <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)", margin: "0 0 16px" }}>
-        {picky
-          ? `Nothing from the last ${hours}h scored ${minScore} or higher. Quiet days are real. Most days have two or three stories worth a video, not twenty.`
-          : `Nothing has come in for the last ${hours}h. The collector runs every 15 minutes, so a fresh install takes a few minutes to fill up.`}
+      <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)", margin: 0 }}>
+        Quiet stretches are real. Most days have two or three stories worth a video,
+        not twenty. If you have just added this category, the collector runs every
+        15 minutes and takes a little while to fill up.
       </p>
-      <button
-        onClick={onWiden}
-        className="hg-btn-ghost"
-        style={{
-          fontSize: 13, fontWeight: 600, padding: "9px 15px", borderRadius: 10,
-          border: "1px solid var(--line)", background: "var(--card)",
-          color: "var(--ink-body)", cursor: "pointer",
-        }}
-      >
-        Widen to 72h, show everything
-      </button>
     </div>
   );
 }

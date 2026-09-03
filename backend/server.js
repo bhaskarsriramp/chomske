@@ -1,5 +1,5 @@
 /**
- * server.js — Hinglish API.
+ * server.js — Chomske API.
  *
  * Deliberately small: auth, transcribe, health. Everything expensive lives behind
  * a signed-in user and a daily cap, because reading a video is the only real cost
@@ -104,7 +104,7 @@ function assertConfig() {
     assertConfig();
     await connectToMongo();
     app.listen(PORT, () => {
-      console.log(`[server] Hinglish API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
+      console.log(`[server] Chomske API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
       console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);
       startNewsScheduler();
       // Load the key pool once at boot. Without this, isApidirectConfigured()

@@ -1,7 +1,7 @@
 {
-  "name": "hinglish-backend",
+  "name": "chomske-backend",
   "version": "1.0.0",
-  "description": "Hinglish — extract what a creator actually says in a video, in their own language.",
+  "description": "Chomske — today's topics for a creator's niche, written in their own voice.",
   "type": "module",
   "main": "server.js",
   "scripts": {

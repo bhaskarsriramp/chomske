@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
-import { categoryColor, BRAND_GRADIENT, HERO_WASH } from "../../theme";
+import { categoryColor, HERO_WASH } from "../../theme";
+import Logo from "../Shell/Logo";
 
 /**
  * First-run category picker.
@@ -93,20 +94,8 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
         padding: `${isPhone ? 30 : 56}px ${gut} ${isPhone ? 120 : 140}px`,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: isPhone ? 26 : 38 }}>
-        <span
-          aria-hidden="true"
-          style={{
-            width: 28, height: 28, borderRadius: 9, background: BRAND_GRADIENT, color: "#fff",
-            display: "grid", placeItems: "center", fontSize: 15, fontWeight: 700,
-            fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
-          }}
-        >
-          ह
-        </span>
-        <span style={{ fontWeight: 700, fontSize: 16, color: "var(--ink)", letterSpacing: "-0.02em" }}>
-          Hinglish
-        </span>
+      <div style={{ marginBottom: isPhone ? 26 : 38 }}>
+        <Logo size={28} fontSize={16} />
       </div>
 
       <h1

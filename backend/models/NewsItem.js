@@ -57,6 +57,14 @@ const NewsItemSchema = new Schema({
 
   cluster_id: { type: String, default: "", index: true },
 
+  // 100-120 words assembled from the coverage above, so a creator can read what
+  // happened before spending a script on it. Written to every row in a cluster.
+  // brief_at doubles as "we already decided about this one": a story with too
+  // little collected text gets an empty brief and a stamp, so it isn't
+  // reconsidered on every open.
+  brief:    { type: String, default: "" },
+  brief_at: { type: Date, default: null },
+
   created_at: { type: Date, default: Date.now },
 });
 

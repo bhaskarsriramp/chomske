@@ -11,6 +11,8 @@ import mongoose from "mongoose";
 import NewsItem from "../models/NewsItem.js";
 import User from "../models/User.js";
 import { isValidCategory, DEFAULT_CATEGORY, getCategory } from "../services/categories.js";
+import { ensureBrief } from "../services/newsBriefService.js";
+import { lastCheckedAt, touchSeen } from "../services/newsCadence.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
@@ -61,22 +63,72 @@ router.get("/", authenticateToken, async (req, res) => {
           earliest: { $min: "$first_seen_at" },
         },
       },
+      // Two stages, and the order matters. Rank first and cut to the limit, so
+      // what survives is the best of the window; THEN order what survived by
+      // when the story broke. Sorting by time first would fill the feed with
+      // whatever happened to arrive most recently, which on a quiet hour is
+      // three press releases and a job posting.
       { $sort: { "doc.ai_score": -1, count: -1, "doc.raw_score": -1 } },
       { $limit: limit },
+      { $sort: { earliest: -1 } },
     ]);
+
+    // When the collector last went and looked. The footer used to claim
+    // "Rechecked every 15 minutes", which is a promise, not evidence — a creator
+    // staring at an eight-hour-old top card could not tell a quiet news day from
+    // a broken collector. Read from Redis, so this costs nothing on a page load.
+    const checkedAt = await lastCheckedAt(cats);
+
+    // Opening the feed is what "still using this" means. Not awaited: the
+    // response must not wait on a bookkeeping write, and if it fails the worst
+    // case is this account looks a little staler than it is.
+    touchSeen(req.user.id);
 
     return res.json({
       success: true,
       window_hours: hours,
       count: rows.length,
-      // What the feed was drawn from, so a user covering three categories can see
-      // which is which instead of one undifferentiated list.
-      categories: cats.map((id) => ({ id, label: getCategory(id)?.label || id })),
+      checked_at: checkedAt,
+      // ALWAYS their full selection, not the filtered subset. The client draws a
+      // category switcher from this, and echoing back only the category it just
+      // asked for would collapse that switcher to one chip and strand them
+      // inside whichever category they happened to open.
+      categories: mine.map((id) => ({ id, label: getCategory(id)?.label || id })),
+      // Which one this response actually is.
+      category: cats.length === 1 ? cats[0] : "",
       items: rows.map((r) => shape(r.doc, r)),
     });
   } catch (err) {
     console.error("[news] GET / failed:", err);
     return res.status(500).json({ success: false, message: "Couldn't load the feed." });
+  }
+});
+
+/**
+ * GET /news/:id/brief — the 100-120 word read on this story.
+ *
+ * Its own endpoint rather than part of /news/:id because generating one takes a
+ * few seconds the first time. Folded into the main read, it would hold back the
+ * coverage list too, and the pane would sit blank while a creator waited for
+ * prose they might not even scroll to. Split, the sources paint immediately and
+ * the brief drops in when it lands. Almost always cached by then: the collector
+ * pre-generates briefs for feed-visible stories after each ranking pass.
+ */
+router.get("/:id/brief", authenticateToken, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: "Invalid id" });
+  }
+  try {
+    const doc = await NewsItem.findById(req.params.id).lean();
+    if (!doc) return res.status(404).json({ success: false, message: "Not found" });
+
+    const brief = await ensureBrief(doc);
+    return res.json({ success: true, brief, summary: doc.summary || "" });
+  } catch (err) {
+    console.error("[news] GET /:id/brief failed:", err);
+    // Not an error the reader needs to see: the pane falls back to the summary
+    // it already has rather than showing them a failure they cannot act on.
+    return res.json({ success: true, brief: "" });
   }
 });
 
@@ -97,7 +149,11 @@ router.get("/:id", authenticateToken, async (req, res) => {
 
   return res.json({
     success: true,
-    item: shape(doc, { count: coverage.length || 1, sources: [...new Set(coverage.map((c) => c.source))] }),
+    item: shape(doc, {
+      count: coverage.length || 1,
+      sources: [...new Set(coverage.map((c) => c.source))],
+      earliest: coverage.length ? coverage[0].published_at : doc.first_seen_at,
+    }),
     // Every link that covered it — this is what a creator opens to grab
     // screenshots and check facts before recording.
     coverage: coverage.map((c) => ({
@@ -115,13 +171,18 @@ function shape(d, cluster = {}) {
     title: d.title,
     url: d.url,
     summary: d.summary || "",
+    brief: d.brief || "",
     source: d.source,
     source_kind: d.source_kind,
     score: d.ai_score,
     angle: d.ai_angle || "",
     why: d.ai_reason || "",
     published_at: d.published_at,
-    first_seen_at: d.first_seen_at,
+    // The cluster's own clock: when the FIRST of its members reached us. The
+    // representative row is whichever scored best, which may well be an outlet
+    // that picked the story up hours late, and showing its timestamp made a
+    // story look newer than it was.
+    first_seen_at: cluster.earliest || d.first_seen_at,
     // How many separate sources carried this story — the "how big is it" signal.
     sources: cluster.sources || [d.source],
     source_count: cluster.count || 1,

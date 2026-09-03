@@ -22,13 +22,18 @@
   --bad: #C5221F;
   --radius: 12px;
 
-  /* The product's own output: scripts written, and the bars that count them.
-     One hue, used in exactly the places that show that one thing. Category
-     hues live in theme.js and never appear here — a colour in this app is
-     either a category or a state, and this is the state "you made something". */
-  --made: #6C3FE0;
-  --made-tint: #F5F2FE;
-  --made-line: #DED4FA;
+  /* The product's own output: scripts written, videos added, the bars that
+     count them, and anything mid-flight. One value, used in exactly the places
+     that show that one thing.
+
+     Warm graphite, not the violet it started as. Violet reads as blue, and pale
+     blue-purple is the tell that makes a page look machine-made before a word
+     of it is read. The colour in this product now lives on the story cards
+     (see theme.js); the chrome around them stays neutral, which is also what
+     YouTube Studio and Instagram actually do. */
+  --made: #3A3733;
+  --made-tint: #F5F3F0;
+  --made-line: #E3DFD9;
 }
 
 * { box-sizing: border-box; }
@@ -144,6 +149,14 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
   border-color: #B8B8B8 !important;
   color: var(--ink-body) !important;
 }
+
+/* The category strip scrolls sideways rather than wrapping, so the header keeps
+   one fixed height however many categories someone picked. The bar itself is
+   hidden: it is a row of four chips, and a scrollbar under them would be taller
+   than the thing it scrolls. Swipe and trackpad still work, and the chips are
+   focusable, so a keyboard reaches the ones off-screen. */
+.hg-strip { -ms-overflow-style: none; }
+.hg-strip::-webkit-scrollbar { display: none; }
 
 /* ── SKELETONS ───────────────────────────────────────────────────────────────
    One quiet pulse, not a staircase of fading opacities. A ladder of

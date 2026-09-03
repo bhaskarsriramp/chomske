@@ -1,18 +1,25 @@
 /**
- * newsRanker.js — decide what an AI/tech creator should actually cover today.
+ * newsRanker.js — decide what a creator should actually cover today.
  *
  * The collector's raw_score only knows recency, source type and upvotes. It has
  * no idea whether a story is *interesting*, and it can't tell "Google ships a new
  * Gemini model" from "Apple renames a lake on Maps" — both were in the top 12 of
  * a real run.
  *
- * That judgement is what this does, in ONE text call over the day's candidates.
+ * ── TWO STAGES, AND WHY ──────────────────────────────────────────────────────
+ * This used to be one call that asked, for every candidate, a score AND a story
+ * key AND an angle AND a reason. About 45 output tokens each. Output is billed
+ * at six times the input rate, so nearly all the money went on writing editorial
+ * copy — and roughly seven items in ten score below 3 and are never shown to
+ * anyone. We were paying to write angles for noise.
  *
- * ── WHY ONE BATCHED CALL, NOT ONE PER ITEM ───────────────────────────────────
- * Per-item calls would be ~60 requests per pass. Batched, the whole ranking is a
- * few thousand input tokens — cents a day. It also lets the model see the items
- * TOGETHER, which is the only way it can tell that six of them are the same
- * launch and rank the cluster once.
+ *   Stage 1 (triage)  every candidate, `{i, score}` only. ~10 output tokens.
+ *   Stage 2 (detail)  only what cleared the bar, the story key, angle and why.
+ *
+ * Same feed, roughly a third of the ranking cost. It also degrades better than
+ * the single call did: if stage 2 fails, every item still carries a real score,
+ * so the feed works and only the one-line angles are missing. Before, one bad
+ * response lost the whole pass.
  *
  * Thinking is off for the same measured reason as transcription (see
  * geminiClient.js): scoring headlines is judgement, not multi-step reasoning, and
@@ -25,6 +32,14 @@ import { getCategory } from "./categories.js";
 const MODEL = process.env.GEMINI_RANK_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 const BATCH = parseInt(process.env.NEWS_RANK_BATCH || "60", 10);
 const WINDOW_HOURS = parseInt(process.env.NEWS_RANK_WINDOW_HOURS || "36", 10);
+
+// The floor for earning stage 2. Deliberately one below the feed's own cut, so
+// a story sitting on the boundary still gets an angle written and a borderline
+// judgement never costs a creator the context.
+const DETAIL_MIN = parseInt(process.env.NEWS_DETAIL_MIN_SCORE || "4", 10);
+
+const USD_IN = parseFloat(process.env.GEMINI_USD_PER_M_INPUT || "1.50");
+const USD_OUT = parseFloat(process.env.GEMINI_USD_PER_M_OUTPUT || "9.00");
 
 let _client = null;
 function client() {
@@ -42,7 +57,7 @@ function client() {
  * flatten both into "is this interesting" — which is how a ranker ends up putting
  * a lake being renamed on Apple Maps in the top twelve.
  */
-function buildPrompt(cat) {
+export function buildPrompt(cat) {
   return `You are the editor for a channel that covers ${cat.editor}.
 
 For EACH item below, decide how much it deserves a video TODAY.
@@ -59,25 +74,89 @@ Judge the EVENT, not the headline's excitement. Rules:
 - An item outside this channel's subject scores 0, whatever its source.
 - Prefer things with a concrete, demonstrable "what changed" over commentary.
 ${cat.caution ? `\n${cat.caution}\n` : ""}
-
-For each item also give:
-  "angle": one short line on what the video would actually be ABOUT — the hook, in plain words. Empty string if score < 3.
-  "why": a few words on the reasoning behind the score.
-  "story": a short lowercase-hyphenated key naming the underlying EVENT, not the headline. Items reporting the same event MUST get the exact same key, however differently they are worded — "OpenAI's Astra Model" and "OpenAI's Astra Sparks Safety Alarm" are both "openai-astra-safety-risk". Keep it 2-5 words.
-
-Return STRICT JSON, an array with one object per item, in the same order:
-[{"i": 0, "score": 7, "story": "openai-astra-safety-risk", "angle": "...", "why": "..."}]
+Return STRICT JSON, an array with one object per item, in the same order, and
+NOTHING else. No angle, no explanation, no prose — only the number:
+[{"i": 0, "score": 7}, {"i": 1, "score": 2}]
 
 ITEMS:`;
 }
 
 /**
+ * Stage 2 only ever sees items that already scored. It is not asked to
+ * reconsider the score: re-deciding here would let an item's rank change
+ * depending on which of two calls happened to look at it last.
+ */
+export function buildDetailPrompt(cat) {
+  return `You are the editor for a channel that covers ${cat.editor}.
+
+These items have already been judged worth covering. For EACH one give:
+
+  "story": a short lowercase-hyphenated key naming the underlying EVENT, not the
+           headline. Items reporting the same event MUST get the exact same key,
+           however differently they are worded — "OpenAI's Astra Model" and
+           "OpenAI's Astra Sparks Safety Alarm" are both
+           "openai-astra-safety-risk". Keep it 2-5 words.
+  "angle": one short line on what the video would actually be ABOUT — the hook,
+           in plain words.
+  "why":   a few words on why it is worth covering.
+
+Do not re-score anything. Do not add items. Do not drop items.
+
+Return STRICT JSON, an array with one object per item, in the same order:
+[{"i": 0, "story": "openai-astra-safety-risk", "angle": "...", "why": "..."}]
+
+ITEMS:`;
+}
+
+/** One line per item, in the shape both stages read. */
+function renderList(items) {
+  return items
+    .map((it, i) => {
+      const src = it.source_kind === "primary" ? `${it.source}, official` : it.source;
+      const pts = it.meta?.points ? `, ${it.meta.points} pts` : "";
+      return `[${i}] (${src}${pts}) ${it.title}${it.summary ? ` — ${it.summary.slice(0, 160)}` : ""}`;
+    })
+    .join("\n");
+}
+
+function costOf(res) {
+  const u = res?.usageMetadata || {};
+  const inTok = u.promptTokenCount || 0;
+  const outTok = (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0);
+  return { inTok, outTok, usd: (inTok / 1e6) * USD_IN + (outTok / 1e6) * USD_OUT };
+}
+
+async function askJson(contents, maxOutputTokens) {
+  return client().models.generateContent({
+    model: MODEL,
+    contents,
+    config: {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+      maxOutputTokens,
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+  });
+}
+
+function parseArray(res, label, categoryId) {
+  try {
+    const out = JSON.parse(res.text || "[]");
+    if (!Array.isArray(out)) throw new Error("not an array");
+    return out;
+  } catch (err) {
+    console.error(`[news-rank:${categoryId}] ${label} response unparseable: ${err.message}`);
+    return null;
+  }
+}
+
+/**
  * Rank the current unranked candidates.
- * @returns {{ considered, ranked, usd, skipped }}
+ * @returns {{ considered, ranked, detailed, usd, skipped }}
  */
 export async function rankNews(categoryId, { force = false } = {}) {
   const cat = getCategory(categoryId);
-  if (!cat) return { considered: 0, ranked: 0, usd: 0, skipped: 0 };
+  if (!cat) return { considered: 0, ranked: 0, detailed: 0, usd: 0, skipped: 0 };
 
   const since = new Date(Date.now() - WINDOW_HOURS * 3600000);
 
@@ -101,87 +180,120 @@ export async function rankNews(categoryId, { force = false } = {}) {
   }
   const items = [...byCluster.values()].slice(0, BATCH);
 
-  if (!items.length) return { considered: 0, ranked: 0, usd: 0, skipped: 0 };
+  if (!items.length) return { considered: 0, ranked: 0, detailed: 0, usd: 0, skipped: 0 };
 
-  const list = items
-    .map((it, i) => {
-      const src = it.source_kind === "primary" ? `${it.source}, official` : it.source;
-      const pts = it.meta?.points ? `, ${it.meta.points} pts` : "";
-      return `[${i}] (${src}${pts}) ${it.title}${it.summary ? ` — ${it.summary.slice(0, 160)}` : ""}`;
-    })
-    .join("\n");
+  /* ── Stage 1: score everything ──────────────────────────────────────── */
 
-  let res;
+  let res1;
   try {
-    res = await client().models.generateContent({
-      model: MODEL,
-      contents: `${PROMPT_HEAD}\n${list}`,
-      config: {
-        temperature: 0.2,
-        responseMimeType: "application/json",
-        maxOutputTokens: 32768,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
+    // ~12 output tokens an item; the ceiling is generous because a truncated
+    // JSON array is salvaged as nothing, and a silent truncation would look
+    // exactly like the model declining to rank the tail of the list.
+    res1 = await askJson(`${buildPrompt(cat)}\n${renderList(items)}`, 8192);
   } catch (err) {
-    console.error(`[news-rank:${categoryId}] Gemini call failed:`, err.message);
-    return { considered: items.length, ranked: 0, usd: 0, skipped: items.length, error: err.message };
+    console.error(`[news-rank:${categoryId}] triage call failed:`, err.message);
+    return { considered: items.length, ranked: 0, detailed: 0, usd: 0, skipped: items.length, error: err.message };
   }
 
-  let verdicts;
-  try {
-    verdicts = JSON.parse(res.text || "[]");
-    if (!Array.isArray(verdicts)) throw new Error("not an array");
-  } catch (err) {
-    console.error(`[news-rank:${categoryId}] unparseable response:`, err.message);
-    return { considered: items.length, ranked: 0, usd: 0, skipped: items.length };
+  const verdicts = parseArray(res1, "triage", categoryId);
+  if (!verdicts) {
+    const c = costOf(res1);
+    return { considered: items.length, ranked: 0, detailed: 0, usd: c.usd, skipped: items.length };
   }
 
-  let ranked = 0;
+  const scored = [];          // [{ item, score }] in the order the model returned
+  const ops = [];
   for (const v of verdicts) {
     const item = items[Number(v?.i)];
     if (!item) continue;
     const score = Math.max(0, Math.min(10, Number(v.score) || 0));
+    scored.push({ item, score });
 
     // Applied to the whole lexical cluster, so every copy of one story carries
     // the same verdict and the feed can collapse them without the score
     // depending on which copy happened to be the representative.
-    const filter = item.cluster_id
-      ? { category: categoryId, cluster_id: item.cluster_id }
-      : { _id: item._id };
-
-    const set = {
-      ai_score: score,
-      ai_angle: String(v.angle || "").slice(0, 300),
-      ai_reason: String(v.why || "").slice(0, 200),
-      ranked_at: new Date(),
-    };
-
-    // RE-CLUSTER ON THE MODEL'S STORY KEY. titleSignature only catches stories
-    // whose WORDING overlaps, so "OpenAI's Astra Model" and "OpenAI's Astra
-    // Sparks AI Safety Alarm Bells" stayed two clusters and both surfaced at
-    // 9/10 — the same story twice at the top of the feed. The model already knew
-    // they were one event (it wrote both the same angle), so its key is a better
-    // cluster than anything lexical. Overwrites cluster_id when supplied.
-    const story = String(v.story || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "");
-    if (story) set.cluster_id = story;
-
-    await NewsItem.updateMany(filter, { $set: set }).catch(() => {});
-    ranked++;
+    ops.push({
+      updateMany: {
+        filter: item.cluster_id
+          ? { category: categoryId, cluster_id: item.cluster_id }
+          : { _id: item._id },
+        update: { $set: { ai_score: score, ranked_at: new Date() } },
+      },
+    });
   }
 
-  const u = res.usageMetadata || {};
-  const inTok = u.promptTokenCount || 0;
-  const outTok = (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0);
-  const usd =
-    (inTok / 1e6) * parseFloat(process.env.GEMINI_USD_PER_M_INPUT || "1.50") +
-    (outTok / 1e6) * parseFloat(process.env.GEMINI_USD_PER_M_OUTPUT || "9.00");
+  // One round trip instead of one per story. At 60 clusters the loop version was
+  // 60 sequential awaits, which took longer than the model call it followed.
+  if (ops.length) await NewsItem.bulkWrite(ops, { ordered: false }).catch(() => {});
+
+  /* ── Stage 2: write angles for what cleared the bar ─────────────────── */
+
+  const keep = scored.filter((s) => s.score >= DETAIL_MIN);
+  let detailed = 0;
+  let res2 = null;
+
+  if (keep.length) {
+    const keepItems = keep.map((k) => k.item);
+    try {
+      res2 = await askJson(`${buildDetailPrompt(cat)}\n${renderList(keepItems)}`, 16384);
+      const details = parseArray(res2, "detail", categoryId);
+
+      if (details) {
+        const ops2 = [];
+        for (const d of details) {
+          const item = keepItems[Number(d?.i)];
+          if (!item) continue;
+
+          const set = {
+            ai_angle: String(d.angle || "").slice(0, 300),
+            ai_reason: String(d.why || "").slice(0, 200),
+          };
+
+          // RE-CLUSTER ON THE MODEL'S STORY KEY. titleSignature only catches
+          // stories whose WORDING overlaps, so "OpenAI's Astra Model" and
+          // "OpenAI's Astra Sparks AI Safety Alarm Bells" stayed two clusters and
+          // both surfaced at 9/10 — the same story twice at the top of the feed.
+          // The model already knows they are one event, so its key is a better
+          // cluster than anything lexical.
+          const story = String(d.story || "").trim().toLowerCase()
+            .replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "");
+          if (story) set.cluster_id = story;
+
+          ops2.push({
+            updateMany: {
+              filter: item.cluster_id
+                ? { category: categoryId, cluster_id: item.cluster_id }
+                : { _id: item._id },
+              update: { $set: set },
+            },
+          });
+          detailed++;
+        }
+        if (ops2.length) await NewsItem.bulkWrite(ops2, { ordered: false }).catch(() => {});
+      }
+    } catch (err) {
+      // Scores are already written. The feed still ranks correctly; the cards
+      // just show no angle line until the next forced pass.
+      console.error(`[news-rank:${categoryId}] detail call failed (scores kept):`, err.message);
+    }
+  }
+
+  const c1 = costOf(res1);
+  const c2 = res2 ? costOf(res2) : { inTok: 0, outTok: 0, usd: 0 };
+  const usd = c1.usd + c2.usd;
 
   console.log(
-    `[news-rank:${categoryId}] ${ranked}/${items.length} clusters scored · ${inTok}+${outTok} tokens · $${usd.toFixed(4)}`
+    `[news-rank:${categoryId}] ${scored.length}/${items.length} scored, ${detailed} detailed · ` +
+    `${c1.inTok}+${c1.outTok} then ${c2.inTok}+${c2.outTok} tokens · $${usd.toFixed(4)}`
   );
 
-  return { considered: items.length, ranked, usd, skipped: items.length - ranked };
+  return {
+    considered: items.length,
+    ranked: scored.length,
+    detailed,
+    usd,
+    skipped: items.length - scored.length,
+  };
 }
 
 export default { rankNews };

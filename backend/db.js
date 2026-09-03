@@ -1,7 +1,7 @@
 /**
  * db.js — one Mongo connection for the process.
  *
- * Hinglish has its own Atlas cluster, so this is deliberately plain: username and
+ * Chomske has its own Atlas cluster, so this is deliberately plain: username and
  * host sit in code, only the password comes from the environment. Same shape as
  * betaFounderProduction.
  *

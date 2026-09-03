@@ -2,7 +2,8 @@ import { useState } from "react";
 import { GoogleLogin } from "@react-oauth/google";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
-import { BRAND_GRADIENT, HERO_WASH, categoryColor } from "../../theme";
+import { HERO_WASH, categoryColor, cardTint } from "../../theme";
+import Logo from "../Shell/Logo";
 
 /**
  * The landing page.
@@ -119,7 +120,7 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
               margin: "20px 0 0",
             }}
           >
-            Hinglish watches the news in your niche all night, ranks the handful
+            Chomske watches the news in your niche all night, ranks the handful
             of stories actually worth a video, and writes the first draft in
             your own speaking style.
           </p>
@@ -208,7 +209,7 @@ function ProductShot({ isMobile }) {
         background: "var(--card)",
         border: "1px solid var(--line)",
         borderRadius: 18,
-        boxShadow: "0 30px 70px -40px rgba(23,15,40,.45)",
+        boxShadow: "0 30px 70px -40px rgba(60,40,25,.4)",
         overflow: "hidden",
       }}
     >
@@ -243,23 +244,20 @@ function ProductShot({ isMobile }) {
         </div>
 
         <MockRow
-          cat="ai_tech"
-          label="AI & technology"
+          i={0}
           title="OpenAI ships a model that runs offline on a laptop"
-          meta="5 sources · 1h ago"
+          meta="5 sources · Hacker News, The Verge · 1h ago"
           fresh
         />
         <MockRow
-          cat="finance"
-          label="Stock market"
-          title="RBI holds rates, but changes the language on inflation"
-          meta="8 sources · 3h ago"
+          i={1}
+          title="Google's new image model is free for the first month"
+          meta="4 sources · DeepMind, Google News · 3h ago"
         />
         <MockRow
-          cat="ai_tech"
-          label="AI & technology"
-          title="Google's new image model is free for the first month"
-          meta="4 sources · 4h ago"
+          i={2}
+          title="Anthropic opens its enterprise tier to Indian startups"
+          meta="3 sources · Google News · 5h ago"
           dim
         />
 
@@ -315,28 +313,25 @@ function ProductShot({ isMobile }) {
   );
 }
 
-function MockRow({ cat, label, title, meta, fresh, dim }) {
-  const c = categoryColor(cat);
+/** Mirrors the real feed row: cycling warm ground, no category label, NEW only. */
+function MockRow({ i, title, meta, fresh, dim }) {
+  const t = cardTint(i);
   return (
     <div
       style={{
         padding: "11px 12px",
         borderRadius: 10,
         marginBottom: 7,
-        background: `linear-gradient(180deg, ${c.tint} 0%, var(--card) 78%)`,
-        border: `1px solid ${c.line}`,
-        opacity: dim ? 0.62 : 1,
+        background: `linear-gradient(180deg, ${t.from} 0%, var(--card) 76%)`,
+        border: `1px solid ${t.line}`,
+        opacity: dim ? 0.6 : 1,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5 }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.solid, flexShrink: 0 }} />
-        <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", color: c.ink }}>
-          {label.toUpperCase()}
-        </span>
-        {fresh && (
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--accent)" }}>NEW</span>
-        )}
-      </div>
+      {fresh && (
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", color: "var(--accent)", marginBottom: 4 }}>
+          NEW
+        </div>
+      )}
       <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, color: "var(--ink)" }}>
         {title}
       </div>
@@ -385,7 +380,7 @@ function TheDay({ isMobile, pad }) {
         />
         <Column
           isMobile={isMobile}
-          heading="Your morning with Hinglish"
+          heading="Your morning with Chomske"
           items={after}
           tone="lit"
         />
@@ -402,9 +397,9 @@ function Column({ heading, items, tone, isMobile }) {
         padding: isMobile ? 20 : 26,
         borderRadius: 16,
         background: lit
-          ? "linear-gradient(160deg, #FFF8F1 0%, #FDF3F6 48%, #F6F2FE 100%)"
+          ? "linear-gradient(160deg, #FFF7EE 0%, #FDF1EC 52%, #F4F5E6 100%)"
           : "var(--card)",
-        border: `1px solid ${lit ? "#F0DFEA" : "var(--line)"}`,
+        border: `1px solid ${lit ? "#EEDFCE" : "var(--line)"}`,
       }}
     >
       <div
@@ -413,7 +408,7 @@ function Column({ heading, items, tone, isMobile }) {
           fontWeight: 700,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
-          color: lit ? "#8A4B93" : "var(--ink-mute)",
+          color: lit ? "#A05A2C" : "var(--ink-mute)",
           marginBottom: 16,
         }}
       >
@@ -430,7 +425,7 @@ function Column({ heading, items, tone, isMobile }) {
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: lit ? "#B8478E" : "#C9C9C9",
+                background: lit ? "#B5502B" : "#C9C9C9",
               }}
             />
             <span
@@ -650,7 +645,7 @@ function SoundsLikeYou({ isMobile, pad }) {
             three seconds.
           </p>
           <p style={{ fontSize: isMobile ? 14.5 : 15.5, lineHeight: 1.65, color: "var(--ink-body)", margin: 0 }}>
-            Hinglish learns from your own videos instead. Your language stays in
+            Chomske learns from your own videos instead. Your language stays in
             its own script, the English words you always keep in English stay in
             English, and your opener is your opener. Hindi, Telugu, Tamil,
             Bengali, Marathi, or the mix of two that you actually use.
@@ -673,7 +668,7 @@ function VoiceCard({ isMobile }) {
         border: "1px solid var(--line)",
         borderRadius: 16,
         overflow: "hidden",
-        boxShadow: "0 22px 54px -40px rgba(23,15,40,.4)",
+        boxShadow: "0 22px 54px -40px rgba(60,40,25,.36)",
       }}
     >
       <div
@@ -685,7 +680,7 @@ function VoiceCard({ isMobile }) {
           color: "var(--ink-mute)",
         }}
       >
-        Your voice · Hinglish (Hindi and English) · learned from 5 videos
+        Your voice · Hindi and English mixed · learned from 5 videos
       </div>
       <div style={{ padding: isMobile ? 18 : 24 }}>
         <p className="indic" style={{ fontSize: isMobile ? 15 : 16.5, color: "var(--ink)", margin: 0 }}>
@@ -783,7 +778,7 @@ function Nav({ pad }) {
         zIndex: 20,
       }}
     >
-      <Wordmark />
+      <Logo />
       <a
         href="#how"
         style={{ fontSize: 14, color: "var(--ink-mute)", textDecoration: "none", fontWeight: 500 }}
@@ -791,38 +786,6 @@ function Nav({ pad }) {
         How it works
       </a>
     </header>
-  );
-}
-
-/**
- * The one place the brand gradient is used at full strength. A 26px square is
- * small enough that a saturated three-stop gradient reads as a mark rather than
- * as a decorated background.
- */
-function Wordmark() {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-      <span
-        aria-hidden="true"
-        style={{
-          width: 27,
-          height: 27,
-          borderRadius: 9,
-          background: BRAND_GRADIENT,
-          color: "#fff",
-          display: "grid",
-          placeItems: "center",
-          fontSize: 14,
-          fontWeight: 700,
-          fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
-        }}
-      >
-        ह
-      </span>
-      <span style={{ fontWeight: 700, fontSize: 16.5, color: "var(--ink)", letterSpacing: "-0.02em" }}>
-        Hinglish
-      </span>
-    </div>
   );
 }
 
@@ -835,9 +798,9 @@ function Eyebrow({ children }) {
         fontWeight: 600,
         letterSpacing: "0.1em",
         textTransform: "uppercase",
-        color: "#6B3AA8",
+        color: "#A64824",
         background: "rgba(255,255,255,.72)",
-        border: "1px solid #E6DAF6",
+        border: "1px solid #EFDCCF",
         borderRadius: 999,
         padding: "6px 13px",
       }}
@@ -917,9 +880,9 @@ function Footer({ pad }) {
         background: "var(--card)",
       }}
     >
-      <Wordmark />
+      <Logo />
       <div style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>
-        © {new Date().getFullYear()} Hinglish · chomske.com
+        © {new Date().getFullYear()} Chomske · chomske.com
       </div>
     </footer>
   );

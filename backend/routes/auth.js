@@ -17,6 +17,7 @@ import { OAuth2Client } from "google-auth-library";
 import User from "../models/User.js";
 import authenticateToken, { COOKIE_NAME, cookieOptions } from "../middleware/authenticateToken.js";
 import { publicCategories, sanitizeSelection, MAX_CATEGORIES } from "../services/categories.js";
+import { kickoffCategories } from "../services/newsScheduler.js";
 
 const router = express.Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -61,6 +62,7 @@ router.post("/google", async (req, res) => {
           name: payload.name || "",
           picture: payload.picture || "",
           last_login: now,
+          last_seen_at: now,
         },
         $inc: { login_count: 1 },
         $setOnInsert: { google_sub: googleSub, created_at: now },
@@ -75,6 +77,13 @@ router.post("/google", async (req, res) => {
     );
 
     res.cookie(COOKIE_NAME, token, cookieOptions());
+
+    // Their categories may have gone cold while they were away — the collector
+    // stops polling a category nobody has opened in a fortnight. This wakes them
+    // and collects immediately, so the feed has something in it by the time they
+    // finish signing in. Fire-and-forget: sign-in never waits on the network.
+    kickoffCategories(user.categories);
+
     return res.json({ success: true, user: publicUser(user) });
   } catch (err) {
     console.error("[auth] /google failed:", err);
@@ -130,6 +139,11 @@ router.put("/categories", authenticateToken, async (req, res) => {
     { new: true }
   );
   if (!user) return res.status(404).json({ success: false, message: "Account not found" });
+
+  // A category they have just added may never have been collected, or may have
+  // gone cold. Without this the onboarding "Continue" lands on an empty feed and
+  // stays empty until the next tick.
+  kickoffCategories(chosen);
 
   return res.json({ success: true, user: publicUser(user) });
 });

@@ -12,7 +12,7 @@
  * below the app header so the logo and close control stay put — same arrangement
  * as the reference project.
  */
-import { BRAND_GRADIENT } from "../../theme";
+import Logo from "./Logo";
 
 // Matches the mobile header height in Dashboard.js. The drawer hangs below it
 // rather than covering it, so the header's own close button stays reachable.
@@ -35,7 +35,7 @@ const SECTIONS = [
   },
 ];
 
-export default function Sidebar({ tab, onTab, isNarrow, open, onClose, user }) {
+export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
   const nav = (
     <nav
       style={{
@@ -52,20 +52,8 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, user }) {
       {/* The app header already shows the wordmark on mobile — repeating it at
           the top of the drawer just pushes the nav down. */}
       {!isNarrow && (
-        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "16px 18px 18px" }}>
-          <span
-            aria-hidden="true"
-            style={{
-              width: 28, height: 28, borderRadius: 9, background: BRAND_GRADIENT, color: "#fff",
-              display: "grid", placeItems: "center", fontSize: 15, fontWeight: 700,
-              fontFamily: '"Noto Sans Devanagari", Inter, sans-serif',
-            }}
-          >
-            ह
-          </span>
-          <span style={{ fontWeight: 700, fontSize: 16, color: "var(--ink)", letterSpacing: "-0.02em" }}>
-            Hinglish
-          </span>
+        <div style={{ padding: "16px 18px 18px" }}>
+          <Logo size={28} fontSize={16} />
         </div>
       )}
 
@@ -110,41 +98,9 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, user }) {
         ))}
       </div>
 
-      {user && (
-        <div
-          style={{
-            padding: "13px 16px", borderTop: "1px solid var(--line)",
-            display: "flex", alignItems: "center", gap: 10, minWidth: 0,
-          }}
-        >
-          {user.picture && (
-            <img
-              src={user.picture}
-              alt=""
-              referrerPolicy="no-referrer"
-              style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid var(--line)", flexShrink: 0 }}
-            />
-          )}
-          <span style={{ minWidth: 0 }}>
-            <span
-              style={{
-                display: "block", fontSize: 13, fontWeight: 600, color: "var(--ink)",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }}
-            >
-              {user.name || "Signed in"}
-            </span>
-            <span
-              style={{
-                display: "block", fontSize: 11.5, color: "var(--ink-mute)",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }}
-            >
-              {user.email}
-            </span>
-          </span>
-        </div>
-      )}
+      {/* No account card down here. It showed a face, a name and an email
+          address to the one person who already knows all three, on every screen,
+          permanently — and Profile exists precisely to hold that. */}
     </nav>
   );
 

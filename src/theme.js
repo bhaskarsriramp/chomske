@@ -1,34 +1,84 @@
 /**
- * theme.js — the colour that carries meaning.
+ * theme.js — the colour that carries meaning, and the colour that carries life.
  *
- * ── WHY COLOUR AT ALL ────────────────────────────────────────────────────────
- * A creator picks up to three categories. Once their feed mixes "Stock market"
- * with "AI & technology", a monochrome list makes them read every row to work
- * out which world it came from. A hue per category answers that before they
- * read a word, which is the only reason colour is here: it is a label, not
- * decoration. Everything colour touches in this app is either a category or a
- * state. Nothing is tinted because tinting looked nice.
+ * ── NO BLUE. AT ALL. ─────────────────────────────────────────────────────────
+ * Not a preference. Pale blue and lavender card tints are the single most
+ * recognisable signature of a generated interface, because every AI product
+ * ships the same indigo-on-white palette. A creator reading this feed clocks it
+ * in under a second and discounts everything on the page. So the whole system
+ * below is built from warm hues and greens: rust, clay, amber, olive, sage,
+ * sea green, plum, magenta, brown. Nothing here is blue, indigo, or violet, and
+ * nothing added later should be. The brand mark in public/ is blue, and that is
+ * fine: a logo is an identity, a background tint is a mood.
  *
- * Each entry carries four fixed values rather than one hue plus runtime maths.
- * Generated tints drift: a computed 6% of violet and a computed 6% of amber do
- * not read as the same weight to the eye, and the list ends up looking like the
- * amber rows are selected. These were picked by eye against white at the sizes
- * they are actually used.
+ * ── TWO SEPARATE JOBS ────────────────────────────────────────────────────────
+ * CARD_TINTS make a long list pleasant to look at. They cycle by position and
+ * mean nothing, which is exactly why they are safe to be decorative.
  *
- *   ink   text and icons on white, at 14px, contrast-checked
- *   solid the dot; full strength, only ever used at 6-8px
- *   tint  card and chip fill; deliberately near-white
+ * CATEGORY_COLORS identify a category, and are never decorative. They appear on
+ * the filter chips and the story header, so the colour a creator picked at
+ * onboarding is the colour that names their feed later.
+ *
+ * Keeping those two jobs in separate palettes is deliberate. When the card
+ * backgrounds also encoded the category, a single-category feed was forty
+ * identical cards, and colour that never varies has stopped being information.
+ */
+
+/**
+ * Twelve card grounds, cycled by index down the feed and repeated past twelve.
+ *
+ * Each is a near-white top fading to white before the headline starts, so the
+ * colour lands where a scanning eye catches the card edge and never behind text
+ * that has to be read. Values are fixed rather than computed: a generated 6% of
+ * amber and a generated 6% of sage do not read as the same weight, and the list
+ * ends up looking like the amber rows are selected.
+ */
+export const CARD_TINTS = [
+  { from: "#FDF0EF", line: "#F2D9D6" },  // blush
+  { from: "#FDF2E8", line: "#F4DFCA" },  // peach
+  { from: "#FCF5E4", line: "#EDE1BE" },  // amber
+  { from: "#F4F6E2", line: "#DEE3BB" },  // olive
+  { from: "#EDF5EA", line: "#D2E2CD" },  // sage
+  { from: "#E9F5F0", line: "#C6E3D7" },  // sea green
+  { from: "#FBEFE9", line: "#EFD7CA" },  // clay
+  { from: "#FAEFF4", line: "#EDD7E2" },  // mauve
+  { from: "#F7F4EC", line: "#E4DDCD" },  // sand
+  { from: "#FBEEF1", line: "#EFD5DB" },  // rosewood
+  { from: "#F1F6E9", line: "#DAE4C6" },  // moss
+  { from: "#FCF3F0", line: "#F1DCD5" },  // shell
+];
+
+export function cardTint(index) {
+  return CARD_TINTS[((index % CARD_TINTS.length) + CARD_TINTS.length) % CARD_TINTS.length];
+}
+
+/**
+ * A card's ground, as a ready-to-use background string.
+ * `active` keeps the full tint instead of fading, so the selected row in the
+ * split view reads as chosen without needing a heavier border or a shadow.
+ */
+export function cardBackground(index, active = false) {
+  const t = cardTint(index);
+  return active ? t.from : `linear-gradient(180deg, ${t.from} 0%, var(--card) 76%)`;
+}
+
+/**
+ * One hue per category.
+ *
+ *   ink   text on white at 13-15px, contrast-checked
+ *   solid the dot, only ever used at 6-8px
+ *   tint  chip fill, deliberately near-white
  *   line  the border that pairs with tint without becoming a box
  */
 export const CATEGORY_COLORS = {
-  ai_tech:        { ink: "#5B32D6", solid: "#6C3FE0", tint: "#F5F2FE", line: "#DED4FA" },
-  finance:        { ink: "#08733E", solid: "#0B8A4B", tint: "#EDF8F1", line: "#C6E7D3" },
-  business:       { ink: "#1A57B8", solid: "#1D63D1", tint: "#EFF4FD", line: "#CFDEF8" },
-  crypto:         { ink: "#8F5E07", solid: "#A9700A", tint: "#FBF5E8", line: "#EEDCB6" },
-  entertainment:  { ink: "#AC1B7A", solid: "#C4218C", tint: "#FCF0F8", line: "#F3D2E8" },
-  sports:         { ink: "#076C6C", solid: "#0A8080", tint: "#ECF7F7", line: "#C2E3E3" },
-  science_health: { ink: "#AB2C41", solid: "#C0344A", tint: "#FCF0F2", line: "#F3D3D8" },
-  jobs_exams:     { ink: "#414B6B", solid: "#4A5578", tint: "#F1F3F8", line: "#D8DDE9" },
+  ai_tech:        { ink: "#A64824", solid: "#B5502B", tint: "#FBF0EA", line: "#F0D8C9" },
+  finance:        { ink: "#1B6E3F", solid: "#1E7A46", tint: "#ECF6F0", line: "#C7E3D2" },
+  business:       { ink: "#6F3057", solid: "#7A3560", tint: "#F9EFF5", line: "#EBD4E2" },
+  crypto:         { ink: "#8A6007", solid: "#9A6B08", tint: "#FBF5E4", line: "#EDE0BC" },
+  entertainment:  { ink: "#A2206B", solid: "#B32476", tint: "#FCEFF6", line: "#F2D3E4" },
+  sports:         { ink: "#0D6E59", solid: "#0F7A63", tint: "#EAF6F2", line: "#C5E4DA" },
+  science_health: { ink: "#556916", solid: "#5F7318", tint: "#F3F6E4", line: "#DDE4BE" },
+  jobs_exams:     { ink: "#63503F", solid: "#6E5847", tint: "#F6F2ED", line: "#E4DCD2" },
 };
 
 /** Neutral fallback, so a category added on the server never renders colourless. */
@@ -39,31 +89,14 @@ export function categoryColor(id) {
 }
 
 /**
- * The brand spectrum: violet, red, amber.
- *
- * Not chosen for prettiness. It is the gradient that runs across the two apps
- * these creators live inside all day, and it is warm, which is what keeps this
- * off the cold indigo-on-charcoal that every AI product ships with. It appears
- * on the mark, behind the hero, and nowhere else. A gradient used on buttons,
- * headings and cards at once stops reading as a brand and starts reading as a
- * template.
- */
-export const BRAND = {
-  violet: "#7B2FF7",
-  red: "#F0264C",
-  amber: "#FF9E2C",
-};
-
-export const BRAND_GRADIENT = `linear-gradient(115deg, ${BRAND.violet} 0%, ${BRAND.red} 52%, ${BRAND.amber} 100%)`;
-
-/**
- * The hero's ground. Three very wide radial washes, all under 20% alpha, on
- * warm white. Soft enough that no edge is visible anywhere, which is the
- * difference between a background and a banner.
+ * The hero and onboarding ground. Three very wide washes on warm white, all
+ * under 15% alpha and soft enough that no edge is visible anywhere, which is
+ * the difference between a background and a banner. Rose, amber and sage: warm
+ * where the usual product gradient is cold.
  */
 export const HERO_WASH = [
-  "radial-gradient(1100px 620px at 12% -10%, rgba(123,47,247,.16), transparent 62%)",
-  "radial-gradient(900px 560px at 88% 4%, rgba(240,38,76,.13), transparent 60%)",
-  "radial-gradient(760px 520px at 62% 88%, rgba(255,158,44,.14), transparent 62%)",
-  "linear-gradient(180deg, #FFFFFF 0%, #FCFBFA 100%)",
+  "radial-gradient(1100px 620px at 10% -12%, rgba(214,109,76,.15), transparent 62%)",
+  "radial-gradient(900px 560px at 90% 2%, rgba(196,60,110,.11), transparent 60%)",
+  "radial-gradient(820px 540px at 58% 92%, rgba(150,160,60,.13), transparent 62%)",
+  "linear-gradient(180deg, #FFFFFF 0%, #FDFBF8 100%)",
 ].join(", ");
