@@ -9,6 +9,8 @@
 import express from "express";
 import mongoose from "mongoose";
 import NewsItem from "../models/NewsItem.js";
+import User from "../models/User.js";
+import { isValidCategory, DEFAULT_CATEGORY, getCategory } from "../services/categories.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
@@ -26,7 +28,20 @@ router.get("/", authenticateToken, async (req, res) => {
     const minScore = Math.max(0, Math.min(10, parseInt(req.query.min_score, 10) || 4));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
 
+    // The feed is whatever this user chose to cover. Falling back to the default
+    // rather than returning nothing keeps a not-yet-onboarded account from seeing
+    // an empty product and concluding it is broken.
+    const me = await User.findById(req.user.id).select("categories").lean();
+    let mine = (me?.categories || []).filter(isValidCategory);
+    if (!mine.length) mine = [DEFAULT_CATEGORY];
+
+    // ?category= narrows to one of THEIR categories, for a per-category tab.
+    // Never a way to read a category they did not pick.
+    const asked = String(req.query.category || "");
+    const cats = asked && mine.includes(asked) ? [asked] : mine;
+
     const match = {
+      category: { $in: cats },
       first_seen_at: { $gte: new Date(Date.now() - hours * 3600000) },
       ai_score: { $gte: minScore },
     };
@@ -54,6 +69,9 @@ router.get("/", authenticateToken, async (req, res) => {
       success: true,
       window_hours: hours,
       count: rows.length,
+      // What the feed was drawn from, so a user covering three categories can see
+      // which is which instead of one undifferentiated list.
+      categories: cats.map((id) => ({ id, label: getCategory(id)?.label || id })),
       items: rows.map((r) => shape(r.doc, r)),
     });
   } catch (err) {
@@ -71,7 +89,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
   if (!doc) return res.status(404).json({ success: false, message: "Not found" });
 
   const coverage = doc.cluster_id
-    ? await NewsItem.find({ cluster_id: doc.cluster_id })
+    ? await NewsItem.find({ category: doc.category, cluster_id: doc.cluster_id })
         .select("source title url published_at")
         .sort({ published_at: 1 })
         .lean()
@@ -91,6 +109,8 @@ router.get("/:id", authenticateToken, async (req, res) => {
 function shape(d, cluster = {}) {
   return {
     id: String(d._id),
+    category: d.category || "",
+    category_label: getCategory(d.category)?.label || "",
     story: d.cluster_id || "",
     title: d.title,
     url: d.url,

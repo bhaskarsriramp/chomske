@@ -20,6 +20,7 @@
  */
 import { GoogleGenAI } from "@google/genai";
 import NewsItem from "../models/NewsItem.js";
+import { getCategory } from "./categories.js";
 
 const MODEL = process.env.GEMINI_RANK_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 const BATCH = parseInt(process.env.NEWS_RANK_BATCH || "60", 10);
@@ -34,21 +35,30 @@ function client() {
   return _client;
 }
 
-const PROMPT_HEAD = `You are the editor for a channel that covers AI and tech news for a general, curious audience — not researchers.
+/**
+ * The editorial brief is built per category, because "does this deserve a video"
+ * is a domain judgement, not a general one. An RBI rate decision is a 10 to a
+ * finance channel and a 0 to a film channel, and a single generic prompt would
+ * flatten both into "is this interesting" — which is how a ranker ends up putting
+ * a lake being renamed on Apple Maps in the top twelve.
+ */
+function buildPrompt(cat) {
+  return `You are the editor for a channel that covers ${cat.editor}.
 
 For EACH item below, decide how much it deserves a video TODAY.
 
 score 0-10:
-  9-10  A major, concrete event a lot of people will search for. A frontier model launch, a big acquisition, a serious outage/breach, a landmark lawsuit ruling.
-  6-8   Genuinely interesting and specific: a notable release, a real benchmark result, a credible leak, a surprising study.
-  3-5   Real but narrow — incremental updates, niche tooling, minor funding.
-  0-2   Not video material: routine papers, listicles, opinion pieces, ads, press releases with no news, anything not actually about AI/tech.
+  9-10  A major, concrete event a lot of people will search for. ${cat.top}
+  6-8   Genuinely interesting and specific. ${cat.mid}
+  3-5   Real but narrow — incremental updates, minor developments.
+  0-2   Not video material. ${cat.low} Also anything outside this channel's subject.
 
 Judge the EVENT, not the headline's excitement. Rules:
 - A rumour or speculation piece scores well below a confirmed event.
 - If several items are the same story, give them the SAME score — do not reward repetition.
-- An item that is not about AI or tech at all scores 0, whatever its source.
-- Prefer things with a concrete, demonstrable "what changed" over commentary about the industry.
+- An item outside this channel's subject scores 0, whatever its source.
+- Prefer things with a concrete, demonstrable "what changed" over commentary.
+${cat.caution ? `\n${cat.caution}\n` : ""}
 
 For each item also give:
   "angle": one short line on what the video would actually be ABOUT — the hook, in plain words. Empty string if score < 3.
@@ -59,15 +69,21 @@ Return STRICT JSON, an array with one object per item, in the same order:
 [{"i": 0, "score": 7, "story": "openai-astra-safety-risk", "angle": "...", "why": "..."}]
 
 ITEMS:`;
+}
 
 /**
  * Rank the current unranked candidates.
  * @returns {{ considered, ranked, usd, skipped }}
  */
-export async function rankNews({ force = false } = {}) {
+export async function rankNews(categoryId, { force = false } = {}) {
+  const cat = getCategory(categoryId);
+  if (!cat) return { considered: 0, ranked: 0, usd: 0, skipped: 0 };
+
   const since = new Date(Date.now() - WINDOW_HOURS * 3600000);
 
-  const query = { first_seen_at: { $gte: since } };
+  // Scoped to the category so one domain's stories are never judged by another
+  // domain's editorial bar, and so each pass stays inside one batch.
+  const query = { category: categoryId, first_seen_at: { $gte: since } };
   if (!force) query.ai_score = -1;   // only what hasn't been judged yet
 
   // One representative per cluster: ranking six copies of one launch wastes
@@ -108,7 +124,7 @@ export async function rankNews({ force = false } = {}) {
       },
     });
   } catch (err) {
-    console.error("[news-rank] Gemini call failed:", err.message);
+    console.error(`[news-rank:${categoryId}] Gemini call failed:`, err.message);
     return { considered: items.length, ranked: 0, usd: 0, skipped: items.length, error: err.message };
   }
 
@@ -117,7 +133,7 @@ export async function rankNews({ force = false } = {}) {
     verdicts = JSON.parse(res.text || "[]");
     if (!Array.isArray(verdicts)) throw new Error("not an array");
   } catch (err) {
-    console.error("[news-rank] unparseable response:", err.message);
+    console.error(`[news-rank:${categoryId}] unparseable response:`, err.message);
     return { considered: items.length, ranked: 0, usd: 0, skipped: items.length };
   }
 
@@ -131,7 +147,7 @@ export async function rankNews({ force = false } = {}) {
     // the same verdict and the feed can collapse them without the score
     // depending on which copy happened to be the representative.
     const filter = item.cluster_id
-      ? { cluster_id: item.cluster_id }
+      ? { category: categoryId, cluster_id: item.cluster_id }
       : { _id: item._id };
 
     const set = {
@@ -162,7 +178,7 @@ export async function rankNews({ force = false } = {}) {
     (outTok / 1e6) * parseFloat(process.env.GEMINI_USD_PER_M_OUTPUT || "9.00");
 
   console.log(
-    `[news-rank] ${ranked}/${items.length} clusters scored · ${inTok}+${outTok} tokens · $${usd.toFixed(4)}`
+    `[news-rank:${categoryId}] ${ranked}/${items.length} clusters scored · ${inTok}+${outTok} tokens · $${usd.toFixed(4)}`
   );
 
   return { considered: items.length, ranked, usd, skipped: items.length - ranked };

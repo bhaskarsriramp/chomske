@@ -53,9 +53,13 @@ function scoreItem(item) {
  * Run one full collection pass.
  * @returns {{ fetched, inserted, duplicates, bySource, errors }}
  */
-export async function collectNews() {
+export async function collectNews(categoryId) {
   const started = Date.now();
-  const sources = allSources();
+  const sources = allSources(categoryId);
+  if (!sources.length) {
+    console.warn(`[news] no sources for category "${categoryId}"`);
+    return { fetched: 0, inserted: 0, duplicates: 0, skipped: 0, bySource: {}, errors: [], ms: 0 };
+  }
 
   const settled = await Promise.allSettled(sources.map((s) => s.run()));
 
@@ -89,12 +93,17 @@ export async function collectNews() {
     if (published.getTime() < cutoff) { skipped++; continue; }
 
     const doc = {
+      category: categoryId,
       source: item.source,
       source_kind: item.source_kind || "outlet",
       title: item.title,
       url: item.url,
       summary: item.summary || "",
-      url_hash: urlHash(item.url),
+      // Scoped to the category: the same article can legitimately belong to two
+      // categories (an AI funding round is both ai_tech and business), and a
+      // globally unique url_hash would let whichever category collected first
+      // silently starve the other's feed of that story.
+      url_hash: urlHash(`${categoryId}|${item.url}`),
       title_sig: titleSignature(item.title),
       // The cluster IS the title signature. Rows are never merged or dropped —
       // five outlets covering one launch stay five rows, because that count is
@@ -146,7 +155,7 @@ export async function collectNews() {
   };
 
   console.log(
-    `[news] collected ${out.fetched} → ${inserted} new, ${duplicates} dup, ${skipped} stale ` +
+    `[news:${categoryId}] collected ${out.fetched} → ${inserted} new, ${duplicates} dup, ${skipped} stale ` +
     `in ${(out.ms / 1000).toFixed(1)}s` + (errors.length ? ` · ${errors.length} error(s)` : "")
   );
   // Grouped, not one line each. A single systematic bug produces one error per

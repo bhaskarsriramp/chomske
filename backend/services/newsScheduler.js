@@ -12,8 +12,10 @@
  * minus the extra dependency: one collection job doesn't justify pulling in Agenda.
  */
 import mongoose from "mongoose";
+import User from "../models/User.js";
 import { collectNews } from "./newsCollector.js";
 import { rankNews } from "./newsRanker.js";
+import { isValidCategory, DEFAULT_CATEGORY } from "./categories.js";
 
 const INTERVAL_MIN = parseInt(process.env.NEWS_POLL_MINUTES || "15", 10);
 
@@ -54,21 +56,68 @@ async function claim(leaseMs) {
   }
 }
 
-async function runOnce() {
-  const collected = await collectNews();
-  // Rank only when something new arrived — a pass with no new stories has
-  // nothing to judge, and skipping it is the difference between ~₹2/day and
-  // ~₹2 every 15 minutes.
-  let ranked = { ranked: 0, usd: 0 };
-  if (collected.inserted > 0) {
-    ranked = await rankNews();
-  } else {
-    console.log("[news] nothing new — skipping the ranking call");
+/**
+ * Categories at least one user has actually chosen.
+ *
+ * ── THIS IS THE COST CONTROL ─────────────────────────────────────────────────
+ * Collection is free but ranking is not, so running every category in the
+ * catalogue would multiply the bill by eight to serve feeds nobody opens. Reading
+ * the selections first means spend scales with what users want rather than with
+ * how many categories we happen to support — the difference between adding a
+ * category being free and it being a standing charge.
+ *
+ * With no users yet, the default keeps the product demoable rather than empty.
+ */
+async function activeCategories() {
+  try {
+    const ids = await User.distinct("categories");
+    const live = (ids || []).filter(isValidCategory);
+    return live.length ? live : [DEFAULT_CATEGORY];
+  } catch (err) {
+    console.error("[news] couldn't read active categories:", err.message);
+    return [DEFAULT_CATEGORY];
   }
+}
+
+async function runOnce() {
+  const cats = await activeCategories();
+  console.log(`[news] pass over ${cats.length} active categor${cats.length === 1 ? "y" : "ies"}: ${cats.join(", ")}`);
+
+  const summary = [];
+  let totalUsd = 0;
+
+  // Sequential on purpose. These are network-bound passes against shared public
+  // endpoints (Google News, HN), and firing eight at once is how a polite
+  // consumer turns into one that gets rate-limited.
+  for (const cat of cats) {
+    try {
+      const collected = await collectNews(cat);
+
+      // Rank only when something new arrived. A pass with nothing new has nothing
+      // to judge, and skipping it is the difference between paying once a day and
+      // paying every 15 minutes, per category.
+      let ranked = { ranked: 0, usd: 0 };
+      if (collected.inserted > 0) {
+        ranked = await rankNews(cat);
+      } else {
+        console.log(`[news:${cat}] nothing new — skipping the ranking call`);
+      }
+
+      totalUsd += ranked.usd || 0;
+      summary.push({ category: cat, inserted: collected.inserted, ranked: ranked.ranked, usd: ranked.usd });
+    } catch (err) {
+      // One category failing must never stop the others — the same reasoning as
+      // Promise.allSettled inside the collector, one level up.
+      console.error(`[news:${cat}] pass failed:`, err.message);
+      summary.push({ category: cat, error: err.message });
+    }
+  }
+
+  if (totalUsd > 0) console.log(`[news] pass complete · $${totalUsd.toFixed(4)}`);
 
   await Lock.updateOne(
     { _id: LOCK_ID },
-    { $set: { last_result: { at: new Date(), inserted: collected.inserted, ranked: ranked.ranked, usd: ranked.usd } } }
+    { $set: { last_result: { at: new Date(), categories: summary, usd: totalUsd } } }
   ).catch(() => {});
 }
 

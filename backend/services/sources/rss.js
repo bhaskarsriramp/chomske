@@ -16,26 +16,19 @@ const parser = new Parser({
   headers: { "User-Agent": "Mozilla/5.0 (compatible; hinglish-news/1.0)" },
 });
 
-export const RSS_FEEDS = [
-  // Primary — the organisation announcing its own work. Earliest and most reliable.
-  { source: "openai",      kind: "primary", url: "https://openai.com/news/rss.xml" },
-  { source: "deepmind",    kind: "primary", url: "https://deepmind.google/blog/rss.xml" },
-  { source: "huggingface", kind: "primary", url: "https://huggingface.co/blog/feed.xml" },
-
-  // Outlets — later, but written for people, which is closer to video material.
-  { source: "techcrunch-ai", kind: "outlet", url: "https://techcrunch.com/category/artificial-intelligence/feed/" },
-  { source: "venturebeat-ai", kind: "outlet", url: "https://venturebeat.com/category/ai/feed/" },
-  { source: "arstechnica",   kind: "outlet", url: "https://feeds.arstechnica.com/arstechnica/index" },
-  { source: "theverge",      kind: "outlet", url: "https://www.theverge.com/rss/index.xml" },
-];
-
-// General-tech feeds (Ars, Verge) carry plenty that has nothing to do with AI.
-// Filtering here keeps the ranker's input — and therefore its token cost — from
-// being mostly phone reviews.
-const AI_TERMS = /\b(ai|a\.i\.|artificial intelligence|llm|gpt|claude|gemini|openai|anthropic|deepmind|machine learning|neural|model|chatbot|nvidia|gpu|agent|transformer|copilot|hugging ?face|inference|diffusion)\b/i;
-const NEEDS_FILTER = new Set(["arstechnica", "theverge"]);
-
-export async function fetchRssFeed({ source, kind, url }) {
+/**
+ * Fetch one feed. The feed definition comes from the category catalog
+ * (services/categories.js), which is what lets a new category add its own
+ * authorities without touching this file.
+ *
+ * @param {{source,kind,url,filter?}} feed — `filter: true` marks a broad feed
+ *   (Ars Technica, The Verge) that carries plenty off-topic for the category, so
+ *   it gets narrowed by `filterTerms` before reaching the ranker. Without that,
+ *   a general-tech feed fills an AI channel's input with phone reviews and the
+ *   token cost goes with it.
+ * @param {RegExp|null} filterTerms — the category's on-topic test.
+ */
+export async function fetchRssFeed({ source, kind, url, filter = false }, filterTerms = null) {
   let feed;
   try {
     feed = await parser.parseURL(url);
@@ -50,7 +43,7 @@ export async function fetchRssFeed({ source, kind, url }) {
     const title = cleanText(item.title, 300);
     const summary = cleanText(item.contentSnippet || item.content || "", 400);
 
-    if (NEEDS_FILTER.has(source) && !AI_TERMS.test(`${title} ${summary}`)) continue;
+    if (filter && filterTerms && !filterTerms.test(`${title} ${summary}`)) continue;
 
     out.push({
       source,
@@ -65,4 +58,4 @@ export async function fetchRssFeed({ source, kind, url }) {
   return out;
 }
 
-export default { fetchRssFeed, RSS_FEEDS };
+export default { fetchRssFeed };

@@ -14,6 +14,20 @@ const UserSchema = new Schema({
   name:       { type: String, default: "" },
   picture:    { type: String, default: "" },
 
+  // What this creator covers. Chosen once at first sign-in and changeable later.
+  //
+  // It decides which stories they see AND which categories the collector spends
+  // money on — services/newsScheduler.js reads a distinct() over this field and
+  // only runs the ones somebody picked. So an empty array here is not just an
+  // incomplete profile, it is the difference between a paid ranking pass running
+  // and not running.
+  categories: { type: [String], default: [], index: true },
+
+  // Stamped when the category screen is completed. Kept separate from
+  // categories.length because "chose nothing yet" and "chose, then cleared"
+  // should not look identical to the onboarding gate.
+  onboarded_at: { type: Date, default: null },
+
   last_login:   { type: Date, default: Date.now },
   login_count:  { type: Number, default: 0 },
   created_at:   { type: Date, default: Date.now },

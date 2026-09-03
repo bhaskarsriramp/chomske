@@ -5,6 +5,7 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import api from "./api";
 import LandingPage from "./components/Landing/LandingPage";
 import Dashboard from "./components/Dashboard/Dashboard";
+import CategoryPicker from "./components/Onboarding/CategoryPicker";
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || "341385315335-6p5l9nqi7hrm953k4ucr48gr2fvpq6eu.apps.googleusercontent.com";
 
@@ -46,12 +47,18 @@ export default function App() {
                 : <LandingPage onSignedIn={(u) => setUser(u)} checking={!resolved} />
             }
           />
+          {/* The category picker replaces the app rather than overlaying it.
+              Until it is answered there is nothing to collect and nothing to
+              show, so letting someone reach an empty dashboard would only teach
+              them the product is broken. No route goes past it. */}
           <Route
             path="/app"
             element={
               !resolved ? <Booting />
-                : user ? <Dashboard user={user} onSignOut={signOut} />
-                : <Navigate to="/" replace />
+                : !user ? <Navigate to="/" replace />
+                : !user.onboarded
+                  ? <CategoryPicker user={user} onDone={setUser} onSignOut={signOut} />
+                  : <Dashboard user={user} onSignOut={signOut} onUserChange={setUser} />
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />

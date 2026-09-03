@@ -20,7 +20,7 @@ import ProfilePanel from "../Profile/ProfilePanel";
  * opened and then stays mounted, hidden. Dashboard is the exception — it holds no
  * in-flight work and its numbers should be fresh on every visit, so it remounts.
  */
-export default function Dashboard({ user, onSignOut }) {
+export default function Dashboard({ user, onSignOut, onUserChange }) {
   const isNarrow = useIsMobile(900);
 
   const [tab, setTab] = useState("topics");
@@ -126,6 +126,7 @@ export default function Dashboard({ user, onSignOut }) {
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "topics" ? "flex" : "none" }}>
               <NewsFeed
                 voiceRev={voiceRev}
+                categoriesKey={(user?.categories || []).join(",")}
                 onGoTranscribe={() => openTab("transcribe")}
               />
             </div>
@@ -150,7 +151,7 @@ export default function Dashboard({ user, onSignOut }) {
 
           {tab === "profile" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <ProfilePanel user={user} onSignOut={onSignOut} />
+              <ProfilePanel user={user} onSignOut={onSignOut} onUserChange={onUserChange} />
             </div>
           )}
         </main>

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 
 /**
@@ -7,7 +8,7 @@ import useIsMobile from "../../hooks/useIsMobile";
  * Deliberately thin. There is nothing to configure here yet, and inventing
  * settings to fill a page gives people switches that do nothing.
  */
-export default function ProfilePanel({ user, onSignOut }) {
+export default function ProfilePanel({ user, onSignOut, onUserChange }) {
   const isPhone = useIsMobile(680);
   const [confirming, setConfirming] = useState(false);
 
@@ -86,6 +87,8 @@ export default function ProfilePanel({ user, onSignOut }) {
         </div>
       </section>
 
+      <CategoriesSection user={user} onUserChange={onUserChange} isPhone={isPhone} />
+
       <section
         style={{
           marginTop: 16, padding: isPhone ? 18 : 22, borderRadius: "var(--radius)",
@@ -139,6 +142,141 @@ export default function ProfilePanel({ user, onSignOut }) {
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * Change what you cover.
+ *
+ * Saves only on an explicit button rather than on each toggle: every change here
+ * alters which categories the collector polls, and a half-finished selection
+ * being written on the way to the intended one would start and stop paid work
+ * for a category the user never meant to have.
+ */
+function CategoriesSection({ user, onUserChange, isPhone }) {
+  const [cats, setCats] = useState([]);
+  const [max, setMax] = useState(3);
+  const [picked, setPicked] = useState(user?.categories || []);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/auth/categories")
+      .then(({ data }) => {
+        if (cancelled) return;
+        setCats(data.categories || []);
+        setMax(data.max || 3);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => { setPicked(user?.categories || []); }, [user]);
+
+  const toggle = useCallback((id) => {
+    setError("");
+    setSaved(false);
+    setPicked((p) => {
+      if (p.includes(id)) return p.filter((x) => x !== id);
+      if (p.length >= max) return p;
+      return [...p, id];
+    });
+  }, [max]);
+
+  const current = user?.categories || [];
+  const dirty =
+    picked.length !== current.length || picked.some((id) => !current.includes(id));
+
+  async function save() {
+    if (!picked.length || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const { data } = await api.put("/auth/categories", { categories: picked });
+      onUserChange?.(data.user);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't save that."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!cats.length) return null;
+
+  return (
+    <section
+      style={{
+        marginTop: 16, padding: isPhone ? 18 : 22, borderRadius: "var(--radius)",
+        background: "var(--card)", border: "1px solid var(--line)",
+      }}
+    >
+      <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 5 }}>
+        What you cover
+      </div>
+      <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)", margin: "0 0 15px" }}>
+        Up to {max}. Changing this changes which stories appear under Topics.
+        New categories take a few minutes to fill up.
+      </p>
+
+      <div
+        style={{
+          display: "grid", gap: 9,
+          gridTemplateColumns: isPhone ? "1fr" : "repeat(auto-fit, minmax(220px, 1fr))",
+        }}
+      >
+        {cats.map((c) => {
+          const on = picked.includes(c.id);
+          const blocked = !on && picked.length >= max;
+          return (
+            <button
+              key={c.id}
+              onClick={() => toggle(c.id)}
+              aria-pressed={on}
+              disabled={blocked}
+              style={{
+                textAlign: "left", padding: "12px 14px", borderRadius: 11,
+                cursor: blocked ? "not-allowed" : "pointer",
+                background: on ? "var(--accent-soft)" : "var(--card)",
+                border: `1.5px solid ${on ? "var(--accent)" : "var(--line)"}`,
+                opacity: blocked ? 0.45 : 1,
+              }}
+            >
+              <span style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{c.label}</span>
+              <span style={{ display: "block", fontSize: 12, color: "var(--ink-mute)", marginTop: 3, lineHeight: 1.5 }}>
+                {c.blurb}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {error && (
+        <div style={{ marginTop: 12, fontSize: 13.5, color: "var(--bad)" }} role="alert">{error}</div>
+      )}
+
+      <div style={{ marginTop: 15, display: "flex", alignItems: "center", gap: 11, flexWrap: "wrap" }}>
+        <button
+          onClick={save}
+          disabled={!dirty || !picked.length || saving}
+          className={!dirty || !picked.length || saving ? undefined : "hg-btn-primary"}
+          style={{
+            fontSize: 13.5, fontWeight: 600, padding: "10px 18px", borderRadius: 10, border: "none",
+            background: !dirty || !picked.length || saving ? "#E9E4DB" : "var(--accent)",
+            color: !dirty || !picked.length || saving ? "var(--ink-mute)" : "#fff",
+            cursor: !dirty || !picked.length || saving ? "default" : "pointer",
+          }}
+        >
+          {saving ? "Saving…" : "Save changes"}
+        </button>
+        <span style={{ fontSize: 12.5, color: saved ? "var(--ok)" : "var(--ink-mute)" }}>
+          {saved ? "Saved" : `${picked.length} of ${max} selected`}
+        </span>
+      </div>
+    </section>
   );
 }
 

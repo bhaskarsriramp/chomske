@@ -16,6 +16,7 @@ import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 import User from "../models/User.js";
 import authenticateToken, { COOKIE_NAME, cookieOptions } from "../middleware/authenticateToken.js";
+import { publicCategories, sanitizeSelection, MAX_CATEGORIES } from "../services/categories.js";
 
 const router = express.Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -91,6 +92,48 @@ router.get("/me", authenticateToken, async (req, res) => {
   return res.json({ success: true, user: publicUser(user) });
 });
 
+/** GET /auth/categories — the catalogue, for the onboarding cards. */
+router.get("/categories", (req, res) => {
+  return res.json({ success: true, categories: publicCategories(), max: MAX_CATEGORIES });
+});
+
+/**
+ * PUT /auth/categories  { categories: [ids] }
+ *
+ * Used by first-run onboarding and by later edits. Validated server-side and
+ * capped — the client enforces the same limit, but a direct call must not be
+ * able to subscribe to all eight and quietly multiply the collection bill.
+ */
+router.put("/categories", authenticateToken, async (req, res) => {
+  const chosen = sanitizeSelection(req.body?.categories);
+  if (!chosen.length) {
+    return res.status(400).json({
+      success: false,
+      message: `Pick at least one, up to ${MAX_CATEGORIES}.`,
+    });
+  }
+
+  // onboarded_at is stamped once and never moved, so it records when they first
+  // chose rather than when they last edited. Done as an aggregation-pipeline
+  // update so $ifNull can read the existing value in the same atomic operation —
+  // a read-then-write would let two concurrent saves race and reset it.
+  const user = await User.findOneAndUpdate(
+    { _id: req.user.id },
+    [
+      {
+        $set: {
+          categories: chosen,
+          onboarded_at: { $ifNull: ["$onboarded_at", new Date()] },
+        },
+      },
+    ],
+    { new: true }
+  );
+  if (!user) return res.status(404).json({ success: false, message: "Account not found" });
+
+  return res.json({ success: true, user: publicUser(user) });
+});
+
 /** POST /auth/logout */
 router.post("/logout", (req, res) => {
   res.clearCookie(COOKIE_NAME, cookieOptions());
@@ -99,7 +142,17 @@ router.post("/logout", (req, res) => {
 
 // Never ship the whole Mongo document to the browser — send only what the UI draws.
 function publicUser(u) {
-  return { id: String(u._id), email: u.email, name: u.name, picture: u.picture };
+  return {
+    id: String(u._id),
+    email: u.email,
+    name: u.name,
+    picture: u.picture,
+    // The onboarding gate reads these. `onboarded` is its own flag rather than
+    // categories.length so a user who clears their selection later is not sent
+    // back through first-run onboarding.
+    categories: u.categories || [],
+    onboarded: !!u.onboarded_at,
+  };
 }
 
 export default router;

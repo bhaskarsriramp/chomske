@@ -36,7 +36,7 @@ const BARS = [
   { key: 8, label: "Major only" },
 ];
 
-export default function NewsFeed({ onGoTranscribe, voiceRev = 0 }) {
+export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey = "" }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
@@ -83,7 +83,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0 }) {
     }
   }, [hours, minScore]);
 
-  useEffect(() => { load(); }, [load]);
+  // categoriesKey is a refetch trigger, not an input: the server derives the
+  // categories from the session, so the request body never changes. It belongs
+  // on the effect rather than in load()'s deps — without it, saving a new
+  // selection in Profile leaves Topics serving the previous categories.
+  useEffect(() => { load(); }, [load, categoriesKey]);
 
   // On a split layout the right pane is always visible, so leaving it empty
   // wastes half the screen — open the top story by default, and re-open it if a

@@ -18,22 +18,20 @@ import { cleanText, parseDate } from "../../utils/normalize.js";
 
 const parser = new Parser({ timeout: 15000 });
 
-const QUERIES = [
-  "artificial intelligence",
-  "OpenAI",
-  "Anthropic Claude",
-  "Google Gemini AI",
-  "AI model release",
-];
-
-export async function fetchGoogleNews() {
+/**
+ * @param {string[]} queries  what to search for — comes from the category catalog
+ * @param {{hl,gl,ceid}} locale  which Google News edition. An Indian creator
+ *   covering markets wants Indian coverage; AI news reads better from the US
+ *   edition. Getting this wrong is the difference between local and irrelevant.
+ */
+export async function fetchGoogleNews(queries = [], locale = { hl: "en-US", gl: "US", ceid: "US:en" }) {
   const out = [];
   const seen = new Set();
 
-  for (const q of QUERIES) {
+  for (const q of queries) {
     const url =
       `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:1d")}` +
-      `&hl=en-US&gl=US&ceid=US:en`;
+      `&hl=${locale.hl}&gl=${locale.gl}&ceid=${locale.ceid}`;
 
     let feed;
     try {

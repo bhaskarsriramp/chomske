@@ -16,19 +16,19 @@ const ENDPOINT = "https://hn.algolia.com/api/v1/search_by_date";
 
 // Queries are OR'd across separate requests — Algolia's relevance works better
 // on one concept at a time than on a long boolean string.
-const QUERIES = ["AI", "LLM", "OpenAI", "Anthropic", "machine learning", "GPU"];
-
 const LOOKBACK_HOURS = parseInt(process.env.NEWS_LOOKBACK_HOURS || "36", 10);
 // Two upvotes is enough to mean "at least one other person thought this mattered",
 // while still catching stories in their first hour before they've accumulated.
 const MIN_POINTS = parseInt(process.env.HN_MIN_POINTS || "2", 10);
 
-export async function fetchHackerNews() {
+/** @param {string[]} queries — from the category catalog; HN only knows some domains. */
+export async function fetchHackerNews(queries = []) {
+  if (!queries.length) return [];
   const since = Math.floor(Date.now() / 1000) - LOOKBACK_HOURS * 3600;
   const out = [];
   const seen = new Set();
 
-  for (const q of QUERIES) {
+  for (const q of queries) {
     const url =
       `${ENDPOINT}?query=${encodeURIComponent(q)}&tags=story&hitsPerPage=50` +
       `&numericFilters=created_at_i>${since},points>=${MIN_POINTS}`;

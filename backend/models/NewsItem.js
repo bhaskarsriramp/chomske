@@ -21,6 +21,12 @@ const { Schema } = mongoose;
  * polled late would lie about that.
  */
 const NewsItemSchema = new Schema({
+  // Which category collected this. Rows are shared by every user who picked that
+  // category, and that is the whole reason this stays affordable: one collection
+  // and one ranking pass per category serves all of its users, rather than one
+  // pass per user. Defaulted so rows written before categories existed still read.
+  category:    { type: String, default: "ai_tech", index: true },
+
   source:      { type: String, required: true, index: true },  // "hn" | "arxiv" | "openai" | …
   source_kind: { type: String, default: "outlet" },            // primary | community | paper | outlet
 
@@ -56,5 +62,7 @@ const NewsItemSchema = new Schema({
 
 // The feed query: recent, best first.
 NewsItemSchema.index({ first_seen_at: -1, ai_score: -1 });
+// The feed always filters by the user's categories first, so category leads.
+NewsItemSchema.index({ category: 1, first_seen_at: -1, ai_score: -1 });
 
 export default mongoose.models.NewsItem || mongoose.model("NewsItem", NewsItemSchema, "news_items");
