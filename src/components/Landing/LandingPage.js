@@ -375,7 +375,13 @@ function Nav({ pad, isMobile }) {
       style={{
         position: "sticky", top: 0, zIndex: 40,
         padding: isMobile ? `12px ${pad}` : `16px ${pad}`,
-        background: stuck ? "rgba(6,9,10,.72)" : "transparent",
+        // Black at rest, not transparent. The bar is a SIBLING above the hero,
+        // so at scroll 0 a transparent one shows the page's own red gradient
+        // through it — a red band across the top of an otherwise black hero,
+        // which reads as a rendering fault rather than a design. Black matches
+        // the hero exactly, so the seam disappears; once scrolled it becomes the
+        // translucent glass, over sections that are no longer black anyway.
+        background: stuck ? "rgba(8,6,6,.74)" : "#000",
         backdropFilter: stuck ? "blur(14px)" : "none",
         WebkitBackdropFilter: stuck ? "blur(14px)" : "none",
         borderBottom: `1px solid ${stuck ? "var(--d-line-soft)" : "transparent"}`,
@@ -715,7 +721,7 @@ function LanguageFlip() {
  * not the list — it is what happens when you pick one thing off it. So the
  * pointer does what a creator does: reads the shortlist, opens a story, reads
  * why it ranks, presses "Write this in my voice", and the script arrives in
- * Telugu. Four seconds, no copy required, and every frame of it is a real
+ * Hindi. Four seconds, no copy required, and every frame of it is a real
  * screen from the app rather than an illustration of one.
  *
  * Phases:
@@ -1252,7 +1258,7 @@ function SceneWriting({ active, isMobile }) {
   const spot = phase <= 0 ? { left: "62%", top: 190 } : { left: "26%", top: 44 };
 
   return (
-    <DemoFrame label="your script · Telugu-English" tone={MINT} height={252}>
+    <DemoFrame label="your script · Hindi-English" tone={MINT} height={252}>
       <Cursor {...spot} pressed={phase === 1} hidden={isMobile} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -1266,7 +1272,7 @@ function SceneWriting({ active, isMobile }) {
         >
           Write this in my voice
         </span>
-        <span style={{ fontSize: 10, color: "var(--d-mute)" }}>Tenglish · 2 videos</span>
+        <span style={{ fontSize: 10, color: "var(--d-mute)" }}>Hinglish · 2 videos</span>
       </div>
 
       {drafting && (
@@ -1296,10 +1302,10 @@ function SceneWriting({ active, isMobile }) {
 /** Numbered script lines, arriving one at a time. */
 function ScriptPage({ active }) {
   const LINES = [
-    "OpenAI వాళ్ళు GPT-6 Astra రిలీజ్ చేసి,",
-    "మనం AGI era లోకి ఎంటర్ అయ్యామని చెప్పారు.",
-    "కానీ అసలు విషయం ఏంటంటే —",
-    "ఇది మీ laptop లోనే offline లో పనిచేస్తుంది.",
+    "तो दोस्तों, OpenAI ने GPT-6 Astra release कर दिया,",
+    "और कहा कि हम AGI era में आ चुके हैं।",
+    "लेकिन असली बात ये है —",
+    "ये आपके laptop पर offline चलता है।",
   ];
   const shown = useSceneClock(LINES.length + 1, { active, interval: 620, hold: 6 });
 
@@ -1457,7 +1463,7 @@ function SceneVoice({ active }) {
       </div>
 
       {[
-        ["AI లో డబ్బులు సంపాదించాలంటే", "51s"],
+        ["AI से पैसे कैसे कमाएँ", "51s"],
         ["Mastering the Claude Suite", "50s"],
       ].map(([t, len], i) => (
         <div
@@ -1513,7 +1519,7 @@ function SceneCopy({ active, isMobile }) {
       <Cursor {...spot} pressed={phase === 2} hidden={isMobile} />
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 11 }}>
-        <span style={{ fontSize: 9.5, color: "var(--d-mute)" }}>Telugu-English · from 2 videos</span>
+        <span style={{ fontSize: 9.5, color: "var(--d-mute)" }}>Hindi-English · from 2 videos</span>
         <span
           style={{
             fontSize: 10, fontWeight: 700, padding: "5px 11px", borderRadius: 8,
@@ -1532,8 +1538,8 @@ function SceneCopy({ active, isMobile }) {
         className="indic"
         style={{ fontSize: 11, lineHeight: 1.8, color: "var(--d-ink)", margin: 0 }}
       >
-        మార్కెట్ లో కొత్త అప్‌డేట్ రాగానే కేవలం పైన పైన ఫీచర్స్ చూసి వదిలేయడం చాలా easy. కానీ ఆ మోడల్ back
-        ground లో ఉన్న విషయాలు అర్థం చేసుకోవడం కష్టం.
+        मार्केट में नया update आते ही सिर्फ ऊपर-ऊपर के features देखकर छोड़ देना बहुत easy है। लेकिन उस model
+        के background में जो चल रहा है, वो समझना असली काम है।
       </p>
     </DemoFrame>
   );
@@ -1811,41 +1817,59 @@ function Dot() {
 /**
  * Where the script ends up.
  *
- * Drawn as paths rather than pulled from an icon package: three marks do not
- * justify a dependency, and the official brand SVGs are the ones people
- * recognise at 18px. YouTube keeps its own red because that mark is only ever
- * red — the rest are white, since a wall of brand colours on a dark strip reads
- * as a sponsor list rather than as "this is where you post".
+ * ── WHY THESE PATHS AND NOT AN ICON PACKAGE ──────────────────────────────────
+ * This project has six dependencies. @mui/icons-material would be a seventh
+ * that drags @mui/material and two emotion packages behind it, all so three
+ * marks can be drawn. These are the official single-colour brand paths (the
+ * Simple Icons geometry), inlined — same shapes, nothing installed.
+ *
+ * The first attempt was hand-simplified versions of them, and it showed: the
+ * Instagram mark came out as a filled blob at 19px, because that glyph is a
+ * rounded square with a hole, a ring with a hole, and a dot — approximate any
+ * of the three and it fills in solid.
+ *
+ * Each sits in a badge rather than floating loose in the line. At icon size on
+ * a dark ground these were too small to identify, and the point of the row is
+ * instant recognition — if you have to squint at it, it has said nothing.
+ * YouTube keeps its own red; the other two are white, because three brand
+ * colours in a row reads as a sponsor strip.
  */
-function PlatformMarks({ size = 19 }) {
-  const marks = [
-    {
-      name: "YouTube",
-      fill: "#FF0000",
-      // Rounded rectangle plus play triangle.
-      path: "M23.5 6.5a3 3 0 0 0-2.1-2.1C19.5 4 12 4 12 4s-7.5 0-9.4.4A3 3 0 0 0 .5 6.5C0 8.4 0 12 0 12s0 3.6.5 5.5a3 3 0 0 0 2.1 2.1C4.5 20 12 20 12 20s7.5 0 9.4-.4a3 3 0 0 0 2.1-2.1C24 15.6 24 12 24 12s0-3.6-.5-5.5ZM9.6 15.6V8.4l6.3 3.6-6.3 3.6Z",
-      box: "0 0 24 24",
-    },
-    {
-      name: "Instagram",
-      fill: "rgba(255,255,255,.72)",
-      path: "M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4C8.4 2.2 8.8 2.2 12 2.2Zm0 3.2A6.6 6.6 0 1 0 18.6 12 6.6 6.6 0 0 0 12 5.4Zm0 10.9A4.3 4.3 0 1 1 16.3 12 4.3 4.3 0 0 1 12 16.3Zm6.9-11.1a1.5 1.5 0 1 1-1.5-1.5 1.5 1.5 0 0 1 1.5 1.5Z",
-      box: "0 0 24 24",
-    },
-    {
-      name: "X",
-      fill: "rgba(255,255,255,.72)",
-      path: "M18.2 2h3.3l-7.2 8.3L22.8 22h-6.6l-5.2-6.8L5.1 22H1.8l7.7-8.8L1.5 2h6.8l4.7 6.2L18.2 2Zm-1.2 18h1.8L7.1 3.9H5.2L17 20Z",
-      box: "0 0 24 24",
-    },
-  ];
+const PLATFORMS = [
+  {
+    name: "YouTube",
+    fill: "#FF0000",
+    path: "M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z",
+  },
+  {
+    name: "Instagram",
+    fill: "rgba(255,255,255,.82)",
+    path: "M12 0C8.74 0 8.333.015 7.053.072 5.775.132 4.905.333 4.14.63c-.789.306-1.459.717-2.126 1.384S.935 3.35.63 4.14C.333 4.905.131 5.775.072 7.053.012 8.333 0 8.74 0 12s.015 3.667.072 4.947c.06 1.277.261 2.148.558 2.913.306.788.717 1.459 1.384 2.126.667.666 1.336 1.079 2.126 1.384.766.296 1.636.499 2.913.558C8.333 23.988 8.74 24 12 24s3.667-.015 4.947-.072c1.277-.06 2.148-.262 2.913-.558.788-.306 1.459-.718 2.126-1.384.666-.667 1.079-1.335 1.384-2.126.296-.765.499-1.636.558-2.913.06-1.28.072-1.687.072-4.947s-.015-3.667-.072-4.947c-.06-1.277-.262-2.149-.558-2.913-.306-.789-.718-1.459-1.384-2.126C21.319 1.347 20.651.935 19.86.63c-.765-.297-1.636-.499-2.913-.558C15.667.012 15.26 0 12 0zm0 2.16c3.203 0 3.585.016 4.85.071 1.17.055 1.805.249 2.227.415.562.217.96.477 1.382.896.419.42.679.819.896 1.381.164.422.36 1.057.413 2.227.057 1.266.07 1.646.07 4.85s-.015 3.585-.074 4.85c-.061 1.17-.256 1.805-.421 2.227-.224.562-.479.96-.899 1.382-.419.419-.824.679-1.38.896-.42.164-1.065.36-2.235.413-1.274.057-1.649.07-4.859.07-3.211 0-3.586-.015-4.859-.074-1.171-.061-1.816-.256-2.236-.421-.569-.224-.96-.479-1.379-.899-.421-.419-.69-.824-.9-1.38-.165-.42-.359-1.065-.42-2.235-.045-1.26-.061-1.649-.061-4.844 0-3.196.016-3.586.061-4.861.061-1.17.255-1.814.42-2.234.21-.57.479-.96.9-1.381.419-.419.81-.689 1.379-.898.42-.166 1.051-.361 2.221-.421 1.275-.045 1.65-.06 4.859-.06l.045.03zm0 3.678a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 1 0 0-12.324zM12 16c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4zm7.846-10.405a1.441 1.441 0 0 1-2.88 0 1.44 1.44 0 0 1 2.88 0z",
+  },
+  {
+    name: "X",
+    fill: "rgba(255,255,255,.82)",
+    path: "M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z",
+  },
+];
 
+function PlatformMarks({ size = 22 }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 14 }}>
-      {marks.map((m) => (
-        <svg key={m.name} width={size} height={size} viewBox={m.box} role="img" aria-label={m.name}>
-          <path d={m.path} fill={m.fill} />
-        </svg>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
+      {PLATFORMS.map((m) => (
+        <span
+          key={m.name}
+          title={m.name}
+          style={{
+            display: "inline-grid", placeItems: "center",
+            width: size + 14, height: size + 14, borderRadius: 10,
+            border: "1px solid rgba(255,255,255,.13)",
+            background: "rgba(255,255,255,.05)",
+          }}
+        >
+          <svg width={size} height={size} viewBox="0 0 24 24" role="img" aria-label={m.name}>
+            <path d={m.path} fill={m.fill} />
+          </svg>
+        </span>
       ))}
     </span>
   );

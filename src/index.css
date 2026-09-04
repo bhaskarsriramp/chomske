@@ -228,20 +228,36 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
   --d-forest: #2A7C13;
   --d-pine: #2A835F;
 
-  /* The base. The red and green washes over it are a separate fixed LAYER (see
-     .hg-wash) rather than `background-attachment: fixed` on this element:
-     iOS Safari handles fixed attachment badly — it is widely ignored there and
-     causes visible scroll jank where it is not — and it also breaks
-     beyond-viewport screenshot capture, which is how this page gets reviewed. */
-  background: #050806;
+  /* ── THE PAGE IS RED AT THE TOP AND GREEN AT THE BOTTOM ─────────────────────
+     Not black with a hint of colour — the gradient spans the whole scroll, so
+     the ground is deep red where the hero ends and deep green by the footer,
+     turning over through the middle.
+
+     They are DEEP red and DEEP green rather than #FF0000 and #00FF00 for one
+     reason: this page is mostly white text. Body copy on saturated red or green
+     is somewhere between hard work and unreadable, and the two at full strength
+     together are a Christmas card. At these depths the hue is unmistakable and
+     white still clears 15:1 — the colour is the brand's, the legibility is not
+     negotiable.
+
+     Living on this element rather than on a fixed layer is what makes it span
+     the page: a fixed background is viewport-sized, so it would show the same
+     slice of the gradient forever instead of turning over as you scroll. */
+  background: linear-gradient(
+    172deg,
+    #3D0808 0%,      /* deep YouTube red, picking up where the hero leaves off */
+    #2A0A0A 18%,
+    #1A1109 40%,     /* the turn */
+    #0C2A16 68%,
+    #073317 100%     /* deep green */
+  );
   color: var(--d-body);
 }
 
-/* ── NOT FLAT BLACK ──────────────────────────────────────────────────────────
-   Three very wide, very faint washes of red and green, held still while the
-   page scrolls past them. Flat #000 across four thousand pixels of scroll is
-   what makes a dark page feel like a template; this way the ground shifts under
-   the content as you move down it, without ever competing with text.
+/* ── THE LIGHT ON TOP OF THE GROUND ──────────────────────────────────────────
+   Wide washes of red and green light, held still while the page scrolls past
+   them. The gradient above supplies the colour; these supply the movement, so
+   the ground is never the same twice as you scroll down it.
 
    It sits at z-index 0 and the page content at z-index 1 — a positioned element
    paints above non-positioned siblings regardless of source order, so without
@@ -252,9 +268,9 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(1200px 820px at 10% 6%, rgba(255, 0, 0, 0.11), transparent 62%),
-    radial-gradient(1100px 780px at 90% 34%, rgba(42, 124, 19, 0.18), transparent 64%),
-    radial-gradient(1000px 760px at 46% 96%, rgba(118, 196, 87, 0.11), transparent 62%);
+    radial-gradient(1200px 820px at 10% 6%, rgba(255, 0, 0, 0.16), transparent 62%),
+    radial-gradient(1100px 780px at 90% 34%, rgba(42, 124, 19, 0.26), transparent 64%),
+    radial-gradient(1000px 760px at 46% 96%, rgba(118, 196, 87, 0.16), transparent 62%);
 }
 
 /* ── Aurora ──────────────────────────────────────────────────────────────────
