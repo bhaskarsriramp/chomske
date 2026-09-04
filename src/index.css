@@ -51,9 +51,18 @@ body {
 
 /* Indic transcripts need their own stack, or Windows renders tofu boxes for
    Telugu and Bengali. Devanagari first, then the others, then a Latin fallback
-   so code-mixed English inside a Hindi sentence still looks right. */
+   so code-mixed English inside a Hindi sentence still looks right.
+
+   "Nirmala UI" is the one that matters on Windows and it is listed for every
+   script, not just the three that had Noto families here before: it ships with
+   Windows and covers Devanagari, Telugu, Tamil, Kannada, Gujarati, Malayalam,
+   Bengali and Gurmukhi in one face. The landing page cycles through nine
+   languages in their own scripts, and without this a Windows visitor would meet
+   a headline of empty boxes — the exact opposite of the point being made. */
 .indic {
-  font-family: "Noto Sans Devanagari", "Noto Sans Telugu", "Noto Sans Bengali",
+  font-family: "Noto Sans Devanagari", "Noto Sans Telugu", "Noto Sans Tamil",
+    "Noto Sans Kannada", "Noto Sans Gujarati", "Noto Sans Malayalam",
+    "Noto Sans Bengali", "Noto Sans Gurmukhi", "Nirmala UI",
     Inter, system-ui, sans-serif;
   line-height: 1.85;
 }
@@ -179,3 +188,186 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 .hg-scroll::-webkit-scrollbar-thumb:hover { background: #ABABAB; background-clip: padding-box; }
 
 ::selection { background: #FFDAD6; color: var(--ink); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LANDING PAGE
+   ───────────────────────────────────────────────────────────────────────────
+   Everything below is scoped to the signed-out page and NOTHING here applies
+   inside the app. The two are deliberately different: the app is a light, quiet
+   workspace a creator sits in every morning and its own rule is that nothing
+   moves ("NOTHING LIFTS ON HOVER", above, still stands in there). The landing
+   page has one job the app does not — convincing somebody in four seconds that
+   this is a real, current product — and motion is most of how that is done.
+   Keeping the two rule sets apart is why the app can stay still while the
+   front door moves.
+
+   Every animation here is decorative and is switched off wholesale by the
+   reduced-motion block at the end. The page must read identically with all of
+   it disabled, so nothing below may be the only way a piece of content appears.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.hg-dark {
+  /* The landing page's own tokens, so the app's light ones are untouched. */
+  --d-bg: #06090A;
+  --d-panel: rgba(255, 255, 255, 0.045);
+  --d-line: rgba(255, 255, 255, 0.10);
+  --d-line-soft: rgba(255, 255, 255, 0.06);
+  --d-ink: #F2F6F5;
+  --d-body: rgba(238, 246, 244, 0.66);
+  --d-mute: rgba(238, 246, 244, 0.44);
+
+  /* The brand seven, as light rather than as pigment. */
+  --d-cyan: #00B7CD;
+  --d-mint: #70FFD2;
+  --d-leaf: #76C457;
+  --d-forest: #2A7C13;
+  --d-pine: #2A835F;
+  --d-ice: #E3F2FD;
+  --d-orchid: #FFA6FB;
+
+  background: var(--d-bg);
+  color: var(--d-body);
+}
+
+/* ── Aurora ──────────────────────────────────────────────────────────────────
+   Three blurred blobs on very slow, prime-ish cycles so they never resynchronise
+   into a visible loop. translate3d keeps them on the compositor: animating a
+   1000px blurred element any other way repaints the whole hero every frame and
+   turns a background into a fan-speed problem. */
+@keyframes hg-aurora-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(7vw, -5vh, 0) scale(1.18); }
+  66%      { transform: translate3d(-5vw, 4vh, 0) scale(0.9); }
+}
+@keyframes hg-aurora-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
+  40%      { transform: translate3d(-8vw, 5vh, 0) scale(0.88); }
+  70%      { transform: translate3d(4vw, -3vh, 0) scale(1.2); }
+}
+@keyframes hg-aurora-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
+  50%      { transform: translate3d(5vw, 6vh, 0) scale(1.22); }
+}
+.hg-aurora {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  will-change: transform;
+  pointer-events: none;
+}
+.hg-aurora-a { animation: hg-aurora-a 26s ease-in-out infinite; }
+.hg-aurora-b { animation: hg-aurora-b 34s ease-in-out infinite; }
+.hg-aurora-c { animation: hg-aurora-c 41s ease-in-out infinite; }
+
+/* ── Scroll reveal ───────────────────────────────────────────────────────────
+   Driven by an IntersectionObserver in the component, not by a scroll handler:
+   one observer for the whole page costs nothing, where a scroll listener runs
+   on every frame of every scroll for the life of the page.
+
+   ── AND WHY THE HIDDEN STATE IS ARMED BY JAVASCRIPT ─────────────────────────
+   `.hg-reveal` on its own does NOTHING. The hidden state only applies inside
+   `.hg-armed`, which the component adds after confirming IntersectionObserver
+   exists. Written the obvious way round — hidden in CSS, revealed by JS — the
+   page fails CLOSED: any browser without the observer, any error before the
+   effect runs, and every section below the fold is a blank black screen with
+   the content still in the DOM. This way the worst case is that the animation
+   simply does not happen. */
+.hg-armed .hg-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity .75s cubic-bezier(.2,.7,.3,1), transform .75s cubic-bezier(.2,.7,.3,1);
+}
+.hg-armed .hg-reveal.is-in { opacity: 1; transform: none; }
+
+/* ── The language flip ───────────────────────────────────────────────────────
+   Every language stacks in ONE grid cell, so the container is as wide as the
+   widest of them and the headline never reflows mid-sentence. A width that
+   animated with the word would drag the rest of the line around nine times a
+   minute, which is the difference between a headline that breathes and one that
+   twitches. */
+@keyframes hg-flip-in {
+  from { opacity: 0; transform: translateY(0.5em) rotateX(-55deg); }
+  to   { opacity: 1; transform: none; }
+}
+.hg-flip { display: inline-grid; vertical-align: baseline; perspective: 700px; }
+.hg-flip > * { grid-area: 1 / 1; }
+.hg-flip-on { animation: hg-flip-in .55s cubic-bezier(.2,.8,.25,1) both; }
+
+/* ── Marquee ─────────────────────────────────────────────────────────────────
+   The track holds the list twice and travels exactly -50%, so the second copy
+   lands where the first began and the seam is never visible. */
+@keyframes hg-marquee { from { transform: translate3d(0,0,0); } to { transform: translate3d(-50%,0,0); } }
+.hg-marquee-track { display: flex; width: max-content; animation: hg-marquee 38s linear infinite; }
+.hg-marquee:hover .hg-marquee-track { animation-play-state: paused; }
+
+/* ── Small signals ───────────────────────────────────────────────────────── */
+/* --ping-rgb so one keyframe serves both palettes: the hero is red/black/white,
+   everything below it is the brand seven. A second copy of this animation that
+   differed only in colour is how the two drift apart. */
+@keyframes hg-ping {
+  0%   { box-shadow: 0 0 0 0 rgba(var(--ping-rgb, 112,255,210), .5); }
+  70%  { box-shadow: 0 0 0 8px rgba(var(--ping-rgb, 112,255,210), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--ping-rgb, 112,255,210), 0); }
+}
+.hg-ping { animation: hg-ping 2.4s cubic-bezier(.2,.7,.3,1) infinite; }
+
+/* ── The hero's own palette ──────────────────────────────────────────────────
+   YouTube red, black and white — and nothing else. The rest of the page carries
+   the brand seven, but the first screen speaks the language of the platform
+   these creators actually publish on: a red they recognise before they have
+   read a word. Scoped to .hg-hero so it cannot leak into the sections below,
+   which would leave the page with two accent systems fighting. */
+.hg-hero {
+  --yt: #FF0000;
+  --yt-deep: #CC0000;
+  --ping-rgb: 255, 0, 0;
+  background: #000;
+}
+.hg-hero .hg-d-btn:hover { box-shadow: 0 12px 30px -12px rgba(255,0,0,.6); }
+
+@keyframes hg-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.hg-caret { animation: hg-blink 1.05s steps(1) infinite; }
+
+@keyframes hg-drift { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+.hg-drift { animation: hg-drift 7s ease-in-out infinite; }
+
+/* A light sweeping across a border, for the primary CTA. Sized 200% and moved
+   across, rather than animating a gradient's colour stops — stops are not
+   compositable and animating them repaints the button every frame. */
+@keyframes hg-sweep { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.hg-sweep {
+  background-size: 200% 100%;
+  animation: hg-sweep 3.4s linear infinite;
+}
+
+/* Equaliser bars under the voice sample — five bars, staggered, so it reads as
+   audio rather than as a loading state. */
+@keyframes hg-eq { 0%, 100% { transform: scaleY(.32); } 50% { transform: scaleY(1); } }
+.hg-eq span {
+  display: block; width: 3px; height: 18px; border-radius: 2px;
+  background: var(--d-mint); transform-origin: bottom;
+  animation: hg-eq 1.1s ease-in-out infinite;
+}
+
+/* Dark-surface hover states. Inline styles cannot express :hover, and the app's
+   .hg-row rules are tuned for white cards. */
+.hg-d-card { transition: border-color .2s ease, background .2s ease, transform .2s ease; }
+.hg-d-card:hover { border-color: rgba(255,255,255,.2) !important; background: rgba(255,255,255,.06) !important; }
+.hg-d-link { transition: color .15s ease; }
+.hg-d-link:hover { color: var(--d-ink) !important; }
+.hg-d-btn { transition: transform .15s ease, box-shadow .2s ease, background .2s ease; }
+.hg-d-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 30px -12px rgba(0,183,205,.55); }
+.hg-d-ghost { transition: background .2s ease, border-color .2s ease; }
+.hg-d-ghost:hover { background: rgba(255,255,255,.07) !important; border-color: rgba(255,255,255,.24) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* The global rule above collapses animation DURATION, which is enough for a
+     spinner but leaves a reveal stuck at opacity 0 — its end state comes from a
+     transition, not an animation. So the reveals are forced to their finished
+     state here, and the decorative loops are stopped outright rather than run
+     at 0.01ms forever. */
+  .hg-armed .hg-reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .hg-aurora, .hg-marquee-track, .hg-ping, .hg-caret, .hg-drift, .hg-sweep, .hg-eq span,
+  .hg-flip-on { animation: none !important; }
+  .hg-d-btn:hover { transform: none; }
+}

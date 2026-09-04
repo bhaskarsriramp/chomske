@@ -9,7 +9,12 @@
  * tile. It ships at 192px and renders at 26-30, so it stays sharp on a retina
  * screen at every size used here.
  */
-export default function Logo({ size = 27, text = true, fontSize = 16.5 }) {
+/**
+ * @param {string} color  wordmark colour. Defaults to the app's ink, which is
+ *   near-black and therefore invisible on the landing page's dark ground — that
+ *   page passes its own. The mark itself is a PNG and reads on both.
+ */
+export default function Logo({ size = 27, text = true, fontSize = 16.5, color = "var(--ink)" }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
       <img
@@ -25,7 +30,7 @@ export default function Logo({ size = 27, text = true, fontSize = 16.5 }) {
           style={{
             fontWeight: 700,
             fontSize,
-            color: "var(--ink)",
+            color,
             letterSpacing: "-0.02em",
             whiteSpace: "nowrap",
           }}
