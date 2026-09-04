@@ -10,8 +10,8 @@ import express from "express";
 import mongoose from "mongoose";
 import NewsItem from "../models/NewsItem.js";
 import StorySeen from "../models/StorySeen.js";
-import User from "../models/User.js";
 import { isValidCategory, DEFAULT_CATEGORY, getCategory } from "../services/categories.js";
+import { resolveProfile } from "../services/profileService.js";
 import { ensureBrief } from "../services/newsBriefService.js";
 import { lastCheckedAt, touchSeen } from "../services/newsCadence.js";
 import { heatOf, latestOf } from "../services/newsHeat.js";
@@ -36,15 +36,20 @@ router.get("/", authenticateToken, async (req, res) => {
     const minScore = Math.max(0, Math.min(10, parseInt(req.query.min_score, 10) || 4));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
 
-    // The feed is whatever this user chose to cover. Falling back to the default
-    // rather than returning nothing keeps a not-yet-onboarded account from seeing
-    // an empty product and concluding it is broken.
-    const me = await User.findById(req.user.id).select("categories").lean();
-    let mine = (me?.categories || []).filter(isValidCategory);
+    // The feed is whatever THIS PROFILE covers, not what the account covers.
+    // A creator running a sports channel and a tech channel must never see AI
+    // stories in the sports feed just because the same person also runs the
+    // other one — that is the whole reason profiles exist.
+    //
+    // Falling back to the default category rather than returning nothing keeps a
+    // not-yet-onboarded account from seeing an empty product and concluding it
+    // is broken.
+    const { profile } = await resolveProfile(req.user.id, req.query.profile);
+    let mine = (profile.categories || []).filter(isValidCategory);
     if (!mine.length) mine = [DEFAULT_CATEGORY];
 
-    // ?category= narrows to one of THEIR categories, for a per-category tab.
-    // Never a way to read a category they did not pick.
+    // ?category= narrows to one of THIS PROFILE's categories, for a per-category
+    // tab. Never a way to read a category they did not pick.
     const asked = String(req.query.category || "");
     const cats = asked && mine.includes(asked) ? [asked] : mine;
 
@@ -182,8 +187,8 @@ router.get("/", authenticateToken, async (req, res) => {
  */
 router.post("/refresh", authenticateToken, async (req, res) => {
   try {
-    const me = await User.findById(req.user.id).select("categories").lean();
-    let mine = (me?.categories || []).filter(isValidCategory);
+    const { profile } = await resolveProfile(req.user.id, req.body?.profile);
+    let mine = (profile.categories || []).filter(isValidCategory);
     if (!mine.length) mine = [DEFAULT_CATEGORY];
 
     const asked = String(req.body?.category || "");

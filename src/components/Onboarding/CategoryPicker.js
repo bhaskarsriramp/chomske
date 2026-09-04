@@ -5,7 +5,7 @@ import { categoryColor, HERO_WASH } from "../../theme";
 import Logo from "../Shell/Logo";
 
 /**
- * First-run category picker.
+ * First run: name the first profile, and say what it covers.
  *
  * ── WHY THIS BLOCKS THE APP ──────────────────────────────────────────────────
  * It is not a preference screen. The selection decides which sources get polled
@@ -15,8 +15,13 @@ import Logo from "../Shell/Logo";
  * broken. So there is no close control and no route past it; the only way out is
  * to choose, or to sign out.
  *
- * The screen explains WHY it is asking, because a signup form that demands
- * answers without saying what they do is where people leave.
+ * ── WHY THE NAME IS PRE-FILLED RATHER THAN DEMANDED ─────────────────────────
+ * This creates their first profile — one channel's workspace, with its own
+ * topics, voice and scripts. Later profiles must be named, because by then the
+ * name is the only thing telling two of them apart in the dropdown where credits
+ * are spent. But stopping someone in their first minute to name a thing they
+ * have not seen yet is how you lose them, so "My Profile" is filled in and they
+ * can change it now or never.
  */
 export default function CategoryPicker({ user, onDone, onSignOut }) {
   const isPhone = useIsMobile(680);
@@ -24,6 +29,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
   const [cats, setCats] = useState([]);
   const [max, setMax] = useState(3);
   const [picked, setPicked] = useState([]);
+  const [name, setName] = useState("My Profile");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -58,10 +64,16 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
 
   async function submit() {
     if (!picked.length || saving) return;
+    const profileName = name.trim();
+    if (!profileName) return setError("Give this profile a name — “My Profile” is fine.");
+
     setSaving(true);
     setError("");
     try {
-      const { data } = await api.put("/auth/categories", { categories: picked });
+      const { data } = await api.put("/auth/categories", {
+        categories: picked,
+        profile_name: profileName,
+      });
       onDone(data.user);
     } catch (err) {
       setError(errorMessage(err, "Couldn't save that. Please try again."));
@@ -121,6 +133,36 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
         We only pull stories from what you choose, so nothing else clutters your feed.
         You can change this any time from Profile.
       </p>
+
+      {/* The channel this is all for. Run more than one? Add the rest from
+          Profile later — each keeps its own topics, voice and scripts. */}
+      <div style={{ maxWidth: 420, marginBottom: 26 }}>
+        <label
+          htmlFor="hg-profile-name"
+          style={{
+            display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em",
+            textTransform: "uppercase", color: "var(--ink-mute)", marginBottom: 8,
+          }}
+        >
+          Name this channel
+        </label>
+        <input
+          id="hg-profile-name"
+          value={name}
+          onChange={(e) => { setName(e.target.value); setError(""); }}
+          maxLength={60}
+          placeholder="My Profile"
+          style={{
+            width: "100%", boxSizing: "border-box", fontSize: 15.5, padding: "13px 15px",
+            border: "1px solid var(--line)", borderRadius: 11,
+            background: "var(--card)", color: "var(--ink)", outline: "none", fontFamily: "inherit",
+          }}
+        />
+        <p style={{ fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.55, margin: "8px 0 0" }}>
+          Run more than one channel? Add the others from Profile later — each keeps
+          its own topics, its own voice and its own scripts.
+        </p>
+      </div>
 
       {error && (
         <div
@@ -232,14 +274,14 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
 
         <button
           onClick={submit}
-          disabled={!picked.length || saving}
-          className={!picked.length || saving ? undefined : "hg-btn-primary"}
+          disabled={!picked.length || !name.trim() || saving}
+          className={!picked.length || !name.trim() || saving ? undefined : "hg-btn-primary"}
           style={{
             fontSize: 15, fontWeight: 600, padding: "13px 28px", borderRadius: 11,
             border: "none", flexShrink: 0,
-            background: !picked.length || saving ? "#E5E5E5" : "var(--primary)",
-            color: !picked.length || saving ? "var(--ink-mute)" : "#fff",
-            cursor: !picked.length || saving ? "default" : "pointer",
+            background: !picked.length || !name.trim() || saving ? "#E5E5E5" : "var(--primary)",
+            color: !picked.length || !name.trim() || saving ? "var(--ink-mute)" : "#fff",
+            cursor: !picked.length || !name.trim() || saving ? "default" : "pointer",
           }}
         >
           {saving ? "Setting up…" : "Continue"}

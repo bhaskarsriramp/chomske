@@ -17,6 +17,7 @@ import mongoose from "mongoose";
 import Transcript from "../models/Transcript.js";
 import Script from "../models/Script.js";
 import User from "../models/User.js";
+import Profile from "../models/Profile.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import { apidirectKeyHealth } from "../services/apidirectClient.js";
 import authenticateToken from "../middleware/authenticateToken.js";
@@ -63,11 +64,11 @@ function resolveRange(q) {
 }
 
 /**
- * GET /stats/dashboard?range=7d|28d|custom&from=&to=&voice=
+ * GET /stats/dashboard?range=7d|28d|custom&from=&to=&profile=
  *
- * ?voice=<id> narrows every number to one voice set; omitted (or "all") reports
- * the whole account. A creator running two channels needs both views: "how is
- * the Hindi channel doing" and "how much have I made in total" are different
+ * ?profile=<id> narrows every number to one channel; omitted (or "all") reports
+ * the whole account. A creator running three channels needs both views: "how is
+ * the tech channel doing" and "how much have I made in total" are different
  * questions and the dashboard should answer whichever was asked.
  */
 router.get("/dashboard", authenticateToken, async (req, res) => {
@@ -78,12 +79,12 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
 
     // Scope. An invalid id falls through to the whole account rather than
     // matching nothing and reporting a confident, wrong zero.
-    const voiceParam = String(req.query.voice || "").trim();
-    const voiceId =
-      voiceParam && voiceParam !== "all" && mongoose.Types.ObjectId.isValid(voiceParam)
-        ? new mongoose.Types.ObjectId(voiceParam)
+    const profileParam = String(req.query.profile || "").trim();
+    const profileId =
+      profileParam && profileParam !== "all" && mongoose.Types.ObjectId.isValid(profileParam)
+        ? new mongoose.Types.ObjectId(profileParam)
         : null;
-    const scope = voiceId ? { voice: voiceId } : {};
+    const scope = profileId ? { profile: profileId } : {};
 
     const [videosHeld, videosReady, scriptsInRange, scriptsAll, profile, recentScripts] =
       await Promise.all([
@@ -91,17 +92,19 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
         Transcript.countDocuments({ user: userId, ...scope, status: "done", text: { $ne: "" } }),
         Script.countDocuments({ user: userId, ...scope, status: "done", created_at: inRange }),
         Script.countDocuments({ user: userId, ...scope, status: "done" }),
-        // With no voice selected this reports the DEFAULT set's profile, not a
-        // blend of every set — there is no such thing as an average of two
-        // voices, and inventing one would be the exact failure voice sets exist
-        // to prevent.
-        voiceId
-          ? VoiceProfile.findOne({ _id: voiceId, user: userId }).lean()
-          : VoiceProfile.findOne({ user: userId, is_default: true }).lean(),
+        // With no profile selected this reports the DEFAULT channel's voice, not
+        // a blend of every channel — there is no such thing as an average of two
+        // voices, and inventing one would be the exact failure profiles exist to
+        // prevent.
+        profileId
+          ? VoiceProfile.findOne({ profile: profileId, user: userId }).lean()
+          : Profile.findOne({ user: userId, is_default: true })
+              .lean()
+              .then((p) => (p ? VoiceProfile.findOne({ profile: p._id, user: userId }).lean() : null)),
         Script.find({ user: userId, ...scope, status: "done" })
           .sort({ created_at: -1 })
           .limit(8)
-          .select("headline language_label voice_name created_at")
+          .select("headline language_label profile_name created_at")
           .lean(),
       ]);
 
@@ -126,7 +129,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
     return res.json({
       success: true,
       range: { key: range.key, label: range.label, from: range.from, to: range.to },
-      voice_id: voiceId ? String(voiceId) : null,
+      profile_id: profileId ? String(profileId) : null,
       videos: {
         used: videosHeld,
         ready: videosReady,
@@ -135,25 +138,23 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
       },
       scripts: { in_range: scriptsInRange, all_time: scriptsAll },
       // built_at is what "analysed" means — the row exists from the moment the
-      // set is created, so its presence alone says nothing.
+      // channel is created, so its presence alone says nothing.
       voice: profile?.built_at
         ? {
-            id: String(profile._id),
-            name: profile.name || "",
             confidence: profile.confidence || "thin",
             language_label: profile.language_label || "",
             transcript_count: profile.transcript_count || 0,
             built_at: profile.built_at,
-            // The profile is behind if videos were added or removed since it
-            // ran — only meaningful when the numbers describe the same set.
-            stale: !!voiceId && (profile.transcript_count || 0) !== videosReady,
+            // The voice is behind if videos were added or removed since it ran —
+            // only meaningful when the numbers describe the same channel.
+            stale: !!profileId && (profile.transcript_count || 0) !== videosReady,
           }
         : null,
       by_day: byDay.map((d) => ({ day: d._id, count: d.n })),
       recent_scripts: recentScripts.map((s) => ({
         headline: s.headline || "",
         language_label: s.language_label || "",
-        voice_name: s.voice_name || "",
+        profile_name: s.profile_name || "",
         created_at: s.created_at,
       })),
     });

@@ -19,7 +19,7 @@ import VoiceProfile from "../models/VoiceProfile.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
 import { transcribeYouTube } from "../services/geminiClient.js";
 import { getYouTubeVideoDetails, isApidirectConfigured } from "../services/apidirectClient.js";
-import { resolveVoice, listVoices } from "../services/voiceProfileService.js";
+import { resolveProfile, listProfiles } from "../services/profileService.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
@@ -28,9 +28,9 @@ const DAILY_LIMIT = parseInt(process.env.DAILY_TRANSCRIBE_LIMIT || "10", 10);
 // How many videos define one voice. Five short-form videos is plenty of signal;
 // past that the marginal gain is small and every extra one costs a transcription.
 //
-// Counted PER VOICE SET, not per account: a creator with a Hindi channel and an
-// English one needs five of each, and the total is bounded instead by
-// MAX_VOICE_PROFILES and by the daily cap below.
+// Counted PER PROFILE, not per account: a creator running a Hindi tech channel
+// and an English one needs five for each, and the total is bounded instead by
+// MAX_PROFILES and by the daily cap below.
 const MAX_VOICE_VIDEOS = parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
 
 // Short-form only. Voice profiling learns hooks and sign-offs, which are dense in
@@ -54,26 +54,26 @@ router.post("/", authenticateToken, async (req, res) => {
 
     const userId = req.user.id;
 
-    // Which voice this video teaches. An unknown or missing id lands on the
-    // user's default set rather than failing — see resolveVoice().
-    const { voice } = await resolveVoice(userId, req.body?.voice);
+    // Which channel this video teaches. An unknown or missing id lands on the
+    // user's default profile rather than failing — see resolveProfile().
+    const { profile } = await resolveProfile(userId, req.body?.profile);
 
     // Already have it? Return the cached row — free, instant, and the reason a
     // second look at yesterday's video costs nothing.
     const existing = await Transcript.findOne({ user: userId, video_id: parsed.videoId }).lean();
     if (existing && existing.status !== "failed") {
-      // It may belong to a DIFFERENT voice set. Adding it here would mean
+      // It may belong to a DIFFERENT profile. Adding it here would mean
       // transcribing and paying for text we already hold, so it is refused —
       // but named, because "you already added this" while looking at an empty
       // list is the kind of message that reads as a bug.
-      if (String(existing.voice || "") !== String(voice._id)) {
-        const other = (await listVoices(userId)).find((v) => v.id === String(existing.voice));
+      if (String(existing.profile || "") !== String(profile._id)) {
+        const other = (await listProfiles(userId)).find((p) => p.id === String(existing.profile));
         return res.status(400).json({
           success: false,
-          duplicate_in_other_voice: true,
+          duplicate_in_other_profile: true,
           message: other
-            ? `That video is already in “${other.name || "your other voice"}”. A video belongs to one voice at a time.`
-            : "You've already added that video to another voice.",
+            ? `That video is already in “${other.name}”. A video belongs to one profile at a time.`
+            : "You've already added that video to another profile.",
         });
       }
       return res.json({ success: true, cached: true, transcript: shape(existing) });
@@ -81,13 +81,13 @@ router.post("/", authenticateToken, async (req, res) => {
 
     // Five videos define one voice. Enforced before anything is spent.
     const held = await Transcript.countDocuments({
-      user: userId, voice: voice._id, status: { $ne: "failed" },
+      user: userId, profile: profile._id, status: { $ne: "failed" },
     });
     if (held >= MAX_VOICE_VIDEOS) {
       return res.status(400).json({
         success: false,
         limit_reached: true,
-        message: `This voice holds ${MAX_VOICE_VIDEOS} videos. Delete one, or add another voice.`,
+        message: `This profile holds ${MAX_VOICE_VIDEOS} videos. Delete one, or add another profile.`,
       });
     }
 
@@ -197,9 +197,9 @@ router.post("/", authenticateToken, async (req, res) => {
         {
           $set: {
             status: "processing", error: "", text: "",
-            // A failed row is being retried; it moves to whichever set the
+            // A failed row is being retried; it moves to whichever profile the
             // creator is looking at now, which may not be where it first landed.
-            voice: voice._id,
+            profile: profile._id,
             created_at: new Date(), updated_at: new Date(), ...videoMeta,
           },
         },
@@ -209,7 +209,7 @@ router.post("/", authenticateToken, async (req, res) => {
       try {
         doc = await Transcript.create({
           user: userId,
-          voice: voice._id,
+          profile: profile._id,
           video_id: parsed.videoId,
           url: parsed.url,
           status: "processing",
@@ -250,20 +250,20 @@ router.get("/:id", authenticateToken, async (req, res) => {
   return res.json({ success: true, transcript: shape(doc) });
 });
 
-/** GET /transcribe?voice=… — the videos in one voice set, newest first. */
+/** GET /transcribe?profile=… — the videos in one profile, newest first. */
 router.get("/", authenticateToken, async (req, res) => {
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 
-  const { voice } = await resolveVoice(req.user.id, req.query.voice);
+  const { profile } = await resolveProfile(req.user.id, req.query.profile);
 
-  const docs = await Transcript.find({ user: req.user.id, voice: voice._id })
+  const docs = await Transcript.find({ user: req.user.id, profile: profile._id })
     .sort({ created_at: -1 })
     .limit(limit)
     .lean();
 
-  // The daily cap stays per ACCOUNT, across every voice. It is a spend control —
-  // reading video is the whole cost of this product — and making it per-set
-  // would multiply the ceiling by however many sets someone chose to create.
+  // The daily cap stays per ACCOUNT, across every profile. It is a spend control
+  // — reading video is the whole cost of this product — and making it per-profile
+  // would multiply the ceiling by however many channels someone chose to create.
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const usedToday = await Transcript.countDocuments({
     user: req.user.id,
@@ -282,8 +282,8 @@ router.get("/", authenticateToken, async (req, res) => {
 
   return res.json({
     success: true,
-    voice_id: String(voice._id),
-    voice_name: voice.name || "",
+    profile_id: String(profile._id),
+    profile_name: profile.name || "",
     transcripts: docs.map(shape),
     slots: { used: held, max: MAX_VOICE_VIDEOS, left: Math.max(0, MAX_VOICE_VIDEOS - held) },
     ready_count: ready.length,
@@ -294,7 +294,7 @@ router.get("/", authenticateToken, async (req, res) => {
 });
 
 /**
- * DELETE /transcribe/:id — drop one video from the voice set.
+ * DELETE /transcribe/:id — drop one video from its profile.
  *
  * The stored VoiceProfile is left alone but marked behind by its own count check
  * (services/voiceProfileService.js), so the next analysis re-learns from what
@@ -309,15 +309,15 @@ router.delete("/:id", authenticateToken, async (req, res) => {
   const doc = await Transcript.findOneAndDelete({ _id: req.params.id, user: req.user.id });
   if (!doc) return res.status(404).json({ success: false, message: "Not found" });
 
-  // Drop it from its own set's provenance so the "is this voice stale" check
-  // notices, without destroying a profile the user still needs to write with.
+  // Drop it from its own profile's voice provenance so the "is this voice
+  // stale" check notices, without destroying a voice the user still writes with.
   await VoiceProfile.updateOne(
-    { _id: doc.voice, user: req.user.id },
+    { profile: doc.profile, user: req.user.id },
     { $pull: { built_from: doc._id } }
   ).catch(() => {});
 
   const left = await Transcript.countDocuments({
-    user: req.user.id, voice: doc.voice, status: { $ne: "failed" },
+    user: req.user.id, profile: doc.profile, status: { $ne: "failed" },
   });
   return res.json({ success: true, deleted: String(doc._id), slots_left: Math.max(0, MAX_VOICE_VIDEOS - left) });
 });

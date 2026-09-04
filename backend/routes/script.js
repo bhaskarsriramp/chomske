@@ -13,7 +13,8 @@ import Script from "../models/Script.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 import { writeScript, writeEnglishTwin, writePackaging } from "../services/scriptWriterService.js";
 import { getCategory } from "../services/categories.js";
-import { buildVoiceProfile, getUsableProfile, profileStatus, resolveVoice } from "../services/voiceProfileService.js";
+import { buildVoiceProfile, getUsableProfile, profileStatus } from "../services/voiceProfileService.js";
+import { resolveProfile } from "../services/profileService.js";
 import { quote, PACKAGING_CREDITS } from "../services/creditPricing.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 
@@ -25,19 +26,19 @@ const router = express.Router();
 const DAILY_SCRIPT_LIMIT = parseInt(process.env.DAILY_SCRIPT_LIMIT || "30", 10);
 
 /**
- * GET /script/voice?voice=… — what we know about how this user talks.
+ * GET /script/voice?profile=… — what we know about how this creator talks.
  *
- * Managing the sets themselves lives in routes/voices.js; this stays because it
- * is the shape the writing screens read — "is there a voice to write in, and how
- * much of one" — for whichever set is selected.
+ * Managing the channels themselves lives in routes/profiles.js; this stays
+ * because it is the shape the writing screens read — "is there a voice to write
+ * in, and how much of one" — for whichever profile is selected.
  */
 router.get("/voice", authenticateToken, async (req, res) => {
   try {
-    const { voice, profile, transcripts_available, stale } = await profileStatus(req.user.id, req.query.voice);
+    const { channel, profile, transcripts_available, stale } = await profileStatus(req.user.id, req.query.profile);
     return res.json({
       success: true,
-      voice_id: String(voice._id),
-      voice_name: voice.name || "",
+      profile_id: String(channel._id),
+      profile_name: channel.name || "",
       transcripts_available,
       stale,
       profile: profile ? shapeProfile(profile) : null,
@@ -48,10 +49,10 @@ router.get("/voice", authenticateToken, async (req, res) => {
   }
 });
 
-/** POST /script/voice/rebuild  { voice? } — re-learn from that set's videos. */
+/** POST /script/voice/rebuild  { profile? } — re-learn from that channel's videos. */
 router.post("/voice/rebuild", authenticateToken, async (req, res) => {
   try {
-    const { profile, built, reason } = await buildVoiceProfile(req.user.id, req.body?.voice);
+    const { profile, built, reason } = await buildVoiceProfile(req.user.id, req.body?.profile);
     if (!built) {
       return res.status(400).json({
         success: false,
@@ -81,17 +82,17 @@ router.post("/", authenticateToken, async (req, res) => {
 
     const userId = req.user.id;
 
-    // Which voice writes this. Resolved before the cache check, because the
-    // same story written in a creator's Hindi voice and their English one are
-    // two different deliverables — treating them as one would hand back the
-    // wrong script and charge for neither.
-    const { voice } = await resolveVoice(userId, req.body?.voice_id || req.body?.voice);
+    // Which channel this is for. Resolved before the cache check, because the
+    // same story written for a creator's Hindi tech channel and their English
+    // one are two different deliverables — treating them as one would hand back
+    // the wrong script and charge for neither.
+    const { profile: channel } = await resolveProfile(userId, req.body?.profile_id || req.body?.profile);
 
-    // Already written it in this voice? Hand it back rather than billing for
+    // Already written it for this channel? Hand it back rather than billing for
     // the same story twice — regenerating has to be an explicit choice.
     if (!req.body?.force) {
       const existing = await Script.findOne({
-        user: userId, news_item: item._id, voice: voice._id, status: { $ne: "failed" },
+        user: userId, news_item: item._id, profile: channel._id, status: { $ne: "failed" },
       })
         .sort({ created_at: -1 })
         .lean();
@@ -125,14 +126,14 @@ router.post("/", authenticateToken, async (req, res) => {
     // Fail before creating a row if there is nothing to write in the voice of —
     // a "processing" script that can never succeed is a worse experience than a
     // clear message here.
-    const profile = await getUsableProfile(userId, { voiceId: voice._id, autoBuild: false });
-    const hasTranscripts = (await profileStatus(userId, voice._id)).transcripts_available > 0;
+    const profile = await getUsableProfile(userId, { profileId: channel._id, autoBuild: false });
+    const hasTranscripts = (await profileStatus(userId, channel._id)).transcripts_available > 0;
     if (!profile && !hasTranscripts) {
       return res.status(400).json({
         success: false,
         needs_transcript: true,
-        voice_id: String(voice._id),
-        message: "Add a video to this voice first — that's how we learn how you talk.",
+        profile_id: String(channel._id),
+        message: "Add a video to this profile first — that's how we learn how you talk.",
       });
     }
 
@@ -144,10 +145,10 @@ router.post("/", authenticateToken, async (req, res) => {
       angle: item.ai_angle || "",
       status: "processing",
       duration_seconds: order.seconds,
-      voice: voice._id,
-      // Copied, not looked up: renaming or deleting a voice must not relabel
-      // scripts already written in it.
-      voice_name: voice.name || "",
+      profile: channel._id,
+      // Copied, not looked up: renaming or deleting a profile must not relabel
+      // scripts already written for it.
+      profile_name: channel.name || "",
     });
 
     // ── Charge AFTER the row exists, BEFORE the work starts ──────────────────
@@ -183,7 +184,7 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 
     // Fire and forget; the client polls.
-    runScript(doc._id, userId, item, { ...order, charged, voiceId: voice._id }).catch((err) =>
+    runScript(doc._id, userId, item, { ...order, charged, profileId: channel._id }).catch((err) =>
       console.error(`[script] unhandled failure for ${doc._id}:`, err)
     );
 
@@ -210,7 +211,7 @@ router.post("/", authenticateToken, async (req, res) => {
  *
  *   ?limit=20     rows per page (max 50)
  *   ?before=ISO   cursor: created_at strictly older than this
- *   ?voice=id     only scripts written in that voice; omit for all of them
+ *   ?profile=id   only scripts written for that channel; omit for all of them
  */
 router.get("/", authenticateToken, async (req, res) => {
   try {
@@ -218,13 +219,13 @@ router.get("/", authenticateToken, async (req, res) => {
 
     const q = { user: req.user.id };
 
-    // Filtering is opt-in. "All voices" is a real answer to "which of my
+    // Filtering is opt-in. "All profiles" is a real answer to "which of my
     // scripts do I want to see", and it is the right default for someone who
     // only ever had one — they should never have to discover a filter to find
-    // work they wrote before voices existed.
-    const voiceParam = String(req.query.voice || "").trim();
-    if (voiceParam && voiceParam !== "all" && mongoose.Types.ObjectId.isValid(voiceParam)) {
-      q.voice = new mongoose.Types.ObjectId(voiceParam);
+    // work they wrote before profiles existed.
+    const profileParam = String(req.query.profile || "").trim();
+    if (profileParam && profileParam !== "all" && mongoose.Types.ObjectId.isValid(profileParam)) {
+      q.profile = new mongoose.Types.ObjectId(profileParam);
     }
 
     if (req.query.before) {
@@ -319,14 +320,14 @@ router.get("/:id", authenticateToken, async (req, res) => {
  */
 async function runScript(id, userId, item, order) {
   const started = Date.now();
-  const { seconds = 60, englishTwin = false, packaging = false, voiceId } = order || {};
+  const { seconds = 60, englishTwin = false, packaging = false, profileId } = order || {};
 
   try {
     // Built here rather than in the route so the first-ever script absorbs the
-    // profile build without the request waiting on both.
-    const profile = await getUsableProfile(userId, { voiceId, autoBuild: true });
+    // voice build without the request waiting on both.
+    const profile = await getUsableProfile(userId, { profileId, autoBuild: true });
     if (!profile) throw Object.assign(new Error("no profile"), {
-      userMessage: "Add a video to this voice first — that's how we learn how you talk.",
+      userMessage: "Add a video to this profile first — that's how we learn how you talk.",
     });
 
     const out = await writeScript({ profile, item, seconds });
@@ -449,8 +450,8 @@ function shape(d) {
     title_suggestions: d.title_suggestions || [],
     language: d.language || "",
     language_label: d.language_label || "",
-    voice: d.voice ? String(d.voice) : null,
-    voice_name: d.voice_name || "",
+    profile: d.profile ? String(d.profile) : null,
+    profile_name: d.profile_name || "",
     voice_confidence: d.voice_confidence || "",
     sources_used: d.sources_used || [],
     error: d.error || "",

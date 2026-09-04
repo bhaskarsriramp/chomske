@@ -4,6 +4,8 @@ import useIsMobile from "../../hooks/useIsMobile";
 import StoryDetail from "./StoryDetail";
 import { sourceLabel, timeAgo } from "./newsUtils";
 import { categoryColor, cardBackground, cardTint } from "../../theme";
+import { useProfiles } from "../../state/ProfileContext";
+import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * What to make a video about today.
@@ -64,14 +66,23 @@ const WIDE_MIN_SCORE = 3;
 // sits there hammering it expecting different news.
 const MAX_REFRESHES = 3;
 
-export default function NewsFeed({ onGoTranscribe, voiceRev = 0, voiceId = null, categoriesKey = "", userCategories = [] }) {
+export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = null }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
+
+  // The categories of the profile they are working in — NOT of the account. A
+  // creator running a sports channel and a tech channel must never see AI
+  // stories in the sports feed just because the same person also runs the other
+  // one. The server enforces this too (routes/news.js resolves the profile);
+  // this is what draws the tab strip.
+  const { active: activeProfile, activeId, setActive: setActiveProfile } = useProfiles();
+  const profileCats = activeProfile?.categories || [];
+  const categoriesKey = profileCats.join(",");
 
   // Opens on their first category rather than on everything. A mixed feed of
   // three subjects has no shape — a creator sits down to make a markets video
   // or a tech video, not "a video".
-  const [cat, setCat] = useState(userCategories[0] || "");
+  const [cat, setCat] = useState(profileCats[0] || "");
   const [feedCats, setFeedCats] = useState([]);
   const [items, setItems] = useState([]);
   const [checkedAt, setCheckedAt] = useState(null);
@@ -127,11 +138,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, voiceId = null,
   const loadVoice = useCallback(async () => {
     try {
       const { data } = await api.get("/script/voice", {
-        params: voiceId ? { voice: voiceId } : {},
+        params: profileId ? { profile: profileId } : {},
       });
       setVoice(data);
     } catch { /* the panel degrades to "transcribe first" — never block the feed */ }
-  }, [voiceId]);
+  }, [profileId]);
 
   // voiceRev changes when videos are added, deleted or re-analysed on the other
   // screen — without it this pane would keep offering to write in a profile that
@@ -155,7 +166,10 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, voiceId = null,
       if (refresh) {
         setRanking(true);
         try {
-          await api.post("/news/refresh", cat ? { category: cat } : {});
+          await api.post("/news/refresh", {
+            ...(cat ? { category: cat } : {}),
+            ...(profileId ? { profile: profileId } : {}),
+          });
         } catch {
           // The feed still renders everything already ranked. A failed refresh
           // is a missing update, not a broken screen.
@@ -166,6 +180,10 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, voiceId = null,
 
       const base = { limit: MAX_CARDS };
       if (cat) base.category = cat;
+      // Sent explicitly rather than left to the server's default: the creator
+      // switched channel a moment ago, and a feed drawn from the wrong one is
+      // a screenful of stories for a channel they are not making today.
+      if (profileId) base.profile = profileId;
 
       let { data } = await api.get("/news", {
         params: { ...base, hours: WINDOW_HOURS, min_score: MIN_SCORE },
@@ -195,12 +213,13 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, voiceId = null,
       setBusy(false);
       setLoadedOnce(true);
     }
-  }, [cat]);
+  }, [cat, profileId]);
 
   // categoriesKey is a refetch trigger, not an input: the server derives the
-  // categories from the session, so the request body never changes. It belongs
-  // on the effect rather than in load()'s deps — without it, saving a new
-  // selection in Profile leaves Topics serving the previous categories.
+  // categories from the selected profile, so the request never carries them.
+  // It belongs on the effect rather than in load()'s deps — without it, editing
+  // a profile's categories leaves Topics serving the previous set.
+  //
   // A plain read. Opening Topics deliberately does NOT rank any more: ranking is
   // the paid half, and work that costs money should be something a creator asks
   // for and can see happening, not something that fires behind them every time
@@ -229,10 +248,12 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, voiceId = null,
     return () => clearTimeout(t);
   }, [loadedOnce, items.length, error, emptyTries, load]);
 
-  // Their selection can change in Profile. If the category being viewed is no
-  // longer one of theirs, fall back to the first that is.
+  // The profile's categories change when they edit it, and switching profiles
+  // replaces them wholesale. Either way, a category tab that is no longer one of
+  // THIS channel's falls back to the first that is — otherwise switching to the
+  // sports channel leaves the feed pinned to an AI tab it no longer has.
   useEffect(() => {
-    const ids = (userCategories || []).filter(Boolean);
+    const ids = profileCats.filter(Boolean);
     if (!ids.length) return;
     if (!cat || !ids.includes(cat)) setCat(ids[0]);
   }, [categoriesKey]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -293,18 +314,27 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, voiceId = null,
         <div style={{ padding: `${isPhone ? 16 : 20}px 0 12px`, flexShrink: 0 }}>
           <div
             style={{
-              display: "flex", alignItems: "baseline", justifyContent: "space-between",
+              display: "flex", alignItems: "flex-start", justifyContent: "space-between",
               gap: 12, padding: `0 ${gut}px`,
             }}
           >
-            <h1
-              style={{
-                fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
-                color: "var(--ink)", margin: 0,
-              }}
-            >
-              What to cover today
-            </h1>
+            <div style={{ minWidth: 0 }}>
+              <h1
+                style={{
+                  fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
+                  color: "var(--ink)", margin: 0,
+                }}
+              >
+                What to cover today
+              </h1>
+              {/* Which channel this feed is for. Only rendered once there is a
+                  second one — see ProfileSelect. It sits under the heading
+                  rather than beside it because it changes what the whole column
+                  below means. */}
+              <div style={{ marginTop: 7 }}>
+                <ProfileSelect value={activeId} onChange={setActiveProfile} label="" size="sm" />
+              </div>
+            </div>
             <FetchButton
               busy={busy}
               running={ranking}

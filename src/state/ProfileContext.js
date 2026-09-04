@@ -2,15 +2,15 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo } 
 import api from "../api";
 
 /**
- * The creator's voice sets, and which one is selected.
+ * The creator's channels, and which one they are working in.
  *
  * ── ONE SELECTION, EVERYWHERE ───────────────────────────────────────────────
- * Topics, My scripts and Dashboard each show a voice picker, and they share this
- * one value on purpose. A creator running a Hindi channel and an English one is
- * working on ONE of them at a time — writing for it, reading what they wrote for
- * it, checking how it is doing. Per-screen selections would let those three
- * silently disagree, so "why is my dashboard showing the other channel" becomes
- * a question with no visible cause.
+ * Topics, My voice, My scripts and Dashboard are all about ONE profile at a
+ * time, and they share this single value on purpose. Someone running a tech
+ * channel and a sports channel is working on one of them right now — reading its
+ * feed, writing in its voice, checking how it is doing. Per-screen selections
+ * would let those four silently disagree, and "why is my dashboard showing the
+ * other channel" becomes a question with no visible cause.
  *
  * The choice survives a reload (localStorage) because it is a working context,
  * not a filter someone re-applies every session. Reading it is wrapped: a
@@ -18,14 +18,14 @@ import api from "../api";
  */
 const Ctx = createContext(null);
 
-const KEY = "hg.voice";
+const KEY = "hg.profile";
 
 const FALLBACK = {
-  voices: [], activeId: null, active: null, loading: false, max: 1,
-  setActive: () => {}, refresh: async () => {}, needsName: null,
+  profiles: [], activeId: null, active: null, loading: false, max: 1,
+  setActive: () => {}, refresh: async () => [],
 };
 
-export function useVoices() {
+export function useProfiles() {
   return useContext(Ctx) || FALLBACK;
 }
 
@@ -39,24 +39,24 @@ function writeStored(id) {
   } catch { /* private mode, or storage blocked — the choice still works in-session */ }
 }
 
-export default function VoiceProvider({ children }) {
-  const [voices, setVoices] = useState([]);
+export default function ProfileProvider({ children }) {
+  const [profiles, setProfiles] = useState([]);
   const [activeId, setActiveId] = useState(readStored);
   const [loading, setLoading] = useState(true);
   const [max, setMax] = useState(1);
 
   const refresh = useCallback(async () => {
     try {
-      const { data } = await api.get("/voices");
-      const list = data.voices || [];
-      setVoices(list);
+      const { data } = await api.get("/profiles");
+      const list = data.profiles || [];
+      setProfiles(list);
       setMax(data.max || 1);
 
       // Keep the current selection if it still exists; otherwise fall back to
-      // the server's default. A stored id can outlive the voice it names —
+      // the server's default. A stored id can outlive the profile it names —
       // deleted in another tab, or on another device.
       setActiveId((prev) => {
-        if (prev && list.some((v) => v.id === prev)) return prev;
+        if (prev && list.some((p) => p.id === prev)) return prev;
         return data.active || list[0]?.id || null;
       });
       return list;
@@ -73,20 +73,16 @@ export default function VoiceProvider({ children }) {
     setActiveId(id);
     writeStored(id);
     // Tell the server too, so the next device — and the next session before the
-    // list loads — opens on the same voice.
-    if (id) api.patch(`/voices/${id}`, { is_default: true }).catch(() => {});
+    // list loads — opens on the same channel.
+    if (id) api.patch(`/profiles/${id}`, { is_default: true }).catch(() => {});
   }, []);
 
   const active = useMemo(
-    () => voices.find((v) => v.id === activeId) || voices.find((v) => v.is_default) || voices[0] || null,
-    [voices, activeId]
+    () => profiles.find((p) => p.id === activeId) || profiles.find((p) => p.is_default) || profiles[0] || null,
+    [profiles, activeId]
   );
 
-  // The first analysed-but-unnamed set. The app blocks on this: a voice with no
-  // name is unusable in the dropdown where credits get spent.
-  const needsName = useMemo(() => voices.find((v) => v.needs_name) || null, [voices]);
-
-  const value = { voices, activeId: active?.id || null, active, loading, max, setActive, refresh, needsName };
+  const value = { profiles, activeId: active?.id || null, active, loading, max, setActive, refresh };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

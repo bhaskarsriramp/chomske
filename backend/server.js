@@ -18,7 +18,7 @@ import newsRoutes from "./routes/news.js";
 import scriptRoutes from "./routes/script.js";
 import statsRoutes from "./routes/stats.js";
 import billingRoutes from "./routes/billing.js";
-import voiceRoutes from "./routes/voices.js";
+import profileRoutes from "./routes/profiles.js";
 import VoiceProfile from "./models/VoiceProfile.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
@@ -99,9 +99,9 @@ app.use(
   rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
   billingRoutes
 );
-// Managing voice sets: cheap reads and small writes, no model calls except
-// /voices/:id/analyse — which is itself bounded by how many videos a set holds.
-app.use("/voices", voiceRoutes);
+// Managing channels: cheap reads and small writes, no model calls except
+// /profiles/:id/analyse — itself bounded by how many videos a profile holds.
+app.use("/profiles", profileRoutes);
 app.use("/stats", statsRoutes);
 
 // 404 + error handler. Errors are logged in full and answered generically —
@@ -131,13 +131,18 @@ function assertConfig() {
     // voice_profiles used to carry `unique: true` on `user`. Removing it from
     // the schema does NOT remove it from a database that already has it —
     // Mongoose creates missing indexes but never drops stale ones — so without
-    // this, creating a second voice fails with E11000 in production while
+    // this, a second profile's voice fails with E11000 in production while
     // working perfectly against a fresh local database. syncIndexes() makes the
-    // collection match the schema exactly.
+    // collection match the schema exactly, and adds the unique index on
+    // `profile` that now enforces one voice per channel.
     //
     // Cheap: voice_profiles holds a handful of rows per user. Failures are
     // logged rather than fatal — a server that will not boot because an index
-    // could not be rebuilt is a worse outage than one extra voice set failing.
+    // could not be rebuilt is a worse outage than one profile failing.
+    //
+    // NOTE: this cannot create the unique { profile: 1 } index while rows still
+    // have profile: null (they all collide on null). Run
+    // scripts/migrateProfiles.js --apply, which backfills first.
     await VoiceProfile.syncIndexes().catch((err) =>
       console.error("[server] voice_profiles index sync failed:", err.message)
     );

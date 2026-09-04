@@ -9,9 +9,8 @@ import ProfilePanel from "../Profile/ProfilePanel";
 import ScriptsPanel from "../Scripts/ScriptsPanel";
 import Logo from "../Shell/Logo";
 import CreditsProvider from "../../state/CreditsContext";
-import VoiceProvider, { useVoices } from "../../state/VoiceContext";
+import ProfileProvider, { useProfiles } from "../../state/ProfileContext";
 import { CreditsPill } from "../Shell/CreditsCard";
-import NameVoiceDialog from "../Voice/NameVoiceDialog";
 
 /**
  * The app shell.
@@ -33,21 +32,21 @@ export const TAB_IDS = ["topics", "voice", "scripts", "dashboard", "profile"];
  * Both providers wrap the whole shell rather than individual panels.
  *
  * The balance is read by the sidebar, the mobile header and the order panel, and
- * the selected voice by Topics, My scripts and Dashboard — all of which are
- * mounted at once here (panels are hidden, not unmounted). Per-panel state would
- * mean several copies of each, disagreeing the moment one of them changed.
+ * the selected profile by every screen — all of which are mounted at once here
+ * (panels are hidden, not unmounted). Per-panel state would mean several copies
+ * of each, disagreeing the moment one of them changed.
  */
 export default function Dashboard(props) {
   return (
     <CreditsProvider>
-      <VoiceProvider>
+      <ProfileProvider>
         <Shell {...props} />
-      </VoiceProvider>
+      </ProfileProvider>
     </CreditsProvider>
   );
 }
 
-function Shell({ user, onSignOut, onUserChange }) {
+function Shell({ user, onSignOut }) {
   const isNarrow = useIsMobile(900);
   const { tab: tabParam } = useParams();
   const navigate = useNavigate();
@@ -62,7 +61,7 @@ function Shell({ user, onSignOut, onUserChange }) {
   // profile instead of offering to write in a voice that no longer exists.
   const [voiceRev, setVoiceRev] = useState(0);
 
-  const { activeId, needsName, refresh: refreshVoices } = useVoices();
+  const { activeId, refresh: refreshProfiles } = useProfiles();
 
   const openTab = useCallback((id) => {
     navigate(`/app/${id}`);
@@ -76,12 +75,12 @@ function Shell({ user, onSignOut, onUserChange }) {
     setMounted((m) => (m[tab] ? m : { ...m, [tab]: true }));
   }, [tab]);
 
-  // The voice set changed — re-read the list (counts, staleness, whether one is
-  // waiting to be named) and tell the panels to re-read the profile.
+  // The profile's videos or voice changed — re-read the list (counts,
+  // staleness) and tell the panels to re-read the voice.
   const bumpVoice = useCallback(() => {
     setVoiceRev((n) => n + 1);
-    refreshVoices();
-  }, [refreshVoices]);
+    refreshProfiles();
+  }, [refreshProfiles]);
 
   // Escape closes the drawer. Also close it if the viewport grows into the
   // desktop layout — otherwise the overlay state survives the resize and blocks
@@ -162,13 +161,7 @@ function Shell({ user, onSignOut, onUserChange }) {
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "topics" ? "flex" : "none" }}>
               <NewsFeed
                 voiceRev={voiceRev}
-                voiceId={activeId}
-                categoriesKey={(user?.categories || []).join(",")}
-                // Passed as well as joined so the feed can open on their first
-                // category in ONE request. Waiting for the server to name their
-                // categories back would mean loading everything, then loading
-                // again scoped — two round trips to render the first screen.
-                userCategories={user?.categories || []}
+                profileId={activeId}
                 onGoTranscribe={() => openTab("voice")}
               />
             </div>
@@ -178,7 +171,11 @@ function Shell({ user, onSignOut, onUserChange }) {
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "voice" ? "flex" : "none" }}>
               {/* setQuota is a stable setState reference — an inline arrow would
                   change identity every render and re-fire the panel's fetch. */}
-              <TranscribePanel onQuota={setQuota} onVoiceChange={bumpVoice} />
+              <TranscribePanel
+                onQuota={setQuota}
+                onVoiceChange={bumpVoice}
+                onGoProfiles={() => openTab("profile")}
+              />
             </div>
           )}
 
@@ -205,23 +202,15 @@ function Shell({ user, onSignOut, onUserChange }) {
 
           {tab === "profile" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <ProfilePanel user={user} onSignOut={onSignOut} onUserChange={onUserChange} />
+              <ProfilePanel
+                user={user}
+                onSignOut={onSignOut}
+                onGoVoice={() => openTab("voice")}
+              />
             </div>
           )}
         </main>
       </div>
-
-      {/* Mounted at the shell, not inside My voice: an analysis can finish while
-          the creator has moved on to Topics, and an unnamed voice is unusable in
-          the dropdown wherever they are. See NameVoiceDialog for why it cannot
-          be dismissed. */}
-      {needsName && (
-        <NameVoiceDialog
-          key={needsName.id}
-          voice={needsName}
-          onNamed={() => { refreshVoices(); setVoiceRev((n) => n + 1); }}
-        />
-      )}
     </div>
   );
 }

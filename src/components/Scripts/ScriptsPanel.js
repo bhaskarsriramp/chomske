@@ -4,8 +4,8 @@ import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton, { SkeletonText } from "../Shell/Skeleton";
 import { timeAgo, sourceLabel } from "../News/newsUtils";
 import { categoryColor, cardBackground } from "../../theme";
-import { useVoices } from "../../state/VoiceContext";
-import VoiceSelect from "../Shell/VoiceSelect";
+import { useProfiles } from "../../state/ProfileContext";
+import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * My scripts — everything this creator has written, and what it was written from.
@@ -25,7 +25,7 @@ export default function ScriptsPanel({ onGoTopics }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
-  const { voices } = useVoices();
+  const { profiles } = useProfiles();
 
   const [scripts, setScripts] = useState([]);
   const [openId, setOpenId] = useState(null);
@@ -44,7 +44,7 @@ export default function ScriptsPanel({ onGoTopics }) {
     setError("");
     try {
       const { data } = await api.get("/script", {
-        params: { limit: 30, ...(filter && filter !== "all" ? { voice: filter } : {}) },
+        params: { limit: 30, ...(filter && filter !== "all" ? { profile: filter } : {}) },
       });
       setScripts(data.scripts || []);
     } catch (err) {
@@ -94,8 +94,8 @@ export default function ScriptsPanel({ onGoTopics }) {
             >
               My scripts
             </h1>
-            {voices.length > 1 && (
-              <VoiceSelect
+            {profiles.length > 1 && (
+              <ProfileSelect
                 value={filter}
                 onChange={setFilter}
                 allowAll
@@ -255,7 +255,7 @@ function ScriptRow({ script, index, isPhone, active, onOpen }) {
           // The voice it was written in, as it was CALLED at the time — the name
           // is copied onto the script, so renaming a voice never rewrites the
           // history of what was already made in it.
-          script.voice_name,
+          script.profile_name,
           script.language_label,
           script.sources?.length ? `${script.sources.length} source${script.sources.length === 1 ? "" : "s"}` : null,
         ].filter(Boolean).join("  ·  ")}

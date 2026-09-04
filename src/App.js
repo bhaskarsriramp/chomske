@@ -63,7 +63,7 @@ export default function App() {
                 : !user ? <Navigate to="/" replace />
                 : !user.onboarded
                   ? <CategoryPicker user={user} onDone={setUser} onSignOut={signOut} />
-                  : <Dashboard user={user} onSignOut={signOut} onUserChange={setUser} />
+                  : <Dashboard user={user} onSignOut={signOut} />
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />

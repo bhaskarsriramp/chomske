@@ -19,36 +19,35 @@ const { Schema } = mongoose;
  * Rebuilt when they add videos — cheap to regenerate (a few thousand input
  * tokens), so it is never patched incrementally.
  *
- * ── WHY A USER MAY HAVE SEVERAL ──────────────────────────────────────────────
- * This used to be one row per user, enforced by a unique index. That was wrong
- * for how creators actually work: one person runs a Hindi tech channel and an
- * English one, or writes for a client as well as themselves, and blending those
- * into a single profile produces a voice that is nobody's — the same failure the
- * mixed-language warning in routes/transcribe.js already had to warn about.
+ * ── ONE VOICE PER PROFILE ────────────────────────────────────────────────────
+ * This used to be one row per USER, enforced by a unique index on `user`. That
+ * was wrong for how creators actually work: one person runs a Hindi tech channel
+ * and an English one, and blending those into a single profile produces a voice
+ * that is nobody's — the same failure the mixed-language warning in
+ * routes/transcribe.js already had to warn about.
  *
- * So the row is now a VOICE SET: a named container that owns its own videos and
- * its own learned style. It is created empty (name "", nothing learned), fills
- * with transcripts, and is analysed as one deliberate act. The name is asked for
- * once the analysis succeeds, because before that there is nothing to name.
+ * It is now one row per PROFILE (models/Profile.js), which is the container for
+ * a whole channel: its categories, its videos, its scripts and this. A profile
+ * has exactly one voice, so this row carries no name of its own — what it is
+ * called is the profile's name, and storing that twice is storing it wrong.
  *
- * The unique index on `user` is therefore gone. It still exists in any database
- * created before this change — VoiceProfile.syncIndexes() at boot (server.js)
- * drops it, and scripts/migrateVoices.js backfills the data.
+ * The unique index on `user` is therefore gone, replaced by a unique index on
+ * `profile`. The old one still exists in any database created before this
+ * change: VoiceProfile.syncIndexes() at boot (server.js) drops it, and
+ * scripts/migrateProfiles.js backfills the data.
  */
 const VoiceProfileSchema = new Schema({
+  // Kept alongside `profile` so every ownership check can be scoped to the
+  // caller without a join. A profile id alone must never be enough to read or
+  // overwrite somebody else's voice.
   user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
 
-  // What the creator calls this voice. Empty until they name it, which they are
-  // asked to do the moment the first analysis succeeds — an unnamed voice is
-  // fine to collect videos into, but useless in a dropdown next to three others.
-  name: { type: String, default: "", trim: true, maxlength: 60 },
+  // The channel this voice belongs to. One voice per profile — enforced by the
+  // unique index below, not by application logic that a double-click can race.
+  profile: { type: Schema.Types.ObjectId, ref: "Profile", required: true },
 
-  // Which one the app opens on. Exactly one per user should carry this; the
-  // service repairs it rather than trusting it (see voiceProfileService.js).
-  is_default: { type: Boolean, default: false },
-
-  // Which transcripts produced this. Used to detect staleness: if the set holds
-  // transcripts this profile never saw, it is out of date.
+  // Which transcripts produced this. Used to detect staleness: if the profile
+  // holds transcripts this voice never saw, it is out of date.
   built_from:     [{ type: Schema.Types.ObjectId, ref: "Transcript" }],
   transcript_count: { type: Number, default: 0 },
 
@@ -111,15 +110,14 @@ const VoiceProfileSchema = new Schema({
   build_failed_at: { type: Date, default: null },
 
   // Null until the first successful analysis. This — not the presence of the row
-  // — is what "this voice is ready" means: a set that has collected videos but
-  // has never been analysed has no style to write from.
+  // — is what "this voice is ready" means: a profile that has collected videos
+  // but has never been analysed has no style to write from.
   built_at:   { type: Date, default: null },
   created_at: { type: Date, default: Date.now },
 });
 
-// The list query on every voice-aware screen: this user's sets, oldest first so
-// the order a creator made them in is the order they see.
-VoiceProfileSchema.index({ user: 1, created_at: 1 });
+// One voice per profile, enforced by the database.
+VoiceProfileSchema.index({ profile: 1 }, { unique: true });
 
 export default mongoose.models.VoiceProfile ||
   mongoose.model("VoiceProfile", VoiceProfileSchema, "voice_profiles");

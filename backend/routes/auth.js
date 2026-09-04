@@ -15,8 +15,10 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 import User from "../models/User.js";
+import Profile from "../models/Profile.js";
 import authenticateToken, { COOKIE_NAME, cookieOptions } from "../middleware/authenticateToken.js";
 import { publicCategories, sanitizeSelection, MAX_CATEGORIES } from "../services/categories.js";
+import { ensureProfile, syncUserCategories } from "../services/profileService.js";
 import { kickoffCategories } from "../services/newsScheduler.js";
 
 const router = express.Router();
@@ -107,11 +109,20 @@ router.get("/categories", (req, res) => {
 });
 
 /**
- * PUT /auth/categories  { categories: [ids] }
+ * PUT /auth/categories  { categories: [ids], profile_name? }
  *
- * Used by first-run onboarding and by later edits. Validated server-side and
- * capped — the client enforces the same limit, but a direct call must not be
- * able to subscribe to all eight and quietly multiply the collection bill.
+ * First-run onboarding. It answers two questions in one screen — what this
+ * channel covers, and what to call it — because they are the same decision:
+ * a profile with no categories has no feed, and one with no name cannot be told
+ * apart from the next one they make.
+ *
+ * Both are written to the user's DEFAULT PROFILE (models/Profile.js), not to the
+ * account. Later edits go through PATCH /profiles/:id, which is where a creator
+ * with several channels changes them one at a time.
+ *
+ * Validated server-side and capped — the client enforces the same limit, but a
+ * direct call must not be able to subscribe to all eight and quietly multiply
+ * the collection bill.
  */
 router.put("/categories", authenticateToken, async (req, res) => {
   const chosen = sanitizeSelection(req.body?.categories);
@@ -122,20 +133,29 @@ router.put("/categories", authenticateToken, async (req, res) => {
     });
   }
 
+  const profile = await ensureProfile(req.user.id);
+
+  // The name is optional HERE and only here: the first profile is pre-filled
+  // with "My Profile" so a new account is never blocked on naming something it
+  // has not seen yet. Every profile after this one has to be named — see
+  // services/profileService.js createProfile().
+  const name = String(req.body?.profile_name || "").trim().slice(0, 60);
+  await Profile.updateOne(
+    { _id: profile._id, user: req.user.id },
+    { $set: { categories: chosen, ...(name ? { name } : {}) } }
+  );
+
+  // Kept in step so the collector keeps scheduling off one field — see
+  // profileService.syncUserCategories() for why this denormalisation exists.
+  await syncUserCategories(req.user.id);
+
   // onboarded_at is stamped once and never moved, so it records when they first
   // chose rather than when they last edited. Done as an aggregation-pipeline
   // update so $ifNull can read the existing value in the same atomic operation —
   // a read-then-write would let two concurrent saves race and reset it.
   const user = await User.findOneAndUpdate(
     { _id: req.user.id },
-    [
-      {
-        $set: {
-          categories: chosen,
-          onboarded_at: { $ifNull: ["$onboarded_at", new Date()] },
-        },
-      },
-    ],
+    [{ $set: { onboarded_at: { $ifNull: ["$onboarded_at", new Date()] } } }],
     { new: true }
   );
   if (!user) return res.status(404).json({ success: false, message: "Account not found" });
@@ -161,9 +181,13 @@ function publicUser(u) {
     email: u.email,
     name: u.name,
     picture: u.picture,
-    // The onboarding gate reads these. `onboarded` is its own flag rather than
+    // The onboarding gate reads this. `onboarded` is its own flag rather than
     // categories.length so a user who clears their selection later is not sent
     // back through first-run onboarding.
+    //
+    // `categories` here is the UNION across every profile, not one channel's
+    // list — it is what the collector schedules off. Screens that show or edit
+    // what a channel covers read it from GET /profiles instead.
     categories: u.categories || [],
     onboarded: !!u.onboarded_at,
   };

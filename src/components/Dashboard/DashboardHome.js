@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
-import { useVoices } from "../../state/VoiceContext";
-import VoiceSelect from "../Shell/VoiceSelect";
+import { useProfiles } from "../../state/ProfileContext";
+import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * The Dashboard: how much voice we have, and how much you've made with it.
@@ -22,7 +22,7 @@ const RANGES = [
 
 export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
   const isPhone = useIsMobile(680);
-  const { voices, activeId, setActive } = useVoices();
+  const { profiles, active, activeId, setActive } = useProfiles();
 
   const [range, setRange] = useState("7d");
   const [custom, setCustom] = useState({ from: "", to: "" });
@@ -30,11 +30,11 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
 
-  // Defaults to the voice they are working in, not to "all". Unlike the script
+  // Defaults to the channel they are working in, not to "all". Unlike the script
   // history, the numbers here answer "how is THIS channel doing" — and the voice
-  // card underneath is meaningless without a set to be about, since there is no
-  // such thing as an average of two voices.
-  const voiceFilter = activeId || "all";
+  // card underneath is meaningless without one channel to be about, since there
+  // is no such thing as an average of two voices.
+  const profileFilter = activeId || "all";
 
   const load = useCallback(async () => {
     // A custom range with only one date chosen isn't a range yet — don't fetch
@@ -45,7 +45,7 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
     try {
       const params = { range };
       if (range === "custom") { params.from = custom.from; params.to = custom.to; }
-      if (voiceFilter && voiceFilter !== "all") params.voice = voiceFilter;
+      if (profileFilter && profileFilter !== "all") params.profile = profileFilter;
       const { data } = await api.get("/stats/dashboard", { params });
       setData(data);
     } catch (err) {
@@ -53,7 +53,7 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
     } finally {
       setBusy(false);
     }
-  }, [range, custom.from, custom.to, voiceFilter]);
+  }, [range, custom.from, custom.to, profileFilter]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -72,8 +72,8 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {voices.length > 1 && (
-            <VoiceSelect value={voiceFilter} onChange={setActive} label="" size="sm" hideWhenSingle={false} />
+          {profiles.length > 1 && (
+            <ProfileSelect value={profileFilter} onChange={setActive} label="" size="sm" hideWhenSingle={false} />
           )}
 
           <div
@@ -174,7 +174,7 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
         />
 
         <Stat
-          label={data?.voice?.name ? `Voice · ${data.voice.name}` : "Voice profile"}
+          label={active?.name ? `Voice · ${active.name}` : "Voice profile"}
           loading={!data}
           value={data?.voice ? confidenceLabel(data.voice.confidence) : data ? "Not built" : ""}
           suffix={data?.voice?.language_label || ""}

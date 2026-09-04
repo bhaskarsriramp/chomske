@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import api from "../../api";
 import { useCredits } from "../../state/CreditsContext";
-import { useVoices } from "../../state/VoiceContext";
-import VoiceSelect from "../Shell/VoiceSelect";
+import { useProfiles } from "../../state/ProfileContext";
+import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * ScriptOrder — choose the voice, choose the length, see the price.
@@ -25,7 +25,7 @@ import VoiceSelect from "../Shell/VoiceSelect";
  */
 export default function ScriptOrder({ busy, onGenerate }) {
   const { balance, setBalance, openBuy, canBuy, rules } = useCredits();
-  const { voices, activeId, setActive } = useVoices();
+  const { profiles, activeId, setActive } = useProfiles();
 
   const [seconds, setSeconds] = useState(60);
   const [english, setEnglish] = useState(false);
@@ -68,15 +68,15 @@ export default function ScriptOrder({ busy, onGenerate }) {
 
   return (
     <div>
-      {/* ── Which voice ──────────────────────────────────────────────────────
-          Only rendered once there is a second voice to choose between — see
-          VoiceSelect. It is first because it is the most expensive thing to get
-          wrong: the wrong length is a rewrite, the wrong voice is a script that
-          sounds like somebody else. */}
-      {voices.length > 1 && (
+      {/* ── Which channel ────────────────────────────────────────────────────
+          Only rendered once there is a second one to choose between — see
+          ProfileSelect. It is first because it is the most expensive thing to
+          get wrong: the wrong length is a rewrite, the wrong channel is a script
+          in somebody else's voice, for an audience that isn't watching. */}
+      {profiles.length > 1 && (
         <div style={{ marginBottom: 14 }}>
           <Label>Write as</Label>
-          <VoiceSelect value={activeId} onChange={setActive} label="" hideWhenSingle={false} />
+          <ProfileSelect value={activeId} onChange={setActive} label="" hideWhenSingle={false} />
         </div>
       )}
 

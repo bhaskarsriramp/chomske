@@ -2,23 +2,24 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
-import { useVoices } from "../../state/VoiceContext";
-import { voiceLabel } from "../Shell/VoiceSelect";
+import { useProfiles } from "../../state/ProfileContext";
+import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * My voice — the videos that teach us how this creator talks.
  *
- * ── ONE SCREEN, SEVERAL VOICES ───────────────────────────────────────────────
- * A creator can keep more than one voice set: their Hindi channel and their
- * English one, or their own work and a client's. Each holds its OWN videos and
- * its own analysis, because a profile built from both is a voice that is
- * nobody's — the failure the mixed-language warning below already had to warn
- * about, now solved rather than flagged.
+ * ── ONE VOICE PER CHANNEL ────────────────────────────────────────────────────
+ * Everything on this screen belongs to the profile they are working in. A
+ * creator running a Hindi tech channel and an English one keeps two profiles,
+ * and each has its OWN five videos and its own single voice — because a voice
+ * built from both is a voice that is nobody's, the failure the mixed-language
+ * warning below used to only be able to warn about.
  *
- * Everything on this screen is about the selected set. The selector is at the
- * top rather than tucked into a menu: which voice you are adding a video to is
- * the single most consequential thing on the page, and a video added to the
- * wrong set costs a transcription to undo.
+ * The profile picker sits at the very top rather than in a menu: which channel
+ * you are adding a video to is the most consequential thing on the page, and a
+ * video added to the wrong one costs a transcription to undo. Channels
+ * themselves are created and named under Profile, not here — this screen is
+ * about the videos.
  *
  * ── WHY ANALYSIS IS A BUTTON, NOT AUTOMATIC ──────────────────────────────────
  * Profiling on every added URL would re-analyse the whole set five times while
@@ -31,14 +32,14 @@ import { voiceLabel } from "../Shell/VoiceSelect";
  * Transcription still happens per video on add, because that is the part that
  * genuinely is per-video and it lets someone read each transcript as they go.
  */
-export default function TranscribePanel({ onQuota, onVoiceChange }) {
+export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
   const {
-    voices, activeId, active: activeVoice, max: maxVoices,
-    setActive: selectVoice, refresh: refreshVoices, loading: voicesLoading,
-  } = useVoices();
+    profiles, activeId, active: activeProfile,
+    setActive: selectProfile, refresh: refreshProfiles, loading: profilesLoading,
+  } = useProfiles();
 
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
@@ -54,16 +55,13 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
 
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
-  const [confirmVoiceDelete, setConfirmVoiceDelete] = useState(null);
-  const [renaming, setRenaming] = useState(false);
-  const [creating, setCreating] = useState(false);
 
   const pollRef = useRef(null);
 
   const loadHistory = useCallback(async () => {
     try {
       const { data } = await api.get("/transcribe", {
-        params: { limit: 20, ...(activeId ? { voice: activeId } : {}) },
+        params: { limit: 20, ...(activeId ? { profile: activeId } : {}) },
       });
       setHistory(data.transcripts || []);
       setMeta({
@@ -79,24 +77,24 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
   const loadVoice = useCallback(async () => {
     try {
       const { data } = await api.get("/script/voice", {
-        params: activeId ? { voice: activeId } : {},
+        params: activeId ? { profile: activeId } : {},
       });
       setVoice(data);
     } catch { /* the panel degrades to "not built yet" */ }
   }, [activeId]);
 
-  // Held until the voice list arrives. Fetching against "whatever the server
+  // Held until the profile list arrives. Fetching against "whatever the server
   // thinks is default" and then again against the real selection would show one
-  // set's videos for a moment before swapping to another's — the exact confusion
-  // this screen has to avoid.
+  // channel's videos for a moment before swapping to another's — the exact
+  // confusion this screen has to avoid.
   useEffect(() => {
-    if (voicesLoading) return;
+    if (profilesLoading) return;
     loadHistory();
     loadVoice();
-  }, [loadHistory, loadVoice, voicesLoading]);
+  }, [loadHistory, loadVoice, profilesLoading]);
 
-  // Switching voices switches everything on screen. The open transcript belongs
-  // to the set that was selected a moment ago.
+  // Switching channels switches everything on screen. The open transcript
+  // belongs to the profile that was selected a moment ago.
   useEffect(() => {
     clearInterval(pollRef.current);
     setOpenVideo(null);
@@ -134,10 +132,10 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
 
     setSubmitting(true);
     try {
-      // The set is named explicitly. Letting the server pick would mean a video
-      // landing in whichever set it considers default — and paying to transcribe
-      // it into the wrong one.
-      const { data } = await api.post("/transcribe", { url: value, voice: activeId || undefined });
+      // The profile is named explicitly. Letting the server pick would mean a
+      // video landing in whichever channel it considers default — and paying to
+      // transcribe it into the wrong one.
+      const { data } = await api.post("/transcribe", { url: value, profile: activeId || undefined });
       setOpenVideo(data.transcript);
       setUrl("");
       setAnalysed(false);   // the set changed, so the last analysis is behind
@@ -175,70 +173,17 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
     setError("");
     setAnalysing(true);
     try {
-      const { data } = await api.post(`/voices/${activeId}/analyse`);
-      setVoice((v) => ({ ...(v || {}), profile: data.profile, stale: false }));
+      const { data } = await api.post(`/profiles/${activeId}/analyse`);
+      setVoice((v) => ({ ...(v || {}), profile: data.voice, stale: false }));
       setAnalysed(true);
-      // Refreshes the shared list, which is what surfaces `needs_name` — the
-      // shell watches for it and puts up the naming dialog. That is deliberately
-      // NOT this component's job: an analysis can finish after the creator has
-      // navigated away, and the demand for a name has to follow them.
-      await refreshVoices();
+      // Refreshes the shared list so every other screen sees this channel's
+      // voice as built — the dashboard card, the order panel, the profile page.
+      await refreshProfiles();
       onVoiceChange?.();
     } catch (err) {
       setError(errorMessage(err, "Couldn't analyse your voice. Please try again."));
     } finally {
       setAnalysing(false);
-    }
-  }
-
-  /* ── Voice sets ─────────────────────────────────────────────────────────── */
-
-  async function addVoice() {
-    if (creating) return;
-    setError("");
-    setCreating(true);
-    try {
-      const { data } = await api.post("/voices", {});
-      await refreshVoices();
-      // Switch to it immediately. Creating a voice and staying on the old one
-      // would mean the next video pasted goes to the wrong place.
-      if (data?.voice?.id) selectVoice(data.voice.id);
-      onVoiceChange?.();
-    } catch (err) {
-      setError(errorMessage(err, "Couldn't add another voice."));
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function doRename(name) {
-    const clean = String(name || "").trim();
-    if (!clean || !activeId) return;
-    setRenaming(false);
-    try {
-      await api.patch(`/voices/${activeId}`, { name: clean });
-      await refreshVoices();
-      onVoiceChange?.();
-    } catch (err) {
-      setError(errorMessage(err, "Couldn't rename that voice."));
-    }
-  }
-
-  async function doDeleteVoice() {
-    if (!confirmVoiceDelete) return;
-    setDeleting(true);
-    try {
-      await api.delete(`/voices/${confirmVoiceDelete.id}`);
-      setConfirmVoiceDelete(null);
-      const list = await refreshVoices();
-      // Land on something real. The deleted set may have been the selection.
-      if (list?.length) selectVoice(list[0].id);
-      onVoiceChange?.();
-    } catch (err) {
-      setError(errorMessage(err, "Couldn't delete that voice."));
-      setConfirmVoiceDelete(null);
-    } finally {
-      setDeleting(false);
     }
   }
 
@@ -260,26 +205,51 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
         className="hg-scroll"
         style={{ flex: "1 1 0", minWidth: 0, minHeight: 0, padding: `${isPhone ? 18 : 28}px ${gut}px ${isPhone ? 40 : 60}px` }}
       >
-        <h1 style={{ fontSize: isPhone ? 21 : 25, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 5px" }}>
-          My voice
-        </h1>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <h1 style={{ fontSize: isPhone ? 21 : 25, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 5px" }}>
+            My voice
+          </h1>
+          {/* Which channel these videos teach. Only rendered once there is a
+              second one — see ProfileSelect. Adding a video to the wrong channel
+              costs a transcription to undo, so this is the first thing on the
+              page rather than something to notice afterwards. */}
+          <ProfileSelect value={activeId} onChange={selectProfile} label="" size="sm" />
+        </div>
+
         <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 18px", lineHeight: 1.6 }}>
           Add up to {meta?.slots?.max || 5} of your own short videos, under {meta?.maxSeconds || 60} seconds
           each. We read how you open, the words you keep in English and how you sign off,
           then write new scripts that sound like you.
         </p>
 
-        <VoiceBar
-          voices={voices}
-          activeId={activeId}
-          max={maxVoices}
-          creating={creating}
-          onSelect={selectVoice}
-          onAdd={addVoice}
-          onRename={() => setRenaming(true)}
-          onDelete={() => setConfirmVoiceDelete(activeVoice)}
-          isPhone={isPhone}
-        />
+        {/* One voice per channel — so a creator who needs a second voice needs a
+            second channel, and that is created under Profile where its
+            categories get set at the same time. */}
+        {activeProfile && (
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+              padding: "11px 14px", borderRadius: 11, marginBottom: 16,
+              background: "var(--made-tint)", border: "1px solid var(--made-line)",
+            }}
+          >
+            <span style={{ fontSize: 13.5, color: "var(--ink-body)", lineHeight: 1.5 }}>
+              These videos teach{" "}
+              <strong style={{ color: "var(--ink)" }}>{activeProfile.name}</strong>
+              {profiles.length > 1 ? " — each channel keeps its own." : ""}
+            </span>
+            <button
+              onClick={onGoProfiles}
+              style={{
+                marginLeft: "auto", border: "none", background: "none", padding: 0,
+                fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", color: "var(--made)",
+                cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3,
+              }}
+            >
+              {profiles.length > 1 ? "Manage channels" : "Add another channel"}
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: isPhone ? "column" : "row", gap: 9 }}>
           <input
@@ -363,7 +333,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
 
         <AnalyseBlock
           voice={voice}
-          voiceName={activeVoice ? voiceLabel(activeVoice) : ""}
+          voiceName={activeProfile?.name || ""}
           canAnalyse={canAnalyse}
           readyCount={meta?.ready || 0}
           analysing={analysing}
@@ -417,268 +387,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange }) {
           onConfirm={doDelete}
         />
       )}
-
-      {renaming && activeVoice && (
-        <RenameDialog
-          voice={activeVoice}
-          onCancel={() => setRenaming(false)}
-          onSave={doRename}
-        />
-      )}
-
-      {confirmVoiceDelete && (
-        <DeleteVoiceDialog
-          voice={confirmVoiceDelete}
-          busy={deleting}
-          onCancel={() => setConfirmVoiceDelete(null)}
-          onConfirm={doDeleteVoice}
-        />
-      )}
     </div>
-  );
-}
-
-/* ── The voice selector ────────────────────────────────────────────────────
-   Pills rather than a dropdown on this one screen: here the choice is the
-   subject of the page, not a filter on it, and pills show the state of every
-   set at once — how full each is, which is analysed, which still needs work.
-   A dropdown would hide exactly that. */
-
-function VoiceBar({ voices, activeId, max, creating, onSelect, onAdd, onRename, onDelete, isPhone }) {
-  if (!voices.length) return null;
-
-  const single = voices.length === 1;
-  const activeVoice = voices.find((v) => v.id === activeId) || voices[0];
-
-  return (
-    <div style={{ marginBottom: 18 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-        {voices.map((v) => {
-          const on = v.id === activeId;
-          return (
-            <button
-              key={v.id}
-              onClick={() => onSelect(v.id)}
-              aria-pressed={on}
-              className={on ? undefined : "hg-pill"}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 7,
-                padding: "8px 13px", borderRadius: 999, cursor: "pointer",
-                border: `1px solid ${on ? "var(--ink)" : "var(--line)"}`,
-                background: on ? "var(--ink)" : "var(--card)",
-                color: on ? "#fff" : "var(--ink-body)",
-                fontSize: 13.5, fontWeight: on ? 650 : 500, maxWidth: "100%",
-              }}
-            >
-              {/* Analysed or not, at a glance. A set with videos but no analysis
-                  cannot write anything, and that is worth seeing before you pick
-                  it rather than after. */}
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                  background: v.built ? (on ? "#7BE3AD" : "var(--made)") : on ? "rgba(255,255,255,.4)" : "#D2D2D2",
-                }}
-              />
-              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {voiceLabel(v)}
-              </span>
-              <span style={{ fontSize: 11.5, opacity: on ? 0.72 : 0.6, flexShrink: 0 }}>
-                {v.videos.used}/{v.videos.max}
-              </span>
-            </button>
-          );
-        })}
-
-        {voices.length < max && (
-          <button
-            onClick={onAdd}
-            disabled={creating}
-            className="hg-pill"
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              padding: "8px 13px", borderRadius: 999,
-              cursor: creating ? "default" : "pointer",
-              border: "1px dashed var(--line)", background: "transparent",
-              color: "var(--ink-mute)", fontSize: 13.5, fontWeight: 500,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: 15, lineHeight: 1 }}>+</span>
-            {creating ? "Adding…" : isPhone ? "Voice" : "Another voice"}
-          </button>
-        )}
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.55 }}>
-          {single
-            ? "Videos you add here teach this voice. Add another voice for a second channel or language."
-            : `Adding to “${voiceLabel(activeVoice)}”. Each voice keeps its own videos.`}
-        </span>
-
-        <span style={{ display: "flex", gap: 10, marginLeft: "auto" }}>
-          <TinyLink onClick={onRename}>Rename</TinyLink>
-          {/* Deleting the only voice is refused by the server anyway — not
-              offering it here saves someone finding that out the hard way. */}
-          {!single && <TinyLink onClick={onDelete} danger>Delete voice</TinyLink>}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function TinyLink({ onClick, danger, children }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        border: "none", background: "none", padding: 0, cursor: "pointer",
-        fontSize: 12.5, fontWeight: 600, fontFamily: "inherit",
-        color: danger ? "var(--bad)" : "var(--ink-mute)",
-        textDecoration: "underline", textUnderlineOffset: 3,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** Renaming, unlike the first naming, is entirely optional — so this one closes. */
-function RenameDialog({ voice, onCancel, onSave }) {
-  const [name, setName] = useState(voice.name || "");
-  const ref = useRef(null);
-
-  useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onCancel(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
-
-  return (
-    <>
-      <div onClick={onCancel} className="hg-fade" style={{ position: "fixed", inset: 0, background: "rgba(15,15,15,.4)", zIndex: 70 }} />
-      <form
-        onSubmit={(e) => { e.preventDefault(); onSave(name); }}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Rename voice"
-        className="hg-dialog-in"
-        style={{
-          position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-          zIndex: 71, width: "min(400px, calc(100vw - 32px))",
-          background: "var(--card)", border: "1px solid var(--line)",
-          borderRadius: "var(--radius)", padding: 22,
-          boxShadow: "0 30px 70px -30px rgba(15,15,15,.5)",
-        }}
-      >
-        <div style={{ fontSize: 17, fontWeight: 700, color: "var(--ink)", marginBottom: 12, letterSpacing: "-0.02em" }}>
-          Rename this voice
-        </div>
-        <input
-          ref={ref}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={60}
-          aria-label="Voice name"
-          style={{
-            width: "100%", boxSizing: "border-box", fontSize: 15, padding: "11px 13px",
-            border: "1px solid var(--line)", borderRadius: 10, background: "var(--card)",
-            color: "var(--ink)", outline: "none", fontFamily: "inherit",
-          }}
-        />
-        <p style={{ fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.55, margin: "10px 0 0" }}>
-          Scripts you already wrote keep the name they were made under.
-        </p>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16, flexWrap: "wrap" }}>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="hg-btn-ghost"
-            style={{
-              fontSize: 13.5, fontWeight: 600, padding: "10px 16px", borderRadius: 10,
-              border: "1px solid var(--line)", background: "var(--card)",
-              color: "var(--ink-body)", cursor: "pointer",
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!name.trim()}
-            className={name.trim() ? "hg-btn-primary" : undefined}
-            style={{
-              fontSize: 13.5, fontWeight: 600, padding: "10px 16px", borderRadius: 10, border: "none",
-              background: name.trim() ? "var(--primary)" : "#E5E5E5",
-              color: name.trim() ? "#fff" : "var(--ink-mute)",
-              cursor: name.trim() ? "pointer" : "default",
-            }}
-          >
-            Save
-          </button>
-        </div>
-      </form>
-    </>
-  );
-}
-
-function DeleteVoiceDialog({ voice, busy, onCancel, onConfirm }) {
-  return (
-    <>
-      <div onClick={busy ? undefined : onCancel} className="hg-fade" style={{ position: "fixed", inset: 0, background: "rgba(15,15,15,.4)", zIndex: 70 }} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Delete voice"
-        className="hg-dialog-in"
-        style={{
-          position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-          zIndex: 71, width: "min(440px, calc(100vw - 32px))",
-          background: "var(--card)", border: "1px solid var(--line)",
-          borderRadius: "var(--radius)", padding: 22,
-          boxShadow: "0 30px 70px -30px rgba(15,15,15,.5)",
-        }}
-      >
-        <div style={{ fontSize: 17, fontWeight: 700, color: "var(--ink)", marginBottom: 8, letterSpacing: "-0.02em" }}>
-          Delete “{voiceLabel(voice)}”?
-        </div>
-        <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)", margin: "0 0 6px" }}>
-          Its {voice.videos?.used || 0} video{(voice.videos?.used || 0) === 1 ? "" : "s"} and what we
-          learned from them go with it.
-        </p>
-        {/* Said plainly, because it is the question someone actually has before
-            they press this. */}
-        <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-mute)", margin: "0 0 18px" }}>
-          Scripts you wrote in this voice are <strong style={{ color: "var(--ink)" }}>kept</strong> — they
-          stay in My scripts with the name they were written under.
-        </p>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <button
-            onClick={onCancel}
-            disabled={busy}
-            className="hg-btn-ghost"
-            style={{
-              fontSize: 13.5, fontWeight: 600, padding: "10px 16px", borderRadius: 10,
-              border: "1px solid var(--line)", background: "var(--card)",
-              color: "var(--ink-body)", cursor: busy ? "default" : "pointer",
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={busy}
-            style={{
-              fontSize: 13.5, fontWeight: 600, padding: "10px 16px", borderRadius: 10,
-              border: "1px solid var(--bad)", background: "var(--bad)", color: "#fff",
-              cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1,
-            }}
-          >
-            {busy ? "Deleting…" : "Delete voice"}
-          </button>
-        </div>
-      </div>
-    </>
   );
 }
 

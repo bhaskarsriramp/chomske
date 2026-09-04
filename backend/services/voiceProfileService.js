@@ -12,29 +12,19 @@
  * That also keeps cost flat: five long videos cost the same to analyse as five
  * Shorts, because only ~2.2k characters of each is ever sent.
  *
- * ── VOICE SETS ───────────────────────────────────────────────────────────────
- * Everything here is scoped to ONE voice set (see models/VoiceProfile.js). A
- * creator can keep several — their Hindi channel and their English one — and
- * each owns its own videos, its own analysis and its own name. The functions in
- * the first block below manage the sets; the rest analyses one of them.
+ * ── ONE PROFILE AT A TIME ────────────────────────────────────────────────────
+ * Everything here is scoped to ONE profile (models/Profile.js) — a single
+ * channel, with a single voice, learned from the videos in that profile only.
+ * The containers themselves are managed in services/profileService.js; this file
+ * only analyses one of them.
  */
-import mongoose from "mongoose";
 import { GoogleGenAI } from "@google/genai";
 import Transcript from "../models/Transcript.js";
-import Script from "../models/Script.js";
 import VoiceProfile from "../models/VoiceProfile.js";
+import { resolveProfile, voiceFor } from "./profileService.js";
 import { measureVoice } from "./voiceMetrics.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
-
-// How many voice sets one account may keep.
-//
-// This is a spend ceiling, not a tidiness rule. Every set carries its own slots
-// of videos, and reading a video is the single expensive thing this product
-// does — an unbounded number of sets is an unbounded transcription bill from one
-// account. The daily cap in routes/transcribe.js limits the rate; this limits
-// the total.
-export const MAX_VOICES = Math.max(1, parseInt(process.env.MAX_VOICE_PROFILES || "5", 10));
 
 // How many transcripts feed one profile. Beyond about eight the marginal signal is
 // small and the input cost is not.
@@ -48,221 +38,6 @@ const HEAD_CHARS = 900;   // the hook, plus how they get into the topic
 const MID_CHARS = 600;    // how they explain something mid-flow
 const TAIL_CHARS = 700;   // the close and call to action
 
-/* ── Voice sets ─────────────────────────────────────────────────────────────
-   Creating, listing, naming and removing the containers. Nothing here calls a
-   model or costs anything. */
-
-/**
- * Adopt rows written before voice sets existed.
- *
- * A transcript or script with no `voice` predates this feature. Left alone it
- * would vanish from every per-set list — a creator would open "My voice" after
- * the deploy and find their five videos gone. So the first set a user has takes
- * ownership of everything unclaimed.
- *
- * Idempotent, and cheap when there is nothing to do: the count is an index hit
- * and the updates only run when it is non-zero. Safe to call on every request
- * that needs a set, which is what makes the migration script optional rather
- * than load-bearing.
- */
-async function adoptOrphans(userId, voiceId) {
-  const orphans = await Transcript.countDocuments({ user: userId, voice: null });
-  if (orphans > 0) {
-    await Transcript.updateMany({ user: userId, voice: null }, { $set: { voice: voiceId } });
-    console.log(`[voice] adopted ${orphans} pre-existing video(s) into voice ${voiceId}`);
-  }
-  // Scripts too, or "My scripts" filtered by voice would show an empty history
-  // to someone who has written thirty.
-  await Script.updateMany(
-    { user: userId, $or: [{ voice: null }, { voice: { $exists: false } }] },
-    { $set: { voice: voiceId } }
-  ).catch(() => {});
-}
-
-/**
- * The user's voice sets, oldest first, each with the counts the UI needs.
- *
- * One aggregate for the video counts rather than two queries per set: a creator
- * with five sets would otherwise cost ten round trips to render a dropdown.
- */
-export async function listVoices(userId) {
-  const uid = new mongoose.Types.ObjectId(String(userId));
-  const [voices, counts] = await Promise.all([
-    VoiceProfile.find({ user: userId }).sort({ created_at: 1 }).lean(),
-    Transcript.aggregate([
-      { $match: { user: uid } },
-      {
-        $group: {
-          _id: "$voice",
-          // "Held" is what fills a slot: anything not failed, including a video
-          // still processing. "Ready" is what analysis can actually read.
-          held: { $sum: { $cond: [{ $ne: ["$status", "failed"] }, 1, 0] } },
-          ready: {
-            $sum: { $cond: [{ $and: [{ $eq: ["$status", "done"] }, { $ne: ["$text", ""] }] }, 1, 0] },
-          },
-        },
-      },
-    ]).catch(() => []),
-  ]);
-
-  const byVoice = new Map(counts.map((c) => [String(c._id), c]));
-  return voices.map((v) => shapeVoice(v, byVoice.get(String(v._id))));
-}
-
-/** The list shape every screen renders from. Never includes the style brief. */
-export function shapeVoice(v, count) {
-  const held = count?.held || 0;
-  const ready = count?.ready || 0;
-  const built = !!v.built_at;
-  const maxVideos = parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
-
-  return {
-    id: String(v._id),
-    name: v.name || "",
-    is_default: !!v.is_default,
-    built,
-    // The one thing the UI blocks on: a set that has been analysed but never
-    // named needs a name before it is any use in a dropdown.
-    needs_name: built && !String(v.name || "").trim(),
-    videos: { used: held, ready, max: maxVideos, left: Math.max(0, maxVideos - held) },
-    transcript_count: v.transcript_count || 0,
-    language: v.language || "",
-    language_label: v.language_label || "",
-    confidence: v.confidence || "thin",
-    // Behind if the set holds videos the analysis never saw. Counted against
-    // what is READY, since a still-processing video was never analysable.
-    stale: built && (v.transcript_count || 0) !== ready,
-    built_at: v.built_at || null,
-    created_at: v.created_at,
-  };
-}
-
-/**
- * The set to act on when the caller didn't name one, creating the first one if
- * this account has never had any.
- */
-export async function ensureVoice(userId) {
-  let voices = await VoiceProfile.find({ user: userId }).sort({ created_at: 1 });
-
-  if (!voices.length) {
-    const created = await VoiceProfile.create({
-      user: userId,
-      name: "",
-      is_default: true,
-      created_at: new Date(),
-    });
-    // Re-read rather than trusting the insert: two requests arriving together
-    // can both find nothing and both create. Whoever is second sees both rows
-    // here and the repair below settles on the older one, so the worst case is
-    // one spare empty set rather than a user with two conflicting defaults.
-    voices = await VoiceProfile.find({ user: userId }).sort({ created_at: 1 });
-    if (!voices.length) voices = [created];
-  }
-
-  // Exactly one default. Repaired rather than assumed — a stale flag decides
-  // which set a script gets written in, so "probably right" is not good enough.
-  const defaults = voices.filter((v) => v.is_default);
-  let active = defaults[0] || voices[0];
-  if (defaults.length !== 1 || !active.is_default) {
-    await VoiceProfile.updateMany({ user: userId, _id: { $ne: active._id } }, { $set: { is_default: false } });
-    await VoiceProfile.updateOne({ _id: active._id }, { $set: { is_default: true } });
-    active.is_default = true;
-  }
-
-  await adoptOrphans(userId, active._id);
-  return active;
-}
-
-/**
- * Resolve a caller-supplied voice id to one of this user's sets.
- *
- * Falls back to the default rather than erroring: an id from a stale tab, or a
- * set deleted in another window, should land the creator on a working screen,
- * not on "not found". Returns { voice, requested_missing }.
- */
-export async function resolveVoice(userId, voiceId) {
-  const id = String(voiceId || "").trim();
-  if (id && mongoose.Types.ObjectId.isValid(id)) {
-    const found = await VoiceProfile.findOne({ _id: id, user: userId });
-    if (found) return { voice: found, requested_missing: false };
-    return { voice: await ensureVoice(userId), requested_missing: true };
-  }
-  return { voice: await ensureVoice(userId), requested_missing: false };
-}
-
-/** A new, empty set. Refuses past the ceiling rather than silently capping. */
-export async function createVoice(userId, name = "") {
-  const held = await VoiceProfile.countDocuments({ user: userId });
-  if (held >= MAX_VOICES) {
-    const err = new Error(`You can keep ${MAX_VOICES} voices. Delete one to add another.`);
-    err.limit_reached = true;
-    throw err;
-  }
-  return VoiceProfile.create({
-    user: userId,
-    name: String(name || "").trim().slice(0, 60),
-    // Never steals the default from an existing set — switching which voice
-    // writes is the creator's choice, not a side effect of making a new one.
-    is_default: held === 0,
-    created_at: new Date(),
-  });
-}
-
-export async function renameVoice(userId, voiceId, name) {
-  const clean = String(name || "").trim().slice(0, 60);
-  if (!clean) throw new Error("Give this voice a name.");
-  return VoiceProfile.findOneAndUpdate(
-    { _id: voiceId, user: userId },
-    { $set: { name: clean } },
-    { new: true }
-  );
-}
-
-/** Make this the set the app opens on. */
-export async function setDefaultVoice(userId, voiceId) {
-  const target = await VoiceProfile.findOne({ _id: voiceId, user: userId });
-  if (!target) return null;
-  await VoiceProfile.updateMany({ user: userId, _id: { $ne: target._id } }, { $set: { is_default: false } });
-  await VoiceProfile.updateOne({ _id: target._id }, { $set: { is_default: true } });
-  return target;
-}
-
-/**
- * Delete a set and the videos that taught it.
- *
- * Scripts are NOT deleted. They are the thing the creator paid for, and losing
- * six months of writing because they tidied up a voice would be unforgivable —
- * they keep the copied voice_name and simply stop matching that filter.
- *
- * The last set cannot be deleted: with none left there is nowhere for the next
- * video to go, and the app would be creating one back a moment later anyway.
- */
-export async function deleteVoice(userId, voiceId) {
-  // Ownership is checked BEFORE the "is this your last one" rule, and both are
-  // checked before anything is removed. The other order answers "this is your
-  // only voice" to someone deleting a set that isn't theirs — a confusing reply
-  // to the wrong question, and one that reports on their own account instead of
-  // simply saying the id was not found.
-  const target = await VoiceProfile.findOne({ _id: voiceId, user: userId });
-  if (!target) return null;
-
-  const count = await VoiceProfile.countDocuments({ user: userId });
-  if (count <= 1) {
-    const err = new Error("This is your only voice. Delete its videos instead, or make another first.");
-    err.last_one = true;
-    throw err;
-  }
-
-  const doc = await VoiceProfile.findOneAndDelete({ _id: target._id, user: userId });
-  if (!doc) return null;
-
-  await Transcript.deleteMany({ user: userId, voice: doc._id });
-  // Detach rather than delete, so the scripts survive with their labels intact.
-  await Script.updateMany({ user: userId, voice: doc._id }, { $set: { voice: null } }).catch(() => {});
-
-  if (doc.is_default) await ensureVoice(userId);   // promotes the next one
-  return doc;
-}
 
 let _client = null;
 function client() {
@@ -474,18 +249,19 @@ function usable(p) {
 }
 
 /**
- * Build (or rebuild) one voice set's profile, from the videos in THAT set.
+ * Build (or rebuild) one profile's voice, from the videos in THAT profile.
  *
  * @param {string} userId
- * @param {string} [voiceId]  which set. Omitted means the user's default.
+ * @param {string} [profileId]  which channel. Omitted means the user's default.
  * @returns {{ profile, built, reason? }}
  */
-export async function buildVoiceProfile(userId, voiceId) {
-  const { voice } = await resolveVoice(userId, voiceId);
+export async function buildVoiceProfile(userId, profileId) {
+  const { profile } = await resolveProfile(userId, profileId);
+  const voice = await voiceFor(userId, profile._id);
 
   const transcripts = await Transcript.find({
     user: userId,
-    voice: voice._id,
+    profile: profile._id,
     status: "done",
     text: { $ne: "" },
   })
@@ -583,8 +359,8 @@ export async function buildVoiceProfile(userId, voiceId) {
     if (Array.isArray(v) ? v.length : v) set[k] = v;
   }
 
-  // Scoped to the set AND the user: a voice id alone must never be enough to
-  // overwrite someone else's profile.
+  // Scoped to the row AND the user: a profile id alone must never be enough to
+  // overwrite somebody else's voice.
   const doc = await VoiceProfile.findOneAndUpdate(
     { _id: voice._id, user: userId },
     { $set: set },
@@ -592,7 +368,7 @@ export async function buildVoiceProfile(userId, voiceId) {
   );
 
   console.log(
-    `[voice] profile ${voice._id} for ${userId} from ${transcripts.length} transcript(s) · ` +
+    `[voice] "${profile.name}" (${profile._id}) for ${userId} from ${transcripts.length} transcript(s) · ` +
     `${languageLabel || language || "?"} · ${confidence} · $${usage.usd.toFixed(4)}`
   );
 
@@ -605,25 +381,26 @@ export async function buildVoiceProfile(userId, voiceId) {
  * rebuild on every script.
  *
  * @param {string} userId
- * @param {{ voiceId?: string, autoBuild?: boolean }} opts
+ * @param {{ profileId?: string, autoBuild?: boolean }} opts
  */
-export async function getUsableProfile(userId, { voiceId, autoBuild = true } = {}) {
-  const { voice } = await resolveVoice(userId, voiceId);
+export async function getUsableProfile(userId, { profileId, autoBuild = true } = {}) {
+  const { profile: channel } = await resolveProfile(userId, profileId);
+  const voice = await voiceFor(userId, channel._id);
 
-  // A set with nothing learned yet is not a profile. built_at is the marker:
-  // the row exists from the moment the set is created, so its mere presence
+  // A voice with nothing learned yet is not a profile. built_at is the marker:
+  // the row exists from the moment the channel is created, so its mere presence
   // says nothing about whether anything has been analysed.
   const existing = voice.built_at ? voice : null;
 
   if (!existing) {
     if (!autoBuild) return null;
-    const { profile } = await buildVoiceProfile(userId, voice._id);
+    const { profile } = await buildVoiceProfile(userId, channel._id);
     return profile;
   }
 
   if (autoBuild) {
     const total = await Transcript.countDocuments({
-      user: userId, voice: voice._id, status: "done", text: { $ne: "" },
+      user: userId, profile: channel._id, status: "done", text: { $ne: "" },
     });
     const seen = existing.transcript_count || 0;
     // Only rebuild when there is genuinely more to learn from, and stop counting
@@ -638,7 +415,7 @@ export async function getUsableProfile(userId, { voiceId, autoBuild = true } = {
       if (Date.now() - failedAt < REBUILD_COOLDOWN_MS) return existing;
 
       try {
-        const { profile } = await buildVoiceProfile(userId, voice._id);
+        const { profile } = await buildVoiceProfile(userId, channel._id);
         return profile || existing;
       } catch (err) {
         console.error("[voice] auto-rebuild failed, writing with the existing profile:", err.message);
@@ -657,17 +434,19 @@ export async function getUsableProfile(userId, { voiceId, autoBuild = true } = {
 }
 
 /**
- * Is one set's profile behind the videos in it? Drives the UI nudge.
- * @param {string} [voiceId]  omitted means the user's default set
+ * Is one channel's voice behind the videos in it? Drives the UI nudge.
+ * @param {string} [profileId]  omitted means the user's default channel
  */
-export async function profileStatus(userId, voiceId) {
-  const { voice } = await resolveVoice(userId, voiceId);
+export async function profileStatus(userId, profileId) {
+  const { profile: channel } = await resolveProfile(userId, profileId);
+  const voice = await voiceFor(userId, channel._id);
   const total = await Transcript.countDocuments({
-    user: userId, voice: voice._id, status: "done", text: { $ne: "" },
+    user: userId, profile: channel._id, status: "done", text: { $ne: "" },
   });
   const profile = voice.built_at ? voice.toObject?.() ?? voice : null;
 
   return {
+    channel,
     voice,
     profile,
     transcripts_available: total,
@@ -702,8 +481,4 @@ function readUsage(res) {
   };
 }
 
-export default {
-  buildVoiceProfile, getUsableProfile, profileStatus,
-  listVoices, ensureVoice, resolveVoice, createVoice, renameVoice, setDefaultVoice, deleteVoice,
-  shapeVoice, MAX_VOICES,
-};
+export default { buildVoiceProfile, getUsableProfile, profileStatus };

@@ -1,7 +1,7 @@
-import { useVoices } from "../../state/VoiceContext";
+import { useProfiles } from "../../state/ProfileContext";
 
 /**
- * Pick which voice a screen is about.
+ * Pick which channel a screen is about.
  *
  * ── A NATIVE <select>, DELIBERATELY ─────────────────────────────────────────
  * A custom dropdown here would need focus trapping, arrow-key handling, an
@@ -9,22 +9,22 @@ import { useVoices } from "../../state/VoiceContext";
  * already does better: on a phone this opens as a native wheel, and it works
  * with a screen reader without a single aria attribute of mine.
  *
- * Renders NOTHING when the creator has one voice. A picker with a single option
- * is furniture that teaches nothing and takes a row from the screen — the moment
- * they make a second one it appears everywhere.
+ * Renders NOTHING when the creator has one profile. A picker with a single
+ * option is furniture that teaches nothing and takes a row from the screen — the
+ * moment they make a second channel it appears everywhere.
  */
-export default function VoiceSelect({
+export default function ProfileSelect({
   value,
   onChange,
-  allowAll = false,       // "All voices" — used where a total is a real answer
-  label = "Voice",
+  allowAll = false,       // "All profiles" — used where a total is a real answer
+  label = "Profile",
   size = "md",
   hideWhenSingle = true,
 }) {
-  const { voices } = useVoices();
+  const { profiles } = useProfiles();
 
-  if (!voices.length) return null;
-  if (hideWhenSingle && voices.length < 2 && !allowAll) return null;
+  if (!profiles.length) return null;
+  if (hideWhenSingle && profiles.length < 2 && !allowAll) return null;
 
   const small = size === "sm";
 
@@ -47,30 +47,14 @@ export default function VoiceSelect({
           border: "1px solid var(--line)", borderRadius: 9,
           padding: small ? "6px 9px" : "8px 11px",
           cursor: "pointer", outline: "none",
-          maxWidth: 200, minWidth: 0, textOverflow: "ellipsis",
+          maxWidth: 220, minWidth: 0, textOverflow: "ellipsis",
         }}
       >
-        {allowAll && <option value="all">All voices</option>}
-        {voices.map((v) => (
-          <option key={v.id} value={v.id}>
-            {voiceLabel(v)}
-          </option>
+        {allowAll && <option value="all">All profiles</option>}
+        {profiles.map((p) => (
+          <option key={p.id} value={p.id}>{p.name}</option>
         ))}
       </select>
     </label>
   );
-}
-
-/**
- * What a voice is called in a list.
- *
- * An unnamed set still has to be pickable — it is where a creator's videos are
- * going right now — so it falls back to its language, then to a plain label.
- */
-export function voiceLabel(v) {
-  if (!v) return "";
-  const name = String(v.name || "").trim();
-  if (name) return name;
-  if (v.language_label) return `${v.language_label} (unnamed)`;
-  return "Untitled voice";
 }

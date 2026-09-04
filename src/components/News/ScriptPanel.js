@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import ScriptOrder from "./ScriptOrder";
 import { useCredits } from "../../state/CreditsContext";
-import { useVoices } from "../../state/VoiceContext";
+import { useProfiles } from "../../state/ProfileContext";
 
 /**
  * Turn the selected story into a script in the creator's own voice.
@@ -25,7 +25,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
   // is shown in the sidebar and the mobile header at the same time as here, and
   // three components each holding their own copy is three numbers that drift.
   const { setBalance, refresh: refreshCredits } = useCredits();
-  const { activeId: voiceId } = useVoices();
+  const { activeId: profileId } = useProfiles();
 
   const pollRef = useRef(null);
 
@@ -80,7 +80,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
       // The creator picked it in the order panel a second ago, and having the
       // server guess at that point is how a story gets written in the wrong
       // voice and charged for.
-      const body = { news_id: storyId, force, voice_id: voiceId || undefined };
+      const body = { news_id: storyId, force, profile_id: profileId || undefined };
       if (order) {
         body.seconds = order.seconds;
         body.english = order.english;
