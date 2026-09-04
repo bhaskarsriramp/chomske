@@ -5,7 +5,6 @@ import Skeleton, { SkeletonText } from "../Shell/Skeleton";
 import { timeAgo, sourceLabel } from "../News/newsUtils";
 import { categoryColor, cardBackground } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
-import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * My scripts — everything this creator has written, and what it was written from.
@@ -25,7 +24,7 @@ export default function ScriptsPanel({ onGoTopics }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
-  const { profiles } = useProfiles();
+  const { profiles, active, activeId } = useProfiles();
 
   const [scripts, setScripts] = useState([]);
   const [openId, setOpenId] = useState(null);
@@ -33,18 +32,23 @@ export default function ScriptsPanel({ onGoTopics }) {
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState("");
 
-  // Which voice's history is on screen. "all" is a real answer here, unlike on
-  // the writing screen: a creator asking "what have I made" usually means all of
-  // it, and someone who only ever had one voice must never have to find a filter
-  // to see work they wrote before voices existed.
-  const [filter, setFilter] = useState("all");
+  // ── THIS IS A SCOPE TOGGLE, NOT A PROFILE PICKER ──────────────────────────
+  // Which channel you are working in is decided once, in the app bar at the top
+  // of every screen. A second dropdown here that could point somewhere else
+  // would let the bar say "Tech channel" while the list showed sports — two
+  // controls for one idea, and one of them wrong.
+  //
+  // So the list follows the bar, and the only extra choice is whether to widen
+  // to everything ever written. That is a genuinely different question ("what
+  // have I made" vs "what have I made for this channel") and worth one toggle.
+  const [allProfiles, setAllProfiles] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
       const { data } = await api.get("/script", {
-        params: { limit: 30, ...(filter && filter !== "all" ? { profile: filter } : {}) },
+        params: { limit: 30, ...(!allProfiles && activeId ? { profile: activeId } : {}) },
       });
       setScripts(data.scripts || []);
     } catch (err) {
@@ -54,14 +58,14 @@ export default function ScriptsPanel({ onGoTopics }) {
       setBusy(false);
       setLoadedOnce(true);
     }
-  }, [filter]);
+  }, [allProfiles, activeId]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Changing the filter changes the list under the open script. Clearing the
+  // Changing the scope changes the list under the open script. Clearing the
   // selection stops the right pane showing a script that is no longer in the
   // list beside it.
-  useEffect(() => { setOpenId(null); }, [filter]);
+  useEffect(() => { setOpenId(null); }, [allProfiles, activeId]);
 
   // The right pane is always on screen at this width, so leaving it empty wastes
   // half the view.
@@ -94,15 +98,36 @@ export default function ScriptsPanel({ onGoTopics }) {
             >
               My scripts
             </h1>
+            {/* Only offered once there is more than one channel to widen to. */}
             {profiles.length > 1 && (
-              <ProfileSelect
-                value={filter}
-                onChange={setFilter}
-                allowAll
-                label=""
-                size="sm"
-                hideWhenSingle={false}
-              />
+              <div
+                role="group"
+                aria-label="Scope"
+                style={{
+                  display: "inline-flex", padding: 3, gap: 2, flexShrink: 0,
+                  background: "#F2F2F2", border: "1px solid var(--line)", borderRadius: 10,
+                }}
+              >
+                {[
+                  { on: !allProfiles, label: "This channel", set: false },
+                  { on: allProfiles, label: "All", set: true },
+                ].map((t) => (
+                  <button
+                    key={t.label}
+                    onClick={() => setAllProfiles(t.set)}
+                    aria-pressed={t.on}
+                    style={{
+                      fontSize: 12.5, fontWeight: t.on ? 600 : 500, padding: "6px 11px",
+                      borderRadius: 8, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+                      background: t.on ? "var(--card)" : "transparent",
+                      color: t.on ? "var(--ink)" : "var(--ink-mute)",
+                      boxShadow: t.on ? "0 1px 2px rgba(15,15,15,.09)" : "none",
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
           <p style={{ fontSize: 13.5, color: "var(--ink-body)", margin: 0, lineHeight: 1.6 }}>
@@ -111,8 +136,8 @@ export default function ScriptsPanel({ onGoTopics }) {
             {loadedOnce
               ? scripts.length
                 ? `${scripts.length} written in your voice, newest first.`
-                : filter !== "all"
-                ? "Nothing written in this voice yet."
+                : !allProfiles && active?.name
+                ? `Nothing written for ${active.name} yet.`
                 : "Nothing written yet."
               : <Skeleton variant="text" width={230} height={11} />}
           </p>

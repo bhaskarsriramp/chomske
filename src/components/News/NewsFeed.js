@@ -5,7 +5,6 @@ import StoryDetail from "./StoryDetail";
 import { sourceLabel, timeAgo } from "./newsUtils";
 import { categoryColor, cardBackground, cardTint } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
-import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * What to make a video about today.
@@ -75,7 +74,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // stories in the sports feed just because the same person also runs the other
   // one. The server enforces this too (routes/news.js resolves the profile);
   // this is what draws the tab strip.
-  const { active: activeProfile, activeId, setActive: setActiveProfile } = useProfiles();
+  const { active: activeProfile } = useProfiles();
   const profileCats = activeProfile?.categories || [];
   const categoriesKey = profileCats.join(",");
 
@@ -314,27 +313,21 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
         <div style={{ padding: `${isPhone ? 16 : 20}px 0 12px`, flexShrink: 0 }}>
           <div
             style={{
-              display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+              display: "flex", alignItems: "baseline", justifyContent: "space-between",
               gap: 12, padding: `0 ${gut}px`,
             }}
           >
-            <div style={{ minWidth: 0 }}>
-              <h1
-                style={{
-                  fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
-                  color: "var(--ink)", margin: 0,
-                }}
-              >
-                What to cover today
-              </h1>
-              {/* Which channel this feed is for. Only rendered once there is a
-                  second one — see ProfileSelect. It sits under the heading
-                  rather than beside it because it changes what the whole column
-                  below means. */}
-              <div style={{ marginTop: 7 }}>
-                <ProfileSelect value={activeId} onChange={setActiveProfile} label="" size="sm" />
-              </div>
-            </div>
+            {/* No profile picker here — the app bar above carries it on every
+                screen, so a second copy would be a second answer to the same
+                question. See Shell/TopBar.js. */}
+            <h1
+              style={{
+                fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
+                color: "var(--ink)", margin: 0,
+              }}
+            >
+              What to cover today
+            </h1>
             <FetchButton
               busy={busy}
               running={ranking}

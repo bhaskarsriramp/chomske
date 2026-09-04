@@ -3,7 +3,6 @@ import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
 import { useProfiles } from "../../state/ProfileContext";
-import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * The Dashboard: how much voice we have, and how much you've made with it.
@@ -22,7 +21,7 @@ const RANGES = [
 
 export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
   const isPhone = useIsMobile(680);
-  const { profiles, active, activeId, setActive } = useProfiles();
+  const { active, activeId } = useProfiles();
 
   const [range, setRange] = useState("7d");
   const [custom, setCustom] = useState({ from: "", to: "" });
@@ -71,10 +70,9 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
           </p>
         </div>
 
+        {/* No profile picker here — the app bar above carries it on every
+            screen. See Shell/TopBar.js. */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {profiles.length > 1 && (
-            <ProfileSelect value={profileFilter} onChange={setActive} label="" size="sm" hideWhenSingle={false} />
-          )}
 
           <div
             role="group"

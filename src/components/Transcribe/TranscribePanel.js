@@ -3,7 +3,6 @@ import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
 import { useProfiles } from "../../state/ProfileContext";
-import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * My voice — the videos that teach us how this creator talks.
@@ -15,11 +14,11 @@ import ProfileSelect from "../Shell/ProfileSelect";
  * built from both is a voice that is nobody's, the failure the mixed-language
  * warning below used to only be able to warn about.
  *
- * The profile picker sits at the very top rather than in a menu: which channel
- * you are adding a video to is the most consequential thing on the page, and a
- * video added to the wrong one costs a transcription to undo. Channels
- * themselves are created and named under Profile, not here — this screen is
- * about the videos.
+ * Which channel that is, is shown by the app bar above every screen
+ * (Shell/TopBar.js) rather than by a picker here — adding a video to the wrong
+ * channel costs a transcription to undo, so it should be a thing you cannot help
+ * seeing, not one you have to go and check. Channels themselves are created and
+ * named under Profile; this screen is about the videos.
  *
  * ── WHY ANALYSIS IS A BUTTON, NOT AUTOMATIC ──────────────────────────────────
  * Profiling on every added URL would re-analyse the whole set five times while
@@ -38,7 +37,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
 
   const {
     profiles, activeId, active: activeProfile,
-    setActive: selectProfile, refresh: refreshProfiles, loading: profilesLoading,
+    refresh: refreshProfiles, loading: profilesLoading,
   } = useProfiles();
 
   const [url, setUrl] = useState("");
@@ -205,16 +204,11 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
         className="hg-scroll"
         style={{ flex: "1 1 0", minWidth: 0, minHeight: 0, padding: `${isPhone ? 18 : 28}px ${gut}px ${isPhone ? 40 : 60}px` }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <h1 style={{ fontSize: isPhone ? 21 : 25, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 5px" }}>
-            My voice
-          </h1>
-          {/* Which channel these videos teach. Only rendered once there is a
-              second one — see ProfileSelect. Adding a video to the wrong channel
-              costs a transcription to undo, so this is the first thing on the
-              page rather than something to notice afterwards. */}
-          <ProfileSelect value={activeId} onChange={selectProfile} label="" size="sm" />
-        </div>
+        {/* No profile picker here — the app bar above carries it on every
+            screen. See Shell/TopBar.js. */}
+        <h1 style={{ fontSize: isPhone ? 21 : 25, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 5px" }}>
+          My voice
+        </h1>
 
         <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 18px", lineHeight: 1.6 }}>
           Add up to {meta?.slots?.max || 5} of your own short videos, under {meta?.maxSeconds || 60} seconds

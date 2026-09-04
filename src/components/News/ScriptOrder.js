@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import api from "../../api";
 import { useCredits } from "../../state/CreditsContext";
-import { useProfiles } from "../../state/ProfileContext";
-import ProfileSelect from "../Shell/ProfileSelect";
 
 /**
  * ScriptOrder — choose the voice, choose the length, see the price.
@@ -25,7 +23,6 @@ import ProfileSelect from "../Shell/ProfileSelect";
  */
 export default function ScriptOrder({ busy, onGenerate }) {
   const { balance, setBalance, openBuy, canBuy, rules } = useCredits();
-  const { profiles, activeId, setActive } = useProfiles();
 
   const [seconds, setSeconds] = useState(60);
   const [english, setEnglish] = useState(false);
@@ -68,17 +65,11 @@ export default function ScriptOrder({ busy, onGenerate }) {
 
   return (
     <div>
-      {/* ── Which channel ────────────────────────────────────────────────────
-          Only rendered once there is a second one to choose between — see
-          ProfileSelect. It is first because it is the most expensive thing to
-          get wrong: the wrong length is a rewrite, the wrong channel is a script
-          in somebody else's voice, for an audience that isn't watching. */}
-      {profiles.length > 1 && (
-        <div style={{ marginBottom: 14 }}>
-          <Label>Write as</Label>
-          <ProfileSelect value={activeId} onChange={setActive} label="" hideWhenSingle={false} />
-        </div>
-      )}
+      {/* No "write as" picker. Which channel this is for is in the app bar at
+          the top of the screen, which never scrolls away — see Shell/TopBar.js.
+          A second copy here would be a second control for one value, and the
+          moment two controls can disagree about which voice is writing, one of
+          them is lying at the exact point where credits get spent. */}
 
       {/* ── Length ───────────────────────────────────────────────────────── */}
       <div style={{ marginBottom: 14 }}>
