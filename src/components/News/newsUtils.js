@@ -50,14 +50,9 @@ export function timeAgo(value) {
   return days === 1 ? "yesterday" : `${days}d ago`;
 }
 
-/**
- * True while a story is still early. Based on first_seen_at — the moment WE first
- * saw it, not publish time, because publish dates are inconsistent across feeds
- * and a backdated republish would otherwise fake urgency.
- */
-export function isFresh(firstSeenAt, withinHours = 3) {
-  if (!firstSeenAt) return false;
-  const ms = Date.now() - new Date(firstSeenAt).getTime();
-  return !Number.isNaN(ms) && ms >= 0 && ms < withinHours * 3600000;
-}
+// isFresh() lived here: true while a story was under three hours old, which is
+// what the NEW badge used to mean. The badge now means "you have not opened
+// this" (per-user read state — see StorySeen on the server), and nothing else
+// wanted a freshness boolean, so the helper went with it rather than staying as
+// an export with no callers.
 

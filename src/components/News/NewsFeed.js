@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import StoryDetail from "./StoryDetail";
-import { sourceLabel, timeAgo, isFresh } from "./newsUtils";
+import { sourceLabel, timeAgo } from "./newsUtils";
 import { categoryColor, cardBackground, cardTint } from "../../theme";
 
 /**
@@ -88,8 +88,38 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
   // going quiet and leaving the reader to guess whether it did anything.
   const [fetched, setFetched] = useState(null);   // null | number of new stories
 
+  // Stories opened in THIS session, on top of the `seen` flag the server sends.
+  // Held locally so a badge disappears on the click rather than on the next
+  // load: the write is a fire-and-forget POST and waiting for it would leave
+  // NEW sitting there for a round trip after the story is already open.
+  const [opened, setOpened] = useState(() => new Set());
+
   const selectedRef = useRef(null);
   const selected = items.find((i) => i.id === openId) || null;
+
+  // The key the server marks read state against — cluster first, so a story
+  // stays read when a sixth outlet joins it and changes the representative row.
+  const seenKey = (it) => it.story || it.id;
+
+  /**
+   * Open a story, and record that it has been looked at.
+   *
+   * Deliberately not awaited and deliberately never surfaced on failure: a lost
+   * read mark means one badge lingers until the next click, which is not worth
+   * either a spinner or an error in front of somebody who is just reading.
+   */
+  const open = useCallback((it) => {
+    setOpenId(it.id);
+    const key = seenKey(it);
+    if (!key) return;
+    setOpened((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+    api.post("/news/seen", { story: key }).catch(() => {});
+  }, []);
+
+  const isUnread = useCallback(
+    (it) => !it.seen && !opened.has(seenKey(it)),
+    [opened]
+  );
 
   // Fetched once here rather than inside each story: the profile is per-user, not
   // per-story, and re-requesting it on every click would be a call per selection.
@@ -208,8 +238,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
   useEffect(() => {
     if (isNarrow || !items.length) return;
     if (openId && items.some((i) => i.id === openId)) return;
-    setOpenId(items[0].id);
-  }, [items, isNarrow, openId]);
+    // Through open(), not setOpenId: the split view puts this story's brief and
+    // sources on screen, so it has been seen whether or not it was clicked, and
+    // a NEW badge on the card whose detail is open beside it reads as a bug.
+    open(items[0]);
+  }, [items, isNarrow, openId, open]);
 
   // Arrow keys walk the list. Cheap to support and it's how anyone actually
   // triages a feed of forty things.
@@ -224,11 +257,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
       const next = e.key === "ArrowDown"
         ? Math.min(items.length - 1, at + 1)
         : Math.max(0, at - 1);
-      if (items[next]) setOpenId(items[next].id);
+      if (items[next]) open(items[next]);   // arrowing to a story opens it, so it counts as read
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, openId, isNarrow]);
+  }, [items, openId, isNarrow, open]);
 
   // Keeps the keyboard cursor on screen. `nearest` is a no-op when the row is
   // already visible, so clicking never causes a jump.
@@ -325,8 +358,9 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
                     index={i}
                     isPhone={isPhone}
                     active={!isNarrow && it.id === openId}
+                    unread={isUnread(it)}
                     rowRef={it.id === openId ? selectedRef : null}
-                    onOpen={() => setOpenId(it.id)}
+                    onOpen={() => open(it)}
                   />
                 ))}
               </div>
@@ -574,11 +608,7 @@ function CategoryStrip({ cats, value, onChange, gut }) {
  * category at a time, so every card came out the same colour, and a colour that
  * never varies has stopped carrying information anyway.
  */
-function StoryRow({ item, index, isPhone, active, rowRef, onOpen }) {
-  // Fresh means "somebody wrote about this in the last three hours", which is
-  // the question a creator is actually asking. Measured on the newest coverage,
-  // so a developing story keeps the flag while it is developing.
-  const fresh = isFresh(item.latest_at || item.first_seen_at);
+function StoryRow({ item, index, isPhone, active, unread, rowRef, onOpen }) {
   const tone = cardTint(index);
 
   // Up to two named sources then a count: "OpenAI, Hacker News" tells a creator
@@ -618,9 +648,18 @@ function StoryRow({ item, index, isPhone, active, rowRef, onOpen }) {
         borderRadius: 10,
       }}
     >
-      {fresh && (
+      {/* ── NEW MEANS "YOU HAVE NOT OPENED THIS", NOT "THIS IS RECENT" ──────
+          It used to mean the latter, on a three-hour clock, which answered a
+          question the timestamp on the same card already answered — and cleared
+          itself on stories nobody had read while a creator was away for an
+          afternoon. Now it survives until the story is opened, so the list
+          shows what is left to get through. Cleared on click, in StoryRow's
+          onOpen, not on a dwell timer: this is a shortlist of fifteen that
+          somebody reads end to end before choosing, and a timer would clear
+          every badge during the very scan they exist to help with. */}
+      {unread && (
         <span
-          title="Fresh coverage in the last 3 hours"
+          title="You haven't opened this one yet"
           style={{
             display: "inline-block", marginBottom: 5,
             fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em",

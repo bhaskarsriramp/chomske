@@ -9,6 +9,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import NewsItem from "../models/NewsItem.js";
+import StorySeen from "../models/StorySeen.js";
 import User from "../models/User.js";
 import { isValidCategory, DEFAULT_CATEGORY, getCategory } from "../services/categories.js";
 import { ensureBrief } from "../services/newsBriefService.js";
@@ -119,6 +120,23 @@ router.get("/", authenticateToken, async (req, res) => {
     // case is this account looks a little staler than it is.
     touchSeen(req.user.id);
 
+    // Which of these this creator has already opened, in one query over the
+    // fifteen keys actually being returned. A story stays badged NEW until they
+    // click it — not until it gets old — so this flag is the badge.
+    let seen = new Set();
+    try {
+      const keys = rows.map((r) => storyKey(r.doc));
+      const marks = await StorySeen.find({ user: req.user.id, story: { $in: keys } })
+        .select("story")
+        .lean();
+      seen = new Set(marks.map((m) => m.story));
+    } catch (err) {
+      // Unreadable read state means every card shows as unread, which is the
+      // safe direction: a badge that should have gone is a smaller problem than
+      // a feed that fails to load over a decoration.
+      console.warn("[news] couldn't read seen state:", err.message);
+    }
+
     return res.json({
       success: true,
       window_hours: hours,
@@ -131,7 +149,7 @@ router.get("/", authenticateToken, async (req, res) => {
       categories: mine.map((id) => ({ id, label: getCategory(id)?.label || id })),
       // Which one this response actually is.
       category: cats.length === 1 ? cats[0] : "",
-      items: rows.map((r) => shape(r.doc, r)),
+      items: rows.map((r) => ({ ...shape(r.doc, r), seen: seen.has(storyKey(r.doc)) })),
     });
   } catch (err) {
     console.error("[news] GET / failed:", err);
@@ -259,6 +277,67 @@ router.get("/:id", authenticateToken, async (req, res) => {
       source: c.source, title: c.title, url: c.url, published_at: c.published_at,
     })),
   });
+});
+
+/**
+ * What the read-state is keyed on: the cluster, falling back to the row.
+ *
+ * Must match what the client posts back, so both sides derive it the same way —
+ * shape() sends the same two fields out as `story` and `id`.
+ */
+function storyKey(d) {
+  return d?.cluster_id || String(d?._id || "");
+}
+
+/**
+ * POST /news/seen  { story } | { stories: [...] }
+ *
+ * "I have looked at this one." Called when a card is opened, which is what
+ * clears its NEW badge.
+ *
+ * ── WHY THE BADGE WAITS FOR A CLICK AND NOT A TIMER ──────────────────────────
+ * The reference project dismisses its NEW chip after a card has been in the
+ * viewport for 2.5 seconds, which suits a feed that is scrolled through. This
+ * one is a shortlist of fifteen where the whole job is choosing between them —
+ * a creator reads every headline before picking, so a dwell timer would clear
+ * every badge on the list during the very scan the badges exist to help with.
+ * Opening a story is the moment they actually dealt with it.
+ *
+ * Idempotent and cheap: an upsert per story, and re-marking one already marked
+ * changes nothing. Failure is answered with success — losing a read mark means
+ * a badge lingers, which is not worth an error in front of somebody.
+ */
+router.post("/seen", authenticateToken, async (req, res) => {
+  try {
+    const raw = Array.isArray(req.body?.stories)
+      ? req.body.stories
+      : [req.body?.story].filter(Boolean);
+
+    // Capped: this is only ever called with what is on screen, and an unbounded
+    // array would let one request write as many rows as it liked.
+    const stories = [...new Set(raw.map((s) => String(s || "").trim()).filter(Boolean))].slice(0, 50);
+    if (!stories.length) return res.json({ success: true, marked: 0 });
+
+    await StorySeen.bulkWrite(
+      stories.map((story) => ({
+        updateOne: {
+          filter: { user: req.user.id, story },
+          // seen_at is insert-only: it anchors the TTL, and refreshing it on a
+          // re-open would keep a story's read mark alive indefinitely for
+          // somebody who keeps revisiting it.
+          update: { $setOnInsert: { user: req.user.id, story, seen_at: new Date() } },
+          upsert: true,
+        },
+      })),
+      { ordered: false }
+    );
+
+    return res.json({ success: true, marked: stories.length });
+  } catch (err) {
+    // 11000 = two tabs marked the same story at once. Not a failure.
+    if (err?.code !== 11000) console.error("[news] POST /seen failed:", err.message);
+    return res.json({ success: true, marked: 0 });
+  }
 });
 
 function shape(d, cluster = {}) {
