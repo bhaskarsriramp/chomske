@@ -18,6 +18,68 @@ import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
 
+// How fast a piece of coverage stops counting toward how "live" a story is.
+// Two hours: a burst from this morning still registers by lunchtime and is
+// spent by evening. Lower it to make the feed twitchier, raise it to let big
+// stories hold their place for longer.
+const HEAT_HALF_LIFE_H = Math.max(0.25, parseFloat(process.env.NEWS_HEAT_HALFLIFE_HOURS || "2"));
+
+/**
+ * How much is being written about this story RIGHT NOW.
+ *
+ * ── WHY NOT JUST ORDER BY THE NEWEST LINK ────────────────────────────────────
+ * Because one late rehash of a dead story would then outrank a burst of twelve
+ * write-ups on a live one: a single blog post at 2am holds the top of the feed
+ * over the story the entire press is still filing on. Counting the coverage
+ * fixes that; counting it WITHOUT decay breaks it the other way, because a
+ * story with forty write-ups from yesterday would never leave.
+ *
+ * So every piece of coverage contributes a share that halves every
+ * HEAT_HALF_LIFE_H hours. At the two-hour default:
+ *
+ *   12 articles over the last 3h   →  7.22   still being written about
+ *    3 articles in the last hour   →  2.47   a real story, breaking now
+ *    1 article 5 minutes ago       →  0.97   one outlet, just now
+ *   20 articles from 17h ago       →  0.03   yesterday's news, however big
+ *
+ * (Measured, not estimated — those are the values the function returns.)
+ *
+ * Deliberately computed here rather than in the aggregation: it is a formula
+ * worth being able to read, test and tune, and it runs over the handful of rows
+ * that survived the ranking cut, not the whole window.
+ */
+/**
+ * When the newest write-up of this story went out.
+ *
+ * Future timestamps are ignored rather than trusted: a scheduled post or a
+ * publisher with a skewed clock would otherwise date a story in the future and
+ * hold the top of the feed until real time caught up with it.
+ */
+function latestOf(times, now = Date.now()) {
+  let best = null;
+  for (const t of times || []) {
+    if (!t) continue;
+    const ms = new Date(t).getTime();
+    if (Number.isNaN(ms) || ms > now) continue;
+    if (best === null || ms > best) best = ms;
+  }
+  return best === null ? null : new Date(best);
+}
+
+function heatOf(times, now = Date.now()) {
+  let heat = 0;
+  for (const t of times || []) {
+    if (!t) continue;
+    const ms = now - new Date(t).getTime();
+    if (Number.isNaN(ms)) continue;
+    // Future-dated coverage counts as "now" rather than scoring above 1 — a
+    // scheduled post or a skewed clock must not be able to buy the top slot.
+    const hours = Math.max(0, ms / 3600000);
+    heat += Math.pow(0.5, hours / HEAT_HALF_LIFE_H);
+  }
+  return heat;
+}
+
 /**
  * GET /news
  *   ?hours=24        window on first_seen_at (default 24, max 72)
@@ -62,23 +124,47 @@ router.get("/", authenticateToken, async (req, res) => {
           sources: { $addToSet: "$source" },
           count: { $sum: 1 },
           earliest: { $min: "$first_seen_at" },
-          // The newest member, which is a different and equally necessary fact.
-          // A running story keeps collecting coverage into the same cluster, so
-          // its `earliest` is pinned to when it broke — correct, and the reason
-          // a feed full of live stories can read as though nothing has moved all
-          // day. This is what says "and there was more of it ten minutes ago".
-          latest: { $max: "$first_seen_at" },
+
+          // ── THE CLUSTER'S CLOCK IS ITS NEWEST MEMBER, NOT ITS OLDEST ───────
+          // A running story keeps gathering coverage into the same cluster, so
+          // `earliest` is pinned to when it broke. That is a true fact and it
+          // was the wrong one to lead with: a story with twenty outlets on it,
+          // the freshest two hours old, displayed and sorted as seventeen hours
+          // old — below stories whose newest coverage was half a day older. The
+          // feed read as frozen while it was in fact moving.
+          //
+          // Publisher time where there is one, our own clock where there isn't,
+          // for every member. `latest` and `heat` are both derived from this in
+          // Node — see below for why that is not done here.
+          times: { $push: { $ifNull: ["$published_at", "$first_seen_at"] } },
+
+          // Never null, so the pipeline always has something to order by even
+          // when every publisher date in a cluster is missing or unparseable.
+          latest_seen: { $max: "$first_seen_at" },
         },
       },
       // Two stages, and the order matters. Rank first and cut to the limit, so
       // what survives is the best of the window; THEN order what survived by
-      // when the story broke. Sorting by time first would fill the feed with
-      // whatever happened to arrive most recently, which on a quiet hour is
-      // three press releases and a job posting.
+      // time. Sorting by time first would fill the feed with whatever happened
+      // to arrive most recently, which on a quiet hour is three press releases
+      // and a job posting.
       { $sort: { "doc.ai_score": -1, count: -1, "doc.raw_score": -1 } },
       { $limit: limit },
-      { $sort: { earliest: -1 } },
+      // A deterministic base order; the real ordering is applied in Node below.
+      { $sort: { latest_seen: -1 } },
     ]);
+
+    // Liveliest first. The cut to `limit` above was made on the ranker's
+    // judgement; this decides the order of what survived, so the story most is
+    // being written about right now opens the list. `latest` breaks ties, so
+    // once every candidate has gone cold and their heat has decayed to nothing,
+    // this degrades to exactly "newest coverage first".
+    const now = Date.now();
+    for (const r of rows) {
+      r.latest = latestOf(r.times, now) || r.latest_seen;
+      r.heat = heatOf(r.times, now);
+    }
+    rows.sort((a, b) => b.heat - a.heat || new Date(b.latest) - new Date(a.latest));
 
     // When the collector last went and looked. The footer used to claim
     // "Rechecked every 15 minutes", which is a promise, not evidence — a creator
@@ -206,10 +292,13 @@ router.get("/:id", authenticateToken, async (req, res) => {
   const doc = await NewsItem.findById(req.params.id).lean();
   if (!doc) return res.status(404).json({ success: false, message: "Not found" });
 
+  // NEWEST FIRST. The list used to open with whoever broke the story, which put
+  // the oldest account of a developing event at the top of the reading list —
+  // the one most likely to have been overtaken by the time anyone opened it.
   const coverage = doc.cluster_id
     ? await NewsItem.find({ category: doc.category, cluster_id: doc.cluster_id })
         .select("source title url published_at")
-        .sort({ published_at: 1 })
+        .sort({ published_at: -1 })
         .lean()
     : [];
 
@@ -218,10 +307,9 @@ router.get("/:id", authenticateToken, async (req, res) => {
     item: shape(doc, {
       count: coverage.length || 1,
       sources: [...new Set(coverage.map((c) => c.source))],
-      earliest: coverage.length ? coverage[0].published_at : doc.first_seen_at,
-      // coverage is sorted by published_at ascending, so the tail is the newest
-      // write-up of this story.
-      latest: coverage.length ? coverage[coverage.length - 1].published_at : doc.first_seen_at,
+      // coverage is newest-first, so the tail broke it and the head is current.
+      earliest: coverage.length ? coverage[coverage.length - 1].published_at : doc.first_seen_at,
+      latest: coverage.length ? coverage[0].published_at : doc.first_seen_at,
     }),
     // Every link that covered it — this is what a creator opens to grab
     // screenshots and check facts before recording.
@@ -252,11 +340,11 @@ function shape(d, cluster = {}) {
     // that picked the story up hours late, and showing its timestamp made a
     // story look newer than it was.
     first_seen_at: cluster.earliest || d.first_seen_at,
-    // When the most recent piece of this story reached us. The feed prints it as
-    // "more N ago" when it is meaningfully newer than the break, which is the
-    // only visible difference between a story that is still developing and one
-    // that has been sitting there since breakfast.
-    latest_seen_at: cluster.latest || d.first_seen_at,
+    // THE ONE THE FEED PRINTS AND SORTS ON: when the newest write-up of this
+    // story went out. `first_seen_at` above is kept for the "NEW" flag's own
+    // reasoning and for anything that wants the break time, but a card leading
+    // with it told creators a live story was seventeen hours stale.
+    latest_at: cluster.latest || d.published_at || d.first_seen_at,
     // How many separate sources carried this story — the "how big is it" signal.
     sources: cluster.sources || [d.source],
     source_count: cluster.count || 1,

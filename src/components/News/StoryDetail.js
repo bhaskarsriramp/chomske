@@ -155,7 +155,8 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
             }}
           >
             {item.source_count > 1 ? `${item.source_count} sources` : sourceLabel(item.source)}
-            {" · "}{timeAgo(item.first_seen_at)}
+            {/* The newest write-up, matching the card that opened this pane. */}
+            {" · "}{timeAgo(item.latest_at || item.first_seen_at)}
           </span>
         </div>
 
@@ -277,10 +278,13 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
                   <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>
                     {sourceLabel(c.source)}
                   </span>
-                  {/* The API sorts by published_at ascending, so row zero broke it. */}
+                  {/* The API now sorts published_at DESCENDING — newest account
+                      of the story first, which is the one worth reading when it
+                      is still developing — so the LAST row is the one that broke
+                      it, not the first. */}
                   {/* Plain text, not a badge. It is a footnote about ordering,
                       not a status worth a coloured chip of its own. */}
-                  {i === 0 && links.length > 1 && (
+                  {i === links.length - 1 && links.length > 1 && (
                     <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ok)" }}>
                       broke it
                     </span>

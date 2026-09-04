@@ -45,8 +45,12 @@ const MIN_SCORE = 5;
 // A hard ceiling, not a page size. The whole promise is "we already decided for
 // you", and forty ranked cards is a list to triage — which is the thing a
 // creator already has in four other apps. Most days genuinely have two or three
-// stories worth a video; ten leaves real choice without becoming a feed.
-const MAX_CARDS = 10;
+// stories worth a video; fifteen leaves real choice without becoming a feed.
+//
+// MUST STAY IN STEP WITH NEWS_BRIEF_LIMIT on the server, which decides how many
+// stories get a brief written ahead of time. Cards beyond that number open to a
+// spinner and generate their brief on the spot, every time anyone opens them.
+const MAX_CARDS = 15;
 
 // The fallback when that comes back empty. A brand-new category has collected
 // for minutes, not days, and showing a first-time user an empty product is how
@@ -571,7 +575,10 @@ function CategoryStrip({ cats, value, onChange, gut }) {
  * never varies has stopped carrying information anyway.
  */
 function StoryRow({ item, index, isPhone, active, rowRef, onOpen }) {
-  const fresh = isFresh(item.first_seen_at);
+  // Fresh means "somebody wrote about this in the last three hours", which is
+  // the question a creator is actually asking. Measured on the newest coverage,
+  // so a developing story keeps the flag while it is developing.
+  const fresh = isFresh(item.latest_at || item.first_seen_at);
   const tone = cardTint(index);
 
   // Up to two named sources then a count: "OpenAI, Hacker News" tells a creator
@@ -579,25 +586,19 @@ function StoryRow({ item, index, isPhone, active, rowRef, onOpen }) {
   const names = (item.sources || []).slice(0, 2).map(sourceLabel).join(", ");
   const more = (item.sources || []).length - 2;
 
-  // A running story keeps gathering coverage under the same cluster, so its own
-  // timestamp stays pinned to when it broke. That is the honest reading of "when
-  // did this happen" and it made a feed of live stories look frozen: every card
-  // said 12h ago all afternoon while fresh write-ups were arriving the whole
-  // time. Shown only when the gap is real, so a settled story stays quiet.
-  const moved =
-    item.latest_seen_at &&
-    new Date(item.latest_seen_at) - new Date(item.first_seen_at) > 45 * 60 * 1000
-      ? `more ${timeAgo(item.latest_seen_at)}`
-      : null;
-
   // One muted line, joined with middots. Metadata as separate coloured chips is
   // how a rundown turns into a sticker album — a creator scans this line, they
   // don't read it, and every badge added is one more thing to look past.
+  //
+  // ONE TIME, AND IT IS THE NEWEST WRITE-UP. Not when the story broke: a story
+  // twenty outlets are still filing on is live whatever hour it started, and
+  // leading with the break time made a moving feed read as a frozen one. It
+  // briefly showed both ("17h ago · more 2h ago"), which was worse — two
+  // timestamps on a card is a puzzle, not information.
   const meta = [
     item.source_count > 1 ? `${item.source_count} sources` : null,
     names ? `${names}${more > 0 ? ` +${more}` : ""}` : null,
-    timeAgo(item.first_seen_at),
-    moved,
+    timeAgo(item.latest_at || item.first_seen_at),
     item.points ? `${item.points} pts` : null,
   ].filter(Boolean).join("  ·  ");
 
@@ -619,7 +620,7 @@ function StoryRow({ item, index, isPhone, active, rowRef, onOpen }) {
     >
       {fresh && (
         <span
-          title="First seen in the last 3 hours"
+          title="Fresh coverage in the last 3 hours"
           style={{
             display: "inline-block", marginBottom: 5,
             fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em",

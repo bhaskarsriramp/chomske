@@ -86,7 +86,23 @@ ITEMS:`;
  * reconsider the score: re-deciding here would let an item's rank change
  * depending on which of two calls happened to look at it last.
  */
-export function buildDetailPrompt(cat) {
+export function buildDetailPrompt(cat, existingKeys = []) {
+  // ── WHY THE MODEL IS SHOWN THE KEYS IT ALREADY COINED ──────────────────────
+  // The story key IS the cluster, and it is invented fresh on every pass. Asked
+  // twice about the same event four hours apart, the model would coin
+  // "nvidia-buys-hugging-face" once and "nvidia-hugging-face-acquisition" the
+  // next time — and since nothing ever re-merges clusters, one acquisition
+  // became three cards carrying 4, 18 and 20 sources, all near the top of the
+  // feed. Handing back the keys already in use turns the second pass into a
+  // lookup rather than a fresh invention. Costs a few dozen input tokens.
+  const known = existingKeys.length
+    ? `\nSTORY KEYS ALREADY IN USE for recent items in this category. If an item
+below is the SAME EVENT as one of these, return that key EXACTLY as written —
+character for character — rather than inventing a new one. Only coin a new key
+when the event genuinely is not in this list:
+${existingKeys.map((k) => `  ${k}`).join("\n")}\n`
+    : "";
+
   return `You are the editor for a channel that covers ${cat.editor}.
 
 These items have already been judged worth covering. For EACH one give:
@@ -96,6 +112,7 @@ These items have already been judged worth covering. For EACH one give:
            however differently they are worded — "OpenAI's Astra Model" and
            "OpenAI's Astra Sparks Safety Alarm" are both
            "openai-astra-safety-risk". Keep it 2-5 words.
+${known}
   "angle": one short line on what the video would actually be ABOUT — the hook,
            in plain words.
   "why":   a few words on why it is worth covering.
@@ -234,8 +251,32 @@ export async function rankNews(categoryId, { force = false } = {}) {
 
   if (keep.length) {
     const keepItems = keep.map((k) => k.item);
+
+    // The keys already standing in this category's recent window. Model-coined
+    // keys only: a lexical title_sig would flood the list with near-duplicates
+    // and teach it the wrong shape. Capped, because this is a hint, not a
+    // catalogue — and the newest are the ones a fresh item is likely to match.
+    let existingKeys = [];
     try {
-      res2 = await askJson(`${buildDetailPrompt(cat)}\n${renderList(keepItems)}`, 16384);
+      const recent = await NewsItem.find({
+        category: categoryId,
+        first_seen_at: { $gte: since },
+        ai_score: { $gte: DETAIL_MIN },
+        ai_angle: { $ne: "" },          // written by stage 2, so the key is one of ours
+        cluster_id: { $ne: "" },
+      })
+        .sort({ first_seen_at: -1 })
+        .limit(200)
+        .select("cluster_id")
+        .lean();
+      existingKeys = [...new Set(recent.map((r) => r.cluster_id).filter(Boolean))].slice(0, 40);
+    } catch (err) {
+      // A hint that fails to load is a hint we go without.
+      console.warn(`[news-rank:${categoryId}] couldn't read existing story keys: ${err.message}`);
+    }
+
+    try {
+      res2 = await askJson(`${buildDetailPrompt(cat, existingKeys)}\n${renderList(keepItems)}`, 16384);
       const details = parseArray(res2, "detail", categoryId);
 
       if (details) {
