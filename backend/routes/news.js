@@ -13,72 +13,11 @@ import User from "../models/User.js";
 import { isValidCategory, DEFAULT_CATEGORY, getCategory } from "../services/categories.js";
 import { ensureBrief } from "../services/newsBriefService.js";
 import { lastCheckedAt, touchSeen } from "../services/newsCadence.js";
+import { heatOf, latestOf } from "../services/newsHeat.js";
 import { fetchAndRank } from "../services/newsScheduler.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
-
-// How fast a piece of coverage stops counting toward how "live" a story is.
-// Two hours: a burst from this morning still registers by lunchtime and is
-// spent by evening. Lower it to make the feed twitchier, raise it to let big
-// stories hold their place for longer.
-const HEAT_HALF_LIFE_H = Math.max(0.25, parseFloat(process.env.NEWS_HEAT_HALFLIFE_HOURS || "2"));
-
-/**
- * How much is being written about this story RIGHT NOW.
- *
- * ── WHY NOT JUST ORDER BY THE NEWEST LINK ────────────────────────────────────
- * Because one late rehash of a dead story would then outrank a burst of twelve
- * write-ups on a live one: a single blog post at 2am holds the top of the feed
- * over the story the entire press is still filing on. Counting the coverage
- * fixes that; counting it WITHOUT decay breaks it the other way, because a
- * story with forty write-ups from yesterday would never leave.
- *
- * So every piece of coverage contributes a share that halves every
- * HEAT_HALF_LIFE_H hours. At the two-hour default:
- *
- *   12 articles over the last 3h   →  7.22   still being written about
- *    3 articles in the last hour   →  2.47   a real story, breaking now
- *    1 article 5 minutes ago       →  0.97   one outlet, just now
- *   20 articles from 17h ago       →  0.03   yesterday's news, however big
- *
- * (Measured, not estimated — those are the values the function returns.)
- *
- * Deliberately computed here rather than in the aggregation: it is a formula
- * worth being able to read, test and tune, and it runs over the handful of rows
- * that survived the ranking cut, not the whole window.
- */
-/**
- * When the newest write-up of this story went out.
- *
- * Future timestamps are ignored rather than trusted: a scheduled post or a
- * publisher with a skewed clock would otherwise date a story in the future and
- * hold the top of the feed until real time caught up with it.
- */
-function latestOf(times, now = Date.now()) {
-  let best = null;
-  for (const t of times || []) {
-    if (!t) continue;
-    const ms = new Date(t).getTime();
-    if (Number.isNaN(ms) || ms > now) continue;
-    if (best === null || ms > best) best = ms;
-  }
-  return best === null ? null : new Date(best);
-}
-
-function heatOf(times, now = Date.now()) {
-  let heat = 0;
-  for (const t of times || []) {
-    if (!t) continue;
-    const ms = now - new Date(t).getTime();
-    if (Number.isNaN(ms)) continue;
-    // Future-dated coverage counts as "now" rather than scoring above 1 — a
-    // scheduled post or a skewed clock must not be able to buy the top slot.
-    const hours = Math.max(0, ms / 3600000);
-    heat += Math.pow(0.5, hours / HEAT_HALF_LIFE_H);
-  }
-  return heat;
-}
 
 /**
  * GET /news
@@ -86,6 +25,9 @@ function heatOf(times, now = Date.now()) {
  *   ?min_score=4     lowest ai_score to include (default 4 — below that is noise)
  *   ?limit=25        max clusters (default 25, max 100)
  *   ?source=hn       optional single-source filter
+ *
+ * Ordering is by how live a story is, not by the single newest link — see
+ * services/newsHeat.js for the formula and why it exists.
  */
 router.get("/", authenticateToken, async (req, res) => {
   try {

@@ -32,6 +32,7 @@ import User from "../models/User.js";
 import NewsLock, { LOCK_ID } from "../models/NewsLock.js";
 import ApidirectAPIs from "../models/ApidirectAPIs.js";
 import { CATEGORIES } from "../services/categories.js";
+import { heatOf, latestOf, HEAT_HALF_LIFE_H } from "../services/newsHeat.js";
 
 const ago = (d) => {
   if (!d) return "never";
@@ -91,6 +92,58 @@ async function main() {
                new Date(newest.first_seen_at) - new Date(newestRanked.first_seen_at) > 3 * 3600000) {
       console.log("    → Fresh items exist but none cleared the bar. Either a quiet day, or the ranker is scoring low.");
     }
+  }
+
+  // ── Why the feed is in the order it is in ──────────────────────────────────
+  // Run with a category id to get this: node scripts/newsDoctor.js ai_tech
+  //
+  // It exists because the ordering is NOT the number printed on the card. Cards
+  // show when the newest write-up went out; the order is decided by how much
+  // coverage is still arriving, decayed by age. Those two usually agree and
+  // when they do not, the only honest answer to "why is that one above this
+  // one" is the actual arithmetic — so here it is, per cluster.
+  const asked = process.argv[2];
+  if (asked && picked.has(asked)) {
+    const now = Date.now();
+    const rows = await NewsItem.find({
+      category: asked,
+      first_seen_at: { $gte: new Date(now - 48 * 3600000) },
+      ai_score: { $gte: 5 },
+    })
+      .select("cluster_id title source ai_score published_at first_seen_at")
+      .lean();
+
+    const byCluster = new Map();
+    for (const r of rows) {
+      const key = r.cluster_id || String(r._id);
+      if (!byCluster.has(key)) byCluster.set(key, { key, title: r.title, score: r.ai_score, times: [] });
+      byCluster.get(key).times.push(r.published_at || r.first_seen_at);
+    }
+
+    const feed = [...byCluster.values()]
+      .map((c) => ({ ...c, heat: heatOf(c.times, now), latest: latestOf(c.times, now) }))
+      .sort((a, b) => b.heat - a.heat || new Date(b.latest) - new Date(a.latest));
+
+    console.log(`\nFEED ORDER · ${asked} · half-life ${HEAT_HALF_LIFE_H}h`);
+    console.log("  (the ranker cuts to the top 15 by ai_score FIRST; this is how those get ordered)\n");
+    for (const [i, c] of feed.slice(0, 15).entries()) {
+      const hrs = c.times
+        .map((t) => (now - new Date(t).getTime()) / 3600000)
+        .sort((a, b) => a - b);
+      // The distribution is the whole explanation: a card can show "4h ago" off
+      // one recent article and be dead underneath, while another shows "11h ago"
+      // with thirty write-ups just behind it.
+      const last6 = hrs.filter((h) => h <= 6).length;
+      console.log(
+        `  ${String(i + 1).padStart(2)}. heat ${c.heat.toFixed(3).padStart(8)}  ` +
+        `newest ${hrs[0].toFixed(1).padStart(5)}h  ${String(c.times.length).padStart(3)} src ` +
+        `(${last6} in last 6h)  score ${c.score}\n` +
+        `      ${c.title.slice(0, 78)}\n` +
+        `      ages: ${hrs.slice(0, 12).map((h) => h.toFixed(1)).join(", ")}${hrs.length > 12 ? ", …" : ""}`
+      );
+    }
+  } else if (asked) {
+    console.log(`\n(“${asked}” is not a category anyone has picked — skipping the feed-order breakdown)`);
   }
 
   console.log("\nAPIDIRECT KEYS");
