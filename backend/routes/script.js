@@ -11,9 +11,11 @@ import mongoose from "mongoose";
 import NewsItem from "../models/NewsItem.js";
 import Script from "../models/Script.js";
 import authenticateToken from "../middleware/authenticateToken.js";
-import { writeScript } from "../services/scriptWriterService.js";
+import { writeScript, writeEnglishTwin, writePackaging } from "../services/scriptWriterService.js";
 import { getCategory } from "../services/categories.js";
 import { buildVoiceProfile, getUsableProfile, profileStatus } from "../services/voiceProfileService.js";
+import { quote, PACKAGING_CREDITS } from "../services/creditPricing.js";
+import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 
 const router = express.Router();
 
@@ -94,6 +96,16 @@ router.post("/", authenticateToken, async (req, res) => {
       });
     }
 
+    // ── What they ordered ────────────────────────────────────────────────────
+    // Duration is clamped inside quote(): `seconds` arrives in a request body,
+    // and an unclamped 86,400 would bill a fortune of credits and hand Gemini a
+    // prompt that never returns.
+    const order = quote({
+      seconds: req.body?.seconds,
+      englishTwin: !!req.body?.english,
+      packaging: !!req.body?.packaging,
+    });
+
     // Fail before creating a row if there is nothing to write in the voice of —
     // a "processing" script that can never succeed is a worse experience than a
     // clear message here.
@@ -114,14 +126,53 @@ router.post("/", authenticateToken, async (req, res) => {
       headline: item.title,
       angle: item.ai_angle || "",
       status: "processing",
+      duration_seconds: order.seconds,
     });
 
+    // ── Charge AFTER the row exists, BEFORE the work starts ──────────────────
+    // After, so the ledger entry can point at a real script id and a creator
+    // asking "what was this 60 credits for" gets an answer. Before the work, so
+    // a story that fails repeatedly cannot be retried without limit against a
+    // metered model — the failure path refunds in full.
+    let charged = 0;
+    try {
+      const spent = await spend(userId, order.total, {
+        reason: "script",
+        refType: "Script",
+        refId: doc._id,
+        note: `${order.seconds}s script${order.twin ? " + English" : ""}${order.packaging ? " + packaging" : ""}`,
+      });
+      charged = spent.spent;
+      await Script.updateOne({ _id: doc._id }, { $set: { credits_charged: charged } });
+    } catch (err) {
+      if (err instanceof InsufficientCredits) {
+        // The row was created a moment ago and nothing was charged for it, so
+        // it is removed rather than left as a "processing" script that never
+        // runs — a ghost in their history is worse than no row at all.
+        await Script.deleteOne({ _id: doc._id }).catch(() => {});
+        return res.status(402).json({
+          success: false,
+          insufficient_credits: true,
+          needed: err.needed,
+          balance: err.balance,
+          message: `This needs ${err.needed} credits and you have ${err.balance}. Top up to keep writing.`,
+        });
+      }
+      throw err;
+    }
+
     // Fire and forget; the client polls.
-    runScript(doc._id, userId, item).catch((err) =>
+    runScript(doc._id, userId, item, { ...order, charged }).catch((err) =>
       console.error(`[script] unhandled failure for ${doc._id}:`, err)
     );
 
-    return res.status(202).json({ success: true, cached: false, script: shape(doc) });
+    return res.status(202).json({
+      success: true,
+      cached: false,
+      charged,
+      balance: await getBalance(userId).catch(() => null),
+      script: shape(doc),
+    });
   } catch (err) {
     console.error("[script] POST failed:", err);
     return res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
@@ -222,9 +273,22 @@ router.get("/:id", authenticateToken, async (req, res) => {
   return res.json({ success: true, script: shape(doc) });
 });
 
-/** The work, off the request path. Never throws to the caller. */
-async function runScript(id, userId, item) {
+/**
+ * The work, off the request path. Never throws to the caller.
+ *
+ * @param {object} order  what was bought: { seconds, englishTwin, packaging, charged }
+ *
+ * ── THE ADD-ONS CANNOT LOSE THE SCRIPT ──────────────────────────────────────
+ * The twin and the packaging run AFTER the main script is saved as done, and
+ * each soft-fails to null. A creator who paid for all three and hits a Gemini
+ * hiccup on the packaging call still has their script — losing the paid-for
+ * main deliverable because an optional extra failed would be the worst possible
+ * trade. What they did not receive is refunded, line by line.
+ */
+async function runScript(id, userId, item, order) {
   const started = Date.now();
+  const { seconds = 60, englishTwin = false, packaging = false } = order || {};
+
   try {
     // Built here rather than in the route so the first-ever script absorbs the
     // profile build without the request waiting on both.
@@ -233,7 +297,7 @@ async function runScript(id, userId, item) {
       userMessage: "Transcribe one of your videos first — that's how we learn your voice.",
     });
 
-    const out = await writeScript({ profile, item });
+    const out = await writeScript({ profile, item, seconds });
 
     await Script.updateOne(
       { _id: id },
@@ -257,9 +321,63 @@ async function runScript(id, userId, item) {
     const u = out.usage || {};
     console.log(
       `[script] ${id} done in ${((Date.now() - started) / 1000).toFixed(1)}s · ` +
-      `${out.text.length} chars · ${out.language_label || "?"} · ` +
+      `${seconds}s · ${out.text.length} chars · ${out.language_label || "?"} · ` +
       `voice:${profile.confidence} · $${(u.usd || 0).toFixed(4)}`
     );
+
+    // ── Extras, each independent ─────────────────────────────────────────────
+    //
+    // Wrapped so nothing in here can reach the outer catch. If it could, a
+    // failure while refunding the twin would fall through to the "script
+    // failed" handler and refund the WHOLE order a second time — on top of the
+    // partial refund that had already gone through, for a script the creator
+    // has in their hands. The main deliverable is saved and paid for by this
+    // point; the extras can only ever adjust around it.
+    try {
+    if (englishTwin) {
+      const twin = await writeEnglishTwin({ profile, item, seconds, sourceScript: out.text });
+      if (twin) {
+        await Script.updateOne(
+          { _id: id },
+          { $set: { english_text: twin.text, english_hook: twin.hook, updated_at: new Date() } }
+        ).catch(() => {});
+      } else {
+        const back = quote({ seconds, englishTwin: true }).twin;
+        await refund(userId, back, { refType: "Script", refId: id, note: "English version failed" });
+        await Script.updateOne({ _id: id }, { $inc: { credits_refunded: back } }).catch(() => {});
+        console.warn(`[script] ${id} twin failed — refunded ${back} credits`);
+      }
+    }
+
+    if (packaging) {
+      const pack = await writePackaging({
+        profile, item, script: out.text, language: out.language_label,
+      });
+      if (pack) {
+        await Script.updateOne(
+          { _id: id },
+          {
+            $set: {
+              // Packaging titles supersede the writer's three: they are written
+              // against the finished script and include English ones for search.
+              title_suggestions: pack.titles.length ? pack.titles : out.title_suggestions,
+              description: pack.description,
+              hashtags: pack.hashtags,
+              thumbnail_lines: pack.thumbnail_lines,
+              updated_at: new Date(),
+            },
+          }
+        ).catch(() => {});
+      } else {
+        await refund(userId, PACKAGING_CREDITS, { refType: "Script", refId: id, note: "Packaging failed" });
+        await Script.updateOne({ _id: id }, { $inc: { credits_refunded: PACKAGING_CREDITS } }).catch(() => {});
+        console.warn(`[script] ${id} packaging failed — refunded ${PACKAGING_CREDITS} credits`);
+      }
+    }
+    } catch (extrasErr) {
+      // Logged, never rethrown. The script itself is done and delivered.
+      console.error(`[script] ${id} extras failed after delivery:`, extrasErr.message);
+    }
   } catch (err) {
     await Script.updateOne(
       { _id: id },
@@ -272,7 +390,18 @@ async function runScript(id, userId, item) {
         },
       }
     ).catch(() => {});
-    console.error(`[script] ${id} failed: ${err.message}`);
+
+    // The whole order is refunded, not just the base. They received nothing.
+    // Charging on start and refunding on failure — rather than charging on
+    // success — is deliberate: it keeps a failing story from being an unlimited
+    // free retry loop against a metered model, while never billing for a
+    // deliverable that did not arrive.
+    const charged = Number(order?.charged) || 0;
+    if (charged > 0) {
+      await refund(userId, charged, { refType: "Script", refId: id, note: "Script failed" });
+      await Script.updateOne({ _id: id }, { $inc: { credits_refunded: charged } }).catch(() => {});
+    }
+    console.error(`[script] ${id} failed: ${err.message}${charged ? ` — refunded ${charged} credits` : ""}`);
   }
 }
 
@@ -291,6 +420,21 @@ function shape(d) {
     voice_confidence: d.voice_confidence || "",
     sources_used: d.sources_used || [],
     error: d.error || "",
+
+    // What was ordered and what it cost — the history list shows this, so a
+    // creator can see why one script cost 30 credits and another 255.
+    duration_seconds: d.duration_seconds || 60,
+    credits_charged: d.credits_charged || 0,
+    credits_refunded: d.credits_refunded || 0,
+
+    // The extras. Empty when they were not bought, so the client can simply
+    // check for content rather than needing to know what was ordered.
+    english_text: d.english_text || "",
+    english_hook: d.english_hook || "",
+    description: d.description || "",
+    hashtags: d.hashtags || [],
+    thumbnail_lines: d.thumbnail_lines || [],
+
     created_at: d.created_at,
   };
 }

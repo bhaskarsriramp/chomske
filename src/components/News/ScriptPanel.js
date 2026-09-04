@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import api, { errorMessage } from "../../api";
+import ScriptOrder from "./ScriptOrder";
 
 /**
  * Turn the selected story into a script in the creator's own voice.
@@ -17,6 +18,9 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  // Held here rather than inside ScriptOrder so it survives the order panel
+  // being replaced by the finished script.
+  const [balance, setBalance] = useState(null);
 
   const pollRef = useRef(null);
 
@@ -53,14 +57,32 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
     }, 2500);
   }, [onVoiceChange]);
 
-  async function generate(force = false) {
+  /**
+   * @param {object} order  { seconds, english, packaging } — what they chose in
+   *   ScriptOrder. Absent on a regenerate, which repeats the original order.
+   */
+  async function generate(force = false, order = null) {
     if (busy) return;
     setError("");
     setCopied(false);
     setBusy(true);
     try {
-      const { data } = await api.post("/script", { news_id: storyId, force });
+      const body = { news_id: storyId, force };
+      if (order) {
+        body.seconds = order.seconds;
+        body.english = order.english;
+        body.packaging = order.packaging;
+      } else if (script?.duration_seconds) {
+        // A regenerate repeats what was bought the first time, including the
+        // add-ons — it is a redo, not a downgrade, and it is charged again.
+        body.seconds = script.duration_seconds;
+        body.english = !!script.english_text;
+        body.packaging = !!script.description;
+      }
+
+      const { data } = await api.post("/script", body);
       setScript(data.script);
+      if (typeof data.balance === "number") setBalance(data.balance);
       if (data.script.status === "processing") startPolling(data.script.id);
       else { setBusy(false); onVoiceChange?.(); }
     } catch (err) {
@@ -68,6 +90,13 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
       if (err?.response?.data?.needs_transcript) {
         setError("");
         setScript({ status: "needs_voice" });
+        return;
+      }
+      // Not an error worth a red box: they simply need to top up, and
+      // ScriptOrder already shows the balance and the buy button. Surfacing it
+      // twice reads as something having gone wrong.
+      if (err?.response?.data?.insufficient_credits) {
+        setBalance(err.response.data.balance);
         return;
       }
       setError(errorMessage(err));
@@ -100,7 +129,17 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
         >
           Your script
         </h3>
-        {hasVoice && <VoiceChip voice={voice} />}
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          {/* Balance in the header, not only inside the order panel — once the
+              script is written the panel is gone, and "what did that cost me"
+              is the next question. */}
+          {balance !== null && (
+            <span style={{ fontSize: 11.5, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
+              {balance} credits
+            </span>
+          )}
+          {hasVoice && <VoiceChip voice={voice} />}
+        </div>
       </div>
 
       {error && (
@@ -123,18 +162,11 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
 
       {!script && (hasVoice || voice?.transcripts_available > 0) && (
         <div>
-          <button
-            onClick={() => generate(false)}
-            disabled={busy}
-            className="hg-btn-primary"
-            style={{
-              fontSize: 14, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
-              border: "none", background: "var(--primary)", color: "#fff",
-              cursor: busy ? "default" : "pointer", opacity: busy ? 0.65 : 1,
-            }}
-          >
-            {busy ? "Writing…" : "Write this in my voice"}
-          </button>
+          <ScriptOrder
+            busy={busy}
+            onBalance={setBalance}
+            onGenerate={(order) => generate(false, order)}
+          />
           {!hasVoice && (
             <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
               First run also learns your voice from your {voice.transcripts_available === 1 ? "video" : "videos"}, so it takes a little longer.
@@ -187,6 +219,53 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
 }
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */
+
+/** "8 min", "90s" — the duration they ordered, shown as they chose it. */
+function fmtDuration(seconds) {
+  const s = Number(seconds) || 0;
+  return s >= 120 ? `${Math.round(s / 60)} min` : `${s}s`;
+}
+
+/**
+ * A labelled block inside the upload package, with its own copy button.
+ *
+ * Per-field rather than one "copy everything": the description and the hashtags
+ * go into different boxes on the upload form, so a single blob would just make
+ * them paste it once and then edit it back apart.
+ */
+function Field({ label, copy, children }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>{label}</span>
+        {copy && <CopyButton text={copy} label="Copy" />}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function CopyButton({ text, label = "Copy" }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text).then(
+          () => { setDone(true); setTimeout(() => setDone(false), 2000); },
+          () => {}
+        );
+      }}
+      className="hg-btn-ghost"
+      style={{
+        fontSize: 12, fontWeight: 600, padding: "5px 11px", borderRadius: 8,
+        border: "1px solid var(--line)", background: "var(--card)",
+        color: done ? "var(--ok)" : "var(--ink-mute)", cursor: "pointer", flexShrink: 0,
+      }}
+    >
+      {done ? "Copied" : label}
+    </button>
+  );
+}
 
 function VoiceChip({ voice }) {
   const p = voice.profile;
@@ -295,6 +374,7 @@ function Result({ script, compact, copied, onCopy, onRegenerate, busy }) {
         >
           <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>
             {script.language_label || "Your voice"}
+            {script.duration_seconds ? ` · ${fmtDuration(script.duration_seconds)}` : ""}
             {script.voice_confidence === "thin" && " · learned from one video"}
           </span>
           <div style={{ display: "flex", gap: 7 }}>
@@ -337,6 +417,106 @@ function Result({ script, compact, copied, onCopy, onRegenerate, busy }) {
           {script.text}
         </div>
       </div>
+
+      {/* ── The English twin ─────────────────────────────────────────────────
+          A second card rather than a tab: they paid for two scripts and both
+          should be visible and copyable without hunting for the other one. */}
+      {script.english_text && (
+        <div
+          style={{
+            marginTop: 14, background: "var(--card)", border: "1px solid var(--line)",
+            borderRadius: "var(--radius)", overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              gap: 10, flexWrap: "wrap", padding: "11px 15px",
+              borderBottom: "1px solid var(--line)", background: "var(--paper)",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>
+              English · for a global audience
+            </span>
+            <CopyButton text={script.english_text} label="Copy English" />
+          </div>
+          <div
+            style={{
+              padding: compact ? 17 : 22, fontSize: compact ? 15 : 16,
+              color: "var(--ink)", whiteSpace: "pre-wrap", wordBreak: "break-word",
+              lineHeight: 1.75,
+            }}
+          >
+            {script.english_text}
+          </div>
+        </div>
+      )}
+
+      {/* ── The upload package ─────────────────────────────────────────────── */}
+      {(script.description || script.hashtags?.length > 0 || script.thumbnail_lines?.length > 0) && (
+        <div
+          style={{
+            marginTop: 14, padding: compact ? 15 : 18,
+            background: "var(--card)", border: "1px solid var(--line)", borderRadius: "var(--radius)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11, fontWeight: 600, letterSpacing: "0.1em",
+              textTransform: "uppercase", color: "var(--ink-mute)", marginBottom: 12,
+            }}
+          >
+            Ready to upload
+          </div>
+
+          {script.description && (
+            <Field label="Description" copy={script.description}>
+              <div style={{ fontSize: 13.5, lineHeight: 1.7, color: "var(--ink-body)", whiteSpace: "pre-wrap" }}>
+                {script.description}
+              </div>
+            </Field>
+          )}
+
+          {script.hashtags?.length > 0 && (
+            <Field label="Hashtags" copy={script.hashtags.map((h) => `#${h}`).join(" ")}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {script.hashtags.map((h) => (
+                  <span
+                    key={h}
+                    className="indic"
+                    style={{
+                      fontSize: 12, padding: "4px 9px", borderRadius: 999,
+                      background: "var(--paper)", border: "1px solid var(--line)", color: "var(--ink-body)",
+                    }}
+                  >
+                    #{h}
+                  </span>
+                ))}
+              </div>
+            </Field>
+          )}
+
+          {script.thumbnail_lines?.length > 0 && (
+            <Field label="Thumbnail text">
+              <div style={{ display: "grid", gap: 6 }}>
+                {script.thumbnail_lines.map((t) => (
+                  <div
+                    key={t}
+                    className="indic"
+                    style={{
+                      fontSize: 15, fontWeight: 700, color: "var(--ink)",
+                      padding: "8px 11px", borderRadius: 8,
+                      background: "var(--paper)", border: "1px solid var(--line)",
+                    }}
+                  >
+                    {t}
+                  </div>
+                ))}
+              </div>
+            </Field>
+          )}
+        </div>
+      )}
 
       {script.title_suggestions?.length > 0 && (
         <div style={{ marginTop: 14 }}>

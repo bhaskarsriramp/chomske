@@ -17,6 +17,7 @@ import transcribeRoutes from "./routes/transcribe.js";
 import newsRoutes from "./routes/news.js";
 import scriptRoutes from "./routes/script.js";
 import statsRoutes from "./routes/stats.js";
+import billingRoutes from "./routes/billing.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
 
@@ -86,6 +87,15 @@ app.use(
   // the per-user daily cap inside the route.
   rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
   scriptRoutes
+);
+app.use(
+  "/billing",
+  // Payment endpoints are the ones worth brute-forcing: order creation costs us
+  // a Razorpay call each, and verify is where a forged signature would be
+  // hammered. Tighter than the global ceiling, and well above what a real
+  // person clicking Buy could reach.
+  rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
+  billingRoutes
 );
 app.use("/stats", statsRoutes);
 
