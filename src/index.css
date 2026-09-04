@@ -102,6 +102,17 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
   from { opacity: 0; transform: translateY(18px); }
   to   { opacity: 1; transform: none; }
 }
+/* The same entrance, for a dialog centred with top/left 50% and a negative
+   translate.
+   hg-sheet-up cannot be used there. It ends at `transform: none` and runs with
+   fill-mode `both`, so once it finishes the animation KEEPS overriding the
+   element's own inline translate(-50%,-50%) — and the dialog settles with its
+   top-left corner at the middle of the screen instead of its centre. This
+   version animates inside the centring transform rather than replacing it. */
+@keyframes hg-dialog-in {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 18px)); }
+  to   { opacity: 1; transform: translate(-50%, -50%); }
+}
 /* The mobile drawer enters from the right edge, matching the reference project:
    the hamburger sits top-right, so the panel should come from under the thumb
    that opened it rather than flying in from the opposite side. */
@@ -126,6 +137,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 .hg-rise { animation: hg-rise .45s cubic-bezier(.2,.7,.3,1) both; }
 .hg-fade { animation: hg-fade .18s ease both; }
 .hg-sheet-up { animation: hg-sheet-up .26s cubic-bezier(.2,.7,.3,1) both; }
+.hg-dialog-in { animation: hg-dialog-in .26s cubic-bezier(.2,.7,.3,1) both; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }

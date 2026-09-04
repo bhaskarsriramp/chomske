@@ -11,8 +11,14 @@
  * The drawer enters from the RIGHT, under the hamburger that opened it, and sits
  * below the app header so the logo and close control stay put — same arrangement
  * as the reference project.
+ *
+ * The credits card is pinned below the list, outside the scrolling region, in
+ * both layouts — see CreditsCard.js for why it is never allowed to scroll away.
+ * On a phone the header also carries a compact version of it, because the whole
+ * nav is behind a hamburger there and a number nobody can see is not a warning.
  */
 import Logo from "./Logo";
+import CreditsCard from "./CreditsCard";
 
 // Matches the mobile header height in Dashboard.js. The drawer hangs below it
 // rather than covering it, so the header's own close button stays reachable.
@@ -99,9 +105,12 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
         ))}
       </div>
 
-      {/* No account card down here. It showed a face, a name and an email
-          address to the one person who already knows all three, on every screen,
-          permanently — and Profile exists precisely to hold that. */}
+      {/* Credits, pinned. Still no account card: that showed a face, a name and
+          an email address to the one person who already knows all three, on
+          every screen, permanently — and Profile exists precisely to hold that.
+          A balance is the opposite kind of fact. It changes without them acting,
+          and it decides whether the next thing they try will work. */}
+      <CreditsCard compact={isNarrow} />
     </nav>
   );
 

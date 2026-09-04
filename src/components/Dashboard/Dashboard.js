@@ -8,6 +8,10 @@ import DashboardHome from "./DashboardHome";
 import ProfilePanel from "../Profile/ProfilePanel";
 import ScriptsPanel from "../Scripts/ScriptsPanel";
 import Logo from "../Shell/Logo";
+import CreditsProvider from "../../state/CreditsContext";
+import VoiceProvider, { useVoices } from "../../state/VoiceContext";
+import { CreditsPill } from "../Shell/CreditsCard";
+import NameVoiceDialog from "../Voice/NameVoiceDialog";
 
 /**
  * The app shell.
@@ -25,7 +29,25 @@ import Logo from "../Shell/Logo";
  */
 export const TAB_IDS = ["topics", "voice", "scripts", "dashboard", "profile"];
 
-export default function Dashboard({ user, onSignOut, onUserChange }) {
+/**
+ * Both providers wrap the whole shell rather than individual panels.
+ *
+ * The balance is read by the sidebar, the mobile header and the order panel, and
+ * the selected voice by Topics, My scripts and Dashboard — all of which are
+ * mounted at once here (panels are hidden, not unmounted). Per-panel state would
+ * mean several copies of each, disagreeing the moment one of them changed.
+ */
+export default function Dashboard(props) {
+  return (
+    <CreditsProvider>
+      <VoiceProvider>
+        <Shell {...props} />
+      </VoiceProvider>
+    </CreditsProvider>
+  );
+}
+
+function Shell({ user, onSignOut, onUserChange }) {
   const isNarrow = useIsMobile(900);
   const { tab: tabParam } = useParams();
   const navigate = useNavigate();
@@ -40,6 +62,8 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
   // profile instead of offering to write in a voice that no longer exists.
   const [voiceRev, setVoiceRev] = useState(0);
 
+  const { activeId, needsName, refresh: refreshVoices } = useVoices();
+
   const openTab = useCallback((id) => {
     navigate(`/app/${id}`);
     setDrawer(false);
@@ -52,7 +76,12 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
     setMounted((m) => (m[tab] ? m : { ...m, [tab]: true }));
   }, [tab]);
 
-  const bumpVoice = useCallback(() => setVoiceRev((n) => n + 1), []);
+  // The voice set changed — re-read the list (counts, staleness, whether one is
+  // waiting to be named) and tell the panels to re-read the profile.
+  const bumpVoice = useCallback(() => {
+    setVoiceRev((n) => n + 1);
+    refreshVoices();
+  }, [refreshVoices]);
 
   // Escape closes the drawer. Also close it if the viewport grows into the
   // desktop layout — otherwise the overlay state survives the resize and blocks
@@ -94,10 +123,14 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
           >
             <Logo size={26} fontSize={15.5} />
 
-            <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              {/* Credits before the daily quota: it is the number that decides
+                  whether the next thing they try will work at all, and on a
+                  narrow header only one of the two survives. */}
+              {!drawer && <CreditsPill />}
               {quota && !drawer && (
-                <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>
-                  {quota.used}/{quota.limit} today
+                <span style={{ fontSize: 12, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
+                  {quota.used}/{quota.limit}
                 </span>
               )}
               <button
@@ -129,6 +162,7 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "topics" ? "flex" : "none" }}>
               <NewsFeed
                 voiceRev={voiceRev}
+                voiceId={activeId}
                 categoriesKey={(user?.categories || []).join(",")}
                 // Passed as well as joined so the feed can open on their first
                 // category in ONE request. Waiting for the server to name their
@@ -176,6 +210,18 @@ export default function Dashboard({ user, onSignOut, onUserChange }) {
           )}
         </main>
       </div>
+
+      {/* Mounted at the shell, not inside My voice: an analysis can finish while
+          the creator has moved on to Topics, and an unnamed voice is unusable in
+          the dropdown wherever they are. See NameVoiceDialog for why it cannot
+          be dismissed. */}
+      {needsName && (
+        <NameVoiceDialog
+          key={needsName.id}
+          voice={needsName}
+          onNamed={() => { refreshVoices(); setVoiceRev((n) => n + 1); }}
+        />
+      )}
     </div>
   );
 }

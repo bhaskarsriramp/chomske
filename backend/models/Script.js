@@ -35,9 +35,16 @@ const ScriptSchema = new Schema({
   language:       { type: String, default: "" },
   language_label: { type: String, default: "" },
 
-  // Which profile wrote it, and how good that profile was at the time. Without
-  // this, a script written from a one-video profile is indistinguishable later
-  // from one written after the creator added ten.
+  // Which voice set wrote it, and how good that profile was at the time. Without
+  // the confidence, a script written from a one-video profile is
+  // indistinguishable later from one written after the creator added ten.
+  //
+  // The name is COPIED, not looked up through the ref. A creator who renames or
+  // deletes a voice must not find their old scripts relabelled or unlabelled —
+  // what a script was written as is a fact about the past, and history that
+  // rewrites itself is not history.
+  voice:            { type: Schema.Types.ObjectId, ref: "VoiceProfile", default: null, index: true },
+  voice_name:       { type: String, default: "" },
   voice_confidence: { type: String, default: "" },
   sources_used:     [{ type: String }],   // urls the facts came from
 

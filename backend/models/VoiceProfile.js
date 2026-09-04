@@ -16,13 +16,38 @@ const { Schema } = mongoose;
  * which is what makes the output land in a specific voice rather than a plausible
  * average of all Hindi tech creators.
  *
- * One row per user, rebuilt when they add videos — cheap to regenerate (a few
- * thousand input tokens), so it is never patched incrementally.
+ * Rebuilt when they add videos — cheap to regenerate (a few thousand input
+ * tokens), so it is never patched incrementally.
+ *
+ * ── WHY A USER MAY HAVE SEVERAL ──────────────────────────────────────────────
+ * This used to be one row per user, enforced by a unique index. That was wrong
+ * for how creators actually work: one person runs a Hindi tech channel and an
+ * English one, or writes for a client as well as themselves, and blending those
+ * into a single profile produces a voice that is nobody's — the same failure the
+ * mixed-language warning in routes/transcribe.js already had to warn about.
+ *
+ * So the row is now a VOICE SET: a named container that owns its own videos and
+ * its own learned style. It is created empty (name "", nothing learned), fills
+ * with transcripts, and is analysed as one deliberate act. The name is asked for
+ * once the analysis succeeds, because before that there is nothing to name.
+ *
+ * The unique index on `user` is therefore gone. It still exists in any database
+ * created before this change — VoiceProfile.syncIndexes() at boot (server.js)
+ * drops it, and scripts/migrateVoices.js backfills the data.
  */
 const VoiceProfileSchema = new Schema({
-  user: { type: Schema.Types.ObjectId, ref: "User", required: true, unique: true, index: true },
+  user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
 
-  // Which transcripts produced this. Used to detect staleness: if the user has
+  // What the creator calls this voice. Empty until they name it, which they are
+  // asked to do the moment the first analysis succeeds — an unnamed voice is
+  // fine to collect videos into, but useless in a dropdown next to three others.
+  name: { type: String, default: "", trim: true, maxlength: 60 },
+
+  // Which one the app opens on. Exactly one per user should carry this; the
+  // service repairs it rather than trusting it (see voiceProfileService.js).
+  is_default: { type: Boolean, default: false },
+
+  // Which transcripts produced this. Used to detect staleness: if the set holds
   // transcripts this profile never saw, it is out of date.
   built_from:     [{ type: Schema.Types.ObjectId, ref: "Transcript" }],
   transcript_count: { type: Number, default: 0 },
@@ -85,9 +110,16 @@ const VoiceProfileSchema = new Schema({
   // "Write this in my voice" paying for the identical doomed analysis.
   build_failed_at: { type: Date, default: null },
 
-  built_at:   { type: Date, default: Date.now },
+  // Null until the first successful analysis. This — not the presence of the row
+  // — is what "this voice is ready" means: a set that has collected videos but
+  // has never been analysed has no style to write from.
+  built_at:   { type: Date, default: null },
   created_at: { type: Date, default: Date.now },
 });
+
+// The list query on every voice-aware screen: this user's sets, oldest first so
+// the order a creator made them in is the order they see.
+VoiceProfileSchema.index({ user: 1, created_at: 1 });
 
 export default mongoose.models.VoiceProfile ||
   mongoose.model("VoiceProfile", VoiceProfileSchema, "voice_profiles");

@@ -18,6 +18,8 @@ import newsRoutes from "./routes/news.js";
 import scriptRoutes from "./routes/script.js";
 import statsRoutes from "./routes/stats.js";
 import billingRoutes from "./routes/billing.js";
+import voiceRoutes from "./routes/voices.js";
+import VoiceProfile from "./models/VoiceProfile.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
 
@@ -97,6 +99,9 @@ app.use(
   rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
   billingRoutes
 );
+// Managing voice sets: cheap reads and small writes, no model calls except
+// /voices/:id/analyse — which is itself bounded by how many videos a set holds.
+app.use("/voices", voiceRoutes);
 app.use("/stats", statsRoutes);
 
 // 404 + error handler. Errors are logged in full and answered generically —
@@ -121,6 +126,22 @@ function assertConfig() {
   try {
     assertConfig();
     await connectToMongo();
+
+    // ── Drop the old one-voice-per-user unique index ────────────────────────
+    // voice_profiles used to carry `unique: true` on `user`. Removing it from
+    // the schema does NOT remove it from a database that already has it —
+    // Mongoose creates missing indexes but never drops stale ones — so without
+    // this, creating a second voice fails with E11000 in production while
+    // working perfectly against a fresh local database. syncIndexes() makes the
+    // collection match the schema exactly.
+    //
+    // Cheap: voice_profiles holds a handful of rows per user. Failures are
+    // logged rather than fatal — a server that will not boot because an index
+    // could not be rebuilt is a worse outage than one extra voice set failing.
+    await VoiceProfile.syncIndexes().catch((err) =>
+      console.error("[server] voice_profiles index sync failed:", err.message)
+    );
+
     app.listen(PORT, () => {
       console.log(`[server] Chomske API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
       console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import ScriptOrder from "./ScriptOrder";
+import { useCredits } from "../../state/CreditsContext";
+import { useVoices } from "../../state/VoiceContext";
 
 /**
  * Turn the selected story into a script in the creator's own voice.
@@ -18,9 +20,12 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  // Held here rather than inside ScriptOrder so it survives the order panel
-  // being replaced by the finished script.
-  const [balance, setBalance] = useState(null);
+
+  // The balance lives in one place for the whole app (see CreditsContext) — it
+  // is shown in the sidebar and the mobile header at the same time as here, and
+  // three components each holding their own copy is three numbers that drift.
+  const { setBalance, refresh: refreshCredits } = useCredits();
+  const { activeId: voiceId } = useVoices();
 
   const pollRef = useRef(null);
 
@@ -48,6 +53,10 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
           // The first run builds the voice profile as a side effect — refresh the
           // header so it stops saying "no voice yet".
           onVoiceChange?.();
+          // A failed script is refunded (routes/script.js), and so is an add-on
+          // that could not be produced. Either way the balance we charged on
+          // the way in is no longer the right one.
+          refreshCredits();
         }
       } catch (err) {
         clearInterval(pollRef.current);
@@ -55,7 +64,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
         setError(errorMessage(err, "Lost track of that script. Try again."));
       }
     }, 2500);
-  }, [onVoiceChange]);
+  }, [onVoiceChange, refreshCredits]);
 
   /**
    * @param {object} order  { seconds, english, packaging } — what they chose in
@@ -67,7 +76,11 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
     setCopied(false);
     setBusy(true);
     try {
-      const body = { news_id: storyId, force };
+      // The voice is sent explicitly rather than left to the server's default.
+      // The creator picked it in the order panel a second ago, and having the
+      // server guess at that point is how a story gets written in the wrong
+      // voice and charged for.
+      const body = { news_id: storyId, force, voice_id: voiceId || undefined };
       if (order) {
         body.seconds = order.seconds;
         body.english = order.english;
@@ -84,7 +97,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
       setScript(data.script);
       if (typeof data.balance === "number") setBalance(data.balance);
       if (data.script.status === "processing") startPolling(data.script.id);
-      else { setBusy(false); onVoiceChange?.(); }
+      else { setBusy(false); onVoiceChange?.(); refreshCredits(); }
     } catch (err) {
       setBusy(false);
       if (err?.response?.data?.needs_transcript) {
@@ -115,32 +128,19 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
 
   return (
     <section style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid var(--line)" }}>
-      <div
+      {/* Just the heading. The balance moved to the sidebar card, where it is on
+          screen permanently instead of only while this section is; and the
+          language chip went with it — the order panel below already says which
+          voice is writing, and the finished script's own header repeats the
+          language. Three copies of one fact is noise, not reassurance. */}
+      <h3
         style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 12, flexWrap: "wrap", marginBottom: 13,
+          fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
+          textTransform: "uppercase", color: "var(--ink-mute)", margin: "0 0 13px",
         }}
       >
-        <h3
-          style={{
-            fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
-            textTransform: "uppercase", color: "var(--ink-mute)", margin: 0,
-          }}
-        >
-          Your script
-        </h3>
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          {/* Balance in the header, not only inside the order panel — once the
-              script is written the panel is gone, and "what did that cost me"
-              is the next question. */}
-          {balance !== null && (
-            <span style={{ fontSize: 11.5, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
-              {balance} credits
-            </span>
-          )}
-          {hasVoice && <VoiceChip voice={voice} />}
-        </div>
-      </div>
+        Your script
+      </h3>
 
       {error && (
         <div
@@ -162,11 +162,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
 
       {!script && (hasVoice || voice?.transcripts_available > 0) && (
         <div>
-          <ScriptOrder
-            busy={busy}
-            onBalance={setBalance}
-            onGenerate={(order) => generate(false, order)}
-          />
+          <ScriptOrder busy={busy} onGenerate={(order) => generate(false, order)} />
           {!hasVoice && (
             <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
               First run also learns your voice from your {voice.transcripts_available === 1 ? "video" : "videos"}, so it takes a little longer.
@@ -264,32 +260,6 @@ function CopyButton({ text, label = "Copy" }) {
     >
       {done ? "Copied" : label}
     </button>
-  );
-}
-
-function VoiceChip({ voice }) {
-  const p = voice.profile;
-  const n = p.transcript_count || 0;
-  const tone =
-    p.confidence === "good"
-      ? { color: "var(--ok)", bg: "#E6F4EA", border: "#B7E1C4" }
-      : p.confidence === "fair"
-      // Amber, matching the dashboard's confidence card. Red here read as an
-      // error rather than as "we could learn more from another video".
-      ? { color: "#8F5E07", bg: "#FBF5E8", border: "#EEDCB6" }
-      : { color: "var(--ink-mute)", bg: "#F2F2F2", border: "var(--line)" };
-
-  return (
-    <span
-      title={`Voice learned from ${n} video${n === 1 ? "" : "s"}`}
-      style={{
-        fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 999,
-        color: tone.color, background: tone.bg, border: `1px solid ${tone.border}`,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {p.language_label || "Your voice"} · {n} video{n === 1 ? "" : "s"}
-    </span>
   );
 }
 

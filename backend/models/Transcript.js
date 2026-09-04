@@ -14,6 +14,14 @@ const { Schema } = mongoose;
  */
 const TranscriptSchema = new Schema({
   user:     { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+
+  // Which voice set this video teaches. A creator with a Hindi channel and an
+  // English one keeps two sets, and a video only ever belongs to one of them —
+  // the slot count, the analysis input and the "your videos" list are all scoped
+  // by this. Null only on rows written before voice sets existed; the migration
+  // and ensureVoice() both adopt those into the user's default set.
+  voice:    { type: Schema.Types.ObjectId, ref: "VoiceProfile", default: null, index: true },
+
   video_id: { type: String, required: true },          // canonical YouTube id
   url:      { type: String, required: true },          // the normalized watch URL we sent
 
@@ -73,6 +81,15 @@ const TranscriptSchema = new Schema({
 });
 
 // One transcript per user per video — the cache key, enforced by the database.
+//
+// Deliberately still keyed on (user, video_id) rather than (user, voice,
+// video_id) now that voice sets exist. Widening it would let the same video be
+// added to two sets, and each copy would be transcribed and BILLED separately
+// for text we already hold. The route turns the resulting duplicate-key error
+// into "that video is already in <set name>", which is the honest answer.
 TranscriptSchema.index({ user: 1, video_id: 1 }, { unique: true });
+
+// The per-set queries: slot counts, the video list, and the analysis input.
+TranscriptSchema.index({ user: 1, voice: 1, status: 1 });
 
 export default mongoose.models.Transcript || mongoose.model("Transcript", TranscriptSchema, "transcripts");

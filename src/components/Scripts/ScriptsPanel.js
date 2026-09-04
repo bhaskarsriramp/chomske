@@ -4,6 +4,8 @@ import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton, { SkeletonText } from "../Shell/Skeleton";
 import { timeAgo, sourceLabel } from "../News/newsUtils";
 import { categoryColor, cardBackground } from "../../theme";
+import { useVoices } from "../../state/VoiceContext";
+import VoiceSelect from "../Shell/VoiceSelect";
 
 /**
  * My scripts — everything this creator has written, and what it was written from.
@@ -23,17 +25,27 @@ export default function ScriptsPanel({ onGoTopics }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
+  const { voices } = useVoices();
+
   const [scripts, setScripts] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [busy, setBusy] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState("");
 
+  // Which voice's history is on screen. "all" is a real answer here, unlike on
+  // the writing screen: a creator asking "what have I made" usually means all of
+  // it, and someone who only ever had one voice must never have to find a filter
+  // to see work they wrote before voices existed.
+  const [filter, setFilter] = useState("all");
+
   const load = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
-      const { data } = await api.get("/script", { params: { limit: 30 } });
+      const { data } = await api.get("/script", {
+        params: { limit: 30, ...(filter && filter !== "all" ? { voice: filter } : {}) },
+      });
       setScripts(data.scripts || []);
     } catch (err) {
       setError(errorMessage(err, "Couldn't load your scripts."));
@@ -42,9 +54,14 @@ export default function ScriptsPanel({ onGoTopics }) {
       setBusy(false);
       setLoadedOnce(true);
     }
-  }, []);
+  }, [filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Changing the filter changes the list under the open script. Clearing the
+  // selection stops the right pane showing a script that is no longer in the
+  // list beside it.
+  useEffect(() => { setOpenId(null); }, [filter]);
 
   // The right pane is always on screen at this width, so leaving it empty wastes
   // half the view.
@@ -68,20 +85,34 @@ export default function ScriptsPanel({ onGoTopics }) {
         }}
       >
         <div style={{ padding: `${isPhone ? 16 : 20}px ${gut}px 12px`, flexShrink: 0 }}>
-          <h1
-            style={{
-              fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
-              color: "var(--ink)", margin: "0 0 4px",
-            }}
-          >
-            My scripts
-          </h1>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <h1
+              style={{
+                fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
+                color: "var(--ink)", margin: "0 0 4px",
+              }}
+            >
+              My scripts
+            </h1>
+            {voices.length > 1 && (
+              <VoiceSelect
+                value={filter}
+                onChange={setFilter}
+                allowAll
+                label=""
+                size="sm"
+                hideWhenSingle={false}
+              />
+            )}
+          </div>
           <p style={{ fontSize: 13.5, color: "var(--ink-body)", margin: 0, lineHeight: 1.6 }}>
             {/* Deliberately not rendered until the count is known — see Skeleton.js.
                 "0 scripts" shown for half a second is a claim, and a wrong one. */}
             {loadedOnce
               ? scripts.length
                 ? `${scripts.length} written in your voice, newest first.`
+                : filter !== "all"
+                ? "Nothing written in this voice yet."
                 : "Nothing written yet."
               : <Skeleton variant="text" width={230} height={11} />}
           </p>
@@ -221,6 +252,10 @@ function ScriptRow({ script, index, isPhone, active, onOpen }) {
       >
         {[
           timeAgo(script.created_at),
+          // The voice it was written in, as it was CALLED at the time — the name
+          // is copied onto the script, so renaming a voice never rewrites the
+          // history of what was already made in it.
+          script.voice_name,
           script.language_label,
           script.sources?.length ? `${script.sources.length} source${script.sources.length === 1 ? "" : "s"}` : null,
         ].filter(Boolean).join("  ·  ")}

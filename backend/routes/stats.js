@@ -62,24 +62,46 @@ function resolveRange(q) {
   return { from, to: new Date(), label: `Last ${days} days`, key: `${days}d` };
 }
 
-/** GET /stats/dashboard?range=7d|28d|custom&from=&to= */
+/**
+ * GET /stats/dashboard?range=7d|28d|custom&from=&to=&voice=
+ *
+ * ?voice=<id> narrows every number to one voice set; omitted (or "all") reports
+ * the whole account. A creator running two channels needs both views: "how is
+ * the Hindi channel doing" and "how much have I made in total" are different
+ * questions and the dashboard should answer whichever was asked.
+ */
 router.get("/dashboard", authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const range = resolveRange(req.query);
     const inRange = { $gte: range.from, $lte: range.to };
 
+    // Scope. An invalid id falls through to the whole account rather than
+    // matching nothing and reporting a confident, wrong zero.
+    const voiceParam = String(req.query.voice || "").trim();
+    const voiceId =
+      voiceParam && voiceParam !== "all" && mongoose.Types.ObjectId.isValid(voiceParam)
+        ? new mongoose.Types.ObjectId(voiceParam)
+        : null;
+    const scope = voiceId ? { voice: voiceId } : {};
+
     const [videosHeld, videosReady, scriptsInRange, scriptsAll, profile, recentScripts] =
       await Promise.all([
-        Transcript.countDocuments({ user: userId, status: { $ne: "failed" } }),
-        Transcript.countDocuments({ user: userId, status: "done", text: { $ne: "" } }),
-        Script.countDocuments({ user: userId, status: "done", created_at: inRange }),
-        Script.countDocuments({ user: userId, status: "done" }),
-        VoiceProfile.findOne({ user: userId }).lean(),
-        Script.find({ user: userId, status: "done" })
+        Transcript.countDocuments({ user: userId, ...scope, status: { $ne: "failed" } }),
+        Transcript.countDocuments({ user: userId, ...scope, status: "done", text: { $ne: "" } }),
+        Script.countDocuments({ user: userId, ...scope, status: "done", created_at: inRange }),
+        Script.countDocuments({ user: userId, ...scope, status: "done" }),
+        // With no voice selected this reports the DEFAULT set's profile, not a
+        // blend of every set — there is no such thing as an average of two
+        // voices, and inventing one would be the exact failure voice sets exist
+        // to prevent.
+        voiceId
+          ? VoiceProfile.findOne({ _id: voiceId, user: userId }).lean()
+          : VoiceProfile.findOne({ user: userId, is_default: true }).lean(),
+        Script.find({ user: userId, ...scope, status: "done" })
           .sort({ created_at: -1 })
           .limit(8)
-          .select("headline language_label created_at")
+          .select("headline language_label voice_name created_at")
           .lean(),
       ]);
 
@@ -88,7 +110,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
     const byDay = await Script.aggregate([
       // req.user.id is a string; $match needs a real ObjectId or it matches
       // nothing and the chart renders silently empty.
-      { $match: { user: new mongoose.Types.ObjectId(userId), status: "done", created_at: inRange } },
+      { $match: { user: new mongoose.Types.ObjectId(userId), ...scope, status: "done", created_at: inRange } },
       {
         $group: {
           // UTC day keys. Deliberately not toLocaleDateString: that only returns
@@ -104,6 +126,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
     return res.json({
       success: true,
       range: { key: range.key, label: range.label, from: range.from, to: range.to },
+      voice_id: voiceId ? String(voiceId) : null,
       videos: {
         used: videosHeld,
         ready: videosReady,
@@ -111,20 +134,26 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
         left: Math.max(0, MAX_VOICE_VIDEOS - videosHeld),
       },
       scripts: { in_range: scriptsInRange, all_time: scriptsAll },
-      voice: profile
+      // built_at is what "analysed" means — the row exists from the moment the
+      // set is created, so its presence alone says nothing.
+      voice: profile?.built_at
         ? {
+            id: String(profile._id),
+            name: profile.name || "",
             confidence: profile.confidence || "thin",
             language_label: profile.language_label || "",
             transcript_count: profile.transcript_count || 0,
             built_at: profile.built_at,
-            // The profile is behind if videos were added or removed since it ran.
-            stale: (profile.transcript_count || 0) !== videosReady,
+            // The profile is behind if videos were added or removed since it
+            // ran — only meaningful when the numbers describe the same set.
+            stale: !!voiceId && (profile.transcript_count || 0) !== videosReady,
           }
         : null,
       by_day: byDay.map((d) => ({ day: d._id, count: d.n })),
       recent_scripts: recentScripts.map((s) => ({
         headline: s.headline || "",
         language_label: s.language_label || "",
+        voice_name: s.voice_name || "",
         created_at: s.created_at,
       })),
     });

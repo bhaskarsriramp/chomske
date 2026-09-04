@@ -23,6 +23,17 @@ const dbUrl =
   "@cluster0.ds8pal0.mongodb.net/hinglish?retryWrites=true&w=majority&appName=Cluster0";
 
 export default async function connectToMongo() {
+  // Escape hatch, unset in production. Its reason for existing is the migration
+  // scripts: running one with --apply against the live cluster having never run
+  // it anywhere is not a thing anyone should have to do, and this is what makes
+  // "restore a dump locally, point at it, watch what it does" possible.
+  const override = String(process.env.MONGODB_URI || "").trim();
+  if (override) {
+    await mongoose.connect(override, { serverSelectionTimeoutMS: 15000 });
+    console.log(`[mongo] connected via MONGODB_URI → db "${mongoose.connection.name}"`);
+    return;
+  }
+
   if (!password) {
     throw new Error("MONGODB_PASSWORD is not set — add it to backend/.env.");
   }

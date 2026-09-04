@@ -64,7 +64,7 @@ const WIDE_MIN_SCORE = 3;
 // sits there hammering it expecting different news.
 const MAX_REFRESHES = 3;
 
-export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey = "", userCategories = [] }) {
+export default function NewsFeed({ onGoTranscribe, voiceRev = 0, voiceId = null, categoriesKey = "", userCategories = [] }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
@@ -121,18 +121,23 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, categoriesKey =
     [opened]
   );
 
-  // Fetched once here rather than inside each story: the profile is per-user, not
-  // per-story, and re-requesting it on every click would be a call per selection.
+  // Fetched once here rather than inside each story: the profile is per-voice,
+  // not per-story, and re-requesting it on every click would be a call per
+  // selection.
   const loadVoice = useCallback(async () => {
     try {
-      const { data } = await api.get("/script/voice");
+      const { data } = await api.get("/script/voice", {
+        params: voiceId ? { voice: voiceId } : {},
+      });
       setVoice(data);
     } catch { /* the panel degrades to "transcribe first" — never block the feed */ }
-  }, []);
+  }, [voiceId]);
 
   // voiceRev changes when videos are added, deleted or re-analysed on the other
   // screen — without it this pane would keep offering to write in a profile that
   // no longer matches, or keep saying "transcribe first" after they just did.
+  // voiceId changes when they switch which voice writes, which is a different
+  // profile with a different set of videos behind it.
   useEffect(() => { loadVoice(); }, [loadVoice, voiceRev]);
 
   // Nothing polls here: the collector runs on its own 15-minute clock, so a

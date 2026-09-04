@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import api, { errorMessage } from "../../api";
+import api from "../../api";
+import { useCredits } from "../../state/CreditsContext";
+import { useVoices } from "../../state/VoiceContext";
+import VoiceSelect from "../Shell/VoiceSelect";
 
 /**
- * ScriptOrder — choose the length, see the price, pay if the wallet is short.
+ * ScriptOrder — choose the voice, choose the length, see the price.
  *
  * ── THE PRICE IS ON SCREEN BEFORE THE BUTTON IS PRESSED ─────────────────────
  * Every number here comes from the server (GET /billing/quote and
@@ -13,35 +16,22 @@ import api, { errorMessage } from "../../api";
  * A creator picking "8 min" is agreeing to spend about ten times what a Short
  * costs. Showing that only after the credits are gone is how a product earns a
  * refund request and a bad review in the same afternoon.
+ *
+ * ── AND SO IS THE REFUSAL ───────────────────────────────────────────────────
+ * When a chosen length costs more than they hold, the button says so instead of
+ * saying the price. A disabled button labelled with a number a creator cannot
+ * afford reads as broken; a button that says "Not enough credits", next to one
+ * that fixes it, reads as an answer.
  */
+export default function ScriptOrder({ busy, onGenerate }) {
+  const { balance, setBalance, openBuy, canBuy, rules } = useCredits();
+  const { voices, activeId, setActive } = useVoices();
 
-/** Razorpay's widget, loaded on demand — not in index.html, where it would cost
- *  every visitor a script they will mostly never use. */
-function loadCheckout() {
-  return new Promise((resolve, reject) => {
-    if (window.Razorpay) return resolve(true);
-    const s = document.createElement("script");
-    s.src = "https://checkout.razorpay.com/v1/checkout.js";
-    s.onload = () => resolve(true);
-    s.onerror = () => reject(new Error("Couldn't load the payment window."));
-    document.body.appendChild(s);
-  });
-}
-
-export default function ScriptOrder({ busy, onGenerate, onBalance }) {
-  const [rules, setRules] = useState(null);      // packs + duration presets, from the server
   const [seconds, setSeconds] = useState(60);
   const [english, setEnglish] = useState(false);
   const [packaging, setPackaging] = useState(false);
   const [q, setQ] = useState(null);              // the live quote
-  const [buying, setBuying] = useState(false);
-  const [showPacks, setShowPacks] = useState(false);
-  const [error, setError] = useState("");
   const quoteReq = useRef(0);
-
-  useEffect(() => {
-    api.get("/billing/packs").then(({ data }) => setRules(data)).catch(() => {});
-  }, []);
 
   // Re-quoted on every change. Guarded by a request counter: the responses can
   // arrive out of order when someone drags the slider, and a stale one landing
@@ -54,74 +44,42 @@ export default function ScriptOrder({ busy, onGenerate, onBalance }) {
       });
       if (mine === quoteReq.current) {
         setQ(data);
-        onBalance?.(data.balance);
+        // The quote carries the authoritative balance, so a script generated in
+        // another tab shows up here without a second request.
+        if (typeof data.balance === "number") setBalance(data.balance);
       }
     } catch { /* the button still works; the server prices it again anyway */ }
-  }, [seconds, english, packaging, onBalance]);
+  }, [seconds, english, packaging, setBalance]);
 
   useEffect(() => { refreshQuote(); }, [refreshQuote]);
 
-  async function buy(packId) {
-    setError("");
-    setBuying(true);
-    let order;
-    try {
-      await loadCheckout();
-      const { data } = await api.post("/billing/order", { pack_id: packId });
-      order = data;
-    } catch (err) {
-      setBuying(false);
-      setError(errorMessage(err, "Couldn't start the payment."));
-      return;
-    }
-
-    const rzp = new window.Razorpay({
-      key: order.key_id,
-      amount: order.amount,
-      currency: order.currency,
-      name: "Lipi",
-      description: `${order.pack.label} — ${order.pack.credits} credits`,
-      order_id: order.order_id,
-      theme: { color: "#FF0000" },
-      handler: async (resp) => {
-        try {
-          const { data } = await api.post("/billing/verify", {
-            order_id: resp.razorpay_order_id,
-            payment_id: resp.razorpay_payment_id,
-            signature: resp.razorpay_signature,
-          });
-          setBuying(false);
-          setShowPacks(false);
-          onBalance?.(data.balance);
-          refreshQuote();
-        } catch (err) {
-          // The money may well have left their account — never say "payment
-          // failed" here, because we do not know that. Say what we know.
-          setBuying(false);
-          setError(errorMessage(err, "Payment went through but we couldn't confirm it. Refresh in a moment — if the credits aren't there, contact us with your payment id."));
-        }
-      },
-      modal: {
-        ondismiss: () => {
-          setBuying(false);
-          api.post("/billing/abandoned", { order_id: order.order_id }).catch(() => {});
-        },
-      },
-    });
-
-    rzp.on("payment.failed", () => {
-      setBuying(false);
-      setError("That payment didn't go through. No credits were used.");
-    });
-
-    rzp.open();
-  }
-
   const presets = rules?.durations || [];
-  const affordable = q ? q.affordable : true;
+
+  // Affordability is decided HERE, against the shared live balance, rather than
+  // read off `q.affordable`. The quote's copy of the balance was true when the
+  // server priced it — but a top-up from the sidebar happens without any of
+  // these three inputs changing, so nothing would re-quote and the button would
+  // stay disabled over credits the creator has already paid for.
+  //
+  // The price itself still comes from the server. Only the comparison is local.
+  const have = typeof balance === "number" ? balance : q?.balance;
+  const cost = q?.total ?? null;
+  const affordable = cost === null || have === undefined || have === null ? true : have >= cost;
 
   return (
     <div>
+      {/* ── Which voice ──────────────────────────────────────────────────────
+          Only rendered once there is a second voice to choose between — see
+          VoiceSelect. It is first because it is the most expensive thing to get
+          wrong: the wrong length is a rewrite, the wrong voice is a script that
+          sounds like somebody else. */}
+      {voices.length > 1 && (
+        <div style={{ marginBottom: 14 }}>
+          <Label>Write as</Label>
+          <VoiceSelect value={activeId} onChange={setActive} label="" hideWhenSingle={false} />
+        </div>
+      )}
+
       {/* ── Length ───────────────────────────────────────────────────────── */}
       <div style={{ marginBottom: 14 }}>
         <Label>How long should it run?</Label>
@@ -177,73 +135,60 @@ export default function ScriptOrder({ busy, onGenerate, onBalance }) {
         </div>
       </div>
 
-      {error && (
-        <div
-          role="alert"
-          style={{
-            padding: "10px 12px", borderRadius: 9, marginBottom: 11,
-            background: "#FCE8E6", border: "1px solid #F5C7C3",
-            color: "var(--bad)", fontSize: 13, lineHeight: 1.55,
-          }}
-        >
-          {error}
-        </div>
-      )}
+      {/* ── The ask ────────────────────────────────────────────────────────
+          Two states for one row. When they can afford it, the write button is
+          the filled one and the balance sits beside it. When they cannot, the
+          refusal goes flat and quiet and BUY becomes the filled button — the
+          only thing on the row that still does anything should be the one that
+          looks like it does.
 
-      {/* ── The ask ──────────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          The dead state is deliberately not white-on-grey. Disabled controls are
+          exempt from the contrast rules, which is not the same as being readable,
+          and this one has to be read: it is the explanation. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <button
           onClick={() => onGenerate({ seconds, english, packaging })}
           disabled={busy || !affordable}
           className={busy || !affordable ? undefined : "hg-btn-primary"}
           style={{
             fontSize: 14, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
-            border: "none", background: "var(--primary)", color: "#fff",
+            border: affordable ? "none" : "1px solid #DCDCDC",
+            color: affordable ? "#fff" : "#5F5F5F",
+            background: affordable ? "var(--primary)" : "#EDEDED",
             cursor: busy || !affordable ? "default" : "pointer",
-            opacity: busy || !affordable ? 0.55 : 1,
+            opacity: busy ? 0.55 : 1,
           }}
         >
-          {busy ? "Writing…" : `Write this in my voice · ${q?.total ?? "…"} credits`}
+          {busy
+            ? "Writing…"
+            : !affordable
+            ? "Not enough credits"
+            : `Write this in my voice · ${cost ?? "…"} credits`}
         </button>
 
-        <span style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>
-          {q ? `${q.balance} credits left` : ""}
-        </span>
-      </div>
-
-      {q && !affordable && (
-        <div
-          style={{
-            marginTop: 12, padding: "12px 14px", borderRadius: 10,
-            border: "1px solid var(--line)", background: "var(--paper)",
-          }}
-        >
-          <div style={{ fontSize: 13.5, color: "var(--ink)", fontWeight: 600, marginBottom: 4 }}>
-            This one needs {q.total} credits — you have {q.balance}.
-          </div>
-          <div style={{ fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.6, marginBottom: 10 }}>
-            Top up once. Credits never expire and there's no subscription.
-          </div>
+        {!affordable && canBuy ? (
           <button
-            onClick={() => setShowPacks(true)}
+            onClick={openBuy}
             className="hg-btn-primary"
             style={{
-              fontSize: 13, fontWeight: 600, padding: "9px 16px", borderRadius: 9,
+              fontSize: 14, fontWeight: 650, padding: "12px 20px", borderRadius: 11,
               border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer",
             }}
           >
             Buy credits
           </button>
-        </div>
-      )}
+        ) : (
+          <span style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>
+            {typeof have === "number" ? `${have} credits left` : ""}
+          </span>
+        )}
+      </div>
 
-      {showPacks && rules && (
-        <Packs
-          rules={rules}
-          buying={buying}
-          onBuy={buy}
-          onClose={() => setShowPacks(false)}
-        />
+      {!affordable && cost !== null && (
+        <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
+          This one needs {cost} credits and you have {have ?? 0}. Credits never
+          expire and there's no subscription — or pick a shorter length above.
+        </p>
       )}
     </div>
   );
@@ -303,103 +248,3 @@ function Toggle({ on, onChange, title, note, cost }) {
   );
 }
 
-/** The pack chooser. Rendered from the server's list — see the note at the top
- *  of this file about why no price is written here. */
-function Packs({ rules, buying, onBuy, onClose }) {
-  return (
-    <div
-      role="dialog"
-      aria-label="Buy credits"
-      style={{
-        position: "fixed", inset: 0, zIndex: 60,
-        background: "rgba(15,15,15,.45)", display: "grid", placeItems: "center", padding: 18,
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="hg-sheet-up"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(460px, 100%)", background: "var(--card)",
-          border: "1px solid var(--line)", borderRadius: 16, padding: 22,
-          maxHeight: "88vh", overflowY: "auto",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-          <h3 style={{ fontSize: 18, fontWeight: 750, color: "var(--ink)", margin: 0, letterSpacing: "-0.02em" }}>
-            Buy credits
-          </h3>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            style={{ border: "none", background: "none", fontSize: 20, color: "var(--ink-mute)", cursor: "pointer", lineHeight: 1 }}
-          >
-            ×
-          </button>
-        </div>
-        <p style={{ fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.6, margin: "0 0 16px" }}>
-          One-time. No subscription, and credits never expire.
-        </p>
-
-        {!rules.configured && (
-          <div style={{ fontSize: 13, color: "var(--bad)", marginBottom: 12 }}>
-            Payments aren't switched on yet. Please try again later.
-          </div>
-        )}
-
-        <div style={{ display: "grid", gap: 9 }}>
-          {rules.packs.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => onBuy(p.id)}
-              disabled={buying || !rules.configured}
-              className="hg-pick"
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                gap: 12, width: "100%", textAlign: "left", cursor: buying ? "default" : "pointer",
-                padding: "13px 15px", borderRadius: 12,
-                border: `1px solid ${p.popular ? "var(--ink)" : "var(--line)"}`,
-                background: "var(--card)", opacity: buying ? 0.6 : 1,
-              }}
-            >
-              <span>
-                <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: "var(--ink)" }}>
-                  {p.label}
-                  {p.popular && (
-                    <span
-                      style={{
-                        marginLeft: 8, fontSize: 10, fontWeight: 700, letterSpacing: ".06em",
-                        padding: "2px 7px", borderRadius: 999,
-                        background: "var(--made-tint)", color: "var(--made)",
-                        border: "1px solid var(--made-line)",
-                      }}
-                    >
-                      POPULAR
-                    </span>
-                  )}
-                </span>
-                <span style={{ display: "block", fontSize: 12.5, color: "var(--ink-mute)", marginTop: 3 }}>
-                  {p.credits} credits · about {p.shorts} × 60s scripts
-                </span>
-              </span>
-              <span style={{ textAlign: "right", flexShrink: 0 }}>
-                <span style={{ display: "block", fontSize: 17, fontWeight: 750, color: "var(--ink)" }}>
-                  ₹{p.inr}
-                </span>
-                <span style={{ display: "block", fontSize: 11, color: "var(--ink-mute)" }}>
-                  ≈ ₹{p.per_short_inr}/script
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <p style={{ fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.6, margin: "14px 0 0" }}>
-          Pay by UPI, card or netbanking. {rules.rules?.seconds_per_credit
-            ? `1 credit = ${rules.rules.seconds_per_credit} seconds of finished script.`
-            : ""}
-        </p>
-      </div>
-    </div>
-  );
-}
