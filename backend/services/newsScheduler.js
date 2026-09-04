@@ -10,8 +10,10 @@
  *
  * Ranking does not. It costs money, and running it ninety-six times a day per
  * category meant paying to judge stories for an empty room. It now fires from
- * ensureRanked() on sign-in, on opening Topics and on Refresh, behind a
- * ten-minute per-category throttle.
+ * ensureRanked() on sign-in and on Fetch, behind a ten-minute per-category
+ * throttle — and Fetch also runs the ONE source cheap and fast enough to belong
+ * on a button press (see fetchAndRank), so that pressing it can return a story
+ * the collector has not been to look for yet.
  *
  * ── WHY THERE'S A DATABASE CLAIM AND NOT JUST setInterval ────────────────────
  * Cloud Run (and anything else that autoscales) can run several instances of
@@ -138,6 +140,53 @@ export async function ensureRanked(cat, { force = false } = {}) {
     usd: ranked.usd || 0,
     skipped: false,
   };
+}
+
+/**
+ * What the Fetch button runs: go and get the newest stories, then judge them.
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+ * Refresh used to rank only, on the reasoning that a full collection is over a
+ * minute of fan-out and the scheduled collector had already been. Both halves of
+ * that were true and the conclusion was still wrong: pressing a button named
+ * "Fetch new topics" could not, under any circumstance, produce a topic that was
+ * not already in the database. On a quiet collector — a restart, a cold
+ * category, a source that started failing — the button was a no-op with a
+ * reassuring spinner, and the honest answer to "why is the top story ten hours
+ * old" was invisible from the outside.
+ *
+ * The paid news source changes what is possible here: it is ONE http request,
+ * about a second, and it reaches back further than any free source can. So a
+ * refresh now genuinely fetches. The free sources stay on the scheduler's clock
+ * where their minute and a half doesn't keep anyone waiting.
+ *
+ * Ranking is FORCED when that fetch actually brought something in, and only
+ * then. Otherwise a creator pays for fresh articles and still sees yesterday's
+ * feed, because the ten-minute ranking cooldown was holding the scores back —
+ * which is the same bug one layer down. Nothing runs away: the fetch has its own
+ * per-category gap, so the second press inside ten minutes inserts nothing, and
+ * a forced rank cannot follow.
+ *
+ * @returns {{ inserted, ranked, briefs, usd, skipped }}
+ */
+export async function fetchAndRank(cat) {
+  if (!getCategory(cat)) return { skipped: true, reason: "unknown_category" };
+
+  let inserted = 0;
+  try {
+    const collected = await collectNews(cat, { fast: true, userInitiated: true });
+    inserted = collected.inserted || 0;
+  } catch (err) {
+    // The feed still renders what is already ranked, and the scheduled pass will
+    // be along shortly. Never worth failing a button press over.
+    console.error(`[news:${cat}] fast collect failed:`, err.message);
+  }
+
+  // Deliberately no markChecked(): "checked N minutes ago" means a FULL pass
+  // over every source, and stamping it here would both overstate what we looked
+  // at and make the next sign-in kickoff skip its real collection.
+  const ranked = await ensureRanked(cat, { force: inserted > 0 });
+  return { inserted, ...ranked };
 }
 
 /**
@@ -271,4 +320,4 @@ export function startNewsScheduler() {
   console.log(`[news] scheduler on — every ${INTERVAL_MIN} min`);
 }
 
-export default { startNewsScheduler, kickoffCategories };
+export default { startNewsScheduler, kickoffCategories, ensureRanked, fetchAndRank };

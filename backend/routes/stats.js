@@ -16,11 +16,24 @@ import express from "express";
 import mongoose from "mongoose";
 import Transcript from "../models/Transcript.js";
 import Script from "../models/Script.js";
+import User from "../models/User.js";
 import VoiceProfile from "../models/VoiceProfile.js";
+import { apidirectKeyHealth } from "../services/apidirectClient.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
 const MAX_VOICE_VIDEOS = parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
+
+// Who may read operational state. Comma-separated addresses; empty means nobody,
+// which is the right default for a public deployment — a signed-in stranger has
+// no business knowing whether our news budget is spent, and "no addresses
+// configured" must never quietly mean "everyone".
+const ADMIN_EMAILS = new Set(
+  String(process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+);
 
 /**
  * Resolve ?range=7d|28d|custom (+ ?from&?to) into real dates.
@@ -118,6 +131,50 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("[stats] dashboard failed:", err);
     return res.status(500).json({ success: false, message: "Couldn't load your dashboard." });
+  }
+});
+
+/**
+ * GET /stats/apidirect — which apidirect key is working, and which is spent.
+ *
+ * ── WHY THIS IS A ROUTE AND NOT A LOG LINE ───────────────────────────────────
+ * With several keys in rotation, "the news stopped updating" and "one key ran
+ * out of credit" look identical from the app. The client already cools a failing
+ * key for an hour, rotates past it and records why on its row — this is the
+ * window onto that, so the answer to "which key do I need to top up" is one
+ * request instead of an hour of log archaeology.
+ *
+ * Secrets never leave: last four characters only, which is enough to match a row
+ * to a key in the apidirect dashboard and useless to anyone else.
+ *
+ * `status` per key:
+ *   ok           serving normally
+ *   exhausted    free tier used up, or a daily/monthly spending cap hit — the
+ *                one that means TOP THIS UP (402, or 429 with a limit code)
+ *   blocked      account blocked for a payment failure (403)
+ *   invalid      key revoked or deleted (401)
+ *   rate_limited too many at once — transient, clears in seconds
+ */
+router.get("/apidirect", authenticateToken, async (req, res) => {
+  try {
+    const me = await User.findById(req.user.id).select("email").lean();
+    const email = String(me?.email || "").toLowerCase();
+    if (!ADMIN_EMAILS.size || !ADMIN_EMAILS.has(email)) {
+      // 404, not 403: an endpoint whose existence is only interesting to whoever
+      // runs the deployment should not confirm itself to anyone else.
+      return res.status(404).json({ success: false, message: "Not found" });
+    }
+
+    const keys = await apidirectKeyHealth();
+    return res.json({
+      success: true,
+      configured: keys.length > 0,
+      usable_now: keys.filter((k) => k.usable_now).length,
+      keys,
+    });
+  } catch (err) {
+    console.error("[stats] apidirect health failed:", err);
+    return res.status(500).json({ success: false, message: "Couldn't read key health." });
   }
 });
 

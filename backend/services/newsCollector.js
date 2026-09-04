@@ -50,12 +50,20 @@ function scoreItem(item) {
 }
 
 /**
- * Run one full collection pass.
+ * Run one collection pass.
+ *
+ * @param {string} categoryId
+ * @param {object} opts
+ * @param {boolean} opts.fast  paid source only — about a second instead of the
+ *   full fan-out's minute and a half. What the Fetch button runs, so a person
+ *   pressing it actually gets new stories rather than a re-score of old ones.
+ * @param {boolean} opts.userInitiated  somebody is waiting; the paid source
+ *   uses its shorter gap between passes.
  * @returns {{ fetched, inserted, duplicates, bySource, errors }}
  */
-export async function collectNews(categoryId) {
+export async function collectNews(categoryId, { fast = false, userInitiated = false } = {}) {
   const started = Date.now();
-  const sources = allSources(categoryId);
+  const sources = allSources(categoryId, { fast, userInitiated });
   if (!sources.length) {
     console.warn(`[news] no sources for category "${categoryId}"`);
     return { fetched: 0, inserted: 0, duplicates: 0, skipped: 0, bySource: {}, errors: [], ms: 0 };
@@ -155,8 +163,8 @@ export async function collectNews(categoryId) {
   };
 
   console.log(
-    `[news:${categoryId}] collected ${out.fetched} → ${inserted} new, ${duplicates} dup, ${skipped} stale ` +
-    `in ${(out.ms / 1000).toFixed(1)}s` + (errors.length ? ` · ${errors.length} error(s)` : "")
+    `[news:${categoryId}]${fast ? " fast" : ""} collected ${out.fetched} → ${inserted} new, ${duplicates} dup, ` +
+    `${skipped} stale in ${(out.ms / 1000).toFixed(1)}s` + (errors.length ? ` · ${errors.length} error(s)` : "")
   );
   // Grouped, not one line each. A single systematic bug produces one error per
   // item — the first run of this printed the same message 694 times and buried

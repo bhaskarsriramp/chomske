@@ -28,6 +28,12 @@ const NewsLockSchema = new mongoose.Schema({
   // choice is between ranking on every page load and never ranking at all, and
   // both of those are bad in a way a stale timestamp is not.
   ranked: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+  // Per-category "last time we spent money FETCHING this" — the paid apidirect
+  // news source. Same reasoning as `ranked`, and separate from it because the
+  // two cost different amounts and run on different clocks: fetching is cheap
+  // and wants to be recent, ranking is dearer and can wait.
+  fetched: { type: mongoose.Schema.Types.Mixed, default: {} },
 });
 
 export const LOCK_ID = "news-poll";

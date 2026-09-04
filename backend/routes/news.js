@@ -13,7 +13,7 @@ import User from "../models/User.js";
 import { isValidCategory, DEFAULT_CATEGORY, getCategory } from "../services/categories.js";
 import { ensureBrief } from "../services/newsBriefService.js";
 import { lastCheckedAt, touchSeen } from "../services/newsCadence.js";
-import { ensureRanked } from "../services/newsScheduler.js";
+import { fetchAndRank } from "../services/newsScheduler.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
@@ -62,6 +62,12 @@ router.get("/", authenticateToken, async (req, res) => {
           sources: { $addToSet: "$source" },
           count: { $sum: 1 },
           earliest: { $min: "$first_seen_at" },
+          // The newest member, which is a different and equally necessary fact.
+          // A running story keeps collecting coverage into the same cluster, so
+          // its `earliest` is pinned to when it broke — correct, and the reason
+          // a feed full of live stories can read as though nothing has moved all
+          // day. This is what says "and there was more of it ten minutes ago".
+          latest: { $max: "$first_seen_at" },
         },
       },
       // Two stages, and the order matters. Rank first and cut to the limit, so
@@ -108,19 +114,25 @@ router.get("/", authenticateToken, async (req, res) => {
 /**
  * POST /news/refresh  { category? }
  *
- * Score whatever the collector has brought in since the last time anyone looked.
+ * Go and get the newest stories, then judge them.
  *
- * ── WHY THIS DOES NOT COLLECT ────────────────────────────────────────────────
- * A full collection is over a minute of fan-out across a dozen sources, which is
- * far too long to hold a button press open — and it is unnecessary, because the
- * collector is already running every fifteen minutes on its own clock. What a
- * refresh actually does is pay to JUDGE the items that arrived since last time.
- * That is a few seconds.
+ * ── THIS USED TO ONLY RE-SCORE, AND THAT WAS THE BUG ─────────────────────────
+ * The reasoning was sound — a full collection is over a minute of fan-out across
+ * a dozen sources, far too long to hold a button press open, and the collector
+ * runs on its own clock anyway — but the result was a button called "Fetch new
+ * topics" that could not fetch a topic. Everything it could show you was already
+ * in the database before you pressed it. When the collector was quiet, for any
+ * of the several reasons it can be quiet, pressing it did nothing and said
+ * nothing, and a ten-hour-old top story looked identical to a broken pipeline.
  *
- * Throttled per category, not per user: three presses, ten page loads and four
- * different people sharing a category have to add up to one paid pass. Coming
- * back inside the cooldown is not an error — it means the feed is already
- * current, so it returns success with ranked: 0.
+ * It now runs the paid news source, which is one request and about a second, and
+ * reaches minutes rather than hours back. The free sources stay on the
+ * scheduler's clock. Both halves are throttled per CATEGORY, not per user, so
+ * three presses, ten page loads and four people sharing a category still add up
+ * to one paid fetch and one paid ranking pass.
+ *
+ * Coming back inside a cooldown is not an error — it means the feed is already
+ * current — so the response says what happened rather than failing.
  */
 router.post("/refresh", authenticateToken, async (req, res) => {
   try {
@@ -131,23 +143,30 @@ router.post("/refresh", authenticateToken, async (req, res) => {
     const asked = String(req.body?.category || "");
     const cats = asked && mine.includes(asked) ? [asked] : mine;
 
+    let inserted = 0;
     let ranked = 0;
     let briefs = 0;
     let paid = false;
 
     for (const cat of cats) {
-      const out = await ensureRanked(cat);
+      const out = await fetchAndRank(cat);
+      inserted += out.inserted || 0;
       ranked += out.ranked || 0;
       briefs += out.briefs || 0;
       if (!out.skipped) paid = true;
     }
 
-    return res.json({ success: true, ranked, briefs, refreshed: paid });
+    // `collected` is what actually came in off the wire. The client reports new
+    // CARDS, which is a different and smaller number (most stories score too low
+    // to reach the feed) — but when the two disagree loudly, this is the field
+    // that says whether the fetch worked and the bar was high, or the fetch
+    // never happened at all.
+    return res.json({ success: true, collected: inserted, ranked, briefs, refreshed: paid });
   } catch (err) {
     console.error("[news] POST /refresh failed:", err);
     // The feed still renders from what is already ranked, so this is never worth
     // showing a creator an error over.
-    return res.json({ success: true, ranked: 0, briefs: 0, refreshed: false });
+    return res.json({ success: true, collected: 0, ranked: 0, briefs: 0, refreshed: false });
   }
 });
 
@@ -200,6 +219,9 @@ router.get("/:id", authenticateToken, async (req, res) => {
       count: coverage.length || 1,
       sources: [...new Set(coverage.map((c) => c.source))],
       earliest: coverage.length ? coverage[0].published_at : doc.first_seen_at,
+      // coverage is sorted by published_at ascending, so the tail is the newest
+      // write-up of this story.
+      latest: coverage.length ? coverage[coverage.length - 1].published_at : doc.first_seen_at,
     }),
     // Every link that covered it — this is what a creator opens to grab
     // screenshots and check facts before recording.
@@ -230,6 +252,11 @@ function shape(d, cluster = {}) {
     // that picked the story up hours late, and showing its timestamp made a
     // story look newer than it was.
     first_seen_at: cluster.earliest || d.first_seen_at,
+    // When the most recent piece of this story reached us. The feed prints it as
+    // "more N ago" when it is meaningfully newer than the break, which is the
+    // only visible difference between a story that is still developing and one
+    // that has been sitting there since breakfast.
+    latest_seen_at: cluster.latest || d.first_seen_at,
     // How many separate sources carried this story — the "how big is it" signal.
     sources: cluster.sources || [d.source],
     source_count: cluster.count || 1,

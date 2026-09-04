@@ -579,6 +579,17 @@ function StoryRow({ item, index, isPhone, active, rowRef, onOpen }) {
   const names = (item.sources || []).slice(0, 2).map(sourceLabel).join(", ");
   const more = (item.sources || []).length - 2;
 
+  // A running story keeps gathering coverage under the same cluster, so its own
+  // timestamp stays pinned to when it broke. That is the honest reading of "when
+  // did this happen" and it made a feed of live stories look frozen: every card
+  // said 12h ago all afternoon while fresh write-ups were arriving the whole
+  // time. Shown only when the gap is real, so a settled story stays quiet.
+  const moved =
+    item.latest_seen_at &&
+    new Date(item.latest_seen_at) - new Date(item.first_seen_at) > 45 * 60 * 1000
+      ? `more ${timeAgo(item.latest_seen_at)}`
+      : null;
+
   // One muted line, joined with middots. Metadata as separate coloured chips is
   // how a rundown turns into a sticker album — a creator scans this line, they
   // don't read it, and every badge added is one more thing to look past.
@@ -586,6 +597,7 @@ function StoryRow({ item, index, isPhone, active, rowRef, onOpen }) {
     item.source_count > 1 ? `${item.source_count} sources` : null,
     names ? `${names}${more > 0 ? ` +${more}` : ""}` : null,
     timeAgo(item.first_seen_at),
+    moved,
     item.points ? `${item.points} pts` : null,
   ].filter(Boolean).join("  ·  ");
 

@@ -50,6 +50,7 @@ const K_POLL = (cat) => `hg:news:poll:${cat}`;
 const K_CHECKED = "hg:news:checked";
 const K_KICK = (cat) => `hg:news:kick:${cat}`;
 const K_RANK = (cat) => `hg:news:rank:${cat}`;
+const K_FETCH = (cat) => `hg:news:apifetch:${cat}`;
 
 // Redis is shared with betaFounderProduction, so nothing here may be written
 // without the hg: prefix. See redis.js.
@@ -258,34 +259,65 @@ export async function wakeCategories(cats) {
  * @returns {Promise<boolean>} true when the caller should do the ranking
  */
 export async function claimRank(cat, seconds = RANK_COOLDOWN_SEC) {
+  return claimPaid(cat, "ranked", K_RANK(cat), seconds);
+}
+
+/**
+ * Take the right to SPEND MONEY fetching one category from apidirect.
+ *
+ * The paid news source is what makes the feed minutes-fresh instead of hours
+ * behind, and it is called from three places that a person can trigger over and
+ * over — the collector's tick, a sign-in kickoff, and the Fetch button. Same
+ * guard as ranking, its own clock: fetching is an eighth of a cent and wants to
+ * be recent, ranking is dearer and can wait.
+ *
+ * @param {number} minutes minimum gap between paid passes for this category
+ */
+export async function claimApidirectNews(cat, minutes = 60) {
+  return claimPaid(cat, "fetched", K_FETCH(cat), Math.max(1, minutes) * 60);
+}
+
+/**
+ * The shared guard behind both paid passes.
+ *
+ * Unlike everything else in this file it does NOT simply fail open, because
+ * failing open here means unbounded spend. Redis is the fast path; when it is
+ * unreachable the same decision is made with one atomic Mongo update, which is
+ * affordable because these run on refreshes rather than on every page view.
+ *
+ * @param {string} field the NewsLock map holding "last time we paid" per category
+ * @returns {Promise<boolean>} true when the caller should do the work
+ */
+async function claimPaid(cat, field, redisKey, seconds) {
   if (redis) {
     try {
-      return (await redis.set(K_RANK(cat), "1", "EX", seconds, "NX")) === "OK";
+      return (await redis.set(redisKey, "1", "EX", seconds, "NX")) === "OK";
     } catch { /* fall through to the database guard */ }
   }
 
-  // Matches only when this category has never been ranked, or was ranked longer
+  // Matches only when this category has never had this pass, or had it longer
   // ago than the cooldown. One round trip, and atomic, so two instances racing
   // on the same refresh cannot both win.
   const cutoff = new Date(Date.now() - seconds * 1000);
+  const path = `${field}.${cat}`;
   try {
     const r = await NewsLock.findOneAndUpdate(
       {
         _id: LOCK_ID,
         $or: [
-          { [`ranked.${cat}`]: { $exists: false } },
-          { [`ranked.${cat}`]: null },
-          { [`ranked.${cat}`]: { $lt: cutoff } },
+          { [path]: { $exists: false } },
+          { [path]: null },
+          { [path]: { $lt: cutoff } },
         ],
       },
-      { $set: { [`ranked.${cat}`]: new Date() } },
+      { $set: { [path]: new Date() } },
       { upsert: true, new: false }
     );
-    return r === null || !r.ranked?.[cat] || new Date(r.ranked[cat]) < cutoff;
+    return r === null || !r[field]?.[cat] || new Date(r[field][cat]) < cutoff;
   } catch (err) {
     // Upsert race: the other instance created the row microseconds earlier.
     if (err?.code === 11000) return false;
-    console.error(`[news] rank guard failed for ${cat}:`, err.message);
+    console.error(`[news] ${field} guard failed for ${cat}:`, err.message);
     return false;   // deliberately closed: an unknown state must not bill
   }
 }
@@ -323,5 +355,6 @@ export async function claimKickoff(cat, seconds = 300) {
 
 export default {
   categoryPlan, claimPoll, markChecked, lastCheckedAt,
-  wakeCategories, claimKickoff, claimRank, isFreshlyCollected, touchSeen,
+  wakeCategories, claimKickoff, claimRank, claimApidirectNews,
+  isFreshlyCollected, touchSeen,
 };
