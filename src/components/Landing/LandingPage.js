@@ -54,24 +54,27 @@ const LANGUAGES = [
 ];
 
 /**
- * The page's whole palette: YouTube red, three greens, and white.
+ * The page's whole palette: black, YouTube red, and white.
  *
- * The cyan, ice blue and orchid this started with are gone. One consequence to
- * keep in mind: red and green are the pair most often confused by people with a
- * red-green deficiency, roughly one man in twelve. Nothing on this page may use
- * the difference between them to carry MEANING — position, label and shape do
- * that everywhere below, and colour is decoration on top. Adding, say, a green
- * "kept" chip beside a red "dropped" chip would break that, and would need a
- * shape or a word as well.
+ * ── ONE HUE AT THREE STRENGTHS, NOT THREE HUES ───────────────────────────────
+ * The greens are gone, and so are the cyan, ice blue and orchid before them.
+ * What is left is the platform's own red at three depths plus white, which is
+ * enough to separate three steps or eight niche chips from each other without
+ * introducing a second colour that has to mean something.
+ *
+ * A note that OUTLIVED the green: nothing on this page may use colour alone to
+ * carry meaning. In the ranking demo the kept stories and the dropped ones are
+ * told apart by their score, their position and a strike-through — the tint is
+ * the last of four signals, not the only one. That was written for red-green
+ * colour blindness and it holds just as well for a red-only palette, where the
+ * risk is instead that everything looks the same at a glance.
  */
-const RED = "255,0,0";
-const MINT = "112,255,210";
-const LEAF = "118,196,87";
-const FOREST = "42,124,19";
-const PINE = "42,131,95";
+const RED = "255,0,0";        // YouTube red — the one that carries the brand
+const DEEP = "196,12,12";     // deeper, for the elements that must recede
+const ROSE = "255,116,116";   // lighter, for small marks that would vibrate at full red
 const WHITE = "255,255,255";
 
-const GLOW = { red: RED, mint: MINT, leaf: LEAF, forest: FOREST, pine: PINE };
+const GLOW = { red: RED, deep: DEEP, rose: ROSE };
 
 /**
  * One observer for every reveal on the page.
@@ -1067,14 +1070,14 @@ function HowItWorks({ isMobile, pad }) {
     },
     {
       n: "02",
-      tone: LEAF,
+      tone: DEEP,
       title: "It throws most of it away",
       body: "Every story is scored against your niche. You get the two or three worth a video.",
       scene: (a) => <SceneRanking active={a} />,
     },
     {
       n: "03",
-      tone: MINT,
+      tone: ROSE,
       title: "It writes the script in your voice",
       body: "One tap. Your hooks, your language, ready to read off the screen.",
       scene: (a) => <SceneWriting active={a} isMobile={isMobile} />,
@@ -1082,7 +1085,7 @@ function HowItWorks({ isMobile, pad }) {
   ];
 
   return (
-    <Section id="how" pad={pad} isMobile={isMobile} glow={LEAF}>
+    <Section id="how" pad={pad} isMobile={isMobile} glow={RED}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="How it works"
@@ -1205,7 +1208,7 @@ function SceneRanking({ active }) {
   ];
 
   return (
-    <DemoFrame label="ranking · ai_tech" tone={LEAF} height={252}>
+    <DemoFrame label="ranking · ai_tech" tone={RED} height={252}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--d-ink)" }}>
           {phase === 0 ? "Scoring 2,140 stories" : phase >= 3 ? "Worth a video today" : "Scoring 2,140 stories"}
@@ -1224,7 +1227,7 @@ function SceneRanking({ active }) {
           <DemoRow
             key={r.t}
             compact
-            tone={r.keep ? LEAF : WHITE}
+            tone={r.keep ? RED : WHITE}
             title={r.t}
             score={phase >= 1 ? r.s : null}
             state={state}
@@ -1258,7 +1261,7 @@ function SceneWriting({ active, isMobile }) {
   const spot = phase <= 0 ? { left: "62%", top: 190 } : { left: "26%", top: 44 };
 
   return (
-    <DemoFrame label="your script · Hindi-English" tone={MINT} height={252}>
+    <DemoFrame label="your script · Hindi-English" tone={ROSE} height={252}>
       <Cursor {...spot} pressed={phase === 1} hidden={isMobile} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -1280,7 +1283,7 @@ function SceneWriting({ active, isMobile }) {
           <span
             style={{
               width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
-              border: `2px solid rgba(255,255,255,.16)`, borderTopColor: `rgb(${MINT})`,
+              border: `2px solid rgba(255,255,255,.16)`, borderTopColor: `rgb(${ROSE})`,
               animation: "hg-spin .8s linear infinite",
             }}
           />
@@ -1352,13 +1355,13 @@ function WhatYouGet({ isMobile, pad }) {
       scene: (a) => <SceneSources active={a} />,
     },
     {
-      tone: LEAF,
+      tone: DEEP,
       title: "A voice built from your videos",
       body: "Your hooks, your sign-offs, your mix of English.",
       scene: (a) => <SceneVoice active={a} />,
     },
     {
-      tone: MINT,
+      tone: ROSE,
       title: "A script, not a prompt",
       body: "Finished and ready to record. Copy and go.",
       scene: (a) => <SceneCopy active={a} isMobile={isMobile} />,
@@ -1366,7 +1369,7 @@ function WhatYouGet({ isMobile, pad }) {
   ];
 
   return (
-    <Section id="what" pad={pad} isMobile={isMobile} glow={MINT}>
+    <Section id="what" pad={pad} isMobile={isMobile} glow={ROSE}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="What you get"
@@ -1456,7 +1459,7 @@ function SceneVoice({ active }) {
   const added = Math.min(phase, 2);
 
   return (
-    <DemoFrame label="my voice" tone={LEAF} height={196}>
+    <DemoFrame label="my voice" tone={RED} height={196}>
       <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--d-ink)", marginBottom: 4 }}>My voice</div>
       <div style={{ fontSize: 10, color: "var(--d-mute)", marginBottom: 11 }}>
         Up to 5 of your own shorts, under 60 seconds each.
@@ -1481,7 +1484,7 @@ function SceneVoice({ active }) {
           <span
             style={{
               fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 999,
-              color: `rgb(${LEAF})`, background: `rgba(${LEAF},.14)`, border: `1px solid rgba(${LEAF},.3)`,
+              color: `rgb(${RED})`, background: `rgba(${RED},.14)`, border: `1px solid rgba(${RED},.3)`,
             }}
           >
             Ready
@@ -1497,7 +1500,7 @@ function SceneVoice({ active }) {
             key={d}
             style={{
               width: 6, height: 6, borderRadius: "50%",
-              background: d < added ? `rgb(${LEAF})` : "rgba(255,255,255,.16)",
+              background: d < added ? `rgb(${RED})` : "rgba(255,255,255,.16)",
               transition: "background .3s ease",
             }}
           />
@@ -1515,7 +1518,7 @@ function SceneCopy({ active, isMobile }) {
   const spot = phase <= 0 ? { left: "30%", top: 150 } : { left: "72%", top: 34 };
 
   return (
-    <DemoFrame label="your script" tone={MINT} height={196}>
+    <DemoFrame label="your script" tone={ROSE} height={196}>
       <Cursor {...spot} pressed={phase === 2} hidden={isMobile} />
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 11 }}>
@@ -1524,8 +1527,8 @@ function SceneCopy({ active, isMobile }) {
           style={{
             fontSize: 10, fontWeight: 700, padding: "5px 11px", borderRadius: 8,
             color: copied ? "#04120F" : "var(--d-ink)",
-            background: copied ? `rgb(${MINT})` : "rgba(255,255,255,.07)",
-            border: `1px solid ${copied ? `rgb(${MINT})` : "rgba(255,255,255,.14)"}`,
+            background: copied ? `rgb(${ROSE})` : "rgba(255,255,255,.07)",
+            border: `1px solid ${copied ? `rgb(${ROSE})` : "rgba(255,255,255,.14)"}`,
             transition: "background .25s ease, color .25s ease, border-color .25s ease",
             whiteSpace: "nowrap",
           }}
@@ -1556,7 +1559,7 @@ function VoiceProof({ isMobile, pad }) {
     {
       lang: "Telugu",
       native: "తెలుగు",
-      tone: LEAF,
+      tone: ROSE,
       text: "ఇది చాలా పెద్ద update గురు. నేను ఇందాక దీన్ని test చేశాను, అసలు ఏం జరిగిందో మీకు చెప్తాను.",
     },
   ];
@@ -1620,17 +1623,17 @@ function Niches({ isMobile, pad }) {
   // here matches the colour that names that category inside the app.
   const niches = [
     ["AI & technology", RED],
-    ["Stock market & finance", FOREST],
-    ["Business & startups", PINE],
-    ["Crypto & Web3", LEAF],
+    ["Stock market & finance", DEEP],
+    ["Business & startups", DEEP],
+    ["Crypto & Web3", RED],
     ["Film & entertainment", RED],
-    ["Sports & cricket", MINT],
-    ["Science & health", LEAF],
-    ["Govt jobs & exams", FOREST],
+    ["Sports & cricket", ROSE],
+    ["Science & health", RED],
+    ["Govt jobs & exams", DEEP],
   ];
 
   return (
-    <Section id="niches" pad={pad} isMobile={isMobile} glow={GLOW.forest}>
+    <Section id="niches" pad={pad} isMobile={isMobile} glow={GLOW.deep}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="Niches"
@@ -1695,7 +1698,7 @@ function ClosingCta({ isMobile, pad, onCredential, busy }) {
         style={{
           width: "46vw", height: "30vw", maxWidth: 620, maxHeight: 380,
           left: "50%", top: "-8vw", marginLeft: "-23vw",
-          background: `radial-gradient(circle, rgba(${MINT},.14), transparent 70%)`,
+          background: `radial-gradient(circle, rgba(${ROSE},.14), transparent 70%)`,
         }}
       />
 
