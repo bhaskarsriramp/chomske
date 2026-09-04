@@ -472,7 +472,12 @@ async function requestWithRetry({ url, endpoint, params, label }) {
  * documented for live streams, and callers must treat it as "unknown", never as
  * zero, or a live stream would sail through a short-form check.
  *
- * @returns {{ video_id, title, author, channel_id, duration, views, thumbnail, is_live, type }|null}
+ * Live-verified field list (2026-09-04, dQw4w9WgXcQ): author, category,
+ * channel_id, date, description, duration, is_live, keywords, thumbnail, title,
+ * type, url, video_id, views.
+ *
+ * @returns {{ video_id, url, title, author, channel_id, description, duration,
+ *   views, category, keywords, thumbnail, is_live, type, date }|null}
  */
 export async function getYouTubeVideoDetails(watchUrl) {
   const url = String(watchUrl || "").trim();
@@ -504,6 +509,9 @@ export async function getYouTubeVideoDetails(watchUrl) {
     description: v.description || "",
     duration: Number.isFinite(duration) ? duration : null,
     views: Number(v.views) || 0,
+    // "Music", "Entertainment", "Science & Technology" — YouTube's own label.
+    category: v.category || "",
+    keywords: Array.isArray(v.keywords) ? v.keywords.filter((k) => typeof k === "string").slice(0, 25) : [],
     thumbnail: v.thumbnail || "",
     is_live: v.is_live === true,
     type: v.type || "",

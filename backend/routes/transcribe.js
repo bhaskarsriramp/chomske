@@ -85,43 +85,83 @@ router.post("/", authenticateToken, async (req, res) => {
     // ── Length gate, BEFORE paying Gemini to read it ────────────────────────
     // Reading video is this product's whole cost, and it scales with duration.
     // One $0.005 lookup here is the difference between rejecting a 40-minute
-    // video and transcribing it first to discover it was too long.
+    // video and transcribing it first to discover it was too long. Gemini is
+    // never asked how long something is — that would be paying the expensive
+    // model to answer a question the cheap endpoint already answers.
     let meta = null;
+    let lookupError = null;
     if (isApidirectConfigured()) {
       try {
         meta = await getYouTubeVideoDetails(parsed.url);
       } catch (err) {
-        // Never block on the checker being down — a failed lookup falls through
-        // to Gemini, which is the same behaviour as before this gate existed.
+        lookupError = err;
         console.warn(`[transcribe] duration lookup failed for ${parsed.videoId}: ${err.message}`);
-      }
-
-      if (meta?.is_live) {
-        return res.status(400).json({
-          success: false,
-          message: "That's a live stream. Add a finished short video instead.",
-        });
-      }
-      // null = unknown (live, or apidirect had no data). Only reject on a number
-      // we actually have, so an unknown never silently blocks a valid Short.
-      if (meta && typeof meta.duration === "number" && meta.duration > MAX_VIDEO_SECONDS) {
-        return res.status(400).json({
-          success: false,
-          too_long: true,
-          duration: meta.duration,
-          message:
-            `That video is ${formatDuration(meta.duration)} long. Voice profiling uses short-form ` +
-            `videos only, up to ${MAX_VIDEO_SECONDS} seconds, because hooks and sign-offs are what ` +
-            `we learn from and a long video buries them.`,
-        });
       }
     }
 
+    if (meta?.is_live) {
+      return res.status(400).json({
+        success: false,
+        message: "That's a live stream. Add a finished short video instead.",
+      });
+    }
+
+    // ── THIS GATE FAILS CLOSED ──────────────────────────────────────────────
+    // It used to fall through to Gemini whenever the lookup was unavailable —
+    // no key configured, key out of credit, endpoint down, video not found — on
+    // the reasoning that an unknown length should not block a valid Short. That
+    // is the wrong way round for the one check standing between an arbitrary
+    // URL and the most expensive call this product makes. "Unknown" is exactly
+    // the state an abusive or accidental 40-minute upload arrives in, and the
+    // failure is silent: nobody discovers it until the bill.
+    //
+    // So a length we cannot verify is not eligible. The message says which of
+    // the two situations it is, because "try again in a minute" and "your key
+    // is out of credit" need different actions from whoever reads it.
+    const duration = typeof meta?.duration === "number" ? meta.duration : null;
+    if (duration === null) {
+      const exhausted = lookupError?.keyExhausted === true;
+      console.warn(
+        `[transcribe] REFUSED ${parsed.videoId}: length unverifiable ` +
+        `(${!isApidirectConfigured() ? "no apidirect key" : exhausted ? "key exhausted" : "lookup failed"})`
+      );
+      return res.status(503).json({
+        success: false,
+        length_unknown: true,
+        message: exhausted || !isApidirectConfigured()
+          ? "We can't check video lengths right now, so new videos are paused. Please try again later."
+          : "We couldn't read that video's details. Check the link is a public YouTube video and try again.",
+      });
+    }
+
+    if (duration > MAX_VIDEO_SECONDS) {
+      return res.status(400).json({
+        success: false,
+        too_long: true,
+        duration,
+        message:
+          `That video is ${formatDuration(duration)} long. Voice profiling uses short-form ` +
+          `videos only, up to ${MAX_VIDEO_SECONDS} seconds, because hooks and sign-offs are what ` +
+          `we learn from and a long video buries them.`,
+      });
+    }
+
+    // Everything the one paid lookup returned, kept. It has already been bought.
     const videoMeta = {
-      duration_seconds: meta && typeof meta.duration === "number" ? meta.duration : null,
-      channel: meta?.author || "",
-      thumbnail: meta?.thumbnail || "",
-      ...(meta?.title ? { title: meta.title } : {}),
+      duration_seconds: duration,
+      channel: meta.author || "",
+      channel_id: meta.channel_id || "",
+      thumbnail: meta.thumbnail || "",
+      description: String(meta.description || "").slice(0, 5000),
+      views: Number.isFinite(meta.views) ? meta.views : null,
+      category: meta.category || "",
+      keywords: meta.keywords || [],
+      // "2009-10-25 06:57:33" is UTC without a marker — left alone it would be
+      // read in the server's local zone and land 5.5 hours out on an IST box.
+      // An unparseable value becomes null rather than an Invalid Date, which
+      // Mongoose would reject and take the whole insert down with it.
+      published_at: parsePublished(meta.date),
+      ...(meta.title ? { title: meta.title } : {}),
     };
 
     // A previous attempt failed — reuse the row rather than fighting the unique index.
@@ -279,6 +319,18 @@ async function runTranscription(id, url) {
     ).catch(() => {});
     console.error(`[transcribe] ${id} failed: ${err.message}`);
   }
+}
+
+/**
+ * apidirect's publish date: "2009-10-25 06:57:33", UTC with no zone marker.
+ * Returns null rather than an Invalid Date, which Mongoose refuses to cast.
+ */
+function parsePublished(v) {
+  const s = String(v || "").trim();
+  if (!s) return null;
+  const iso = /[TZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : `${s.replace(" ", "T")}Z`;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function formatDuration(s) {

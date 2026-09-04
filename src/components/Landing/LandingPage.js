@@ -53,16 +53,25 @@ const LANGUAGES = [
   { native: "English", name: "English" },
 ];
 
-/** The brand seven as rgb triples, for translucent light on a dark ground. */
-const GLOW = {
-  cyan: "0,183,205",
-  mint: "112,255,210",
-  leaf: "118,196,87",
-  forest: "42,124,19",
-  pine: "42,131,95",
-  ice: "227,242,253",
-  orchid: "255,166,251",
-};
+/**
+ * The page's whole palette: YouTube red, three greens, and white.
+ *
+ * The cyan, ice blue and orchid this started with are gone. One consequence to
+ * keep in mind: red and green are the pair most often confused by people with a
+ * red-green deficiency, roughly one man in twelve. Nothing on this page may use
+ * the difference between them to carry MEANING — position, label and shape do
+ * that everywhere below, and colour is decoration on top. Adding, say, a green
+ * "kept" chip beside a red "dropped" chip would break that, and would need a
+ * shape or a word as well.
+ */
+const RED = "255,0,0";
+const MINT = "112,255,210";
+const LEAF = "118,196,87";
+const FOREST = "42,124,19";
+const PINE = "42,131,95";
+const WHITE = "255,255,255";
+
+const GLOW = { red: RED, mint: MINT, leaf: LEAF, forest: FOREST, pine: PINE };
 
 /**
  * One observer for every reveal on the page.
@@ -111,6 +120,180 @@ function useReveal() {
   return root;
 }
 
+/**
+ * Is this element on screen?
+ *
+ * The scenes below are looping state machines. Left running off-screen they
+ * would burn a timer and a re-render every second or so for every scene on the
+ * page, on a laptop that is not even showing them.
+ */
+function useInView(ref, { once = false } = {}) {
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") { setInView(true); return; }
+
+    const io = new IntersectionObserver(
+      ([e]) => {
+        setInView(e.isIntersecting);
+        if (e.isIntersecting && once) io.disconnect();
+      },
+      { threshold: 0.25 }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref, once]);
+
+  return inView;
+}
+
+/**
+ * The clock behind every demo: advance a phase counter while visible, loop, and
+ * stop dead when scrolled away.
+ *
+ * Reduced motion pins it to the LAST phase rather than the first — the end of
+ * each scene is its finished state, which is the frame that actually explains
+ * the product. Freezing on phase 0 would show an empty panel forever.
+ */
+function useSceneClock(phaseCount, { active, interval = 1100, hold = 2 }) {
+  const [phase, setPhase] = useState(0);
+  const still =
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+  useEffect(() => {
+    if (still) { setPhase(phaseCount - 1); return; }
+    if (!active) return;
+    // `hold` extra ticks at the end so the finished state is readable before it
+    // resets — a scene that restarts the instant it completes reads as a glitch.
+    const t = setInterval(() => setPhase((p) => (p + 1) % (phaseCount + hold)), interval);
+    return () => clearInterval(t);
+  }, [active, phaseCount, interval, hold, still]);
+
+  return Math.min(phase, phaseCount - 1);
+}
+
+/**
+ * The hand doing the clicking.
+ *
+ * A demo that changes state on its own reads as a video. A pointer that travels
+ * to a control and presses it reads as somebody using the product, which is the
+ * difference between "this is what it looks like" and "this is what you do".
+ */
+function Cursor({ left, top, pressed, hidden }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        // left/top rather than a transform, because the panels these travel
+        // across are fluid: a pointer placed at a fixed pixel offset lands on
+        // the right control at 1440px and in the margin at 900px.
+        position: "absolute", left, top, zIndex: 5,
+        transform: `scale(${pressed ? 0.82 : 1})`,
+        transition: "left .62s cubic-bezier(.3,.8,.3,1), top .62s cubic-bezier(.3,.8,.3,1), transform .18s ease, opacity .3s ease",
+        opacity: hidden ? 0 : 1,
+        pointerEvents: "none",
+      }}
+    >
+      <svg width="17" height="20" viewBox="0 0 17 20" fill="none">
+        <path d="M1 1L1 15.5L4.8 12.2L7.4 18.4L10.3 17.2L7.7 11.2L12.6 10.8L1 1Z"
+              fill="#fff" stroke="#0B0B0B" strokeWidth="1.1" strokeLinejoin="round" />
+      </svg>
+      {pressed && (
+        <span
+          style={{
+            position: "absolute", left: -9, top: -9, width: 34, height: 34,
+            borderRadius: "50%", border: "2px solid rgba(255,255,255,.55)",
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
+/** The frame every demo sits in — the app's window chrome, small. */
+function DemoFrame({ children, label, tone, height }) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        borderRadius: 14,
+        border: "1px solid var(--d-line)",
+        background: "linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015))",
+        boxShadow: `0 40px 90px -50px rgba(${tone},.55)`,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "9px 12px", borderBottom: "1px solid rgba(255,255,255,.07)",
+          background: "rgba(255,255,255,.03)",
+        }}
+      >
+        <Dot /><Dot /><Dot />
+        <span style={{ marginLeft: 6, fontSize: 10.5, color: "var(--d-mute)" }}>{label}</span>
+      </div>
+      {/* Fixed height so a scene that adds and removes rows cannot make the page
+          jump under the reader as it loops. */}
+      <div style={{ position: "relative", height, padding: 14 }}>{children}</div>
+    </div>
+  );
+}
+
+/** One row of the mock feed, shared by every scene. */
+function DemoRow({ title, meta, tone = "255,255,255", score, state = "in", isNew, compact }) {
+  const dropped = state === "dropped";
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "flex-start", gap: 10,
+        padding: compact ? "8px 10px" : "10px 11px",
+        borderRadius: 9,
+        marginBottom: 7,
+        background: `linear-gradient(180deg, rgba(${tone},.10), rgba(${tone},.025))`,
+        border: `1px solid rgba(${tone},.20)`,
+        opacity: state === "hidden" ? 0 : dropped ? 0.25 : 1,
+        transform: state === "hidden" ? "translateY(7px)" : "none",
+        transition: "opacity .45s ease, transform .45s ease, border-color .3s ease",
+      }}
+    >
+      <div style={{ minWidth: 0, flex: 1 }}>
+        {isNew && (
+          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".08em", color: `rgb(${tone})`, marginBottom: 3 }}>
+            NEW
+          </div>
+        )}
+        <div
+          style={{
+            fontSize: 11.5, fontWeight: 600, lineHeight: 1.35, color: "var(--d-ink)",
+            textDecoration: dropped ? "line-through" : "none",
+          }}
+        >
+          {title}
+        </div>
+        {meta && <div style={{ fontSize: 9.5, color: "var(--d-mute)", marginTop: 4 }}>{meta}</div>}
+      </div>
+
+      {score != null && (
+        <span
+          style={{
+            flexShrink: 0, fontSize: 11, fontWeight: 800,
+            padding: "3px 8px", borderRadius: 7,
+            color: score >= 6 ? `rgb(${tone})` : "var(--d-mute)",
+            background: score >= 6 ? `rgba(${tone},.14)` : "rgba(255,255,255,.05)",
+            border: `1px solid ${score >= 6 ? `rgba(${tone},.3)` : "rgba(255,255,255,.08)"}`,
+          }}
+        >
+          {score}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function LandingPage({ onSignedIn, checking }) {
   const isMobile = useIsMobile();
   const [error, setError] = useState("");
@@ -138,7 +321,13 @@ export default function LandingPage({ onSignedIn, checking }) {
   const pad = isMobile ? "20px" : "clamp(28px, 5vw, 104px)";
 
   return (
-    <div ref={page} className="hg-dark" style={{ minHeight: "100vh", overflowX: "hidden" }}>
+    <div ref={page} className="hg-dark" style={{ position: "relative", minHeight: "100vh", overflowX: "hidden" }}>
+      {/* The red/green ground, held still behind everything. */}
+      <div className="hg-wash" aria-hidden="true" />
+
+      {/* Everything else rides above it — see .hg-wash for why this z-index is
+          load-bearing rather than decoration. */}
+      <div style={{ position: "relative", zIndex: 1 }}>
       <Nav pad={pad} isMobile={isMobile} />
       <Hero
         isMobile={isMobile}
@@ -150,11 +339,12 @@ export default function LandingPage({ onSignedIn, checking }) {
       />
       <SourceBar />
       <HowItWorks isMobile={isMobile} pad={pad} />
-      <Capabilities isMobile={isMobile} pad={pad} />
+      <WhatYouGet isMobile={isMobile} pad={pad} />
       <VoiceProof isMobile={isMobile} pad={pad} />
       <Niches isMobile={isMobile} pad={pad} />
       <ClosingCta isMobile={isMobile} pad={pad} onCredential={handleCredential} busy={busy} />
       <Footer pad={pad} isMobile={isMobile} />
+      </div>
     </div>
   );
 }
@@ -212,18 +402,6 @@ function Nav({ pad, isMobile }) {
           </nav>
         )}
 
-        <a
-          href="#start"
-          className="hg-d-ghost"
-          style={{
-            fontSize: 13, fontWeight: 650, padding: "9px 17px", borderRadius: 999,
-            border: "1px solid var(--d-line)", color: "var(--d-ink)",
-            textDecoration: "none", whiteSpace: "nowrap",
-            background: "rgba(255,255,255,.04)",
-          }}
-        >
-          Get started
-        </a>
       </div>
     </header>
   );
@@ -297,19 +475,6 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
           }}
         >
           <SignIn onCredential={onCredential} onError={onError} busy={busy} />
-          <a
-            href="#how"
-            className="hg-d-ghost"
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              fontSize: 14, fontWeight: 600, padding: "11px 21px", borderRadius: 999,
-              border: "1px solid var(--d-line)", color: "var(--d-ink)",
-              background: "rgba(255,255,255,.03)", textDecoration: "none",
-            }}
-          >
-            See how it works
-            <span aria-hidden="true" style={{ fontSize: 15, lineHeight: 1 }}>↓</span>
-          </a>
         </div>
 
         {error && (
@@ -318,15 +483,32 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
           </div>
         )}
 
-        <div className="hg-reveal" style={{ marginTop: 14, fontSize: 12.5, color: "var(--d-mute)", transitionDelay: ".22s" }}>
-          Free to start · No card required · Works in your language
+        <div
+          className="hg-reveal"
+          style={{
+            marginTop: 16, display: "flex", flexWrap: "wrap",
+            alignItems: "center", justifyContent: "center", gap: 14,
+            transitionDelay: ".22s",
+          }}
+        >
+          <span style={{ fontSize: 12.5, color: "var(--d-mute)" }}>Free to start · No card required</span>
+          {/* The rule only separates two things that are on the SAME line. On a
+              phone this wraps, and it was left dangling at the end of the first
+              line separating nothing from nothing. */}
+          {!isMobile && (
+            <span aria-hidden="true" style={{ width: 1, height: 14, background: "rgba(255,255,255,.14)" }} />
+          )}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 11 }}>
+            <span style={{ fontSize: 12.5, color: "var(--d-mute)" }}>Record for</span>
+            <PlatformMarks size={17} />
+          </span>
         </div>
 
         <div
           className="hg-reveal"
           style={{ marginTop: isMobile ? 40 : 62, transitionDelay: ".26s" }}
         >
-          <AppWindow isMobile={isMobile} />
+          <HeroDemo isMobile={isMobile} />
         </div>
       </div>
     </section>
@@ -526,15 +708,45 @@ function LanguageFlip() {
 /* ── The product, shown ────────────────────────────────────────────────────── */
 
 /**
- * The app's own two panes, at small scale.
+ * The hero's demo: the actual flow, performed.
  *
- * A feature list can claim anything. Showing the screen a creator will actually
- * open every morning makes the claim checkable in two seconds, which is why the
- * hero ends on this rather than on an illustration.
+ * ── WHY IT MOVES ─────────────────────────────────────────────────────────────
+ * A still screenshot of a feed says "this is a list of news". The product is
+ * not the list — it is what happens when you pick one thing off it. So the
+ * pointer does what a creator does: reads the shortlist, opens a story, reads
+ * why it ranks, presses "Write this in my voice", and the script arrives in
+ * Telugu. Four seconds, no copy required, and every frame of it is a real
+ * screen from the app rather than an illustration of one.
+ *
+ * Phases:
+ *   0  the shortlist, cursor idle
+ *   1  cursor travels to the top story
+ *   2  press — the story opens on the right
+ *   3  cursor travels to "Write this in my voice"
+ *   4  press
+ *   5  drafting
+ *   6  the script, in their language
  */
-function AppWindow({ isMobile }) {
+function HeroDemo({ isMobile }) {
+  const ref = useRef(null);
+  const inView = useInView(ref);
+  const phase = useSceneClock(7, { active: inView, interval: 1150, hold: 3 });
+
+  const opened = phase >= 2;
+  const drafting = phase === 5;
+  const written = phase >= 6;
+
+  // Where the pointer is, per phase. Percentages across the window, so it lands
+  // on the same control at every width.
+  const spot =
+    phase <= 0 ? { left: "44%", top: 300 } :
+    phase <= 2 ? { left: "20%", top: 96 } :
+    { left: isMobile ? "26%" : "62%", top: isMobile ? 250 : 62 };
+  const pressed = phase === 2 || phase === 4;
+
   return (
     <div
+      ref={ref}
       className="hg-drift"
       style={{
         position: "relative",
@@ -549,7 +761,6 @@ function AppWindow({ isMobile }) {
         WebkitBackdropFilter: "blur(6px)",
       }}
     >
-      {/* Window chrome */}
       <div
         style={{
           display: "flex", alignItems: "center", gap: 7,
@@ -569,66 +780,171 @@ function AppWindow({ isMobile }) {
         </span>
       </div>
 
-      <div
-        style={{
-          display: isMobile ? "block" : "grid",
-          gridTemplateColumns: "1.05fr 1fr",
-          minHeight: isMobile ? 0 : 340,
-        }}
-      >
-        {/* Left: the ranked feed */}
-        <div style={{ padding: isMobile ? 14 : 18, borderRight: isMobile ? "none" : "1px solid rgba(255,255,255,.07)" }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
-            <span style={{ fontSize: isMobile ? 13.5 : 15, fontWeight: 700, color: "var(--d-ink)" }}>
-              What to cover today
-            </span>
-            <span style={{ fontSize: 10.5, color: "var(--d-mute)" }}>checked 4m ago</span>
-          </div>
+      <div style={{ position: "relative" }}>
+        {/* Hidden on phones: there is no pointer on a touch screen, and drawing
+            one there is a lie about how the product is used. */}
+        <Cursor {...spot} pressed={pressed} hidden={isMobile} />
 
-          {/* Red marks the one story that is live; the rest are white on black.
-              Colour used as a signal, not as decoration — which is also exactly
-              how the real feed uses its NEW badge. */}
-          <MockRow
-            tone="255,0,0"
-            isNew
-            title="OpenAI ships a model that runs offline on a laptop"
-            meta="18 sources · Hacker News, The Verge · 12m ago"
-          />
-          <MockRow
-            tone="255,255,255"
-            title="Nvidia buys an open-source AI lab for $13 billion"
-            meta="14 sources · Google News · 2h ago"
-          />
-          <MockRow
-            tone="255,255,255"
-            dim
-            title="India's UPI adds an offline payments mode"
-            meta="9 sources · Google News · 4h ago"
-          />
-        </div>
+        <div
+          style={{
+            display: isMobile ? "block" : "grid",
+            gridTemplateColumns: "1.02fr 1fr",
+            minHeight: isMobile ? 0 : 330,
+          }}
+        >
+          {/* Left: the shortlist */}
+          <div style={{ padding: isMobile ? 14 : 18, borderRight: isMobile ? "none" : "1px solid rgba(255,255,255,.07)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
+              <span style={{ fontSize: isMobile ? 13.5 : 15, fontWeight: 700, color: "var(--d-ink)" }}>
+                What to cover today
+              </span>
+              <span style={{ fontSize: 10.5, color: "var(--d-mute)" }}>checked 4m ago</span>
+            </div>
 
-        {/* Right: the script it writes */}
-        <div style={{ padding: isMobile ? 14 : 18, borderTop: isMobile ? "1px solid rgba(255,255,255,.07)" : "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-            <span
+            {/* The selected row lifts on the press, exactly as the real feed's
+                selected row does — the demo has to match the product it shows. */}
+            <div
               style={{
-                fontSize: 11.5, fontWeight: 700, padding: "6px 12px", borderRadius: 999,
-                color: "#fff",
-                background: "var(--yt)",
+                borderRadius: 10, marginBottom: 8,
+                border: `1px solid rgba(255,0,0,${opened ? ".55" : ".22"})`,
+                background: `linear-gradient(180deg, rgba(255,0,0,${opened ? ".16" : ".10"}), rgba(255,0,0,.025))`,
+                padding: "11px 13px",
+                transition: "border-color .3s ease, background .3s ease",
               }}
             >
-              Write this in my voice
-            </span>
-            <span style={{ fontSize: 10.5, color: "var(--d-mute)" }}>
-              learned from 5 of your videos
-            </span>
+              <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".08em", color: "var(--yt)", marginBottom: 5 }}>
+                NEW
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.42, color: "var(--d-ink)" }}>
+                OpenAI ships a model that runs offline on a laptop
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--d-mute)", marginTop: 6 }}>
+                18 sources · Hacker News, The Verge · 12m ago
+              </div>
+            </div>
+
+            <MockRow
+              tone="255,255,255"
+              title="Nvidia buys an open-source AI lab for $13 billion"
+              meta="14 sources · Google News · 2h ago"
+            />
+            <MockRow
+              tone="255,255,255"
+              dim
+              title="India's UPI adds an offline payments mode"
+              meta="9 sources · Google News · 4h ago"
+            />
           </div>
-          <ScriptTyping isMobile={isMobile} />
+
+          {/* Right: what opening a story gives you */}
+          <div
+            style={{
+              padding: isMobile ? 14 : 18,
+              borderTop: isMobile ? "1px solid rgba(255,255,255,.07)" : "none",
+              minHeight: isMobile ? 210 : 0,
+            }}
+          >
+            {!opened ? (
+              <div style={{ display: "grid", placeItems: "center", height: "100%", minHeight: 120 }}>
+                <span style={{ fontSize: 12, color: "var(--d-mute)" }}>Pick a story to see what happened.</span>
+              </div>
+            ) : (
+              <div className="hg-fade">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                  <span
+                    style={{
+                      fontSize: 11.5, fontWeight: 700, padding: "6px 12px", borderRadius: 999,
+                      color: "#fff", background: "var(--yt)",
+                      boxShadow: pressed && phase === 4 ? "0 0 0 5px rgba(255,0,0,.25)" : "none",
+                      transition: "box-shadow .2s ease",
+                    }}
+                  >
+                    Write this in my voice
+                  </span>
+                  <span style={{ fontSize: 10.5, color: "var(--d-mute)" }}>learned from 5 of your videos</span>
+                </div>
+
+                {!drafting && !written && (
+                  <p style={{ fontSize: 11.5, lineHeight: 1.65, color: "var(--d-body)", margin: 0 }}>
+                    <strong style={{ color: "var(--d-ink)" }}>Why it ranks.</strong>{" "}
+                    A frontier model that runs without a connection — the first one people can
+                    actually try on their own laptop.
+                  </p>
+                )}
+
+                {drafting && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 11.5, color: "var(--d-body)" }}>
+                    <span
+                      style={{
+                        width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
+                        border: "2px solid rgba(255,255,255,.18)", borderTopColor: "var(--yt)",
+                        animation: "hg-spin .8s linear infinite",
+                      }}
+                    />
+                    Writing in your voice…
+                  </div>
+                )}
+
+                {written && <DemoScript isMobile={isMobile} />}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+const SCRIPT_WORDS =
+  "तो दोस्तों, आज की सबसे बड़ी खबर — OpenAI ने एक ऐसा model निकाल दिया है जो आपके laptop पर बिना internet के चलेगा। मैंने खुद try किया, और सच बताऊँ तो...".split(
+    " "
+  );
+
+/**
+ * The script, arriving word by word.
+ *
+ * ── WORD BY WORD, NEVER CHARACTER BY CHARACTER ───────────────────────────────
+ * This text is Devanagari. A matra is a separate code point that attaches to
+ * the consonant before it, so slicing a Hindi string one character at a time
+ * renders half-formed clusters and stray floating vowel marks for a frame each
+ * — broken-looking, in exactly the script the page is promising to handle well.
+ * Splitting on spaces means every frame shows whole, correctly shaped words.
+ */
+function DemoScript({ isMobile }) {
+  const [n, setN] = useState(0);
+
+  useEffect(() => {
+    const still =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (still) { setN(SCRIPT_WORDS.length); return; }
+    const t = setInterval(() => setN((v) => (v >= SCRIPT_WORDS.length ? v : v + 1)), 85);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <p
+      className="indic hg-fade"
+      style={{
+        fontSize: isMobile ? 12.5 : 13.5, lineHeight: 1.85,
+        color: "var(--d-ink)", margin: 0, minHeight: isMobile ? 110 : 130,
+      }}
+    >
+      {SCRIPT_WORDS.slice(0, n).join(" ")}
+      {n < SCRIPT_WORDS.length && (
+        <span
+          className="hg-caret"
+          aria-hidden="true"
+          style={{
+            display: "inline-block", width: 2, height: "1em",
+            marginLeft: 3, verticalAlign: "text-bottom", background: "var(--yt)",
+          }}
+        />
+      )}
+    </p>
+  );
+}
+
 
 function MockRow({ title, meta, tone, isNew, dim }) {
   return (
@@ -658,77 +974,6 @@ function MockRow({ title, meta, tone, isNew, dim }) {
   );
 }
 
-/**
- * The script, typing itself out.
- *
- * ── WORD BY WORD, NEVER CHARACTER BY CHARACTER ───────────────────────────────
- * This text is Devanagari. A matra is a separate code point that attaches to the
- * consonant before it, so slicing a Hindi string one character at a time renders
- * half-formed clusters and stray floating vowel marks for a frame each — the
- * effect looks broken in exactly the script the page is promising to handle
- * well. Splitting on spaces means every frame shows whole, correctly shaped
- * words.
- */
-const SCRIPT_WORDS =
-  "तो दोस्तों, आज की सबसे बड़ी खबर — OpenAI ने एक ऐसा model निकाल दिया है जो आपके laptop पर बिना internet के चलेगा। मैंने खुद try किया, और सच बताऊँ तो...".split(
-    " "
-  );
-
-function ScriptTyping({ isMobile }) {
-  const [n, setN] = useState(0);
-
-  useEffect(() => {
-    // Somebody who asked for less motion gets the finished script immediately,
-    // not a paragraph that assembles itself while they try to read it.
-    const still =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (still) {
-      setN(SCRIPT_WORDS.length);
-      return;
-    }
-
-    const t = setInterval(() => {
-      setN((v) => {
-        // Holds on the finished paragraph for a beat, then starts over, so a
-        // visitor who arrives mid-cycle still sees the whole thing.
-        if (v > SCRIPT_WORDS.length + 8) return 0;
-        return v + 1;
-      });
-    }, 105);
-    return () => clearInterval(t);
-  }, []);
-
-  const done = n >= SCRIPT_WORDS.length;
-
-  return (
-    <p
-      className="indic"
-      style={{
-        fontSize: isMobile ? 13.5 : 14.5,
-        lineHeight: 1.85,
-        color: "var(--d-ink)",
-        margin: 0,
-        // Reserves the finished paragraph's height so the card does not grow
-        // line by line and shove the page around beneath it.
-        minHeight: isMobile ? 132 : 152,
-      }}
-    >
-      {SCRIPT_WORDS.slice(0, n).join(" ")}
-      {!done && (
-        <span
-          className="hg-caret"
-          aria-hidden="true"
-          style={{
-            display: "inline-block", width: 2, height: "1em",
-            marginLeft: 3, verticalAlign: "text-bottom",
-            background: "var(--yt)",
-          }}
-        />
-      )}
-    </p>
-  );
-}
 
 /* ── The sources it reads ──────────────────────────────────────────────────── */
 
@@ -758,7 +1003,7 @@ function SourceBar() {
       }}
     >
       <div style={{ textAlign: "center", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--d-mute)", marginBottom: 14 }}>
-        Reading, every 15 minutes
+        Watching 120+ sources
       </div>
 
       <div
@@ -792,116 +1037,330 @@ function SourceBar() {
 
 /* ── Sections ──────────────────────────────────────────────────────────────── */
 
+/* ── How it works: the product, performed ──────────────────────────────────── */
+
+/**
+ * Three steps, each one a working miniature of the real screen with two lines
+ * of text beside it.
+ *
+ * ── WHY THE COPY IS THIS SHORT ───────────────────────────────────────────────
+ * This section used to be three paragraphs in three boxes. Nobody reads three
+ * paragraphs on a landing page — they scan, decide, and leave. A creator can
+ * watch a story get scored and a script get written in about four seconds, and
+ * understand more from that than from sixty words explaining it. So the text is
+ * a caption for the demo, not a substitute for one.
+ */
 function HowItWorks({ isMobile, pad }) {
   const steps = [
     {
       n: "01",
-      tone: GLOW.cyan,
-      title: "It reads the wires while you sleep",
-      body:
-        "A dozen sources every fifteen minutes — Google News, Hacker News, publisher feeds, and a live news API that answers in minutes rather than hours. Nothing waits for you to open the app.",
+      tone: RED,
+      title: "It watches while you sleep",
+      body: "120+ sources, around the clock. Nothing waits for you to open the app.",
+      scene: (a) => <SceneWatching active={a} />,
     },
     {
       n: "02",
-      tone: GLOW.orchid,
-      title: "It decides what deserves a video",
-      body:
-        "Most of what breaks is not worth covering. Every story is scored against your niche's own editorial bar, and you get the handful that clear it — with the reason, the angle, and every source that carried it.",
+      tone: LEAF,
+      title: "It throws most of it away",
+      body: "Every story is scored against your niche. You get the two or three worth a video.",
+      scene: (a) => <SceneRanking active={a} />,
     },
     {
       n: "03",
-      tone: GLOW.mint,
-      title: "It writes the whole thing in your voice",
-      body:
-        "Built from your own videos: your hooks, your sign-offs, your mix of English and your language. One tap on a story and the script is there, ready to record.",
+      tone: MINT,
+      title: "It writes the script in your voice",
+      body: "One tap. Your hooks, your language, ready to read off the screen.",
+      scene: (a) => <SceneWriting active={a} isMobile={isMobile} />,
     },
   ];
 
   return (
-    <Section id="how" pad={pad} isMobile={isMobile} glow={GLOW.cyan}>
+    <Section id="how" pad={pad} isMobile={isMobile} glow={LEAF}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="How it works"
         title="Three things you no longer do"
-        sub="The hour before recording is research and writing. Both are finished before you sit down."
+        sub="Watch it happen. This is the actual screen, not an illustration of one."
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)",
-          gap: isMobile ? 14 : 20,
-          marginTop: isMobile ? 30 : 46,
-        }}
-      >
+      <div style={{ marginTop: isMobile ? 34 : 60, display: "grid", gap: isMobile ? 34 : 64 }}>
         {steps.map((s, i) => (
-          <div
-            key={s.n}
-            className="hg-reveal hg-d-card"
-            style={{
-              position: "relative",
-              padding: isMobile ? "22px 20px" : "28px 26px",
-              borderRadius: 16,
-              border: "1px solid var(--d-line)",
-              background: "var(--d-panel)",
-              overflow: "hidden",
-              transitionDelay: `${i * 0.09}s`,
-            }}
-          >
-            {/* A single bar of the step's colour along the top edge — enough to
-                separate the three without three coloured cards shouting. */}
-            <span
-              aria-hidden="true"
-              style={{
-                position: "absolute", top: 0, left: 0, right: 0, height: 1,
-                background: `linear-gradient(90deg, transparent, rgba(${s.tone},.85), transparent)`,
-              }}
-            />
-            {/* The number carries the section's rhythm, so it is sized to be
-                seen from across the page rather than read. Its glow is what
-                stops three bordered rectangles reading as a pricing table. */}
-            <div
-              style={{
-                fontSize: isMobile ? 30 : 38, fontWeight: 800,
-                letterSpacing: "-0.04em", lineHeight: 1,
-                color: `rgba(${s.tone},.9)`,
-                textShadow: `0 0 34px rgba(${s.tone},.45)`,
-                marginBottom: isMobile ? 14 : 20,
-              }}
-            >
-              {s.n}
-            </div>
-            <h3
-              style={{
-                fontSize: isMobile ? 17 : 19,
-                fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.28,
-                color: "var(--d-ink)", margin: "0 0 10px",
-              }}
-            >
-              {s.title}
-            </h3>
-            <p style={{ fontSize: isMobile ? 14 : 14.5, lineHeight: 1.65, color: "var(--d-body)", margin: 0 }}>
-              {s.body}
-            </p>
-          </div>
+          <StepRow key={s.n} step={s} index={i} isMobile={isMobile} />
         ))}
       </div>
     </Section>
   );
 }
 
-function Capabilities({ isMobile, pad }) {
-  const items = [
-    ["Ranked, not listed", "Three stories worth covering, out of the few thousand that broke today."],
-    ["Early, not late", "First-seen times on every story, so you post before the big channels do."],
-    ["Yours, not generic", "The draft is written from your own videos, in the way you actually talk."],
-    ["Your language, properly", "Hindi stays Hindi. Telugu stays Telugu. Code-mixing stays where you put it."],
-    ["Sources you can check", "Every claim carries the links it came from. Nothing is invented for you."],
-    ["One tap to a script", "Pick the story, get the script. No prompt to write, nothing to configure."],
+/**
+ * One step. Alternates sides on desktop so the eye zig-zags down the page
+ * instead of running down a single column of identical rows; stacks with the
+ * visual FIRST on mobile, because the demo is the argument and a phone should
+ * not make you read past the caption to reach it.
+ */
+function StepRow({ step, index, isMobile }) {
+  const ref = useRef(null);
+  const active = useInView(ref);
+  const flip = !isMobile && index % 2 === 1;
+
+  return (
+    <div
+      ref={ref}
+      className="hg-reveal"
+      style={{
+        display: "grid",
+        gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+        gap: isMobile ? 18 : 56,
+        alignItems: "center",
+      }}
+    >
+      <div style={{ order: flip ? 2 : 1 }}>{step.scene(active)}</div>
+
+      <div style={{ order: flip ? 1 : 2 }}>
+        <div
+          style={{
+            fontSize: isMobile ? 26 : 34, fontWeight: 800,
+            letterSpacing: "-0.04em", lineHeight: 1,
+            color: `rgba(${step.tone},.92)`,
+            textShadow: `0 0 34px rgba(${step.tone},.45)`,
+            marginBottom: 14,
+          }}
+        >
+          {step.n}
+        </div>
+        <h3
+          style={{
+            fontSize: isMobile ? 20 : 26, fontWeight: 750,
+            letterSpacing: "-0.028em", lineHeight: 1.22,
+            color: "var(--d-ink)", margin: "0 0 10px",
+          }}
+        >
+          {step.title}
+        </h3>
+        <p style={{ fontSize: isMobile ? 14.5 : 16, lineHeight: 1.6, color: "var(--d-body)", margin: 0, maxWidth: 420 }}>
+          {step.body}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ── The three scenes ──────────────────────────────────────────────────────── */
+
+/** 01 — stories arriving on their own, with the clock running. */
+function SceneWatching({ active }) {
+  const phase = useSceneClock(5, { active, interval: 900, hold: 2 });
+
+  const rows = [
+    { t: "OpenAI ships a model that runs offline", m: "18 sources · Hacker News · 12m ago", tone: RED, isNew: true },
+    { t: "Nvidia buys an open-source AI lab", m: "14 sources · Google News · 41m ago", tone: WHITE },
+    { t: "India's UPI adds offline payments", m: "9 sources · Google News · 1h ago", tone: WHITE },
+    { t: "Anthropic opens an enterprise tier", m: "6 sources · Google News · 2h ago", tone: WHITE },
   ];
 
   return (
-    <Section id="what" pad={pad} isMobile={isMobile} glow={GLOW.mint}>
+    <DemoFrame label="chomske.com/app/topics" tone={RED} height={252}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--d-ink)" }}>What to cover today</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: "var(--d-mute)" }}>
+          <span className="hg-ping" style={{ width: 6, height: 6, borderRadius: "50%", background: `rgb(${RED})` }} />
+          {phase === 0 ? "checking…" : "just now"}
+        </span>
+      </div>
+
+      {rows.map((r, i) => (
+        <DemoRow
+          key={r.t}
+          compact
+          tone={r.tone}
+          title={r.t}
+          meta={r.m}
+          isNew={r.isNew && phase >= 1}
+          // Each row lands one tick after the last, so the panel visibly fills
+          // rather than appearing complete.
+          state={phase > i ? "in" : "hidden"}
+        />
+      ))}
+    </DemoFrame>
+  );
+}
+
+/** 02 — the scoring pass, and what it throws away. */
+function SceneRanking({ active }) {
+  const phase = useSceneClock(4, { active, interval: 1150, hold: 2 });
+
+  const rows = [
+    { t: "OpenAI ships a model that runs offline", s: 9, keep: true },
+    { t: "Nvidia buys an open-source AI lab", s: 8, keep: true },
+    { t: "A startup renames its pricing tiers", s: 2, keep: false },
+    { t: "Opinion: why AI needs more regulation", s: 1, keep: false },
+    { t: "Weekly roundup of 12 AI tools", s: 1, keep: false },
+  ];
+
+  return (
+    <DemoFrame label="ranking · ai_tech" tone={LEAF} height={252}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--d-ink)" }}>
+          {phase === 0 ? "Scoring 2,140 stories" : phase >= 3 ? "Worth a video today" : "Scoring 2,140 stories"}
+        </span>
+        <span style={{ fontSize: 10, color: "var(--d-mute)" }}>
+          {phase >= 3 ? "2 kept" : `${rows.length} shown`}
+        </span>
+      </div>
+
+      {rows.map((r, i) => {
+        // Phase 1 puts a number on everything; phase 2 strikes the weak ones;
+        // phase 3 removes them. Dropping straight from 5 rows to 2 would hide
+        // the very thing this scene exists to show.
+        const state = phase >= 3 && !r.keep ? "hidden" : phase >= 2 && !r.keep ? "dropped" : "in";
+        return (
+          <DemoRow
+            key={r.t}
+            compact
+            tone={r.keep ? LEAF : WHITE}
+            title={r.t}
+            score={phase >= 1 ? r.s : null}
+            state={state}
+          />
+        );
+      })}
+
+      {phase >= 3 && (
+        <div className="hg-fade" style={{ fontSize: 10.5, lineHeight: 1.6, color: "var(--d-body)", marginTop: 4 }}>
+          <strong style={{ color: "var(--d-ink)" }}>Why it ranks.</strong>{" "}
+          First frontier model people can run on their own laptop.
+        </div>
+      )}
+    </DemoFrame>
+  );
+}
+
+/**
+ * 03 — the script being written.
+ *
+ * Drawn as a SCRIPT PAGE rather than a chat bubble: numbered lines, the
+ * language it is in, and the two buttons a creator actually reaches for. This
+ * is the frame the whole product is for, so it should look like the thing they
+ * will read off a screen while recording, not like a chatbot's answer.
+ */
+function SceneWriting({ active, isMobile }) {
+  const phase = useSceneClock(5, { active, interval: 1100, hold: 3 });
+
+  const drafting = phase === 2;
+  const writing = phase >= 3;
+  const spot = phase <= 0 ? { left: "62%", top: 190 } : { left: "26%", top: 44 };
+
+  return (
+    <DemoFrame label="your script · Telugu-English" tone={MINT} height={252}>
+      <Cursor {...spot} pressed={phase === 1} hidden={isMobile} />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <span
+          style={{
+            fontSize: 11, fontWeight: 700, padding: "6px 12px", borderRadius: 999,
+            color: "#fff", background: `rgb(${RED})`,
+            boxShadow: phase === 1 ? `0 0 0 5px rgba(${RED},.25)` : "none",
+            transition: "box-shadow .2s ease",
+          }}
+        >
+          Write this in my voice
+        </span>
+        <span style={{ fontSize: 10, color: "var(--d-mute)" }}>Tenglish · 2 videos</span>
+      </div>
+
+      {drafting && (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 11.5, color: "var(--d-body)" }}>
+          <span
+            style={{
+              width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
+              border: `2px solid rgba(255,255,255,.16)`, borderTopColor: `rgb(${MINT})`,
+              animation: "hg-spin .8s linear infinite",
+            }}
+          />
+          Reading the coverage, then drafting…
+        </div>
+      )}
+
+      {writing && <ScriptPage active={active} />}
+
+      {!drafting && !writing && (
+        <div style={{ fontSize: 11, color: "var(--d-mute)" }}>
+          Pick a story and press the button.
+        </div>
+      )}
+    </DemoFrame>
+  );
+}
+
+/** Numbered script lines, arriving one at a time. */
+function ScriptPage({ active }) {
+  const LINES = [
+    "OpenAI వాళ్ళు GPT-6 Astra రిలీజ్ చేసి,",
+    "మనం AGI era లోకి ఎంటర్ అయ్యామని చెప్పారు.",
+    "కానీ అసలు విషయం ఏంటంటే —",
+    "ఇది మీ laptop లోనే offline లో పనిచేస్తుంది.",
+  ];
+  const shown = useSceneClock(LINES.length + 1, { active, interval: 620, hold: 6 });
+
+  return (
+    <div className="hg-fade">
+      {LINES.map((l, i) => (
+        <div
+          key={l}
+          className="indic"
+          style={{
+            display: "flex", gap: 10, alignItems: "baseline",
+            fontSize: 11.5, lineHeight: 1.75, color: "var(--d-ink)",
+            opacity: i < shown ? 1 : 0,
+            transform: i < shown ? "none" : "translateY(4px)",
+            transition: "opacity .35s ease, transform .35s ease",
+          }}
+        >
+          <span style={{ fontSize: 9, color: "var(--d-mute)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+            {String(i + 1).padStart(2, "0")}
+          </span>
+          <span>{l}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── What you get ──────────────────────────────────────────────────────────── */
+
+/**
+ * Three things, each one shown rather than claimed.
+ *
+ * Replaces six text tiles. The six were true and nobody was reading them: a
+ * bulleted list of virtues is the part of a landing page a creator scrolls
+ * past. Each of these is a small piece of the real interface doing the thing
+ * its heading describes.
+ */
+function WhatYouGet({ isMobile, pad }) {
+  const items = [
+    {
+      tone: RED,
+      title: "Every source, checkable",
+      body: "Nothing is invented. Open the links it read.",
+      scene: (a) => <SceneSources active={a} />,
+    },
+    {
+      tone: LEAF,
+      title: "A voice built from your videos",
+      body: "Your hooks, your sign-offs, your mix of English.",
+      scene: (a) => <SceneVoice active={a} />,
+    },
+    {
+      tone: MINT,
+      title: "A script, not a prompt",
+      body: "Finished and ready to record. Copy and go.",
+      scene: (a) => <SceneCopy active={a} isMobile={isMobile} />,
+    },
+  ];
+
+  return (
+    <Section id="what" pad={pad} isMobile={isMobile} glow={MINT}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="What you get"
@@ -912,69 +1371,192 @@ function Capabilities({ isMobile, pad }) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(300px, 1fr))",
-          gap: isMobile ? 12 : 18,
-          marginTop: isMobile ? 30 : 46,
+          gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)",
+          gap: isMobile ? 20 : 24,
+          marginTop: isMobile ? 32 : 52,
         }}
       >
-        {items.map(([t, d], i) => (
-          <div
-            key={t}
-            className="hg-reveal hg-d-card"
-            style={{
-              padding: isMobile ? "18px 18px" : "22px 22px",
-              borderRadius: 14,
-              border: "1px solid var(--d-line-soft)",
-              background: "rgba(255,255,255,.028)",
-              transitionDelay: `${(i % 3) * 0.08}s`,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 9 }}>
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                  background: "var(--d-mint)",
-                  boxShadow: `0 0 12px rgba(${GLOW.mint},.8)`,
-                }}
-              />
-              <span style={{ fontSize: isMobile ? 14.5 : 15.5, fontWeight: 700, color: "var(--d-ink)" }}>{t}</span>
-            </div>
-            <p style={{ fontSize: 13.5, lineHeight: 1.62, color: "var(--d-body)", margin: 0 }}>{d}</p>
-          </div>
+        {items.map((it) => (
+          <GetTile key={it.title} item={it} isMobile={isMobile} />
         ))}
       </div>
     </Section>
   );
 }
 
-/**
- * The language claim, shown rather than asserted.
- *
- * This is the part of the product most likely to be disbelieved — every tool in
- * this category says it supports Indian languages and most of them mean
- * translated English. So the section is two real script openings side by side,
- * with the code-mixing left in, because that mix is exactly what a translation
- * layer destroys and what a creator will check for first.
- */
+function GetTile({ item, isMobile }) {
+  const ref = useRef(null);
+  const active = useInView(ref);
+
+  return (
+    <div ref={ref} className="hg-reveal">
+      {item.scene(active)}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 7 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+              background: `rgb(${item.tone})`, boxShadow: `0 0 12px rgba(${item.tone},.8)`,
+            }}
+          />
+          <span style={{ fontSize: isMobile ? 15.5 : 16.5, fontWeight: 700, color: "var(--d-ink)" }}>
+            {item.title}
+          </span>
+        </div>
+        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--d-body)", margin: 0 }}>{item.body}</p>
+      </div>
+    </div>
+  );
+}
+
+/** Coverage links landing one after another. */
+function SceneSources({ active }) {
+  const rows = [
+    ["Google News", "3h ago", "OpenAI unveils 'world's most intelligent model'"],
+    ["Qz", "4h ago", "OpenAI launches GPT-6 Astra amid safety fears"],
+    ["The Verge", "4h ago", "OpenAI's next big model has 'entered the AGI era'"],
+  ];
+  const shown = useSceneClock(rows.length + 1, { active, interval: 780, hold: 3 });
+
+  return (
+    <DemoFrame label="sources · 56" tone={RED} height={196}>
+      {rows.map(([src, when, title], i) => (
+        <div
+          key={title}
+          style={{
+            padding: "9px 11px", borderRadius: 9, marginBottom: 7,
+            border: "1px solid rgba(255,255,255,.09)",
+            background: "rgba(255,255,255,.03)",
+            opacity: i < shown ? 1 : 0,
+            transform: i < shown ? "none" : "translateY(6px)",
+            transition: "opacity .4s ease, transform .4s ease",
+          }}
+        >
+          <div style={{ display: "flex", gap: 7, alignItems: "baseline", marginBottom: 3 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--d-ink)" }}>{src}</span>
+            <span style={{ fontSize: 9.5, color: "var(--d-mute)" }}>{when}</span>
+          </div>
+          <div style={{ fontSize: 11, lineHeight: 1.4, color: "var(--d-body)" }}>{title}</div>
+        </div>
+      ))}
+    </DemoFrame>
+  );
+}
+
+/** The voice set filling up — their own My voice screen. */
+function SceneVoice({ active }) {
+  const phase = useSceneClock(4, { active, interval: 900, hold: 3 });
+  const added = Math.min(phase, 2);
+
+  return (
+    <DemoFrame label="my voice" tone={LEAF} height={196}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--d-ink)", marginBottom: 4 }}>My voice</div>
+      <div style={{ fontSize: 10, color: "var(--d-mute)", marginBottom: 11 }}>
+        Up to 5 of your own shorts, under 60 seconds each.
+      </div>
+
+      {[
+        ["AI లో డబ్బులు సంపాదించాలంటే", "51s"],
+        ["Mastering the Claude Suite", "50s"],
+      ].map(([t, len], i) => (
+        <div
+          key={t}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "8px 10px", borderRadius: 9, marginBottom: 7,
+            border: "1px solid rgba(255,255,255,.09)", background: "rgba(255,255,255,.03)",
+            opacity: i < added ? 1 : 0,
+            transform: i < added ? "none" : "translateY(6px)",
+            transition: "opacity .4s ease, transform .4s ease",
+          }}
+        >
+          <span className="indic" style={{ fontSize: 10.5, color: "var(--d-ink)", flex: 1, minWidth: 0 }}>{t}</span>
+          <span
+            style={{
+              fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 999,
+              color: `rgb(${LEAF})`, background: `rgba(${LEAF},.14)`, border: `1px solid rgba(${LEAF},.3)`,
+            }}
+          >
+            Ready
+          </span>
+          <span style={{ fontSize: 9, color: "var(--d-mute)" }}>{len}</span>
+        </div>
+      ))}
+
+      {/* The slot dots from the real screen — five, filling as videos land. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10 }}>
+        {[0, 1, 2, 3, 4].map((d) => (
+          <span
+            key={d}
+            style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: d < added ? `rgb(${LEAF})` : "rgba(255,255,255,.16)",
+              transition: "background .3s ease",
+            }}
+          />
+        ))}
+        <span style={{ fontSize: 9.5, color: "var(--d-mute)", marginLeft: 4 }}>{added} of 5 added</span>
+      </div>
+    </DemoFrame>
+  );
+}
+
+/** The finished script, and the one button that ends the job. */
+function SceneCopy({ active, isMobile }) {
+  const phase = useSceneClock(4, { active, interval: 1100, hold: 3 });
+  const copied = phase >= 3;
+  const spot = phase <= 0 ? { left: "30%", top: 150 } : { left: "72%", top: 34 };
+
+  return (
+    <DemoFrame label="your script" tone={MINT} height={196}>
+      <Cursor {...spot} pressed={phase === 2} hidden={isMobile} />
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 11 }}>
+        <span style={{ fontSize: 9.5, color: "var(--d-mute)" }}>Telugu-English · from 2 videos</span>
+        <span
+          style={{
+            fontSize: 10, fontWeight: 700, padding: "5px 11px", borderRadius: 8,
+            color: copied ? "#04120F" : "var(--d-ink)",
+            background: copied ? `rgb(${MINT})` : "rgba(255,255,255,.07)",
+            border: `1px solid ${copied ? `rgb(${MINT})` : "rgba(255,255,255,.14)"}`,
+            transition: "background .25s ease, color .25s ease, border-color .25s ease",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {copied ? "Copied ✓" : "Copy script"}
+        </span>
+      </div>
+
+      <p
+        className="indic"
+        style={{ fontSize: 11, lineHeight: 1.8, color: "var(--d-ink)", margin: 0 }}
+      >
+        మార్కెట్ లో కొత్త అప్‌డేట్ రాగానే కేవలం పైన పైన ఫీచర్స్ చూసి వదిలేయడం చాలా easy. కానీ ఆ మోడల్ back
+        ground లో ఉన్న విషయాలు అర్థం చేసుకోవడం కష్టం.
+      </p>
+    </DemoFrame>
+  );
+}
+
 function VoiceProof({ isMobile, pad }) {
   const samples = [
     {
       lang: "Hindi",
       native: "हिन्दी",
-      tone: GLOW.cyan,
+      tone: RED,
       text: "देखो भाई, ये launch normal नहीं है। मैंने पूरा paper पढ़ा है और तीन चीज़ें ऐसी हैं जो किसी ने बताई ही नहीं।",
     },
     {
       lang: "Telugu",
       native: "తెలుగు",
-      tone: GLOW.orchid,
+      tone: LEAF,
       text: "ఇది చాలా పెద్ద update గురు. నేను ఇందాక దీన్ని test చేశాను, అసలు ఏం జరిగిందో మీకు చెప్తాను.",
     },
   ];
 
   return (
-    <Section id="voice" pad={pad} isMobile={isMobile} glow={GLOW.orchid}>
+    <Section id="voice" pad={pad} isMobile={isMobile} glow={GLOW.red}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="Your voice"
@@ -1031,18 +1613,18 @@ function Niches({ isMobile, pad }) {
   // Mirrors services/categories.js. Colours are the brand seven, so a niche chip
   // here matches the colour that names that category inside the app.
   const niches = [
-    ["AI & technology", GLOW.cyan],
-    ["Stock market & finance", GLOW.forest],
-    ["Business & startups", GLOW.pine],
-    ["Crypto & Web3", GLOW.leaf],
-    ["Film & entertainment", GLOW.orchid],
-    ["Sports & cricket", GLOW.mint],
-    ["Science & health", GLOW.ice],
-    ["Govt jobs & exams", GLOW.orchid],
+    ["AI & technology", RED],
+    ["Stock market & finance", FOREST],
+    ["Business & startups", PINE],
+    ["Crypto & Web3", LEAF],
+    ["Film & entertainment", RED],
+    ["Sports & cricket", MINT],
+    ["Science & health", LEAF],
+    ["Govt jobs & exams", FOREST],
   ];
 
   return (
-    <Section id="niches" pad={pad} isMobile={isMobile} glow={GLOW.leaf}>
+    <Section id="niches" pad={pad} isMobile={isMobile} glow={GLOW.forest}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="Niches"
@@ -1098,7 +1680,7 @@ function ClosingCta({ isMobile, pad, onCredential, busy }) {
         style={{
           width: "84vw", height: "46vw", maxWidth: 1200, maxHeight: 620,
           left: "8vw", bottom: "-24vw",
-          background: `radial-gradient(circle, rgba(${GLOW.cyan},.26), transparent 68%)`,
+          background: `radial-gradient(circle, rgba(${RED},.20), transparent 68%)`,
         }}
       />
       <div
@@ -1107,7 +1689,7 @@ function ClosingCta({ isMobile, pad, onCredential, busy }) {
         style={{
           width: "46vw", height: "30vw", maxWidth: 620, maxHeight: 380,
           left: "50%", top: "-8vw", marginLeft: "-23vw",
-          background: `radial-gradient(circle, rgba(${GLOW.mint},.14), transparent 70%)`,
+          background: `radial-gradient(circle, rgba(${MINT},.14), transparent 70%)`,
         }}
       />
 
@@ -1224,6 +1806,49 @@ function SignIn({ onCredential, onError, busy }) {
 
 function Dot() {
   return <span style={{ width: 8, height: 8, borderRadius: "50%", background: "rgba(255,255,255,.16)" }} />;
+}
+
+/**
+ * Where the script ends up.
+ *
+ * Drawn as paths rather than pulled from an icon package: three marks do not
+ * justify a dependency, and the official brand SVGs are the ones people
+ * recognise at 18px. YouTube keeps its own red because that mark is only ever
+ * red — the rest are white, since a wall of brand colours on a dark strip reads
+ * as a sponsor list rather than as "this is where you post".
+ */
+function PlatformMarks({ size = 19 }) {
+  const marks = [
+    {
+      name: "YouTube",
+      fill: "#FF0000",
+      // Rounded rectangle plus play triangle.
+      path: "M23.5 6.5a3 3 0 0 0-2.1-2.1C19.5 4 12 4 12 4s-7.5 0-9.4.4A3 3 0 0 0 .5 6.5C0 8.4 0 12 0 12s0 3.6.5 5.5a3 3 0 0 0 2.1 2.1C4.5 20 12 20 12 20s7.5 0 9.4-.4a3 3 0 0 0 2.1-2.1C24 15.6 24 12 24 12s0-3.6-.5-5.5ZM9.6 15.6V8.4l6.3 3.6-6.3 3.6Z",
+      box: "0 0 24 24",
+    },
+    {
+      name: "Instagram",
+      fill: "rgba(255,255,255,.72)",
+      path: "M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4C8.4 2.2 8.8 2.2 12 2.2Zm0 3.2A6.6 6.6 0 1 0 18.6 12 6.6 6.6 0 0 0 12 5.4Zm0 10.9A4.3 4.3 0 1 1 16.3 12 4.3 4.3 0 0 1 12 16.3Zm6.9-11.1a1.5 1.5 0 1 1-1.5-1.5 1.5 1.5 0 0 1 1.5 1.5Z",
+      box: "0 0 24 24",
+    },
+    {
+      name: "X",
+      fill: "rgba(255,255,255,.72)",
+      path: "M18.2 2h3.3l-7.2 8.3L22.8 22h-6.6l-5.2-6.8L5.1 22H1.8l7.7-8.8L1.5 2h6.8l4.7 6.2L18.2 2Zm-1.2 18h1.8L7.1 3.9H5.2L17 20Z",
+      box: "0 0 24 24",
+    },
+  ];
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 14 }}>
+      {marks.map((m) => (
+        <svg key={m.name} width={size} height={size} viewBox={m.box} role="img" aria-label={m.name}>
+          <path d={m.path} fill={m.fill} />
+        </svg>
+      ))}
+    </span>
+  );
 }
 
 function Footer({ pad, isMobile }) {

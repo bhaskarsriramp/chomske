@@ -208,25 +208,53 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 
 .hg-dark {
   /* The landing page's own tokens, so the app's light ones are untouched. */
-  --d-bg: #06090A;
   --d-panel: rgba(255, 255, 255, 0.045);
   --d-line: rgba(255, 255, 255, 0.10);
   --d-line-soft: rgba(255, 255, 255, 0.06);
-  --d-ink: #F2F6F5;
-  --d-body: rgba(238, 246, 244, 0.66);
-  --d-mute: rgba(238, 246, 244, 0.44);
+  --d-ink: #F3F7F3;
+  --d-body: rgba(240, 247, 240, 0.66);
+  --d-mute: rgba(240, 247, 240, 0.44);
 
-  /* The brand seven, as light rather than as pigment. */
-  --d-cyan: #00B7CD;
+  /* ── RED AND GREEN, AND NOTHING ELSE ────────────────────────────────────────
+     The cyan, ice-blue and orchid that used to carry these sections are gone.
+     One warning that comes with the pairing: red and green are the classic
+     confusable pair for the ~8% of men with a red-green deficiency, so neither
+     may ever be the ONLY thing separating two meanings on this page. They are
+     decorative here — position, label and shape carry the meaning — and it must
+     stay that way. */
+  --d-red: #FF0000;
   --d-mint: #70FFD2;
   --d-leaf: #76C457;
   --d-forest: #2A7C13;
   --d-pine: #2A835F;
-  --d-ice: #E3F2FD;
-  --d-orchid: #FFA6FB;
 
-  background: var(--d-bg);
+  /* The base. The red and green washes over it are a separate fixed LAYER (see
+     .hg-wash) rather than `background-attachment: fixed` on this element:
+     iOS Safari handles fixed attachment badly — it is widely ignored there and
+     causes visible scroll jank where it is not — and it also breaks
+     beyond-viewport screenshot capture, which is how this page gets reviewed. */
+  background: #050806;
   color: var(--d-body);
+}
+
+/* ── NOT FLAT BLACK ──────────────────────────────────────────────────────────
+   Three very wide, very faint washes of red and green, held still while the
+   page scrolls past them. Flat #000 across four thousand pixels of scroll is
+   what makes a dark page feel like a template; this way the ground shifts under
+   the content as you move down it, without ever competing with text.
+
+   It sits at z-index 0 and the page content at z-index 1 — a positioned element
+   paints above non-positioned siblings regardless of source order, so without
+   that pairing this layer would cover the entire page. */
+.hg-wash {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 820px at 10% 6%, rgba(255, 0, 0, 0.11), transparent 62%),
+    radial-gradient(1100px 780px at 90% 34%, rgba(42, 124, 19, 0.18), transparent 64%),
+    radial-gradient(1000px 760px at 46% 96%, rgba(118, 196, 87, 0.11), transparent 62%);
 }
 
 /* ── Aurora ──────────────────────────────────────────────────────────────────
@@ -356,7 +384,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 .hg-d-link { transition: color .15s ease; }
 .hg-d-link:hover { color: var(--d-ink) !important; }
 .hg-d-btn { transition: transform .15s ease, box-shadow .2s ease, background .2s ease; }
-.hg-d-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 30px -12px rgba(0,183,205,.55); }
+.hg-d-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 30px -12px rgba(118,196,87,.55); }
 .hg-d-ghost { transition: background .2s ease, border-color .2s ease; }
 .hg-d-ghost:hover { background: rgba(255,255,255,.07) !important; border-color: rgba(255,255,255,.24) !important; }
 

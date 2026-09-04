@@ -42,6 +42,19 @@ const TranscriptSchema = new Schema({
   channel:          { type: String, default: "" },
   thumbnail:        { type: String, default: "" },
 
+  // The rest of what that same (already paid for) lookup returns. Stored
+  // because the call has been made either way — throwing the answer away and
+  // asking again later would be paying twice for one fact. `category` and
+  // `keywords` are YouTube's own labels for the video, which say what this
+  // creator actually makes; `views` is the closest thing to a reach signal we
+  // get without asking them to connect an account.
+  channel_id:   { type: String, default: "" },
+  description:  { type: String, default: "" },
+  views:        { type: Number, default: null },
+  category:     { type: String, default: "" },
+  keywords:     { type: [String], default: [] },
+  published_at: { type: Date,   default: null },
+
   // What this row actually cost to produce. Stored per transcript because reading
   // video is the only real cost here and it varies enormously with length — a
   // 60-second Short and a 40-minute talk are two different businesses. Keeping
