@@ -13,12 +13,32 @@ import StorySeen from "../models/StorySeen.js";
 import { isValidCategory, DEFAULT_CATEGORY, getCategory } from "../services/categories.js";
 import { resolveProfile } from "../services/profileService.js";
 import { ensureBrief } from "../services/newsBriefService.js";
-import { lastCheckedAt, touchSeen } from "../services/newsCadence.js";
+import { lastCheckedAt, touchSeen, claimAutoFetch } from "../services/newsCadence.js";
+import { allSources } from "../services/sources/index.js";
 import { heatOf, latestOf } from "../services/newsHeat.js";
 import { fetchAndRank } from "../services/newsScheduler.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
+
+/**
+ * How old the newest story in a category may be before the feed goes and looks
+ * for itself.
+ *
+ * ── WHY THE FEED'S OWN TOP CARD IS THE TRIGGER ───────────────────────────────
+ * `checked_at` says when the collector last ran, which is a fact about our
+ * plumbing. This is a fact about the PRODUCT: whatever we last ran, the freshest
+ * thing a creator can actually see is four hours old, and on a hot category that
+ * is either a quiet morning or a pipeline that has quietly stopped serving. The
+ * creator cannot tell those apart and should not have to — so the feed spends
+ * one gated fetch finding out, rather than leaving them to guess at a button.
+ *
+ * Measured on `latest_at` (the newest publisher timestamp in a cluster), which
+ * is the number printed on the card, so the rule and what a creator sees are the
+ * same rule. Three hours by default: long enough that a normal news lull does
+ * not trip it, short enough that a stalled feed is caught within one session.
+ */
+const STALE_HOURS = parseFloat(process.env.NEWS_STALE_HOURS || "3");
 
 /**
  * GET /news
@@ -114,6 +134,17 @@ router.get("/", authenticateToken, async (req, res) => {
     }
     rows.sort((a, b) => b.heat - a.heat || new Date(b.latest) - new Date(a.latest));
 
+    // ── IS THIS FEED STALE? ────────────────────────────────────────────────
+    // The MAXIMUM latest_at, not rows[0]'s — the list is ordered by heat, so the
+    // top card is the liveliest story rather than the newest one, and reading
+    // its timestamp would call a feed stale while a fresher story sat third.
+    // No rows at all counts as stale: an empty feed is the strongest possible
+    // case for going to look.
+    const freshestAt = rows.length
+      ? new Date(Math.max(...rows.map((r) => new Date(r.latest).getTime())))
+      : null;
+    const stale = !freshestAt || Date.now() - freshestAt.getTime() > STALE_HOURS * 3600000;
+
     // When the collector last went and looked. The footer used to claim
     // "Rechecked every 15 minutes", which is a promise, not evidence — a creator
     // staring at an eight-hour-old top card could not tell a quiet news day from
@@ -147,6 +178,15 @@ router.get("/", authenticateToken, async (req, res) => {
       window_hours: hours,
       count: rows.length,
       checked_at: checkedAt,
+      // The newest story on offer, and whether that is old enough to be worth
+      // going and looking. The client acts on `stale` by calling POST /refresh
+      // with { auto: true } — the decision is made here, and the spend is gated
+      // there, so no browser can turn a page load into an unbounded fetch.
+      freshest_at: freshestAt,
+      stale,
+      // How many feeds a fetch would actually cover, so the banner can name a
+      // real number instead of a reassuring one.
+      sources_checked: new Set(cats.flatMap((c) => allSources(c).map((s) => s.name))).size,
       // ALWAYS their full selection, not the filtered subset. The client draws a
       // category switcher from this, and echoing back only the category it just
       // asked for would collapse that switcher to one chip and strand them
@@ -194,12 +234,28 @@ router.post("/refresh", authenticateToken, async (req, res) => {
     const asked = String(req.body?.category || "");
     const cats = asked && mine.includes(asked) ? [asked] : mine;
 
+    // ── A PRESS AND A CONDITION ARE NOT THE SAME REQUEST ─────────────────────
+    // { auto: true } means the feed decided this for itself, because its newest
+    // story had aged past NEWS_STALE_HOURS. That is a trigger the fetch is meant
+    // to CLEAR, so when the fetch finds nothing the condition is still true and
+    // the next page load — from this creator, another tab, or anyone else who
+    // picked the category — asks again. Left ungated that is a paid retry loop
+    // whose rate is set by how many people are looking.
+    //
+    // So an automatic fetch has to take claimAutoFetch first, held per category
+    // across every user, and a lost claim returns quietly rather than as an
+    // error: the feed is not stale enough to be worth paying twice for.
+    // A press skips this entirely — a person asked, and is owed the attempt.
+    const auto = req.body?.auto === true;
+
     let inserted = 0;
     let ranked = 0;
     let briefs = 0;
     let paid = false;
 
     for (const cat of cats) {
+      if (auto && !(await claimAutoFetch(cat))) continue;
+
       const out = await fetchAndRank(cat);
       inserted += out.inserted || 0;
       ranked += out.ranked || 0;

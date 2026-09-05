@@ -168,6 +168,33 @@ function parseArray(res, label, categoryId) {
 }
 
 /**
+ * Is there anything here that has been collected but not yet judged?
+ *
+ * ── WHY THIS IS ASKED BEFORE THE COOLDOWN IS TAKEN ───────────────────────────
+ * rankNews already returns for free when it finds nothing — the early return
+ * above the first API call means an empty pass costs a Mongo query and no
+ * tokens. What it does NOT do is give the cooldown back, and ensureRanked claims
+ * that cooldown before it knows whether there is any work. So an empty pass used
+ * to burn the category's ten-minute slot, and a story landing a minute later
+ * waited nine minutes for a pass that had already been spent on nothing.
+ *
+ * That was survivable while ranking only fired from a button. It is not now that
+ * a sign-in and a stale feed can both trigger it: the likeliest sequence is a
+ * page load claiming the slot for zero items, immediately followed by the fetch
+ * that actually brings news in — and finding itself throttled.
+ *
+ * One indexed existence check, covered by { category, first_seen_at, ai_score }.
+ */
+export async function hasUnranked(categoryId) {
+  const since = new Date(Date.now() - WINDOW_HOURS * 3600000);
+  return !!(await NewsItem.exists({
+    category: categoryId,
+    first_seen_at: { $gte: since },
+    ai_score: -1,
+  }));
+}
+
+/**
  * Rank the current unranked candidates.
  * @returns {{ considered, ranked, detailed, usd, skipped }}
  */

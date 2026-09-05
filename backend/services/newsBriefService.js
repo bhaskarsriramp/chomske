@@ -222,12 +222,28 @@ async function stamp(item, brief, { failed = false } = {}) {
 /**
  * Pre-generate briefs for the stories a feed will actually show.
  *
+ * hasPendingBriefs() is the same question as a cheap existence check, asked
+ * before a paid slot is claimed — a pass with nothing to rank may still have
+ * briefs owed from a previous one that hit its per-pass cap, and skipping on the
+ * ranking answer alone would strand those. See ensureRanked in newsScheduler.js.
+ *
  * Called after each ranking pass so the brief is already there when someone
  * opens the story, instead of the pane sitting on a spinner. Capped per pass:
  * this is the one place in the collector loop that scales with content rather
  * than with a fixed batch, and an uncapped version would be the bill nobody
  * predicted on a busy news day.
  */
+export async function hasPendingBriefs(categoryId, { minScore = BRIEF_MIN_SCORE, hours = 48 } = {}) {
+  const since = new Date(Date.now() - hours * 3600000);
+  return !!(await NewsItem.exists({
+    category: categoryId,
+    first_seen_at: { $gte: since },
+    ai_score: { $gte: minScore },
+    $or: [{ brief: { $exists: false } }, { brief: "" }],
+    $and: [{ $or: [{ brief_tries: { $exists: false } }, { brief_tries: { $lt: MAX_TRIES } }] }],
+  }));
+}
+
 export async function backfillBriefs(categoryId, { limit = 10, minScore = BRIEF_MIN_SCORE, hours = 48 } = {}) {
   const since = new Date(Date.now() - hours * 3600000);
 

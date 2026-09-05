@@ -94,6 +94,17 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   const [refreshes, setRefreshes] = useState(0);
   const [ranking, setRanking] = useState(false);
   const [emptyTries, setEmptyTries] = useState(0);
+  // The server's verdict on its own feed: the newest story on offer has aged
+  // past NEWS_STALE_HOURS. Not computed here on purpose — one browser deciding
+  // to spend money is a decision every browser then makes separately.
+  const [stale, setStale] = useState(false);
+  const [autoFetching, setAutoFetching] = useState(false);
+  const [sourceCount, setSourceCount] = useState(0);
+  // One automatic attempt per category per mount. The server holds the real
+  // gate (claimAutoFetch, per category, across everyone); this is the local half
+  // that stops THIS pane retrying in a loop when the fetch comes back with
+  // nothing and the feed is therefore still stale.
+  const autoTried = useRef(new Set());
   // What the last fetch produced, so the button can report back instead of
   // going quiet and leaving the reader to guess whether it did anything.
   const [fetched, setFetched] = useState(null);   // null | number of new stories
@@ -158,7 +169,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // timer, so this is what actually surfaces new stories. It is throttled per
   // category server-side, which is why it is safe to call on every open: inside
   // the cooldown it returns in about a millisecond having spent nothing.
-  const load = useCallback(async ({ refresh = false } = {}) => {
+  const load = useCallback(async ({ refresh = false, auto = false } = {}) => {
     setBusy(true);
     setError("");
     try {
@@ -168,6 +179,10 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
           await api.post("/news/refresh", {
             ...(cat ? { category: cat } : {}),
             ...(profileId ? { profile: profileId } : {}),
+            // Tells the server this was the feed's decision, not a press. It
+            // gates those separately — a person who asked is owed the attempt,
+            // a self-clearing condition is not. See POST /news/refresh.
+            ...(auto ? { auto: true } : {}),
           });
         } catch {
           // The feed still renders everything already ranked. A failed refresh
@@ -203,10 +218,19 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
       setWidened(wide);
       setCheckedAt(data.checked_at || null);
       setFeedCats(data.categories || []);
+      // `wide` means the normal bar found nothing and this is the fallback pass,
+      // so its rows are already the bottom of the barrel — treating that as
+      // "fresh enough" would suppress the one fetch most likely to help.
+      setStale(!!data.stale || wide);
+      setSourceCount(data.sources_checked || 0);
       return next;
     } catch (err) {
       setError(errorMessage(err, "Couldn't load today's topics."));
       setItems([]);
+      // A feed that failed to load has no opinion about its own freshness, and
+      // firing a paid fetch off the back of a network error would pay for a
+      // symptom of something else.
+      setStale(false);
       return [];
     } finally {
       setBusy(false);
@@ -219,10 +243,12 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // It belongs on the effect rather than in load()'s deps — without it, editing
   // a profile's categories leaves Topics serving the previous set.
   //
-  // A plain read. Opening Topics deliberately does NOT rank any more: ranking is
-  // the paid half, and work that costs money should be something a creator asks
-  // for and can see happening, not something that fires behind them every time
-  // they glance at the page. The button below is that ask.
+  // A plain read, ALWAYS. Opening Topics never ranks by itself — ranking is the
+  // paid half, and it should not fire every time somebody glances at the page.
+  // What happens instead is that this read comes back carrying the server's own
+  // verdict on its freshness (`stale`), and the effect further down acts on that
+  // when the newest story on offer has aged out. So the common case is still one
+  // free GET; the fetch is reserved for a feed that has visibly stopped moving.
   useEffect(() => { load(); }, [load, categoriesKey]);
 
   // A different category is a different feed, so it gets its own refresh budget.
@@ -246,6 +272,50 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
     }, 10000);
     return () => clearTimeout(t);
   }, [loadedOnce, items.length, error, emptyTries, load]);
+
+  /**
+   * The feed has gone stale — go and get news without being asked.
+   *
+   * ── WHY THIS FIRES ON WHAT THE CREATOR CAN SEE ───────────────────────────
+   * The collector runs every fifteen minutes and is almost never the problem.
+   * What a creator meets in the morning is the RANKED feed, and that only moved
+   * when somebody pressed a button — so the honest signal is not "when did we
+   * last poll" but "how old is the newest thing I am being offered". When that
+   * is over three hours on a live category, either the news is genuinely quiet
+   * or the pipeline has stopped serving, and a creator cannot tell those apart
+   * by looking. One fetch answers it.
+   *
+   * ── WHY IT CANNOT RUN AWAY ────────────────────────────────────────────────
+   * The trigger is a condition the fetch is supposed to clear, so a fetch that
+   * finds nothing leaves it true. Three separate things stop that becoming a
+   * paid loop: this pane tries once per category per mount (autoTried), the
+   * server holds a thirty-minute per-category claim across every user and tab,
+   * and the ranking pass underneath now checks for unranked stock before it
+   * takes its own slot.
+   *
+   * Deliberately never touches the Fetch button's budget: that is a count of
+   * what this creator asked for, and spending it on something the page did by
+   * itself would leave them holding a spent button they never pressed.
+   */
+  useEffect(() => {
+    if (!loadedOnce || busy || error || !stale || autoFetching) return;
+
+    const key = cat || "all";
+    if (autoTried.current.has(key)) return;
+    autoTried.current.add(key);
+
+    let cancelled = false;
+    (async () => {
+      setAutoFetching(true);
+      try {
+        await load({ refresh: true, auto: true });
+      } finally {
+        if (!cancelled) setAutoFetching(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [loadedOnce, busy, error, stale, autoFetching, cat, load]);
 
   // The profile's categories change when they edit it, and switching profiles
   // replaces them wholesale. Either way, a category tab that is no longer one of
@@ -350,6 +420,10 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
           {feedCats.length > 0 && (
             <CategoryStrip cats={feedCats} value={cat} onChange={setCat} gut={gut} />
           )}
+
+          {/* Above the scroller rather than inside it, so the list's own
+              loading dim doesn't grey out the thing explaining the wait. */}
+          {autoFetching && <FetchingBanner gut={gut} isPhone={isPhone} sources={sourceCount} />}
         </div>
 
         <div
@@ -448,6 +522,71 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 }
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */
+
+/**
+ * "We noticed this feed was stale and went to look."
+ *
+ * ── WHY THE PAGE SAYS THIS OUT LOUD ──────────────────────────────────────────
+ * The fetch is automatic, which is the point — a creator should not have to know
+ * that ranking is a separate paid step from collection, or diagnose a ten-hour-
+ * old top card by pressing a button and seeing whether the number changes. But
+ * work that happens on somebody's behalf and says nothing is indistinguishable
+ * from a page that has hung, and the honest read of a silent five seconds is
+ * "this is broken", which is the exact conclusion the fetch exists to prevent.
+ *
+ * So it names what is happening and what it is reading, and then it goes away.
+ * The source count is the server's real number (allSources for the categories in
+ * play), not a decorative one — a banner that claimed twelve while checking one
+ * would be worse than no banner.
+ */
+function FetchingBanner({ gut, isPhone, sources }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        margin: `10px ${gut}px 0`,
+        display: "flex", alignItems: "center", gap: 11,
+        padding: isPhone ? "10px 12px" : "11px 14px",
+        borderRadius: 12,
+        border: "1px solid var(--line)",
+        background: "var(--paper-2, var(--paper))",
+        animation: "hg-fade .18s ease",
+      }}
+    >
+      <svg
+        width="15" height="15" viewBox="0 0 24 24" fill="none"
+        stroke="var(--ink)" strokeWidth="2.5" strokeLinecap="round"
+        style={{ animation: "hg-spin 1s linear infinite", flexShrink: 0 }}
+      >
+        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+      </svg>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: isPhone ? 12.5 : 13, fontWeight: 700, color: "var(--ink)" }}>
+          Fetching new topics{sources ? ` from ${sources} sources` : ""}…
+        </div>
+        {!isPhone && (
+          <div style={{ fontSize: 11.5, color: "var(--ink-mute)", marginTop: 1.5, fontWeight: 500 }}>
+            The newest story here had gone quiet — checking for something fresher.
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 4.5, flexShrink: 0 }}>
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            style={{
+              width: 6, height: 6, borderRadius: "50%", background: "var(--ink-mute)",
+              animation: `hg-pulse 1.2s ease-in-out ${i * 0.16}s infinite`,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Fetch new topics.

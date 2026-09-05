@@ -10,10 +10,17 @@
  *
  * Ranking does not. It costs money, and running it ninety-six times a day per
  * category meant paying to judge stories for an empty room. It now fires from
- * ensureRanked() on sign-in and on Fetch, behind a ten-minute per-category
- * throttle — and Fetch also runs the ONE source cheap and fast enough to belong
- * on a button press (see fetchAndRank), so that pressing it can return a story
- * the collector has not been to look for yet.
+ * ensureRanked() on sign-in — including a cookie session restore, which is what
+ * "logging in" actually is most days — on Fetch, and when the feed reports that
+ * its own newest story has aged past NEWS_STALE_HOURS. All of it sits behind a
+ * ten-minute per-category throttle, and behind an existence check so an idle
+ * category cannot spend that slot learning it had nothing to do.
+ *
+ * Fetch also runs the ONE source cheap and fast enough to belong on a button
+ * press (see fetchAndRank), so that pressing it can return a story the collector
+ * has not been to look for yet. The automatic version of that press takes an
+ * extra, longer claim — see claimAutoFetch — because a condition that retries
+ * itself is not the same risk as a person who clicked.
  *
  * ── WHY THERE'S A DATABASE CLAIM AND NOT JUST setInterval ────────────────────
  * Cloud Run (and anything else that autoscales) can run several instances of
@@ -27,8 +34,8 @@
  */
 import NewsLock, { LOCK_ID } from "../models/NewsLock.js";
 import { collectNews } from "./newsCollector.js";
-import { rankNews } from "./newsRanker.js";
-import { backfillBriefs } from "./newsBriefService.js";
+import { rankNews, hasUnranked } from "./newsRanker.js";
+import { backfillBriefs, hasPendingBriefs } from "./newsBriefService.js";
 import { getCategory } from "./categories.js";
 import {
   categoryPlan, claimPoll, markChecked, claimKickoff, claimRank,
@@ -114,6 +121,20 @@ async function collectCategory(cat) {
  */
 export async function ensureRanked(cat, { force = false } = {}) {
   if (!getCategory(cat)) return { skipped: true, reason: "unknown_category" };
+
+  // ── ASK WHETHER THERE IS WORK BEFORE SPENDING THE SLOT ON FINDING OUT ─────
+  // Both halves below already no-op when there is nothing to do, at the cost of
+  // a Mongo query and no tokens. The claim underneath does not: it hands out one
+  // ten-minute slot per category whether or not the pass that took it did
+  // anything. So a page load arriving on an idle category used to spend the slot
+  // learning there was nothing, and the fetch a minute later — the one carrying
+  // actual news — was told to wait nine.
+  //
+  // Two indexed existence checks, both covered, and they are what makes this
+  // safe to call from a sign-in and a stale feed as well as from the button.
+  if (!force && !(await hasUnranked(cat)) && !(await hasPendingBriefs(cat))) {
+    return { ranked: 0, detailed: 0, briefs: 0, usd: 0, skipped: true, reason: "nothing_new" };
+  }
 
   // The throttle the whole on-demand model rests on. Ten page loads, three
   // refreshes and four users all arriving at once must add up to one paid pass.

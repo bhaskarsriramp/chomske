@@ -46,11 +46,18 @@ const WARM_CADENCE_MIN = parseInt(process.env.NEWS_WARM_CADENCE_MIN || "60", 10)
 // for stories that have actually arrived since the last one.
 const RANK_COOLDOWN_SEC = parseInt(process.env.NEWS_RANK_COOLDOWN_SEC || "600", 10);
 
+// The gap between AUTOMATIC fetches for one category. Deliberately longer than
+// the paid source's own user-initiated gap (10 min): that one paces a person
+// pressing a button, this one paces a condition that retries itself. See
+// claimAutoFetch.
+const AUTO_GAP_MIN = parseInt(process.env.NEWS_AUTO_FETCH_GAP_MIN || "30", 10);
+
 const K_POLL = (cat) => `hg:news:poll:${cat}`;
 const K_CHECKED = "hg:news:checked";
 const K_KICK = (cat) => `hg:news:kick:${cat}`;
 const K_RANK = (cat) => `hg:news:rank:${cat}`;
 const K_FETCH = (cat) => `hg:news:apifetch:${cat}`;
+const K_AUTO = (cat) => `hg:news:auto:${cat}`;
 
 // Redis is shared with betaFounderProduction, so nothing here may be written
 // without the hg: prefix. See redis.js.
@@ -278,6 +285,30 @@ export async function claimApidirectNews(cat, minutes = 60) {
 }
 
 /**
+ * Take the right to run an AUTOMATIC fetch for one category.
+ *
+ * ── WHY THIS IS NOT claimApidirectNews, AND NOT THE BUTTON'S BUDGET ──────────
+ * The feed now fetches by itself when its newest story has gone stale, which
+ * makes the trigger a CONDITION rather than a click — and a condition that the
+ * fetch is supposed to clear. When it works that is self-limiting: news comes
+ * in, the top card is fresh, the condition goes false and nothing fires again.
+ *
+ * When it does NOT work it is a loop. A quiet Sunday, a source outage, a
+ * category where nothing has been published in six hours — the fetch runs, finds
+ * nothing newer, the top card is still stale, and the next page load asks again.
+ * At the paid source's user-initiated gap of ten minutes that is 144 paid passes
+ * a day per category instead of the scheduled 24, for a fetch that is by
+ * definition returning nothing.
+ *
+ * So automatic fetches get their own, longer gate, held per CATEGORY across
+ * every user and tab. The Fetch button is unaffected: a person who presses it
+ * has asked, and is owed the attempt.
+ */
+export async function claimAutoFetch(cat, minutes = AUTO_GAP_MIN) {
+  return claimPaid(cat, "auto_fetched", K_AUTO(cat), Math.max(1, minutes) * 60);
+}
+
+/**
  * The shared guard behind both paid passes.
  *
  * Unlike everything else in this file it does NOT simply fail open, because
@@ -355,6 +386,6 @@ export async function claimKickoff(cat, seconds = 300) {
 
 export default {
   categoryPlan, claimPoll, markChecked, lastCheckedAt,
-  wakeCategories, claimKickoff, claimRank, claimApidirectNews,
+  wakeCategories, claimKickoff, claimRank, claimApidirectNews, claimAutoFetch,
   isFreshlyCollected, touchSeen,
 };

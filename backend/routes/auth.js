@@ -93,13 +93,35 @@ router.post("/google", async (req, res) => {
   }
 });
 
-/** GET /auth/me — who am I? The frontend's only way to know, since the cookie is httpOnly. */
+/**
+ * GET /auth/me — who am I? The frontend's only way to know, since the cookie is httpOnly.
+ *
+ * ── THIS IS WHAT "LOGGING IN FOR THE DAY" ACTUALLY LOOKS LIKE ────────────────
+ * POST /auth/google runs once a fortnight. The cookie lasts 14 days, so every
+ * other visit — opening the app in the morning, a new tab, a reload — arrives
+ * here instead, and for a long time here did nothing but answer the question.
+ *
+ * That was the whole staleness bug. The kickoff lives on the sign-in path, the
+ * paid ranking pass fires from the kickoff, and a returning creator was taking
+ * neither: the collector had run forty times overnight and every one of those
+ * rows was sitting at ai_score -1, invisible to a feed that filters on score.
+ * The top card stayed at whatever was last judged, which could be yesterday.
+ *
+ * So a session restore wakes the categories exactly as a fresh sign-in does.
+ * Fire-and-forget for the same reason it is there: nobody should wait on a
+ * network-bound collection to find out who they are. It is safe to call on
+ * every page load because claimKickoff holds a five-minute per-category slot
+ * and claimRank a ten-minute one — fifty tabs are still one pass.
+ */
 router.get("/me", authenticateToken, async (req, res) => {
   const user = await User.findById(req.user.id).lean();
   if (!user) {
     res.clearCookie(COOKIE_NAME, cookieOptions());
     return res.status(401).json({ success: false, message: "Account not found" });
   }
+
+  kickoffCategories(user.categories);
+
   return res.json({ success: true, user: publicUser(user) });
 });
 
