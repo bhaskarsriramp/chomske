@@ -82,6 +82,24 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  /**
+   * A brief that landed while this pane was open.
+   *
+   * The feed patches its row when the server pushes one (see the socket handler
+   * in NewsFeed.js), which changes `preview` under us — but `brief` was seeded
+   * from `preview` once, at mount, so without this the story a creator is
+   * actually staring at is the one place the live update would not appear.
+   *
+   * Only ever fills a gap: once there is a brief here, whether fetched above or
+   * pushed, it is not replaced. Swapping prose out from under someone mid-read
+   * would be worse than showing them the copy they started reading.
+   */
+  useEffect(() => {
+    if (!preview?.brief) return;
+    setBrief((prev) => prev || preview.brief);
+    setBriefLoading(false);
+  }, [preview?.brief]);
+
   useEffect(() => {
     if (mode !== "sheet") return;
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };

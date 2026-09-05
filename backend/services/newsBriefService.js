@@ -24,6 +24,7 @@
  */
 import { GoogleGenAI } from "@google/genai";
 import NewsItem from "../models/NewsItem.js";
+import { publishNewsEvent } from "./newsEvents.js";
 
 const MODEL = process.env.GEMINI_BRIEF_MODEL || process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
 
@@ -271,7 +272,26 @@ export async function backfillBriefs(categoryId, { limit = 10, minScore = BRIEF_
     if (seen.has(key)) continue;
     seen.add(key);
     const brief = await ensureBrief(row);
-    if (brief) made++;
+    if (!brief) continue;
+    made++;
+
+    // ── PUSH IT, DON'T MAKE THEM WAIT FOR THE PASS ───────────────────────────
+    // Briefs are written one at a time and the pass runs to fifteen, so under a
+    // plain request the fifteenth story's reader waits on the other fourteen for
+    // prose that was ready minutes ago. This hands each one over the moment it
+    // exists.
+    //
+    // Keyed on the CLUSTER, matching what the feed sends as `story` — the brief
+    // is written across every member (see the updateMany in ensureBrief), and
+    // the row the feed happened to pick as representative is often not the row
+    // the backfill happened to brief. `id` rides along for the unclustered case.
+    publishNewsEvent({
+      type: "news:brief",
+      category: categoryId,
+      story: row.cluster_id || String(row._id),
+      id: String(row._id),
+      brief,
+    }).catch(() => {});
   }
 
   if (made) console.log(`[news-brief:${categoryId}] pre-generated ${made} brief(s)`);

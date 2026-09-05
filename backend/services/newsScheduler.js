@@ -119,50 +119,144 @@ async function collectCategory(cat) {
  *
  * @returns {{ ranked, detailed, briefs, usd, skipped }}
  */
-export async function ensureRanked(cat, { force = false } = {}) {
-  if (!getCategory(cat)) return { skipped: true, reason: "unknown_category" };
-
-  // ── ASK WHETHER THERE IS WORK BEFORE SPENDING THE SLOT ON FINDING OUT ─────
-  // Both halves below already no-op when there is nothing to do, at the cost of
-  // a Mongo query and no tokens. The claim underneath does not: it hands out one
-  // ten-minute slot per category whether or not the pass that took it did
-  // anything. So a page load arriving on an idle category used to spend the slot
-  // learning there was nothing, and the fetch a minute later — the one carrying
-  // actual news — was told to wait nine.
+export async function ensureRanked(cat, { force = false, awaitBriefs = true } = {}) {
+  // ── ONE PASS PER CATEGORY AT A TIME ───────────────────────────────────────
+  // claimRank is a COOLDOWN — "not too often" — and a forced pass is allowed to
+  // step over it, which is right: a fetch that just brought news in must not be
+  // held back by a slot taken thirty seconds earlier. What neither of those is,
+  // is a MUTEX, and the difference started costing money the moment sign-in
+  // became a trigger. A returning creator fires the kickoff and the stale-feed
+  // fetch within a second of each other; the kickoff's pass and the fetch's
+  // forced pass then ran concurrently over the same category, both read the same
+  // un-briefed rows before either had written one, and both paid to write them.
   //
-  // Two indexed existence checks, both covered, and they are what makes this
-  // safe to call from a sign-in and a stale feed as well as from the button.
-  if (!force && !(await hasUnranked(cat)) && !(await hasPendingBriefs(cat))) {
-    return { ranked: 0, detailed: 0, briefs: 0, usd: 0, skipped: true, reason: "nothing_new" };
-  }
+  // Serialising fixes it without weakening force, because the second pass now
+  // starts AFTER the first has committed: rankNews finds nothing left at
+  // ai_score -1 and returns free, backfillBriefs finds nothing missing a brief
+  // and returns on a query. The work still happens exactly once, and the pass
+  // carrying genuinely new rows still gets to do it.
+  //
+  // In-process only. Across instances the Redis claims still apply, and the
+  // window this closes — two triggers from one person's page load — is by its
+  // nature on one instance.
+  const running = inFlight.get(cat);
+  if (running) await running.catch(() => {});
 
-  // The throttle the whole on-demand model rests on. Ten page loads, three
-  // refreshes and four users all arriving at once must add up to one paid pass.
-  if (!force && !(await claimRank(cat))) {
-    return { ranked: 0, detailed: 0, briefs: 0, usd: 0, skipped: true, reason: "cooldown" };
-  }
+  const task = rankAndBrief(cat, { force });
+  inFlight.set(cat, task.settled);
+  task.settled.catch(() => {}).finally(() => {
+    if (inFlight.get(cat) === task.settled) inFlight.delete(cat);
+  });
 
-  let ranked = { ranked: 0, detailed: 0, usd: 0 };
-  try {
-    ranked = await rankNews(cat);
-  } catch (err) {
-    console.error(`[news:${cat}] ranking failed:`, err.message);
-  }
+  // ── WHY THE CALLER DOES NOT WAIT FOR BRIEFS ───────────────────────────────
+  // Ranking is what puts cards on the page; briefs are what fills one card once
+  // it is opened. Awaiting both meant a creator watched a spinner through five
+  // to ten sequential Gemini calls for prose they had not asked to read yet —
+  // the cards were ready and being withheld.
+  //
+  // Nothing is lost by letting them run on: a story opened before its brief
+  // lands generates one on demand through GET /news/:id/brief, which has its own
+  // loading state and is the same call the backfill was pre-warming. The
+  // backfill keeps running under the in-flight entry above, so the next pass
+  // still waits for it and cannot duplicate it.
+  return awaitBriefs ? task.settled : task.ranked;
+}
 
-  let briefs = 0;
-  try {
-    briefs = await backfillBriefs(cat, { limit: BRIEF_LIMIT });
-  } catch (err) {
-    console.error(`[news:${cat}] brief pass failed:`, err.message);
-  }
+// Held per category, for the lifetime of one pass. See ensureRanked.
+const inFlight = new Map();
 
-  return {
-    ranked: ranked.ranked || 0,
-    detailed: ranked.detailed || 0,
-    briefs,
-    usd: ranked.usd || 0,
-    skipped: false,
-  };
+/**
+ * The pass itself, split so the caller can have the ranking result as soon as it
+ * exists while the briefs carry on behind it.
+ *
+ * @returns {{ ranked: Promise, settled: Promise }} `ranked` resolves when the
+ *   scoring is written; `settled` when the briefs are done too.
+ */
+function rankAndBrief(cat, { force }) {
+  let resolveRanked;
+  let rejectRanked;
+  const ranked = new Promise((res, rej) => { resolveRanked = res; rejectRanked = rej; });
+  // Nothing may await `ranked` before the task attaches its own handler, so a
+  // rejection here would otherwise surface as an unhandled rejection and take
+  // the process down under Node's default.
+  ranked.catch(() => {});
+
+  const settled = (async () => {
+    if (!getCategory(cat)) {
+      const out = { skipped: true, reason: "unknown_category" };
+      resolveRanked(out);
+      return out;
+    }
+
+    // ── ASK WHETHER THERE IS WORK BEFORE SPENDING THE SLOT ON FINDING OUT ───
+    // Both halves below already no-op when there is nothing to do, at the cost
+    // of a Mongo query and no tokens. The claim underneath does not: it hands
+    // out one ten-minute slot per category whether or not the pass that took it
+    // did anything. So a page load arriving on an idle category used to spend
+    // the slot learning there was nothing, and the fetch a minute later — the
+    // one carrying actual news — was told to wait nine.
+    //
+    // Wrapped because ensureRanked has never thrown and callers are written that
+    // way — fetchAndRank does not guard it, and POST /news/refresh would turn a
+    // transient Mongo blip into a refresh that reported nothing happened. An
+    // unreadable answer here means "assume there is work": the claim below is
+    // still the thing standing between that assumption and a bill.
+    let idle = false;
+    if (!force) {
+      try {
+        idle = !(await hasUnranked(cat)) && !(await hasPendingBriefs(cat));
+      } catch (err) {
+        console.warn(`[news:${cat}] couldn't check for pending work:`, err.message);
+      }
+    }
+    if (idle) {
+      const out = { ranked: 0, detailed: 0, briefs: 0, usd: 0, skipped: true, reason: "nothing_new" };
+      resolveRanked(out);
+      return out;
+    }
+
+    // The throttle the whole on-demand model rests on. Ten page loads, three
+    // refreshes and four users all arriving at once must add up to one paid pass.
+    if (!force && !(await claimRank(cat))) {
+      const out = { ranked: 0, detailed: 0, briefs: 0, usd: 0, skipped: true, reason: "cooldown" };
+      resolveRanked(out);
+      return out;
+    }
+
+    let scored = { ranked: 0, detailed: 0, usd: 0 };
+    try {
+      scored = await rankNews(cat);
+    } catch (err) {
+      console.error(`[news:${cat}] ranking failed:`, err.message);
+    }
+
+    // The cards can be drawn from here on. Everything below is pre-warming.
+    resolveRanked({
+      ranked: scored.ranked || 0,
+      detailed: scored.detailed || 0,
+      briefs: 0,
+      usd: scored.usd || 0,
+      skipped: false,
+    });
+
+    let briefs = 0;
+    try {
+      briefs = await backfillBriefs(cat, { limit: BRIEF_LIMIT });
+    } catch (err) {
+      console.error(`[news:${cat}] brief pass failed:`, err.message);
+    }
+
+    return {
+      ranked: scored.ranked || 0,
+      detailed: scored.detailed || 0,
+      briefs,
+      usd: scored.usd || 0,
+      skipped: false,
+    };
+  })();
+
+  settled.catch((err) => rejectRanked(err));
+  return { ranked, settled };
 }
 
 /**
@@ -208,7 +302,14 @@ export async function fetchAndRank(cat) {
   // Deliberately no markChecked(): "checked N minutes ago" means a FULL pass
   // over every source, and stamping it here would both overstate what we looked
   // at and make the next sign-in kickoff skip its real collection.
-  const ranked = await ensureRanked(cat, { force: inserted > 0 });
+  //
+  // awaitBriefs:false because somebody is watching this one. The response is
+  // what takes the "Fetching new topics" banner off the screen, and holding it
+  // through five to ten sequential brief calls kept a finished list of cards
+  // hidden behind prose for stories the creator had not opened. The briefs carry
+  // on in the background; anything opened before its own lands generates it on
+  // demand. See ensureRanked.
+  const ranked = await ensureRanked(cat, { force: inserted > 0, awaitBriefs: false });
   return { inserted, ...ranked };
 }
 

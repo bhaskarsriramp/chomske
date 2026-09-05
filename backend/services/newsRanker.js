@@ -28,6 +28,7 @@
 import { GoogleGenAI } from "@google/genai";
 import NewsItem from "../models/NewsItem.js";
 import { getCategory } from "./categories.js";
+import { publishNewsEvent } from "./newsEvents.js";
 
 const MODEL = process.env.GEMINI_RANK_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 const BATCH = parseInt(process.env.NEWS_RANK_BATCH || "60", 10);
@@ -354,6 +355,29 @@ export async function rankNews(categoryId, { force = false } = {}) {
     `[news-rank:${categoryId}] ${scored.length}/${items.length} scored, ${detailed} detailed · ` +
     `${c1.inTok}+${c1.outTok} then ${c2.inTok}+${c2.outTok} tokens · $${usd.toFixed(4)}`
   );
+
+  // ── TELL ANYONE WAITING THAT THE CARDS EXIST ─────────────────────────────
+  // Scores are what put a story in the feed — GET /news filters on ai_score — so
+  // this is the moment the list a creator is watching actually changed, and
+  // until now the only way to find that out was to ask again.
+  //
+  // The event carries a COUNT, not the cards. Everything that makes a card what
+  // it is — clustering, heat ordering, the profile's categories, this creator's
+  // own read state — is decided in GET /news, and a socket payload that tried to
+  // carry all of that would be a second, quietly diverging copy of that route.
+  // So the browser is told what changed and re-reads, which is one cheap query
+  // against a feed that has just been written.
+  //
+  // Not awaited: publishing is best-effort and a ranking pass must never fail
+  // over a notification about itself.
+  if (scored.length) {
+    publishNewsEvent({
+      type: "news:ranked",
+      category: categoryId,
+      ranked: scored.length,
+      detailed,
+    }).catch(() => {});
+  }
 
   return {
     considered: items.length,

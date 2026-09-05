@@ -5,6 +5,7 @@ import StoryDetail from "./StoryDetail";
 import { sourceLabel, timeAgo } from "./newsUtils";
 import { categoryColor, cardBackground, cardTint } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
+import { onNewsEvent } from "../../realtime/socket";
 
 /**
  * What to make a video about today.
@@ -93,6 +94,10 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   const [voice, setVoice] = useState(null);
   const [refreshes, setRefreshes] = useState(0);
   const [ranking, setRanking] = useState(false);
+  // Read by the socket handler below. A piece of state there would put `ranking`
+  // in that effect's dependencies and tear the listeners down and back up on
+  // every fetch — which is the exact moment they need to be up.
+  const rankingRef = useRef(false);
   const [emptyTries, setEmptyTries] = useState(0);
   // The server's verdict on its own feed: the newest story on offer has aged
   // past NEWS_STALE_HOURS. Not computed here on purpose — one browser deciding
@@ -118,9 +123,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   const selectedRef = useRef(null);
   const selected = items.find((i) => i.id === openId) || null;
 
-  // The key the server marks read state against — cluster first, so a story
-  // stays read when a sixth outlet joins it and changes the representative row.
-  const seenKey = (it) => it.story || it.id;
+  // What is on screen right now, readable without making it a dependency.
+  // load() clears the badges of whatever it is about to replace, and taking
+  // `items` as a hook dependency there would rebuild load() on every result —
+  // which the effect below calls, which sets items, which rebuilds load().
+  const itemsRef = useRef([]);
 
   /**
    * Open a story, and record that it has been looked at.
@@ -161,6 +168,8 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // profile with a different set of videos behind it.
   useEffect(() => { loadVoice(); }, [loadVoice, voiceRev]);
 
+  useEffect(() => { rankingRef.current = ranking; }, [ranking]);
+
   // Nothing polls here: the collector runs on its own 15-minute clock, so a
   // client-side interval would re-read identical rows and add load for nothing.
   //
@@ -169,11 +178,36 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // timer, so this is what actually surfaces new stories. It is throttled per
   // category server-side, which is why it is safe to call on every open: inside
   // the cooldown it returns in about a millisecond having spent nothing.
-  const load = useCallback(async ({ refresh = false, auto = false } = {}) => {
-    setBusy(true);
+  const load = useCallback(async ({ refresh = false, auto = false, quiet = false } = {}) => {
+    // `quiet` is for reads nobody asked for — a live update arriving because a
+    // pass finished somewhere else. The list dims while `busy`, and dimming the
+    // page under someone who is reading it, to deliver news they did not request,
+    // is worse than the update is good.
+    if (!quiet) setBusy(true);
     setError("");
     try {
       if (refresh) {
+        // ── THE BATCH BEING REPLACED STOPS BEING NEW ──────────────────────
+        // NEW used to mean "you have not opened this", which is a fact about
+        // the creator and never expires on its own — so a story they scrolled
+        // past this morning was still wearing the badge tonight, sitting under
+        // a timestamp reading 14h. The badge and the timestamp were describing
+        // different things and the badge was losing.
+        //
+        // It now means "this arrived in the latest batch". Everything on screen
+        // when a fetch starts has, by definition, already been offered; marking
+        // it read here is what leaves the badge free to mean the one thing a
+        // creator actually wants it to mean when the new cards land.
+        //
+        // Marked BEFORE the fetch, so a story that arrives during it is not
+        // caught by its own refresh. Awaited, so the re-read below sees the
+        // marks rather than racing them. A failure is not worth a word: the
+        // worst case is a badge that lingers one cycle longer.
+        const shown = itemsRef.current.map(seenKey).filter(Boolean);
+        if (shown.length) {
+          try { await api.post("/news/seen", { stories: shown }); } catch { /* badges only */ }
+        }
+
         setRanking(true);
         try {
           await api.post("/news/refresh", {
@@ -215,6 +249,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
       const next = data.items || [];
       setItems(next);
+      itemsRef.current = next;
       setWidened(wide);
       setCheckedAt(data.checked_at || null);
       setFeedCats(data.categories || []);
@@ -227,13 +262,14 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
     } catch (err) {
       setError(errorMessage(err, "Couldn't load today's topics."));
       setItems([]);
+      itemsRef.current = [];
       // A feed that failed to load has no opinion about its own freshness, and
       // firing a paid fetch off the back of a network error would pay for a
       // symptom of something else.
       setStale(false);
       return [];
     } finally {
-      setBusy(false);
+      if (!quiet) setBusy(false);
       setLoadedOnce(true);
     }
   }, [cat, profileId]);
@@ -316,6 +352,55 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
     return () => { cancelled = true; };
   }, [loadedOnce, busy, error, stale, autoFetching, cat, load]);
+
+  /**
+   * The live feed.
+   *
+   * ── WHAT THIS IS FOR, AND WHAT IT IS NOT FOR ─────────────────────────────
+   * The work a creator waits on does not happen inside the request they are
+   * waiting on. Ranking fires from a sign-in kickoff on another instance, from
+   * somebody else who picked the same category, from the scheduler. Briefs run
+   * on after the fetch has already answered. None of that could reach this page
+   * before, so the only way to find out was to load it again.
+   *
+   * `news:ranked` says the list changed — and carries a count, not cards.
+   * Clustering, heat ordering and this creator's own read state are all decided
+   * in GET /news, so the page re-reads rather than trying to keep a second copy
+   * of that logic in sync over a socket. Quietly, because nobody asked.
+   *
+   * `news:brief` carries the prose itself, because that one IS just a field on a
+   * row and a re-read to collect it would be fifteen reads for fifteen briefs.
+   */
+  useEffect(() => {
+    const mine = new Set(cat ? [cat] : profileCats.filter(Boolean));
+
+    const offRanked = onNewsEvent("news:ranked", (ev) => {
+      if (!ev?.category || !mine.has(ev.category)) return;
+      // A fetch this pane started will re-read the moment its POST answers, and
+      // that answer lands within a second of this event — the ranking is what
+      // both of them are reporting. Reading twice would be two queries and a
+      // race over which result renders.
+      if (rankingRef.current) return;
+      load({ quiet: true });
+    });
+
+    const offBrief = onNewsEvent("news:brief", (ev) => {
+      if (!ev?.category || !mine.has(ev.category) || !ev.brief) return;
+      setItems((prev) => {
+        let hit = false;
+        const next = prev.map((it) => {
+          if (it.brief || (seenKey(it) !== ev.story && it.id !== ev.id)) return it;
+          hit = true;
+          return { ...it, brief: ev.brief };
+        });
+        // Same array back when nothing matched, so an event for a story this
+        // pane is not showing does not re-render the list.
+        return hit ? next : prev;
+      });
+    });
+
+    return () => { offRanked(); offBrief(); };
+  }, [cat, categoriesKey, load]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // The profile's categories change when they edit it, and switching profiles
   // replaces them wholesale. Either way, a category tab that is no longer one of
@@ -519,6 +604,18 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
       )}
     </div>
   );
+}
+
+/**
+ * The key read state is marked against — cluster first, so a story stays read
+ * when a sixth outlet joins it and changes the representative row.
+ *
+ * Module scope rather than a closure: load() needs it, and a function rebuilt
+ * on every render would either have to join that hook's dependencies or be
+ * silently stale.
+ */
+function seenKey(it) {
+  return it.story || it.id;
 }
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */

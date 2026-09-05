@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema } = mongoose;
 
 /**
- * StorySeen — which stories this creator has already opened.
+ * StorySeen — which stories this creator has already been shown.
  *
  * ── WHY THIS IS ITS OWN COLLECTION ───────────────────────────────────────────
  * The reference project marks an opportunity read by writing `seen_at` onto the
@@ -13,6 +13,18 @@ const { Schema } = mongoose;
  * to open a story cleared the NEW badge for everybody.
  *
  * So the read state is keyed on (user, story) and lives apart from the story.
+ *
+ * ── "SHOWN", NOT "OPENED" ────────────────────────────────────────────────────
+ * A row lands here from two places, and the wider of the two is what the field
+ * means. Opening a story writes one, as it always did. So does starting a fetch:
+ * the feed marks the batch it is about to replace, because NEW now means "came
+ * in with the latest batch" rather than "you never clicked it".
+ *
+ * That second meaning is the one the badge needed. Read as "unopened", NEW never
+ * expired on its own — a story scrolled past in the morning still wore it at
+ * midnight, under a timestamp saying 14h, and the badge and the timestamp were
+ * describing different things. Read as "since the last fetch", it answers the
+ * question a creator is actually asking when they come back to the page.
  *
  * ── WHAT "STORY" IS ──────────────────────────────────────────────────────────
  * The cluster key, not a row id. A story is five outlets and one card, and the

@@ -353,8 +353,12 @@ function storyKey(d) {
 /**
  * POST /news/seen  { story } | { stories: [...] }
  *
- * "I have looked at this one." Called when a card is opened, which is what
- * clears its NEW badge.
+ * "I have been shown this one." Called from two places, both of which clear the
+ * NEW badge: opening a card, and starting a fetch — the feed marks the batch it
+ * is about to replace, so NEW means "arrived in the latest batch" rather than
+ * "never clicked". See models/StorySeen.js.
+ *
+ * The batch call is why the cap below is 50 and not 1.
  *
  * ── WHY THE BADGE WAITS FOR A CLICK AND NOT A TIMER ──────────────────────────
  * The reference project dismisses its NEW chip after a card has been in the

@@ -6,6 +6,7 @@
  * in this product and an open endpoint would be someone else's free GPU.
  */
 import "dotenv/config";
+import http from "http";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -22,6 +23,7 @@ import profileRoutes from "./routes/profiles.js";
 import VoiceProfile from "./models/VoiceProfile.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
+import { initSocketServer } from "./socket/index.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "8001", 10);
@@ -147,7 +149,14 @@ function assertConfig() {
       console.error("[server] voice_profiles index sync failed:", err.message)
     );
 
-    app.listen(PORT, () => {
+    // http.createServer rather than app.listen, because Socket.IO attaches to
+    // the SERVER and not to the Express app — app.listen makes one internally
+    // and gives no way to reach it. Everything else is unchanged: Express still
+    // handles every ordinary request, the socket server only claims /socket.io.
+    const server = http.createServer(app);
+    initSocketServer(server, { allowedOrigins });
+
+    server.listen(PORT, () => {
       console.log(`[server] Chomske API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
       console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);
       startNewsScheduler();
