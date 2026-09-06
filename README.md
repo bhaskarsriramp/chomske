@@ -104,6 +104,47 @@ The limits that come with that surface as real error messages:
 
 ---
 
+## Landing page performance
+
+The landing page is a first impression shown to people who have never heard of
+us, so its budget is the whole page painting inside a second on a mid-range
+phone. Four things hold that, and each one is easy to undo by accident:
+
+**The landing page is the only screen in the main bundle.** `App.js` imports it
+eagerly and lazy-loads everything else (`React.lazy`), because a visitor
+reading a headline should not be downloading the news feed, the transcriber,
+the script editor and socket.io-client. If you add a route, lazy-load it; if
+you add an import to `App.js`, check it isn't dragging the app into the
+landing chunk. `npm run build` prints the chunk table — main should stay well
+under 100 kB gzipped.
+
+**Nothing third-party blocks the first paint.** Inter is self-hosted from
+`public/fonts/` with its `@font-face` inline in `public/index.html`, next to
+the `<link rel=preload>` that starts it. The Noto Indic stylesheet still comes
+from Google but is loaded with the `media="print"` trick so it never blocks;
+the nine-language headline is legible on system fonts and sharpens when Noto
+lands. Do not add a plain `<link rel=stylesheet>` to a third-party origin — one
+costs a DNS lookup, a TLS handshake and a round trip before the browser paints
+anything.
+
+**`src/api.js` is fetch, not axios,** on purpose: axios was ~40KB of a bundle
+whose landing page makes one request. The module's surface (`api.get/post/...`,
+`{ data }`, `err.response.{status,data}`) is what the 37 call sites are written
+against, so it can be swapped again without touching them.
+
+**Cache headers live in `deploy/nginx.conf`.** The build's hashed assets are
+safe to cache for a year and `index.html` must not be cached at all. Without
+those headers every repeat visitor revalidates every file over the network.
+That file is documentation, not something nginx reads — copy the blocks into
+the live server config.
+
+One thing to check at deploy time: `REACT_APP_API_URL` must be the production
+API in the environment you *build* in. It is baked into the bundle and into a
+`<link rel=preconnect>` in the HTML, so a build made with the local `.env`
+ships a page that preconnects to `localhost:8001`.
+
+---
+
 ## Cost control
 
 Reading a video is the only real cost in this product, so it's gated three ways:

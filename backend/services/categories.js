@@ -164,19 +164,6 @@ export const CATEGORIES = [
       "Do NOT overstate a finding. A study on mice is not a cure, and a correlation is not a cause. Say plainly what was and was not shown.",
   },
 
-  {
-    id: "jobs_exams",
-    label: "Govt jobs & exams",
-    blurb: "Notifications, admit cards, results, dates",
-    locale: IN,
-    googleNews: ["government job notification", "SSC recruitment", "UPSC exam date", "railway recruitment", "exam result declared"],
-    editor: "Indian government job and competitive exam updates, for aspirants preparing for them",
-    top: "A new recruitment notification opening, a result declaration, an exam date announcement, an admit card release.",
-    mid: "A pattern or syllabus change, a deadline extension, a vacancy count update.",
-    low: "Coaching advertisements, motivational content, unofficial rumours about upcoming vacancies.",
-    caution:
-      "Dates, vacancy counts and deadlines change people's plans. Use only what the sources state, and never guess a date.",
-  },
 ];
 
 const BY_ID = new Map(CATEGORIES.map((c) => [c.id, c]));

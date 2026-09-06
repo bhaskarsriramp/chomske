@@ -107,17 +107,17 @@ export function cardBackground(index, active = false) {
  * for `solid`: a 6px dot in #70FFD2 on white is not there, so the dots sit at
  * 3:1, the threshold for a small non-text shape.
  *
- * ── EIGHT CATEGORIES, SEVEN COLOURS, AND FOUR OF THEM GREEN ──────────────────
- * The palette has five hue families, not eight: yellow-green (#2A7C13,
+ * ── SEVEN CATEGORIES, FIVE HUE FAMILIES, AND FOUR OF THEM GREEN ──────────────
+ * The palette has five hue families, not seven: yellow-green (#2A7C13,
  * #76C457), teal-green (#2A835F, #70FFD2), cyan, ice blue, magenta. Darkened to
  * one contrast level the pairs come out nearly identical, which is useless for
  * something whose whole job is telling categories apart. So same-family pairs
  * are separated by DEPTH instead: finance sits at 7.2:1 and crypto at 4.6:1 off
- * the two greens, business at 5.4:1 and sports at 4.6:1 off the two teals. The
- * eighth (jobs_exams) has no colour left, so it is magenta taken much deeper
- * than entertainment's, a plum against a bright pink, with a deeper chip fill
- * as well, since two categories sharing one hue need every bit of separation
- * they can get.
+ * the two greens, business at 5.4:1 and sports at 4.6:1 off the two teals.
+ *
+ * There used to be an eighth, jobs_exams, which had no hue left and took magenta
+ * far deeper than entertainment's to stay apart from it. It is gone, and magenta
+ * belongs to one category again.
  *
  * The chip always carries its label. Colour reinforces which category you are
  * reading; it is not asked to carry that alone.
@@ -130,9 +130,6 @@ export const CATEGORY_COLORS = {
   entertainment:  { ink: "#C800BF", solid: "#FF30F6", tint: "#FFF3FE", line: "#FFCDFD" },  // orchid 5.0:1
   sports:         { ink: "#00865C", solid: "#00AA74", tint: "#D7FFF2", line: "#70FFD2" },  // mint   4.6:1
   science_health: { ink: "#0D70B9", solid: "#279BF0", tint: "#EFF8FE", line: "#E3F2FD" },  // ice    5.2:1
-  // Deeper than entertainment on every channel, including the dot: at the same
-  // `solid` the two magenta categories were indistinguishable at 6px.
-  jobs_exams:     { ink: "#81007B", solid: "#C800BF", tint: "#FFE6FE", line: "#FFBCFC" },  // orchid 9.5:1
 };
 
 /** Neutral fallback, so a category added on the server never renders colourless. */

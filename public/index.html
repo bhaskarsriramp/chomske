@@ -22,15 +22,96 @@
     <meta property="og:url" content="https://trylipi.online" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Noto Sans Devanagari/Telugu/Bengali: without these, transcripts render as
-         tofu boxes on machines with no Indic fonts installed, which is most
-         Windows defaults for Telugu and Bengali. -->
+    <!-- ── THE CRITICAL PATH ──────────────────────────────────────────────────
+         Everything in this head is ordered by what the first paint actually
+         needs. Two rules hold it together:
+
+         1. Nothing third-party is allowed to block render. A stylesheet from
+            another origin costs a DNS lookup, a TLS handshake and a round trip
+            BEFORE the browser will paint a single pixel — ~500ms on a cold
+            mobile connection, spent on fonts we have a good fallback for.
+         2. Anything the first paint genuinely needs is asked for as early as
+            possible, in parallel, rather than being discovered later inside a
+            stylesheet or a bundle.
+    -->
+
+    <!-- The session check (`GET /auth/me`) fires the moment React mounts and
+         decides whether this visitor sees the landing page or the app. Opening
+         the connection now means that request doesn't pay for DNS + TLS when it
+         is finally made. -->
+    <link rel="preconnect" href="%REACT_APP_API_URL%" crossorigin />
+    <!-- Google's sign-in button is above the fold and loads its own script. -->
+    <link rel="preconnect" href="https://accounts.google.com" />
+
+    <!-- Inter is self-hosted (see public/fonts/ and the @font-face in
+         index.css). Same origin means no third-party handshake, and it is a
+         variable font, so the 650 and 750 weights this design actually uses
+         render as themselves instead of snapping to 600/700 the way the old
+         static-weight Google request made them.
+
+         The preload matters: an @font-face inside the stylesheet is only
+         discovered after that stylesheet has arrived and been parsed, which
+         puts the font a whole round trip late. This starts it immediately, in
+         parallel with everything else. -->
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;500;600&family=Noto+Sans+Telugu:wght@400;500&family=Noto+Sans+Bengali:wght@400;500&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="%PUBLIC_URL%/fonts/inter-latin-var.woff2"
+      crossorigin
     />
+
+    <!-- Declared here rather than in index.css so the font-face exists before
+         the stylesheet has arrived, and because a root-relative url() inside a
+         CRA stylesheet is resolved by webpack as a module import (it fails the
+         build). unicode-range is what keeps latin-ext (85KB) off the wire for
+         the visitors who never type a character in it. -->
+    <style>
+      @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 400 800;
+        font-display: swap;
+        src: url('%PUBLIC_URL%/fonts/inter-latin-var.woff2') format('woff2');
+        unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+          U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+          U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }
+      @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 400 800;
+        font-display: swap;
+        src: url('%PUBLIC_URL%/fonts/inter-latin-ext-var.woff2') format('woff2');
+        unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+          U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+          U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+          U+A720-A7FF;
+      }
+    </style>
+
+    <!-- Noto Sans Devanagari/Telugu/Bengali: without these, transcripts render
+         as tofu boxes on machines with no Indic fonts installed.
+
+         Loaded ASYNCHRONOUSLY (media="print" is ignored for rendering, so the
+         browser fetches it at low priority and never blocks on it; onload
+         promotes it to "all" once it has arrived). This is safe because the
+         .indic stack in index.css falls back to Nirmala UI on Windows and to
+         the system Indic faces on macOS/Android, so the nine-language headline
+         is legible from the first paint and simply sharpens when Noto lands. -->
+    <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600&family=Noto+Sans+Telugu:wght@400;500&family=Noto+Sans+Bengali:wght@400;500&display=swap"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'; this.onload=null;"
+    />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600&family=Noto+Sans+Telugu:wght@400;500&family=Noto+Sans+Bengali:wght@400;500&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
   </head>
   <body>
     <noscript>You need JavaScript enabled to run this app.</noscript>

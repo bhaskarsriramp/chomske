@@ -36,6 +36,10 @@
   --made-line: #E3DFD9;
 }
 
+/* Inter is self-hosted: its two @font-face rules live in an inline <style> in
+   public/index.html, deliberately, so the browser knows about the font before
+   this stylesheet has even arrived. See the comment there. */
+
 * { box-sizing: border-box; }
 
 html, body, #root { height: 100%; }

@@ -1629,7 +1629,6 @@ function Niches({ isMobile, pad }) {
     ["Film & entertainment", RED],
     ["Sports & cricket", ROSE],
     ["Science & health", RED],
-    ["Govt jobs & exams", DEEP],
   ];
 
   return (
