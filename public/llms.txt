@@ -1,0 +1,90 @@
+# Lipi
+
+> Lipi tells Indian YouTube creators what is worth covering today and writes the script in their own voice, in their own language. It watches the news in a creator's niche all day, ranks what actually deserves a video, and hands back a finished first draft in Hindi, Telugu, Tamil, Marathi, Kannada, Bengali, Gujarati, Malayalam, Punjabi or English. Credits are bought once and never expire. There is no subscription.
+
+Most tools for creators are built for English-speaking YouTubers and stop at raw data: keyword scores, view counts, a list of trending terms. A creator making videos in Telugu or Hindi still has to decide what to cover, then sit down and write it. Lipi closes that gap. It does the deciding and the first draft, in the language the creator actually records in, and in a voice learned from their own past videos rather than a generic template.
+
+## What a creator gets
+
+### Today's topics, ranked for their niche
+- News from across a creator's chosen categories, gathered continuously and scored on whether it genuinely deserves a video today
+- Stories from many outlets are grouped into one item, so a launch covered by sixty publications is one card, not sixty
+- Each story arrives with a short read on what happened and a one-line angle on what the video would be about
+- Every claim is traceable: each story shows every source it was assembled from, with links, so a creator can check a number before saying it out loud
+
+### A script in the creator's own voice
+- Add a few of your own short videos and Lipi learns how you open, the words you keep in English, how much you code-mix, your pacing and how you sign off
+- New scripts are written to match that, so the output sounds like the creator rather than like a machine
+- Each channel keeps its own voice, so a creator running a tech channel and a cricket channel never gets one bleeding into the other
+- Scripts are written only from the source material for that story, so the model is not inventing figures from memory
+
+### Length that matches the format
+- Anything from a 45-second Reel to an eight-minute long-form explainer
+- Long-form scripts get real structure and sections rather than a stretched Short
+- The exact credit cost is shown on the button before it is pressed, never after
+
+### Add-ons
+- An English version of the same story, written for a global audience rather than translated word for word
+- Titles, description and hashtags, written from the finished script, so the upload form is filled in too
+
+### Hinglish and regional language, done properly
+- Code-mixing is kept exactly as a creator speaks it. Hindi stays in Devanagari, Telugu in Telugu script, and the English words a creator naturally uses stay in English
+- Nothing is romanised or "cleaned up" into formal language a creator would never say on camera
+
+## Pricing
+
+- No subscription and nothing recurring. Credits are bought once and never expire
+- New accounts start with 90 free credits, which is enough to write real scripts before paying anything
+- Starter: Rs 199 for 250 credits
+- Creator: Rs 499 for 700 credits
+- Studio: Rs 999 for 1600 credits
+- Cost scales with the length of the script, so a Short costs a fraction of a long-form explainer
+- Payments are in Indian Rupees through Razorpay
+
+## Outcomes
+
+- The blank page is gone: a creator opens Lipi and already knows what to cover and has a draft to react to
+- Scripts read like the creator, so they can be recorded without rewriting every line
+- Facts are checkable, because every source is attached to the script it produced
+- A creator publishing in Telugu or Hindi gets the same quality of help an English-speaking creator has had for years
+- The English add-on opens a second, higher-earning audience from research already paid for
+
+## Who it is for
+
+- Indian YouTube creators making Shorts, Reels and long-form video in Indian languages
+- Regional-language creators in Telugu, Hindi, Tamil, Marathi, Kannada, Bengali, Gujarati, Malayalam and Punjabi
+- News, technology, finance, business, crypto, entertainment, sports, science and exam-focused channels
+- Creators running more than one channel, who need each one to keep its own topics and its own voice
+- Anyone who can record confidently but loses hours every week deciding what to make and writing it
+
+## Key pages
+
+- [Homepage](https://trylipi.online/): what Lipi does, who it is for, and a live demo of the product
+- [How it works](https://trylipi.online/#how): the path from a story breaking to a finished script
+- [Your voice](https://trylipi.online/#voice): how Lipi learns a creator's speaking style from their own videos
+- [Niches](https://trylipi.online/#niches): the categories a channel can follow
+- [Contact](https://trylipi.online/contact): support, sales and security
+- [Privacy Policy](https://trylipi.online/privacy): what is collected and why
+- [Terms of Service](https://trylipi.online/terms): the agreement, credits, and who owns the scripts
+- [Cancellation and Refunds](https://trylipi.online/refunds): when credits come back
+- [Delivery Policy](https://trylipi.online/shipping): how a digital product is delivered
+
+## Ownership and control
+
+- Creators own every script Lipi writes for them, to publish, edit and monetise. Lipi claims no rights and takes no cut
+- A voice profile belongs to one account. It is never pooled, shared, or used to serve anyone else
+- Videos, transcripts and voice analysis can be deleted by the creator at any time
+- Lipi writes drafts. The creator reads, checks and decides what is published
+
+## Categories
+
+AI and technology, stock market and finance, business and startups, crypto and Web3, film and entertainment, sports and cricket, science and health, and government jobs and exams.
+
+## Company
+
+Lipi is a product of Betafounder Enterprises, Hyderabad, India.
+
+## Contact
+
+- [Website](https://trylipi.online)
+- Email: sreeram@trylipi.online

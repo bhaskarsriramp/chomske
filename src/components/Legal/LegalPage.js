@@ -26,7 +26,7 @@ import useIsMobile from "../../hooks/useIsMobile";
 export const ORG = "Betafounder Enterprises";
 export const BRAND = "Lipi";
 export const SITE = "trylipi.online";
-export const SUPPORT_EMAIL = "sreeram@solosaas.co";
+export const SUPPORT_EMAIL = "sreeram@trylipi.online";
 export const ADDRESS_LINES = [
   "Plot no - 20, 2nd Floor, 302,",
   "Behind Lucid Hospital, Kukatpally,",
