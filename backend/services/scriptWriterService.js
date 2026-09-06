@@ -22,6 +22,17 @@ import NewsItem from "../models/NewsItem.js";
 import { metricsBlock, gradeDraft } from "./voiceMetrics.js";
 import { wordTarget } from "./creditPricing.js";
 import { noEmDash, noEmDashAll, dropDashes } from "../utils/prose.js";
+import { fetchArticles } from "./tinyfishClient.js";
+
+// ── HOW MANY SOURCES GET READ IN FULL ────────────────────────────────────────
+// Reading pages costs nothing (see tinyfishClient.js). What it costs is input
+// tokens and a few seconds of latency, so the amount is matched to what the
+// chosen length can actually use rather than taken as high as it will go.
+const DEEP_READ_FROM_SECONDS = parseInt(process.env.SCRIPT_DEEP_READ_FROM_SECONDS || "120", 10);
+const SHORT_READ_SOURCES = parseInt(process.env.SCRIPT_SHORT_READ_SOURCES || "3", 10);
+const DEEP_READ_SOURCES = parseInt(process.env.SCRIPT_DEEP_READ_SOURCES || "5", 10);
+const SHORT_READ_CHARS = parseInt(process.env.SCRIPT_SHORT_READ_CHARS || "2500", 10);
+const DEEP_READ_CHARS = parseInt(process.env.SCRIPT_DEEP_READ_CHARS || "3000", 10);
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
@@ -79,17 +90,56 @@ export async function writeScript({ profile, item, seconds = 60 }) {
   // Scoped by category as well as cluster. cluster_id is the model's own story
   // key ("openai-astra-safety-risk"), which is only unique WITHIN a category,
   // unscoped, a finance story could pull a tech story's facts into its script.
+  // NEWEST FIRST, which is a change. Oldest-first is right for the source list a
+  // creator reads, where the first row is whoever broke the story. It is wrong
+  // for the material a script is written from: the earliest write-up is the
+  // thinnest, filed before anyone knew the details, and the latest is the one
+  // carrying the numbers, the response and the context.
   const coverage = item.cluster_id
     ? await NewsItem.find({ category: item.category, cluster_id: item.cluster_id })
         .select("source title summary url published_at")
-        .sort({ published_at: 1 })
+        .sort({ published_at: -1 })
         .limit(8)
         .lean()
     : [item];
 
+  // ── HOW MUCH MATERIAL THIS LENGTH DESERVES ────────────────────────────────
+  // A 45 second Reel makes one point, and three articles is already more than
+  // it can use. An eight minute explainer needs sections that each say something
+  // new, and five gives it enough distinct angles to build them from without
+  // repeating itself, which is exactly how long-form read when it was written
+  // from 300-character snippets.
+  const deep = seconds >= DEEP_READ_FROM_SECONDS;
+  const readCount = deep ? DEEP_READ_SOURCES : SHORT_READ_SOURCES;
+  const perSource = deep ? DEEP_READ_CHARS : SHORT_READ_CHARS;
+
+  // Free, and it fails soft: anything that could not be read falls back to the
+  // snippet the collector already had, so a paywall costs detail, never a script.
+  let articles = new Map();
+  try {
+    articles = await fetchArticles(
+      coverage.slice(0, readCount).map((c) => c.url).filter(Boolean),
+      { maxChars: perSource }
+    );
+  } catch (err) {
+    console.warn(`[script] article read failed, using snippets: ${err.message}`);
+  }
+
   const facts = coverage
-    .map((c, i) => `[${i + 1}] (${c.source}) ${c.title}${c.summary ? `\n    ${c.summary.slice(0, 300)}` : ""}`)
-    .join("\n");
+    .map((c, i) => {
+      const full = c.url ? articles.get(c.url) : "";
+      const body = full || (c.summary ? c.summary.slice(0, 300) : "");
+      // Labelled, so the writer can tell a full account from a one-line wire
+      // snippet and lean on the one that actually says something.
+      const kind = full ? "FULL ARTICLE" : "headline only";
+      return `[${i + 1}] (${c.source} \u00b7 ${kind}) ${c.title}${body ? `\n${body}` : ""}`;
+    })
+    .join("\n\n");
+
+  console.log(
+    `[script] material: ${articles.size} of ${Math.min(readCount, coverage.length)} read in full, ` +
+    `${coverage.length} source(s) listed, ~${facts.length} chars`
+  );
 
   const language = profile.language_label || profile.language || "the creator's language";
 

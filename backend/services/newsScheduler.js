@@ -44,13 +44,25 @@ import {
 
 const INTERVAL_MIN = parseInt(process.env.NEWS_POLL_MINUTES || "15", 10);
 
-// Briefs written per category per pass. Matched to MAX_CARDS in NewsFeed.js,
-// the number of cards the feed will actually show, so every visible story is
-// readable the moment it is opened rather than generating a brief with the
-// reader waiting on it. Raise both together or the tail of the feed pays for a
-// brief on every single open. Ranking is on-demand now, so this fires a few
-// times a day, not ninety-six.
-const BRIEF_LIMIT = parseInt(process.env.NEWS_BRIEF_LIMIT || "15", 10);
+// ── PRE-GENERATION IS OFF, AND THE MEASUREMENT IS WHY ────────────────────────
+// This used to be 15: every ranking pass pre-wrote briefs for the fifteen cards
+// the feed might show, so that opening one was instant. It sounded right and it
+// was the single largest line on the bill.
+//
+// Measured over one morning with ONE user, who opened ONE card:
+//   442 briefs written, 148 more attempted and failed, ~$1.00 of Gemini
+//   1 brief actually read
+//
+// Pre-warming only pays when most of what you warm gets used. Here 441 of 442
+// were thrown away, because a creator picks one story a day out of fifteen and
+// never opens the rest.
+//
+// So briefs are written when a card is opened, and only then. The reader waits
+// two or three seconds behind a skeleton, once, for the one story they chose.
+// See GET /news/:id/brief and the Brief component in News/StoryDetail.js.
+//
+// Set NEWS_BRIEF_LIMIT above 0 to put pre-warming back without a deploy.
+const BRIEF_LIMIT = parseInt(process.env.NEWS_BRIEF_LIMIT || "0", 10);
 
 // Ranking is demand-driven now: it runs when somebody signs in, opens Topics or
 // presses Refresh, not on the collector's clock. Flip this to put the old
@@ -243,7 +255,12 @@ function rankAndBrief(cat, { force }) {
     let idle = false;
     if (!force) {
       try {
-        idle = !(await hasUnranked(cat)) && !(await hasPendingBriefs(cat));
+        // Missing briefs no longer count as pending work: nothing pre-writes
+        // them, so a category whose stories have no brief is not behind, it is
+        // simply waiting for somebody to open one.
+        idle = BRIEF_LIMIT > 0
+          ? !(await hasUnranked(cat)) && !(await hasPendingBriefs(cat))
+          : !(await hasUnranked(cat));
       } catch (err) {
         console.warn(`[news:${cat}] couldn't check for pending work:`, err.message);
       }
@@ -279,10 +296,12 @@ function rankAndBrief(cat, { force }) {
     });
 
     let briefs = 0;
-    try {
-      briefs = await backfillBriefs(cat, { limit: BRIEF_LIMIT });
-    } catch (err) {
-      console.error(`[news:${cat}] brief pass failed:`, err.message);
+    if (BRIEF_LIMIT > 0) {
+      try {
+        briefs = await backfillBriefs(cat, { limit: BRIEF_LIMIT });
+      } catch (err) {
+        console.error(`[news:${cat}] brief pass failed:`, err.message);
+      }
     }
 
     return {
@@ -363,8 +382,16 @@ async function runCategory(cat) {
   const fresh = await isFreshlyCollected(cat);
   const collected = fresh ? { inserted: 0, skipped: true } : await collectCategory(cat);
 
-  const out = await ensureRanked(cat);
-  return { category: cat, inserted: collected.inserted, ...out };
+  // ── COLLECT ONLY. NO RANKING ON SIGN-IN ───────────────────────────────────
+  // Signing in is not the same as asking to read the feed. Plenty of sessions
+  // start on My scripts or My voice and never open Topics at all, and ranking
+  // every category on the chance that they might meant paying for a pass per
+  // category per session, whether or not anyone ever looked at the cards.
+  //
+  // Opening Topics still ranks, a second later, through the stale-feed fetch,
+  // which is the moment a person is actually looking at the list. This only
+  // removes the guess.
+  return { category: cat, inserted: collected.inserted, ranked: 0, briefs: 0, usd: 0 };
 }
 
 async function runOnce() {

@@ -41,6 +41,9 @@ const MIN_SOURCE_CHARS = 180;
 // collected summary, which is what it shows for thin stories anyway.
 const MAX_TRIES = parseInt(process.env.NEWS_BRIEF_MAX_TRIES || "2", 10);
 
+// Extra attempts granted when a creator has the story open and is waiting.
+const OPENED_EXTRA_TRIES = parseInt(process.env.NEWS_BRIEF_OPENED_EXTRA_TRIES || "2", 10);
+
 // The score at which a story becomes worth writing a brief for. MUST match the
 // feed's own floor (MIN_SCORE in src/components/News/NewsFeed.js). It was 6
 // while the feed showed 5, so a story scoring exactly 5 was visible to readers
@@ -120,9 +123,12 @@ Return STRICT JSON only:
  * Get the brief for a story, generating and caching it if needed.
  *
  * @param {object} item  a NewsItem (lean doc is fine)
+ * @param {object} opts
+ * @param {boolean} opts.opened  a person has this story open and is watching a
+ *   skeleton where the prose goes. Buys one extra attempt; see below.
  * @returns {Promise<string>} the brief, or "" when there was too little to say
  */
-export async function ensureBrief(item) {
+export async function ensureBrief(item, { opened = false } = {}) {
   if (!item) return "";
   if (item.brief) return item.brief;
 
@@ -130,7 +136,19 @@ export async function ensureBrief(item) {
   // brief: too little source text, a model failure, an unparseable reply. An
   // unrecorded failure is indistinguishable from never having tried, which is
   // what turned one broken story into a permanent line item on the bill.
-  if ((item.brief_tries || 0) >= MAX_TRIES) return "";
+  //
+  // ── WHY AN OPENED STORY GETS MORE ROOM ────────────────────────────────────
+  // That cap was written when briefs were pre-generated in bulk, where a story
+  // nobody had asked for burning three attempts was pure loss. Now nothing is
+  // written unless a creator opens the card, so the two cases are not the same:
+  // a failure here is somebody watching a skeleton resolve into nothing.
+  //
+  // It also matters right now because the old bulk pass left roughly 150
+  // stories carrying failed attempts they earned while nobody was looking. On
+  // the old rule those could never produce a brief again, however many times a
+  // creator opened them.
+  const cap = opened ? MAX_TRIES + OPENED_EXTRA_TRIES : MAX_TRIES;
+  if ((item.brief_tries || 0) >= cap) return "";
 
   const key = keyOf(item);
   if (inFlight.has(key)) return inFlight.get(key);
@@ -272,7 +290,7 @@ export async function backfillBriefs(categoryId, { limit = 10, minScore = BRIEF_
     const key = keyOf(row);
     if (seen.has(key)) continue;
     seen.add(key);
-    const brief = await ensureBrief(row);
+    const brief = await ensureBrief(row);   // bulk: strict cap
     if (!brief) continue;
     made++;
 

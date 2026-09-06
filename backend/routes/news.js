@@ -236,8 +236,16 @@ router.post("/refresh", authenticateToken, async (req, res) => {
     let mine = (profile.categories || []).filter(isValidCategory);
     if (!mine.length) mine = [DEFAULT_CATEGORY];
 
+    // ── ONE CATEGORY, NOT ALL OF THEM ────────────────────────────────────────
+    // This used to fall back to every category the creator has when the client
+    // did not name one, which happens on the first load before the category
+    // strip has settled. A creator reads one category at a time; ranking the
+    // other two costs a full pass each for cards nobody is looking at.
+    //
+    // So an unnamed category means the first one, not all of them. Switching
+    // category sends its own refresh, and that one names it.
     const asked = String(req.body?.category || "");
-    const cats = asked && mine.includes(asked) ? [asked] : mine;
+    const cats = asked && mine.includes(asked) ? [asked] : mine.slice(0, 1);
 
     // ── A PRESS AND A CONDITION ARE NOT THE SAME REQUEST ─────────────────────
     // { auto: true } means the feed decided this for itself, because its newest
@@ -300,7 +308,7 @@ router.get("/:id/brief", authenticateToken, async (req, res) => {
     const doc = await NewsItem.findById(req.params.id).lean();
     if (!doc) return res.status(404).json({ success: false, message: "Not found" });
 
-    const brief = await ensureBrief(doc);
+    const brief = await ensureBrief(doc, { opened: true });
     return res.json({ success: true, brief, summary: doc.summary || "" });
   } catch (err) {
     console.error("[news] GET /:id/brief failed:", err);

@@ -115,4 +115,61 @@ export async function acquireSlot(service, max) {
   };
 }
 
-export default { setCooldown, cooldownRemainingMs, acquireSlot, NoSlotError };
+/**
+ * Take one unit from a per-key REQUESTS-PER-WINDOW budget.
+ *
+ * ── WHY THIS IS NOT acquireSlot ─────────────────────────────────────────────
+ * acquireSlot caps how many calls run AT ONCE, which is what apidirect limits.
+ * TinyFish limits how many run PER MINUTE, and the two need opposite shapes: a
+ * concurrency slot is given back when the call finishes, a rate unit is not
+ * given back at all, it expires with the window.
+ *
+ * Fixed window rather than sliding: a sliding window needs a sorted set and a
+ * cleanup pass per call, and the failure mode of a fixed window here is allowing
+ * a brief double burst across a boundary, which TinyFish answers with a 429 that
+ * the caller already handles by rotating.
+ *
+ * @param {string} service   bucket name, e.g. "tinyfish"
+ * @param {string} keyId     the key this budget belongs to
+ * @param {number} limit     units per window
+ * @param {number} windowSec window length in seconds
+ * @param {number} count     units to take, since one request can carry several URLs
+ * @returns {Promise<boolean>} false when the budget for this window is spent
+ */
+export async function takeRate(service, keyId, limit, windowSec, count = 1) {
+  const bucket = Math.floor(Date.now() / (windowSec * 1000));
+  const k = `hg:rate:${service}:${keyId}:${bucket}`;
+
+  if (!isRedisEnabled()) {
+    const cur = (_rateLocal.get(k) || 0) + count;
+    if (cur > limit) return false;
+    _rateLocal.set(k, cur);
+    // Bounded: one entry per key per window, and old windows are dropped on the
+    // next call rather than by a timer.
+    if (_rateLocal.size > 200) {
+      for (const key of _rateLocal.keys()) {
+        if (key !== k) _rateLocal.delete(key);
+      }
+    }
+    return true;
+  }
+
+  try {
+    const n = await redis.incrby(k, count);
+    // Set every time, for the same reason acquireSlot does: a counter orphaned
+    // between INCR and EXPIRE would hold its budget for ever.
+    await redis.expire(k, windowSec * 2);
+    if (n > limit) return false;
+    return true;
+  } catch (err) {
+    // Fail OPEN. This is a politeness limit on a free endpoint, not a spend
+    // guard, and refusing to fetch because Redis blinked would break script
+    // generation over a rate limit nobody was near.
+    console.warn("[limiter] rate check failed, allowing:", err.message);
+    return true;
+  }
+}
+
+const _rateLocal = new Map();
+
+export default { setCooldown, cooldownRemainingMs, acquireSlot, takeRate, NoSlotError };

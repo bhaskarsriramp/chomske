@@ -343,17 +343,48 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
  * stories arrive as a headline and nothing else, and showing the one line we
  * genuinely have beats an apology for the paragraph we don't.
  */
+/**
+ * The read on the story, and the wait while it is written.
+ *
+ * ── WHY THIS SAYS WHAT IT IS DOING ──────────────────────────────────────────
+ * Briefs are no longer pre-generated. Nothing is written until a creator opens
+ * a card, which is the only way to stop paying for four hundred briefs so that
+ * one gets read. The cost of that is a real wait, two or three seconds, the
+ * first time any story is opened.
+ *
+ * Bare shimmer bars would read as a slow page. A line saying what is happening
+ * turns the same wait into something the reader understands, and the shimmer
+ * underneath it shows the shape of what is coming.
+ */
 function Brief({ text, loading, fallback, compact }) {
   if (loading && !text) {
     return (
-      <div style={{ margin: "0 0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
-        {[0, 1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="hg-skel"
-            style={{ height: 13, borderRadius: 5, width: i === 3 ? "72%" : "100%" }}
+      <div style={{ margin: "0 0 20px" }}>
+        <div
+          style={{
+            display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+            fontSize: 12.5, color: "var(--ink-mute)",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
+              border: "2px solid var(--line)", borderTopColor: "var(--made)",
+              animation: "hg-spin .8s linear infinite",
+            }}
           />
-        ))}
+          Reading every source and writing the brief…
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }} aria-hidden="true">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="hg-skel"
+              style={{ height: 13, borderRadius: 5, width: i === 4 ? "58%" : "100%" }}
+            />
+          ))}
+        </div>
       </div>
     );
   }

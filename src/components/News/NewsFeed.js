@@ -358,8 +358,12 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   useEffect(() => {
     if (!loadedOnce || busy || error || !stale) return;
     if (autoRunning.current) return;
+    // Nothing to refresh until the category strip has settled. Firing now would
+    // send no category, and the server would have to guess which feed the
+    // creator is looking at.
+    if (!cat) return;
 
-    const key = cat || "all";
+    const key = cat;
     if (autoTried.current.has(key)) return;
     autoTried.current.add(key);
 
