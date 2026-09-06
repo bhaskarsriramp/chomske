@@ -1,23 +1,32 @@
 /**
- * transcribe.js: paste a YouTube link, get back what was said.
+ * transcribe.js: the videos a channel's voice is learned from.
  *
- * ── WHY THIS IS ASYNC RATHER THAN ONE REQUEST ────────────────────────────────
- * Reading a video takes anywhere from ~20 seconds to several minutes. Holding an
- * HTTP request open that long loses to proxy and load-balancer idle timeouts
- * (Cloud Run, nginx and friends all cut long-idle connections), and the user sees
- * a network error on work that actually succeeded. So POST creates a row and
- * returns immediately; the client polls GET until it leaves "processing".
+ * ── ADDING A VIDEO NO LONGER READS IT ────────────────────────────────────────
+ * This used to transcribe on add. Paste a link, Gemini reads the video, done.
+ * It was simple and it billed for work nobody had asked for: a creator pasting
+ * five links to see what happens, changing their mind, and deleting them, had
+ * already spent five video reads. The expensive call was triggered by an action
+ * that costs nothing to take back.
+ *
+ * So adding a video now buys only the cheap metadata lookup (title, length,
+ * thumbnail, about half a cent) and stores the row as "pending". Gemini is not
+ * called at all. Every pending video for a channel is read in one go when the
+ * creator presses Analyse my voice, which is the moment they have actually
+ * asked for something, see services/voiceProfileService.js.
+ *
+ * The length gate still runs here rather than at analysis time. It is the whole
+ * reason the metadata lookup is bought, and refusing a 40-minute video at the
+ * moment it is pasted is a far better experience than accepting it and failing
+ * later.
  *
  * The unique index on (user, video_id) is what makes this safe against a
- * double-click: the second insert loses, and we hand back the row that won
- * instead of paying to read the same video twice.
+ * double-click: the second insert loses, and we hand back the row that won.
  */
 import express from "express";
 import mongoose from "mongoose";
 import Transcript from "../models/Transcript.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
-import { transcribeYouTube } from "../services/geminiClient.js";
 import { getYouTubeVideoDetails, isApidirectConfigured } from "../services/apidirectClient.js";
 import { resolveProfile, listProfiles } from "../services/profileService.js";
 import authenticateToken from "../middleware/authenticateToken.js";
@@ -37,9 +46,11 @@ const MAX_VOICE_VIDEOS = parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
 // a Short and diluted across twenty minutes of a long video, and a long video
 // costs roughly 20× more to read for a weaker signal.
 //
-// NOTE: YouTube raised the Shorts ceiling to 180s in late 2024, so a creator's own
-// Shorts may now exceed this. Raise MAX_VIDEO_SECONDS if their uploads get rejected.
-const MAX_VIDEO_SECONDS = parseInt(process.env.MAX_VIDEO_SECONDS || "60", 10);
+// 90 seconds rather than 60: YouTube raised its own Shorts ceiling past a minute,
+// and creators were being refused their own uploads for running a few seconds
+// over. The extra thirty seconds costs little to read and removes a rejection
+// that looked like a bug.
+const MAX_VIDEO_SECONDS = parseInt(process.env.MAX_VIDEO_SECONDS || "90", 10);
 
 /** POST /transcribe  { url } */
 router.post("/", authenticateToken, async (req, res) => {
@@ -97,7 +108,7 @@ router.post("/", authenticateToken, async (req, res) => {
     const usedToday = await Transcript.countDocuments({
       user: userId,
       created_at: { $gte: since },
-      status: { $in: ["processing", "done"] },
+      status: { $in: ["pending", "processing", "done"] },
     });
     if (usedToday >= DAILY_LIMIT) {
       return res.status(429).json({
@@ -196,7 +207,7 @@ router.post("/", authenticateToken, async (req, res) => {
         { _id: existing._id },
         {
           $set: {
-            status: "processing", error: "", text: "",
+            status: "pending", error: "", text: "",
             // A failed row is being retried; it moves to whichever profile the
             // creator is looking at now, which may not be where it first landed.
             profile: profile._id,
@@ -212,7 +223,7 @@ router.post("/", authenticateToken, async (req, res) => {
           profile: profile._id,
           video_id: parsed.videoId,
           url: parsed.url,
-          status: "processing",
+          status: "pending",
           ...videoMeta,
         });
       } catch (err) {
@@ -226,12 +237,8 @@ router.post("/", authenticateToken, async (req, res) => {
       }
     }
 
-    // Fire and forget. The client polls; nothing awaits this.
-    runTranscription(doc._id, parsed.url).catch((err) =>
-      console.error(`[transcribe] unhandled failure for ${doc._id}:`, err)
-    );
-
-    return res.status(202).json({ success: true, cached: false, transcript: shape(doc) });
+    // Nothing is read here. The row waits until the creator asks for a voice.
+    return res.json({ success: true, cached: false, transcript: shape(doc) });
   } catch (err) {
     console.error("[transcribe] POST failed:", err);
     return res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
@@ -268,17 +275,22 @@ router.get("/", authenticateToken, async (req, res) => {
   const usedToday = await Transcript.countDocuments({
     user: req.user.id,
     created_at: { $gte: since },
-    status: { $in: ["processing", "done"] },
+    status: { $in: ["pending", "processing", "done"] },
   });
 
   const held = docs.filter((d) => d.status !== "failed").length;
-  const ready = docs.filter((d) => d.status === "done" && d.text);
+
+  // ANALYSABLE, not already-read. A pending video has not cost anything yet and
+  // has not been transcribed, but it is exactly what an analysis would consume,
+  // so it is what the button should count. Counting only "done" here would have
+  // told a creator who just added three videos that they had none.
+  const ready = docs.filter((d) => d.status === "pending" || (d.status === "done" && d.text));
 
   // A voice is one person. Videos in two different languages produce a blended
   // profile that is nobody's, the reason a Telugu Short and a Hindi Short in the
   // same list yielded "Telugu-English and Hinglish" as a single voice. Surfaced
   // rather than silently blocked, because a genuinely bilingual creator exists.
-  const languages = [...new Set(ready.map((d) => d.language_label).filter(Boolean))];
+  const languages = [...new Set(docs.map((d) => d.language_label).filter(Boolean))];
 
   return res.json({
     success: true,
@@ -323,48 +335,6 @@ router.delete("/:id", authenticateToken, async (req, res) => {
 });
 
 /** The actual work, off the request path. Never throws to the caller. */
-async function runTranscription(id, url) {
-  const started = Date.now();
-  try {
-    const out = await transcribeYouTube(url);
-    await Transcript.updateOne(
-      { _id: id },
-      {
-        $set: {
-          status: "done",
-          text: out.text,
-          language: out.language,
-          language_label: out.language_label,
-          title: out.title,
-          usage: out.usage || {},
-          ms_taken: Date.now() - started,
-          updated_at: new Date(),
-        },
-      }
-    );
-    const u = out.usage || {};
-    console.log(
-      `[transcribe] ${id} done in ${((Date.now() - started) / 1000).toFixed(1)}s · ` +
-      `${out.text.length} chars · ${out.language_label || out.language || "?"} · ` +
-      `${u.total_tokens || 0} tokens · $${(u.usd || 0).toFixed(4)}`
-    );
-  } catch (err) {
-    // userMessage is the version safe to show; err.message may carry internals.
-    await Transcript.updateOne(
-      { _id: id },
-      {
-        $set: {
-          status: "failed",
-          error: err.userMessage || "We couldn't read this video.",
-          ms_taken: Date.now() - started,
-          updated_at: new Date(),
-        },
-      }
-    ).catch(() => {});
-    console.error(`[transcribe] ${id} failed: ${err.message}`);
-  }
-}
-
 /**
  * apidirect's publish date: "2009-10-25 06:57:33", UTC with no zone marker.
  * Returns null rather than an Invalid Date, which Mongoose refuses to cast.

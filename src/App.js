@@ -7,9 +7,9 @@ import LandingPage from "./components/Landing/LandingPage";
 
 /* ── WHAT IS SPLIT, AND WHY ──────────────────────────────────────────────────
    A stranger arriving at trylipi.online sees exactly one screen: the landing
-   page. Before this split they downloaded, parsed and executed all of it —
+   page. Before this split they downloaded, parsed and executed all of it:
    the dashboard, the news feed, the transcriber, the script editor, the
-   billing dialog, the legal pages, and socket.io-client — to read a headline
+   billing dialog, the legal pages, and socket.io-client, to read a headline
    and press one button. That is most of a ~490KB bundle spent on screens the
    visitor may never open, and parse time is worse than download time on a
    mid-range phone.
@@ -48,7 +48,12 @@ export default function App() {
       // with it the download overlaps the render we were doing anyway.
       if (data?.user) warmAppChunks();
     } catch {
-      setUser(null); // 401 is the normal signed-out case, not an error worth showing
+      // Reaching here now means the request genuinely failed: offline, or the
+      // API is down. Being signed out is NOT this branch: /auth/me answers 200
+      // with `user: null` for an anonymous visitor, precisely so the front door
+      // stops logging a console error on every first visit. Landing on the
+      // landing page is still the right thing to do either way.
+      setUser(null);
     } finally {
       setResolved(true);
     }
@@ -120,7 +125,7 @@ export default function App() {
  *
  * Fire-and-forget on purpose: React.lazy caches the module promise, so calling
  * this early just means the later render finds the chunk already there. A
- * rejection here is not an error anyone should see — if the chunk is genuinely
+ * rejection here is not an error anyone should see: if the chunk is genuinely
  * unreachable, the real import at render time will surface it.
  */
 let warmed = false;

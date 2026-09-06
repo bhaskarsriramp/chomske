@@ -23,7 +23,7 @@ import VoiceProfile from "../models/VoiceProfile.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 import {
   listProfiles, ensureProfile, resolveProfile, createProfile, updateProfile,
-  setDefaultProfile, deleteProfile, shapeProfile, MAX_PROFILES,
+  setDefaultProfile, deleteProfile, shapeProfile, voiceFor, MAX_PROFILES,
 } from "../services/profileService.js";
 import { buildVoiceProfile } from "../services/voiceProfileService.js";
 import { kickoffCategories } from "../services/newsScheduler.js";
@@ -150,66 +150,104 @@ router.delete("/:id", authenticateToken, async (req, res) => {
 /**
  * POST /profiles/:id/analyse, learn this channel's voice from its videos.
  *
- * Held open rather than polled, unlike transcription: this is one text-in
- * text-out call over at most ~18k characters, which lands in a few seconds.
+ * ── WHY THIS IS NOW KICKED OFF AND POLLED ────────────────────────────────────
+ * It used to be held open: one text-in text-out call over transcripts that had
+ * already been read, landing in a few seconds. That stopped being true when
+ * adding a video stopped reading it. This call now reads every pending video
+ * first, and five video reads plus the analysis runs to minutes, past the
+ * client's timeout and past nginx's default proxy_read_timeout of sixty
+ * seconds. Held open, it would fail on exactly the accounts doing the most work.
+ *
+ * So it claims the build, returns immediately, and the client polls
+ * GET /script/voice until `building` clears. `building` is on the VoiceProfile
+ * row rather than in memory so a restart mid-build cannot strand the flag
+ * somewhere the next request cannot see it.
  */
 router.post("/:id/analyse", authenticateToken, async (req, res) => {
   try {
     const { profile } = await resolveProfile(req.user.id, req.params.id);
-    const { profile: voice, built, reason } = await buildVoiceProfile(req.user.id, profile._id);
+    const voice = await voiceFor(req.user.id, profile._id);
 
-    if (!built) {
+    // Already running. Answered as success, because the end state the caller
+    // wants is already on its way and a second press should not read the same
+    // videos twice.
+    if (voice.building) {
+      return res.status(202).json({ success: true, building: true, already: true });
+    }
+
+    const analysable = await Transcript.countDocuments({
+      user: req.user.id,
+      profile: profile._id,
+      status: { $in: ["pending", "processing", "done"] },
+    });
+    if (!analysable) {
       return res.status(400).json({
         success: false,
-        message:
-          reason === "no_transcripts"
-            ? "Add at least one video to this profile first. That's what its voice is learned from."
-            : "Couldn't build this voice.",
+        message: "Add at least one video to this profile first. That's what its voice is learned from.",
       });
     }
 
-    const profiles = await listProfiles(req.user.id);
-    return res.json({
-      success: true,
-      profiles: profiles.map(withLabels),
-      profile: withLabels(profiles.find((p) => p.id === String(profile._id)) || null),
-      // The summary only, same as GET /script/voice. The analysis stays here.
-      voice: shapeVoice(voice),
-    });
+    await VoiceProfile.updateOne(
+      { _id: voice._id },
+      { $set: { building: true, build_error: "" } }
+    );
+
+    // Fire and forget; the client polls.
+    buildVoiceProfile(req.user.id, profile._id)
+      .then(({ built, reason }) => VoiceProfile.updateOne({ _id: voice._id }, {
+        $set: {
+          building: false,
+          build_error: built ? "" : (reason === "no_transcripts"
+            ? "None of the videos could be read. Check they are public and try again."
+            : "Couldn't build this voice."),
+        },
+      }))
+      .catch((err) => {
+        console.error("[profiles] analyse failed:", err.message);
+        return VoiceProfile.updateOne({ _id: voice._id }, {
+          $set: {
+            building: false,
+            build_error: err.userMessage || "Couldn't analyse this voice. Please try again.",
+          },
+        });
+      })
+      .catch(() => {});
+
+    return res.status(202).json({ success: true, building: true });
   } catch (err) {
-    console.error("[profiles] analyse failed:", err);
-    return res.status(500).json({ success: false, message: err.message || "Couldn't analyse this voice." });
+    console.error("[profiles] analyse kickoff failed:", err);
+    return res.status(500).json({ success: false, message: "Couldn't start this analysis." });
   }
 });
 
 /**
- * DELETE /profiles/:id/voice, throw away this channel's voice analysis.
+ * DELETE /profiles/:id/voice, throw away the voice AND the videos behind it.
  *
- * The VIDEOS stay. That is the whole point of having this separate from
- * deleting the channel: the thing a creator wants to undo is usually the
- * analysis, not the hour they spent collecting links. Built from the wrong
- * videos, built from one video when they meant to add three, built before they
- * deleted the odd one out: all of those are fixed by removing the analysis and
- * running it again over the set they actually want.
+ * The videos go with it, deliberately. A voice is nothing but its videos read;
+ * leaving them behind would mean the next Analyse press rebuilt the same voice
+ * from the same set, which is not what somebody pressing Delete is asking for.
+ * They want to start the channel's voice again from nothing, and this is the
+ * one control that does it without deleting the channel itself.
  *
  * Scripts already written keep working. They carry their own copy of the voice
- * they were written in, so deleting the analysis cannot reach back and change
- * anything a creator has already paid for.
+ * they were written in, so this cannot reach back and change anything a creator
+ * has already paid for.
  */
 router.delete("/:id/voice", authenticateToken, async (req, res) => {
   try {
     const { profile } = await resolveProfile(req.user.id, req.params.id);
-    const { deletedCount } = await VoiceProfile.deleteMany({
-      user: req.user.id,
-      profile: profile._id,
-    });
+    const [voiceGone, videosGone] = await Promise.all([
+      VoiceProfile.deleteMany({ user: req.user.id, profile: profile._id }),
+      Transcript.deleteMany({ user: req.user.id, profile: profile._id }),
+    ]);
 
     const profiles = await listProfiles(req.user.id);
     return res.json({
       success: true,
       // False when there was nothing to delete. The caller treats that as done
       // rather than as an error: the end state they asked for is the end state.
-      deleted: deletedCount > 0,
+      deleted: (voiceGone.deletedCount || 0) > 0,
+      videos_deleted: videosGone.deletedCount || 0,
       profiles: profiles.map(withLabels),
     });
   } catch (err) {

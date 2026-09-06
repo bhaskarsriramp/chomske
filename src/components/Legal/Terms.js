@@ -35,7 +35,7 @@ export default function Terms() {
         <Facts
           rows={[
             ["No subscription", "Credits are bought once and never expire. Nothing recurs, and there is nothing to cancel."],
-            ["New accounts", "Start with 90 free credits, enough to try the product properly before paying anything."],
+            ["New accounts", "Start with 100 free credits, enough to try the product properly before paying anything."],
             ["What a script costs", "Priced by finished length: one credit buys two seconds of script. The exact cost is shown on the button before you press it."],
             ["Add-ons", "An English version and the title/description/hashtag pack are priced separately and shown before you order."],
             ["Payments", "Handled by Razorpay in Indian Rupees. We never see your card details."],

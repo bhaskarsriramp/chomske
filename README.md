@@ -115,7 +115,7 @@ eagerly and lazy-loads everything else (`React.lazy`), because a visitor
 reading a headline should not be downloading the news feed, the transcriber,
 the script editor and socket.io-client. If you add a route, lazy-load it; if
 you add an import to `App.js`, check it isn't dragging the app into the
-landing chunk. `npm run build` prints the chunk table — main should stay well
+landing chunk. `npm run build` prints the chunk table; main should stay well
 under 100 kB gzipped.
 
 **Nothing third-party blocks the first paint.** Inter is self-hosted from
@@ -123,7 +123,7 @@ under 100 kB gzipped.
 the `<link rel=preload>` that starts it. The Noto Indic stylesheet still comes
 from Google but is loaded with the `media="print"` trick so it never blocks;
 the nine-language headline is legible on system fonts and sharpens when Noto
-lands. Do not add a plain `<link rel=stylesheet>` to a third-party origin — one
+lands. Do not add a plain `<link rel=stylesheet>` to a third-party origin: one
 costs a DNS lookup, a TLS handshake and a round trip before the browser paints
 anything.
 
@@ -135,7 +135,7 @@ against, so it can be swapped again without touching them.
 **Cache headers live in `deploy/nginx.conf`.** The build's hashed assets are
 safe to cache for a year and `index.html` must not be cached at all. Without
 those headers every repeat visitor revalidates every file over the network.
-That file is documentation, not something nginx reads — copy the blocks into
+That file is documentation, not something nginx reads. Copy the blocks into
 the live server config.
 
 One thing to check at deploy time: `REACT_APP_API_URL` must be the production

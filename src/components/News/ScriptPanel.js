@@ -206,7 +206,6 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
           compact={compact}
           copied={copied}
           onCopy={copyScript}
-          onRegenerate={() => generate(true)}
           busy={busy}
         />
       )}
@@ -323,7 +322,7 @@ function Writing() {
   );
 }
 
-function Result({ script, compact, copied, onCopy, onRegenerate, busy }) {
+function Result({ script, compact, copied, onCopy }) {
   return (
     <div className="hg-rise">
       <div
@@ -347,19 +346,12 @@ function Result({ script, compact, copied, onCopy, onRegenerate, busy }) {
             {script.duration_seconds ? ` · ${fmtDuration(script.duration_seconds)}` : ""}
             {script.voice_confidence === "thin" && " · learned from one video"}
           </span>
+          {/* Copy only. Rewrite used to sit here and it was a button that charged
+              full price for a second attempt at something the creator had
+              already paid for, one click away from the thing they actually
+              wanted. Ordering another script is still possible from the panel
+              above, where the price is on the button. */}
           <div style={{ display: "flex", gap: 7 }}>
-            <button
-              onClick={onRegenerate}
-              disabled={busy}
-              className="hg-btn-ghost"
-              style={{
-                fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-                border: "1px solid var(--line)", background: "var(--card)",
-                color: "var(--ink-mute)", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1,
-              }}
-            >
-              Rewrite
-            </button>
             <button
               onClick={onCopy}
               className="hg-btn-ghost"

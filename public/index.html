@@ -28,18 +28,22 @@
 
          1. Nothing third-party is allowed to block render. A stylesheet from
             another origin costs a DNS lookup, a TLS handshake and a round trip
-            BEFORE the browser will paint a single pixel — ~500ms on a cold
+            BEFORE the browser will paint a single pixel, about 500ms on a cold
             mobile connection, spent on fonts we have a good fallback for.
          2. Anything the first paint genuinely needs is asked for as early as
             possible, in parallel, rather than being discovered later inside a
             stylesheet or a bundle.
     -->
 
-    <!-- The session check (`GET /auth/me`) fires the moment React mounts and
-         decides whether this visitor sees the landing page or the app. Opening
-         the connection now means that request doesn't pay for DNS + TLS when it
-         is finally made. -->
-    <link rel="preconnect" href="%REACT_APP_API_URL%" crossorigin />
+    <!-- No preconnect for the API on purpose. nginx proxies it at /api/ on this
+         same origin (see deploy/nginx.conf), so the connection the document
+         arrived on is the one `GET /auth/me` will reuse, so there is nothing to
+         open early. A same-origin preconnect with `crossorigin` is in fact
+         slightly harmful: it asks for an anonymous connection, which browsers
+         keep in a different pool from the credentialed one this app uses, so
+         it can open a second TLS handshake that nothing ever sends a byte down.
+         If the API ever moves to its own hostname, add it back. -->
+
     <!-- Google's sign-in button is above the fold and loads its own script. -->
     <link rel="preconnect" href="https://accounts.google.com" />
 

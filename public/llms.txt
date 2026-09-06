@@ -34,7 +34,7 @@ Most tools for creators are built for English-speaking YouTubers and stop at raw
 ## Pricing
 
 - No subscription and nothing recurring. Credits are bought once and never expire
-- New accounts start with 90 free credits, which is enough to write real scripts before paying anything
+- New accounts start with 100 free credits, which is enough to write real scripts before paying anything
 - Starter: Rs 199 for 250 credits
 - Creator: Rs 499 for 700 credits
 - Studio: Rs 999 for 1600 credits

@@ -23,6 +23,7 @@ import Transcript from "../models/Transcript.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import { resolveProfile, voiceFor } from "./profileService.js";
 import { measureVoice } from "./voiceMetrics.js";
+import { transcribeYouTube } from "./geminiClient.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
@@ -255,9 +256,90 @@ function usable(p) {
  * @param {string} [profileId]  which channel. Omitted means the user's default.
  * @returns {{ profile, built, reason? }}
  */
+/**
+ * Read every video this channel has added but not yet had read.
+ *
+ * ── WHY THIS RUNS HERE AND NOT WHEN THE LINK WAS PASTED ─────────────────────
+ * Transcription is the most expensive call this product makes, and pasting a
+ * link is the cheapest thing a person can do. Tying them together meant paying
+ * for videos nobody ever analysed. They are now separated: adding is free, and
+ * this is the moment the creator actually asked for the work.
+ *
+ * Read in parallel because they are independent and a creator waiting on five
+ * sequential video reads waits five times as long for no reason. A failure is
+ * recorded on its own row and does not stop the others: four good videos still
+ * make a voice, and refusing to build one because the fifth link was private
+ * would be the wrong trade.
+ */
+async function readPendingVideos(userId, profileId) {
+  const pending = await Transcript.find({
+    user: userId,
+    profile: profileId,
+    status: "pending",
+  }).limit(MAX_TRANSCRIPTS).lean();
+
+  if (!pending.length) return { read: 0, failed: 0 };
+
+  console.log(`[voice] reading ${pending.length} pending video(s) for profile ${profileId}`);
+
+  // Claimed before the work starts, so a second Analyse press arriving while
+  // this one runs does not read the same videos again.
+  await Transcript.updateMany(
+    { _id: { $in: pending.map((p) => p._id) } },
+    { $set: { status: "processing", updated_at: new Date() } }
+  );
+
+  const results = await Promise.all(pending.map(async (row) => {
+    const started = Date.now();
+    try {
+      const out = await transcribeYouTube(row.url);
+      await Transcript.updateOne({ _id: row._id }, {
+        $set: {
+          status: "done",
+          text: out.text,
+          language: out.language,
+          language_label: out.language_label,
+          // Only overwrite the title when the read produced one. The metadata
+          // lookup already gave us a good title at add time, and an empty
+          // string here would blank a name the creator has been looking at.
+          ...(out.title ? { title: out.title } : {}),
+          usage: out.usage || {},
+          ms_taken: Date.now() - started,
+          updated_at: new Date(),
+        },
+      });
+      const u = out.usage || {};
+      console.log(
+        `[voice] read ${row.video_id} in ${((Date.now() - started) / 1000).toFixed(1)}s · ` +
+        `${out.text.length} chars · ${out.language_label || out.language || "?"} · ` +
+        `$${(u.usd || 0).toFixed(4)}`
+      );
+      return true;
+    } catch (err) {
+      await Transcript.updateOne({ _id: row._id }, {
+        $set: {
+          status: "failed",
+          error: err.userMessage || "We couldn't read this video.",
+          ms_taken: Date.now() - started,
+          updated_at: new Date(),
+        },
+      }).catch(() => {});
+      console.error(`[voice] read failed for ${row.video_id}: ${err.message}`);
+      return false;
+    }
+  }));
+
+  const read = results.filter(Boolean).length;
+  return { read, failed: results.length - read };
+}
+
 export async function buildVoiceProfile(userId, profileId) {
   const { profile } = await resolveProfile(userId, profileId);
   const voice = await voiceFor(userId, profile._id);
+
+  // Everything added since the last build gets read now, at the one moment the
+  // creator has asked for a voice.
+  await readPendingVideos(userId, profile._id);
 
   const transcripts = await Transcript.find({
     user: userId,
@@ -440,8 +522,13 @@ export async function getUsableProfile(userId, { profileId, autoBuild = true } =
 export async function profileStatus(userId, profileId) {
   const { profile: channel } = await resolveProfile(userId, profileId);
   const voice = await voiceFor(userId, channel._id);
+  // Analysable, which includes videos that have been added but not yet read.
+  // Counting only "done" would tell a creator who has just added three videos
+  // that there is nothing to analyse, which is the opposite of true.
   const total = await Transcript.countDocuments({
-    user: userId, profile: channel._id, status: "done", text: { $ne: "" },
+    user: userId,
+    profile: channel._id,
+    $or: [{ status: "pending" }, { status: "processing" }, { status: "done", text: { $ne: "" } }],
   });
   const profile = voice.built_at ? voice.toObject?.() ?? voice : null;
 

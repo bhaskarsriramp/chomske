@@ -174,6 +174,7 @@ function Shell({ user, onSignOut }) {
               <TranscribePanel
                 onVoiceChange={bumpVoice}
                 onGoProfiles={() => openTab("profile")}
+                onGoTopics={() => openTab("topics")}
               />
             </div>
           )}

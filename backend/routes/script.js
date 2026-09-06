@@ -34,13 +34,19 @@ const DAILY_SCRIPT_LIMIT = parseInt(process.env.DAILY_SCRIPT_LIMIT || "30", 10);
  */
 router.get("/voice", authenticateToken, async (req, res) => {
   try {
-    const { channel, profile, transcripts_available, stale } = await profileStatus(req.user.id, req.query.profile);
+    const { channel, voice, profile, transcripts_available, stale } =
+      await profileStatus(req.user.id, req.query.profile);
     return res.json({
       success: true,
       profile_id: String(channel._id),
       profile_name: channel.name || "",
       transcripts_available,
       stale,
+      // The analysis now reads the videos first and runs to minutes, so the
+      // client polls this instead of holding a request open. See
+      // POST /profiles/:id/analyse.
+      building: !!voice?.building,
+      build_error: voice?.build_error || "",
       profile: profile ? shapeProfile(profile) : null,
     });
   } catch (err) {

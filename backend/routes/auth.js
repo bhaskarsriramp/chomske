@@ -16,7 +16,7 @@ import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 import User from "../models/User.js";
 import Profile from "../models/Profile.js";
-import authenticateToken, { COOKIE_NAME, cookieOptions } from "../middleware/authenticateToken.js";
+import authenticateToken, { COOKIE_NAME, cookieOptions, readSession } from "../middleware/authenticateToken.js";
 import { publicCategories, sanitizeSelection, MAX_CATEGORIES } from "../services/categories.js";
 import { ensureProfile, syncUserCategories } from "../services/profileService.js";
 import { kickoffCategories } from "../services/newsScheduler.js";
@@ -113,11 +113,30 @@ router.post("/google", async (req, res) => {
  * every page load because claimKickoff holds a five-minute per-category slot
  * and claimRank a ten-minute one, fifty tabs are still one pass.
  */
-router.get("/me", authenticateToken, async (req, res) => {
-  const user = await User.findById(req.user.id).lean();
+router.get("/me", async (req, res) => {
+  // Never cached. This used to answer 401, which nothing caches; a 200 with a
+  // user object in it is exactly the kind of response a proxy or the browser's
+  // heuristic WILL hold on to, and one creator being served another's identity
+  // is not a bug worth risking to save a request.
+  res.set("Cache-Control", "no-store");
+
+  // ── WHY THIS IS 200 AND NOT 401 ────────────────────────────────────────────
+  // Every visitor to the landing page hits this, and the honest answer for a
+  // creator who has never signed in is "you are nobody yet", which is a fact,
+  // not an error. Answering 401 made Chrome log a red "Failed to load resource"
+  // on the front door of the product for every anonymous visit. The client
+  // reads `user`, so it cannot tell the difference; the console can.
+  //
+  // Guarded routes are unchanged and still 401. See authenticateToken.
+  const session = readSession(req, res);
+  if (!session) return res.json({ success: true, user: null });
+
+  const user = await User.findById(session.id).lean();
   if (!user) {
+    // The account went away under a still-valid token (deleted, or a restore).
+    // Same shape as signed out, because that is what the holder now is.
     res.clearCookie(COOKIE_NAME, cookieOptions());
-    return res.status(401).json({ success: false, message: "Account not found" });
+    return res.json({ success: true, user: null });
   }
 
   kickoffCategories(user.categories);

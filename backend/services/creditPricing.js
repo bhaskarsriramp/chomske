@@ -81,7 +81,7 @@ export const PACKAGING_CREDITS = 15;
  * script in their own voice, without being enough to run a channel on. A
  * trial that ends before that moment tells them nothing about whether to pay.
  */
-export const SIGNUP_FREE_CREDITS = 90;
+export const SIGNUP_FREE_CREDITS = 100;
 
 /**
  * The packs. `credits` is what lands in the wallet; `inr` is what Razorpay

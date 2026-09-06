@@ -9,19 +9,48 @@ import jwt from "jsonwebtoken";
 
 export const COOKIE_NAME = "hinglish_token";
 
-export default function authenticateToken(req, res, next) {
+/**
+ * Read the session cookie WITHOUT deciding what absence means.
+ *
+ * Split out of the middleware because exactly one route disagrees about what
+ * "no session" is. For every guarded route it is a refusal, and 401 is right.
+ * For GET /auth/me it is the answer: that endpoint's whole job is to report
+ * session state, and "signed out" is a state, not a failure. Answering it with
+ * 401 made every anonymous landing-page visit log a red error in the console,
+ * which is both untrue and the kind of noise that hides real errors.
+ *
+ * Returns { id, email } or null. Clears a cookie that is expired or tampered,
+ * so the browser stops sending a dead one on every subsequent request.
+ */
+export function readSession(req, res) {
   const token = req.cookies?.[COOKIE_NAME];
-  if (!token) return res.status(401).json({ success: false, message: "Not signed in" });
+  if (!token) return null;
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = { id: payload.sub, email: payload.email };
-    return next();
+    return { id: payload.sub, email: payload.email };
   } catch {
-    // Expired or tampered, clear it so the browser stops sending a dead cookie.
     res.clearCookie(COOKIE_NAME, cookieOptions());
-    return res.status(401).json({ success: false, message: "Session expired. Please sign in again." });
+    return null;
   }
+}
+
+export default function authenticateToken(req, res, next) {
+  // Read before readSession can clear it: the difference between "you never had
+  // a session" and "yours expired" is the difference between silence and a
+  // message worth showing, and only the presence of the cookie tells them apart.
+  const had = Boolean(req.cookies?.[COOKIE_NAME]);
+  const user = readSession(req, res);
+
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      message: had ? "Session expired. Please sign in again." : "Not signed in",
+    });
+  }
+
+  req.user = user;
+  return next();
 }
 
 /**

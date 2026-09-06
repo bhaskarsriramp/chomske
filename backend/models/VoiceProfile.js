@@ -109,6 +109,12 @@ const VoiceProfileSchema = new Schema({
   // "Write this in my voice" paying for the identical doomed analysis.
   build_failed_at: { type: Date, default: null },
 
+  // Reading several videos and then analysing them runs to minutes, far past
+  // any HTTP timeout, so the build is kicked off and polled rather than held
+  // open. These two are what the client polls on.
+  building: { type: Boolean, default: false },
+  build_error: { type: String, default: "" },
+
   // Null until the first successful analysis. This, not the presence of the row
   // is what "this voice is ready" means: a profile that has collected videos
   // but has never been analysed has no style to write from.

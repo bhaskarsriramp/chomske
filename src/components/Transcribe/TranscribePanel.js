@@ -38,18 +38,22 @@ import { useProfiles } from "../../state/ProfileContext";
  * the analysis found is on the page permanently, not only in the seconds after
  * it ran, which is what made a second visit feel like a dead end.
  *
- * ── WHY ANALYSIS IS A BUTTON, NOT AUTOMATIC ──────────────────────────────────
- * Profiling on every added URL would re-analyse the whole set five times while
- * someone pastes five links, paying four times for a profile that is thrown
- * away. Worse, the intermediate profiles are wrong: a voice built from video
- * one is a different voice from one built from all five, so the output would
- * change under the user for reasons they cannot see. Adding is cheap and
- * incremental; analysing is one deliberate act over the finished set.
+ * ── ADDING A VIDEO COSTS NOTHING ─────────────────────────────────────────────
+ * Pasting a link buys only its title, length and thumbnail. The video is not
+ * read, and no expensive model is called, until the creator presses Analyse my
+ * voice. Somebody trying five links and changing their mind now costs a fraction
+ * of a cent instead of five video reads. See backend/routes/transcribe.js.
  *
- * Transcription still happens per video on add, because that is the part that
- * genuinely is per-video and it lets someone read each transcript as they go.
+ * That also removed the transcript viewer that used to sit under this screen.
+ * There is no transcript to show until an analysis has run, and nobody came here
+ * to read one: they came to teach the product how they talk.
+ *
+ * ── SO ANALYSE IS NOW SLOW, AND POLLED ───────────────────────────────────────
+ * It reads every pending video and then analyses them, which runs to minutes.
+ * The request cannot be held open that long, so it kicks the work off and this
+ * screen polls until the server says it has finished.
  */
-export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
+export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopics }) {
   const isPhone = useIsMobile(680);
 
   const {
@@ -60,13 +64,16 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [openVideo, setOpenVideo] = useState(null);
   const [history, setHistory] = useState([]);
   const [meta, setMeta] = useState(null);      // slots, ready_count, mixed_languages
-  const [copied, setCopied] = useState(false);
 
   const [voice, setVoice] = useState(null);
   const [analysing, setAnalysing] = useState(false);
+
+  // Shown once, when a build that THIS screen started finishes. Not on every
+  // load that happens to find a built voice, which would greet a returning
+  // creator with a congratulation for something they did last week.
+  const [justBuilt, setJustBuilt] = useState(null);
 
   // Why the analyse button is unavailable, shown on hover and on click. See
   // the button itself for why it is not simply `disabled`.
@@ -77,7 +84,9 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
   const [confirmVoiceDelete, setConfirmVoiceDelete] = useState(false);
   const [deletingVoice, setDeletingVoice] = useState(false);
 
-  const pollRef = useRef(null);
+  // True while this screen is the one waiting on a build, so the success dialog
+  // fires for the person who pressed the button and nobody else.
+  const awaitingRef = useRef(false);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -116,12 +125,10 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
   // Switching channels switches everything on screen. The open transcript
   // belongs to the profile that was selected a moment ago.
   useEffect(() => {
-    clearInterval(pollRef.current);
-    setOpenVideo(null);
     setError("");
+    setJustBuilt(null);
+    awaitingRef.current = false;
   }, [activeId]);
-
-  useEffect(() => () => clearInterval(pollRef.current), []);
 
   // ── WHY THE LIST POLLS ITSELF ─────────────────────────────────────────────
   // A video added a second ago is still being transcribed, and a transcribing
@@ -138,28 +145,10 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
     return () => clearInterval(t);
   }, [waiting, loadHistory]);
 
-  const startPolling = useCallback((id) => {
-    clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const { data } = await api.get(`/transcribe/${id}`);
-        setOpenVideo(data.transcript);
-        if (data.transcript.status !== "processing") {
-          clearInterval(pollRef.current);
-          loadHistory();
-        }
-      } catch (err) {
-        clearInterval(pollRef.current);
-        setError(errorMessage(err, "Lost track of that video. Try opening it from the list."));
-      }
-    }, 3000);
-  }, [loadHistory]);
-
   async function handleSubmit(e) {
     e?.preventDefault();
     if (submitting) return;
     setError("");
-    setCopied(false);
 
     const value = url.trim();
     if (!value) return setError("Paste a YouTube link first.");
@@ -169,11 +158,9 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
       // The profile is named explicitly. Letting the server pick would mean a
       // video landing in whichever channel it considers default, and paying to
       // transcribe it into the wrong one.
-      const { data } = await api.post("/transcribe", { url: value, profile: activeId || undefined });
-      setOpenVideo(data.transcript);
+      await api.post("/transcribe", { url: value, profile: activeId || undefined });
       setUrl("");
-      if (data.transcript.status === "processing") startPolling(data.transcript.id);
-      else loadHistory();
+      loadHistory();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -187,7 +174,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
     setDeleting(true);
     try {
       await api.delete(`/transcribe/${confirmDelete.id}`);
-      if (openVideo?.id === confirmDelete.id) setOpenVideo(null);
       setConfirmDelete(null);
       await loadHistory();
       await loadVoice();
@@ -200,23 +186,59 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
     }
   }
 
+  /**
+   * Start a build and wait for it.
+   *
+   * The POST returns as soon as the work is claimed; everything real happens on
+   * the server, so what follows is a poll rather than a response. Reading the
+   * videos is most of the wait, which is why the button says so.
+   */
   async function analyseVoice() {
     if (analysing || !activeId) return;
     setError("");
+    setJustBuilt(null);
     setAnalysing(true);
+    awaitingRef.current = true;
     try {
-      const { data } = await api.post(`/profiles/${activeId}/analyse`);
-      setVoice((v) => ({ ...(v || {}), profile: data.voice, stale: false }));
-      // Refreshes the shared list so every other screen sees this channel's
-      // voice as built: the dashboard card, the order panel, the profile page.
-      await refreshProfiles();
-      onVoiceChange?.();
+      await api.post(`/profiles/${activeId}/analyse`, {}, { timeout: 60000 });
     } catch (err) {
-      setError(errorMessage(err, "Couldn't analyse your voice. Please try again."));
-    } finally {
       setAnalysing(false);
+      awaitingRef.current = false;
+      setError(errorMessage(err, "Couldn't start the analysis. Please try again."));
     }
   }
+
+  // ── Waiting on the server ─────────────────────────────────────────────────
+  // `building` comes off the voice row, so a reload mid-build still finds the
+  // work in progress and keeps waiting rather than showing an idle button over
+  // a server that is busy.
+  useEffect(() => {
+    if (!voice) return;
+    const building = !!voice.building;
+    setAnalysing(building);
+
+    if (building) {
+      const t = setInterval(() => { loadVoice(); loadHistory(); }, 3000);
+      return () => clearInterval(t);
+    }
+
+    if (!awaitingRef.current) return;
+    awaitingRef.current = false;
+
+    if (voice.build_error) {
+      setError(voice.build_error);
+      return;
+    }
+    if (voice.profile) {
+      setJustBuilt({
+        name: activeProfile?.name || "",
+        videos: voice.profile.transcript_count || 0,
+        language: voice.profile.language_label || "",
+      });
+      refreshProfiles();
+      onVoiceChange?.();
+    }
+  }, [voice, loadVoice, loadHistory, activeProfile, refreshProfiles, onVoiceChange]);
 
   async function doDeleteVoice() {
     if (deletingVoice || !activeId) return;
@@ -226,6 +248,8 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
       await api.delete(`/profiles/${activeId}/voice`);
       setVoice((v) => ({ ...(v || {}), profile: null, stale: false }));
       setConfirmVoiceDelete(false);
+      await loadHistory();
+      await loadVoice();
       await refreshProfiles();
       onVoiceChange?.();
     } catch (err) {
@@ -234,18 +258,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
     } finally {
       setDeletingVoice(false);
     }
-  }
-
-  function toggleVideo(v) {
-    setOpenVideo((cur) => (cur?.id === v.id ? null : v));
-  }
-
-  function copyText() {
-    if (!openVideo?.text) return;
-    navigator.clipboard.writeText(openVideo.text).then(
-      () => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
-      () => setError("Couldn't copy. Select the text and copy it manually.")
-    );
   }
 
   const gut = isPhone ? 16 : 30;
@@ -501,9 +513,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
               <Videos
                 items={history}
                 loading={!meta?.slots}
-                openId={openVideo?.id}
                 isPhone={isPhone}
-                onOpen={toggleVideo}
                 onDelete={setConfirmDelete}
               />
             </div>
@@ -542,17 +552,21 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
           )}
         </div>
 
-        {openVideo && (
-          <Result
-            t={openVideo}
-            isPhone={isPhone}
-            onCopy={copyText}
-            copied={copied}
-            onClose={() => setOpenVideo(null)}
-            onRetry={() => { setUrl(openVideo.url); setOpenVideo(null); }}
-          />
-        )}
       </div>
+
+      {/* ── The one moment worth interrupting for ───────────────────────────
+          A creator has just waited a couple of minutes for something they
+          cannot see happening. Ending that silently, with a card that quietly
+          changes from "Not built yet" to "Built", wastes the only moment they
+          are certain something worked. It also answers the question they have
+          next, which is not "what did you learn" but "so what do I do now". */}
+      {justBuilt && (
+        <SuccessDialog
+          info={justBuilt}
+          onGoTopics={onGoTopics}
+          onClose={() => setJustBuilt(null)}
+        />
+      )}
 
       {confirmDelete && (
         <ConfirmDialog
@@ -587,13 +601,14 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
           onConfirm={doDeleteVoice}
         >
           <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)", margin: "0 0 10px" }}>
-            Your {history.length === 1 ? "video stays" : "videos stay"} where they are, and you can
-            analyse again whenever you like.
+            This also removes the {history.length === 1 ? "video" : `${history.length} videos`} it was
+            learned from. A voice is nothing but its videos read, so starting again means
+            starting from an empty list.
           </p>
           <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)", margin: 0 }}>
-            Scripts you have already written keep the voice they were written in. If you
-            order a new one before analysing again, we rebuild the voice from these
-            videos first, so nothing here blocks writing.
+            Scripts you have already written keep the voice they were written in, and are
+            not affected. You will need to add videos again before this channel can write
+            anything new.
           </p>
         </ConfirmDialog>
       )}
@@ -608,7 +623,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
  * empty line and a list, because it appears in two places now: on its own
  * before there is a voice, and folded into what we learned once there is.
  */
-function Videos({ items, loading, openId, isPhone, onOpen, onDelete }) {
+function Videos({ items, loading, isPhone, onDelete }) {
   // Held back until the real list arrives. "Nothing added yet" shown for half a
   // second to someone who has four videos is a claim, and a wrong one.
   if (loading) return <VideoSkeleton />;
@@ -621,85 +636,67 @@ function Videos({ items, loading, openId, isPhone, onOpen, onDelete }) {
     );
   }
 
-  return (
-    <VideoList
-      items={items}
-      activeId={openId}
-      isPhone={isPhone}
-      onOpen={onOpen}
-      onDelete={onDelete}
-    />
-  );
+  return <VideoList items={items} isPhone={isPhone} onDelete={onDelete} />;
 }
 
 /* ── The videos ────────────────────────────────────────────────────────── */
 
-function VideoList({ items, activeId, isPhone, onOpen, onDelete }) {
+function VideoList({ items, isPhone, onDelete }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {items.map((it) => {
-        const on = it.id === activeId;
-        return (
-          <div
-            key={it.id}
-            className={on ? undefined : "hg-row"}
+      {items.map((it) => (
+        <div
+          key={it.id}
+          style={{
+            display: "flex", alignItems: "center", gap: 11, padding: 9,
+            background: "var(--card)", border: "1px solid var(--line)", borderRadius: 11,
+          }}
+        >
+          <Thumb src={it.thumbnail} isPhone={isPhone} />
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <span
+              className="indic"
+              style={{
+                display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--ink)",
+                lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}
+            >
+              {it.title || it.url}
+            </span>
+            <span
+              style={{
+                display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap",
+                fontSize: 11.5, color: "var(--ink-mute)", marginTop: 5,
+              }}
+            >
+              <StatusTag status={it.status} />
+              {it.duration_seconds != null && <span>{formatDuration(it.duration_seconds)}</span>}
+              {it.language_label && <span>· {it.language_label}</span>}
+              {it.status === "failed" && it.error && (
+                <span style={{ color: "var(--bad)" }}>· {it.error}</span>
+              )}
+            </span>
+          </div>
+
+          <button
+            onClick={() => onDelete(it)}
+            aria-label={`Delete ${it.title || "video"}`}
+            title="Delete"
+            className="hg-icon-btn"
             style={{
-              display: "flex", alignItems: "center", gap: 11, padding: 9,
-              background: on ? "#F2F2F2" : "var(--card)",
-              border: `1px solid ${on ? "#D0D0D0" : "var(--line)"}`,
-              borderRadius: 11,
+              flexShrink: 0, display: "grid", placeItems: "center",
+              width: 32, height: 32, borderRadius: 8,
+              border: "1px solid transparent", background: "transparent",
+              color: "var(--ink-mute)", cursor: "pointer",
             }}
           >
-            <Thumb src={it.thumbnail} isPhone={isPhone} />
-
-            <button
-              onClick={() => onOpen(it)}
-              aria-expanded={on}
-              style={{
-                flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
-                border: "none", background: "transparent", padding: 0, fontFamily: "inherit",
-              }}
-            >
-              <span
-                className="indic"
-                style={{
-                  display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--ink)",
-                  lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}
-              >
-                {it.title || it.url}
-              </span>
-              <span
-                style={{
-                  display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap",
-                  fontSize: 11.5, color: "var(--ink-mute)", marginTop: 5,
-                }}
-              >
-                <StatusTag status={it.status} />
-                {it.duration_seconds != null && <span>{formatDuration(it.duration_seconds)}</span>}
-                {it.language_label && <span>· {it.language_label}</span>}
-              </span>
-            </button>
-
-            <button
-              onClick={() => onDelete(it)}
-              aria-label={`Delete ${it.title || "video"}`}
-              title="Delete"
-              className="hg-icon-btn"
-              style={{
-                flexShrink: 0, display: "grid", placeItems: "center",
-                width: 32, height: 32, borderRadius: 8,
-                border: "1px solid transparent", background: "transparent",
-                color: "var(--ink-mute)", cursor: "pointer",
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
-              </svg>
-            </button>
-          </div>
-        );
-      })}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+            </svg>
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -770,157 +767,16 @@ function formatDuration(seconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/* ── The transcript ────────────────────────────────────────────────────── */
-
-function Result({ t, isPhone, onCopy, copied, onRetry, onClose }) {
-  if (t.status === "processing") return <Processing />;
-
-  if (t.status === "failed") {
-    return (
-      <div style={{ marginTop: 16, padding: 19, borderRadius: "var(--radius)", background: "#FCE8E6", border: "1px solid #F5C7C3" }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--bad)", marginBottom: 6 }}>
-          Couldn't read this video
-        </div>
-        <div style={{ fontSize: 14, lineHeight: 1.6, color: "var(--ink-body)" }}>
-          {t.error || "Something went wrong."}
-        </div>
-        <button
-          onClick={onRetry}
-          className="hg-btn-ghost"
-          style={{
-            marginTop: 13, fontSize: 13, fontWeight: 600, padding: "8px 14px",
-            borderRadius: 9, border: "1px solid var(--line)", background: "var(--card)",
-            color: "var(--ink-body)", cursor: "pointer",
-          }}
-        >
-          Try again
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="hg-rise"
-      style={{
-        marginTop: 16, background: "var(--card)", border: "1px solid var(--line)",
-        borderRadius: "var(--radius)", overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 12, flexWrap: "wrap", padding: "13px 17px",
-          borderBottom: "1px solid var(--line)", background: "#F9F9F9",
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          {t.title && (
-            <div
-              className="indic"
-              style={{
-                fontSize: 14.5, fontWeight: 600, color: "var(--ink)", lineHeight: 1.4,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }}
-            >
-              {t.title}
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: t.title ? 6 : 0, flexWrap: "wrap" }}>
-            {t.language_label && (
-              <span
-                style={{
-                  fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
-                  color: "var(--made)", background: "var(--made-tint)", border: "1px solid var(--made-line)",
-                }}
-              >
-                {t.language_label}
-              </span>
-            )}
-            {t.duration_seconds != null && (
-              <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>{formatDuration(t.duration_seconds)}</span>
-            )}
-            <a href={t.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "var(--ink-mute)", textDecoration: "none" }}>
-              open on YouTube ↗
-            </a>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            onClick={onCopy}
-            className="hg-btn-ghost"
-            style={{
-              fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: 9,
-              border: "1px solid var(--line)", background: "var(--card)",
-              color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer", whiteSpace: "nowrap",
-            }}
-          >
-            {copied ? "Copied" : "Copy transcript"}
-          </button>
-          <button
-            onClick={onClose}
-            className="hg-btn-ghost"
-            style={{
-              fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: 9,
-              border: "1px solid var(--line)", background: "var(--card)",
-              color: "var(--ink-body)", cursor: "pointer", whiteSpace: "nowrap",
-            }}
-          >
-            Close
-          </button>
-        </div>
-      </div>
-
-      <div
-        className="indic"
-        style={{
-          padding: isPhone ? 18 : 26, fontSize: isPhone ? 15.5 : 16.5,
-          color: "var(--ink)", whiteSpace: "pre-wrap", wordBreak: "break-word",
-        }}
-      >
-        {t.text}
-      </div>
-    </div>
-  );
-}
-
-function Processing() {
-  return (
-    <div
-      style={{
-        marginTop: 16, padding: 24, borderRadius: "var(--radius)",
-        background: "var(--card)", border: "1px solid var(--line)",
-        display: "flex", alignItems: "center", gap: 14,
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          width: 18, height: 18, borderRadius: "50%",
-          border: "2px solid var(--line)", borderTopColor: "var(--made)",
-          animation: "hg-spin .8s linear infinite", flexShrink: 0,
-        }}
-      />
-      <div>
-        <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--ink)" }}>Listening to the video…</div>
-        <div style={{ fontSize: 13, color: "var(--ink-mute)", marginTop: 3 }}>
-          A few seconds for a Short. You can leave this page open.
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function StatusTag({ status }) {
   const map = {
-    done:       { label: "Ready",   color: "var(--ok)",   bg: "#E6F4EA",          border: "#B7E1C4" },
-    // "Working" was red, which put it in the same colour as "Failed" two rows
-    // down and made a healthy queue look like a screen full of problems.
-    processing: { label: "Working", color: "var(--made)", bg: "var(--made-tint)", border: "var(--made-line)" },
+    // Added but not read. Neutral on purpose: nothing has happened to it yet,
+    // and a green tick here would imply work that has not been done.
+    pending:    { label: "Added",   color: "var(--ink-mute)", bg: "#F2F2F2",      border: "var(--line)" },
+    processing: { label: "Reading", color: "var(--made)", bg: "var(--made-tint)", border: "var(--made-line)" },
+    done:       { label: "Read",    color: "var(--ok)",   bg: "#E6F4EA",          border: "#B7E1C4" },
     failed:     { label: "Failed",  color: "var(--bad)",  bg: "#FCE8E6",          border: "#F5C7C3" },
   };
-  const s = map[status] || map.processing;
+  const s = map[status] || map.pending;
   return (
     <span
       style={{
@@ -990,6 +846,89 @@ function ConfirmDialog({ title, label, children, busy, confirmLabel, busyLabel, 
             }}
           >
             {busy ? busyLabel : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SuccessDialog({ info, onGoTopics, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const n = info.videos || 0;
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        className="hg-fade"
+        style={{ position: "fixed", inset: 0, background: "rgba(15,15,15,.4)", zIndex: 70 }}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Voice ready"
+        className="hg-dialog-in"
+        style={{
+          position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+          zIndex: 71, width: "min(440px, calc(100vw - 32px))",
+          background: "var(--card)", border: "1px solid var(--line)",
+          borderRadius: "var(--radius)", padding: 24,
+          boxShadow: "0 30px 70px -30px rgba(15,15,15,.5)",
+          textAlign: "center",
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            display: "grid", placeItems: "center", width: 48, height: 48, margin: "0 auto 14px",
+            borderRadius: "50%", background: "#E6F4EA", border: "1px solid #B7E1C4", color: "var(--ok)",
+          }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        </span>
+
+        <div style={{ fontSize: 19, fontWeight: 700, color: "var(--ink)", letterSpacing: "-0.02em", marginBottom: 8 }}>
+          {info.name ? `${info.name} sounds like you now` : "Your voice is ready"}
+        </div>
+
+        <p style={{ fontSize: 14, lineHeight: 1.65, color: "var(--ink-body)", margin: "0 0 4px" }}>
+          We read {n} video{n === 1 ? "" : "s"}
+          {info.language ? ` in ${info.language}` : ""} and learned how you open, the
+          words you keep in English, and how you sign off.
+        </p>
+        <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-mute)", margin: "0 0 20px" }}>
+          Every script from here on is written that way. Pick a story and try it.
+        </p>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+          <button
+            onClick={onClose}
+            className="hg-btn-ghost"
+            style={{
+              fontSize: 13.5, fontWeight: 600, padding: "11px 16px", borderRadius: 10,
+              border: "1px solid var(--line)", background: "var(--card)",
+              color: "var(--ink-body)", cursor: "pointer",
+            }}
+          >
+            Stay here
+          </button>
+          <button
+            onClick={() => { onClose?.(); onGoTopics?.(); }}
+            className="hg-btn-primary"
+            style={{
+              fontSize: 13.5, fontWeight: 600, padding: "11px 20px", borderRadius: 10,
+              border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer",
+            }}
+          >
+            Find today's topic
           </button>
         </div>
       </div>

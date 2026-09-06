@@ -5,7 +5,7 @@
  * axios was ~40KB of the landing page's JavaScript, and the landing page makes
  * exactly one request with it (`GET /auth/me`). What the rest of the app
  * actually uses is `params`, `signal`, `{ data }` on the way out and
- * `err.response.{status,data}` on the way back — four things, all of which
+ * `err.response.{status,data}` on the way back: four things, all of which
  * fetch gives us in about fifty lines. Nothing about the 37 call sites changed;
  * they were written against this module's surface, not against axios's.
  *

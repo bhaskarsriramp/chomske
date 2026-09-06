@@ -25,7 +25,17 @@ const TranscriptSchema = new Schema({
   video_id: { type: String, required: true },          // canonical YouTube id
   url:      { type: String, required: true },          // the normalized watch URL we sent
 
-  status: { type: String, enum: ["processing", "done", "failed"], default: "processing", index: true },
+  // "pending" is a video added but NOT yet read. Adding is free: the title,
+  // length and thumbnail come from the cheap metadata lookup, and Gemini is
+  // never called until the creator asks for an analysis. Somebody pasting
+  // five links and wandering off now costs a few tenths of a cent instead of
+  // five video reads.
+  status: {
+    type: String,
+    enum: ["pending", "processing", "done", "failed"],
+    default: "pending",
+    index: true,
+  },
 
   // What the model heard, in the language it was spoken in, Devanagari stays
   // Devanagari, Telugu stays Telugu. Never translated to English.
