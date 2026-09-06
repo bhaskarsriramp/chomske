@@ -22,7 +22,7 @@ export default function ProfilePanel({ user, onSignOut, onGoVoice }) {
         Profile
       </h1>
       <p style={{ fontSize: 14, color: "var(--ink-body)", margin: "0 0 8px" }}>
-        Your channels, and the account they belong to.
+        Your channel, and the account it belongs to.
       </p>
 
       <ProfilesSection isPhone={isPhone} onGoVoice={onGoVoice} />

@@ -14,10 +14,11 @@
  * so it costs only the extra input tokens (a few tenths of a cent per script).
  *
  * ── WHY THERE IS A KEY POOL FOR A FREE SERVICE ───────────────────────────────
- * Free is not unlimited. The limit is requests per minute per key, and one
- * script takes one request carrying three to five URLs. One key is fine for one
- * creator and tight the moment several order at once, so keys rotate and a
- * second key is added by inserting a row (see models/TinyfishAPIs.js).
+ * Free is not unlimited. The limit is per key per minute and is counted in URLs
+ * rather than requests, so one script's single request for five pages spends
+ * five of them. One key is fine for one creator and tight the moment several
+ * order at once, so keys rotate and a second key is added by inserting a row
+ * (see models/TinyfishAPIs.js).
  *
  * ── THIS MUST NEVER BREAK A SCRIPT ───────────────────────────────────────────
  * Everything here fails soft. No key, rate limited, a paywall, a dead link, the
@@ -35,10 +36,19 @@ const SERVICE = "tinyfish";
 // needs, so a fetch is always a single call.
 const URLS_PER_REQUEST = 10;
 
-// Requests per minute per key. Deliberately under whatever the published
-// ceiling is: this is a free service and being a polite consumer of it is worth
-// more than the last few requests a minute.
-const RPM = parseInt(process.env.TINYFISH_RPM || "15", 10);
+// ── THE BUDGET IS COUNTED IN URLS, NOT REQUESTS ──────────────────────────────
+// TinyFish meters a fetch by the number of URLs it carries, so a single request
+// for five pages spends five units, not one. takeAnyKey() spends `count` below
+// for that reason, and the name says URLs so nobody reads this as five times the
+// capacity it is: at 15, one key covers three five-URL scripts a minute, or five
+// three-URL ones.
+//
+// Deliberately under the reference project's tuned 20, because this is a free
+// service and being a polite consumer of it is worth more than the last few
+// pages a minute. Raise it with the env var if fetches start queueing.
+const URLS_PER_MIN = parseInt(
+  process.env.TINYFISH_URLS_PER_MIN || process.env.TINYFISH_RPM || "15", 10
+);
 
 // A 429 says "later". An auth failure says "not with this key", and an hour is
 // long enough that a dead key stops being tried on every script.
@@ -243,7 +253,7 @@ export async function fetchArticles(urls, { maxChars = 2500 } = {}) {
 async function takeAnyKey(pool, count) {
   for (const cand of pool) {
     if (await cooldownRemainingMs(SERVICE, cand.keyId)) continue;
-    if (await takeRate(SERVICE, cand.keyId, RPM, 60, count)) return cand;
+    if (await takeRate(SERVICE, cand.keyId, URLS_PER_MIN, 60, count)) return cand;
   }
   return null;
 }

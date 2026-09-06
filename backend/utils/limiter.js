@@ -136,6 +136,14 @@ export async function acquireSlot(service, max) {
  * @param {number} count     units to take, since one request can carry several URLs
  * @returns {Promise<boolean>} false when the budget for this window is spent
  */
+const TAKE = `
+  local n = tonumber(redis.call('GET', KEYS[1]) or '0')
+  if n + tonumber(ARGV[1]) > tonumber(ARGV[2]) then return 0 end
+  redis.call('INCRBY', KEYS[1], ARGV[1])
+  redis.call('EXPIRE', KEYS[1], ARGV[3])
+  return 1
+`;
+
 export async function takeRate(service, keyId, limit, windowSec, count = 1) {
   const bucket = Math.floor(Date.now() / (windowSec * 1000));
   const k = `hg:rate:${service}:${keyId}:${bucket}`;
@@ -154,13 +162,20 @@ export async function takeRate(service, keyId, limit, windowSec, count = 1) {
     return true;
   }
 
+  // INCRBY first and compare afterwards is the obvious version, and it is wrong:
+  // a request that gets refused has already spent its units, and does not get
+  // them back until the window rolls. Under the exact load this exists for,
+  // several scripts starting at once, every refusal inflates the counter that
+  // refused it, so the pool locks itself out well below its real limit, and a
+  // one-URL take cannot fit in the room a refused five-URL take left behind.
+  //
+  // TAKE runs on the server as a single step, so the budget only moves when the
+  // take succeeds. EXPIRE is inside it for the reason acquireSlot sets one: a
+  // counter orphaned between the write and the expiry would hold its budget for
+  // ever.
   try {
-    const n = await redis.incrby(k, count);
-    // Set every time, for the same reason acquireSlot does: a counter orphaned
-    // between INCR and EXPIRE would hold its budget for ever.
-    await redis.expire(k, windowSec * 2);
-    if (n > limit) return false;
-    return true;
+    const ok = await redis.eval(TAKE, 1, k, count, limit, windowSec * 2);
+    return ok === 1;
   } catch (err) {
     // Fail OPEN. This is a politeness limit on a free endpoint, not a spend
     // guard, and refusing to fetch because Redis blinked would break script

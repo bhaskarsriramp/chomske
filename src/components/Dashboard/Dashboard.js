@@ -11,7 +11,6 @@ import Logo from "../Shell/Logo";
 import CreditsProvider from "../../state/CreditsContext";
 import ProfileProvider, { useProfiles } from "../../state/ProfileContext";
 import { CreditsPill } from "../Shell/CreditsCard";
-import TopBar from "../Shell/TopBar";
 
 /**
  * The app shell.
@@ -152,11 +151,6 @@ function Shell({ user, onSignOut }) {
             </span>
           </header>
         )}
-
-        {/* Which channel everything below is about. Not on Profile: that screen
-            IS the list of channels, with the active one marked, so a bar above
-            it naming one of them is a second smaller copy of the page. */}
-        {tab !== "profile" && <TopBar isNarrow={isNarrow} />}
 
         <main style={{ flex: 1, minHeight: 0, display: "flex" }}>
           {mounted.topics && (

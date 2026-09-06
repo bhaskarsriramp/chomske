@@ -144,11 +144,9 @@ export default function ScriptOrder({ busy, onGenerate, compact }) {
 
   return (
     <div>
-      {/* No "write as" picker. Which channel this is for is in the app bar at
-          the top of the screen, which never scrolls away. See Shell/TopBar.js.
-          A second copy here would be a second control for one value, and the
-          moment two controls can disagree about which voice is writing, one of
-          them is lying at the exact point where credits get spent. */}
+      {/* No "write as" picker. The account has one voice, so there is nothing
+          to choose and nothing to get wrong at the point where credits are
+          actually spent. See state/ProfileContext.js. */}
 
       {/* ── Length ───────────────────────────────────────────────────────── */}
       <div style={{ marginBottom: 14 }}>

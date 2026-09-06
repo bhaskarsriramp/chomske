@@ -17,14 +17,23 @@ import Script from "../models/Script.js";
 import User from "../models/User.js";
 import { sanitizeSelection, isValidCategory } from "./categories.js";
 
-// How many channels one account may keep.
+// How many channels one account may keep. ONE, deliberately.
 //
-// This is a spend ceiling, not a tidiness rule. Every profile carries its own
-// slots of videos, and reading a video is the single expensive thing this
-// product does, an unbounded number of profiles is an unbounded transcription
-// bill from one account. DAILY_TRANSCRIBE_LIMIT caps the rate; this caps the
-// total.
-export const MAX_PROFILES = Math.max(1, parseInt(process.env.MAX_PROFILES || "5", 10));
+// Multi-channel was built before there was anyone to use it. It bought a
+// switcher in the app bar, a card list, and a question every screen had to
+// answer ("which channel is this?") for a case that does not exist yet. One
+// account, one voice, until there are creators actually running two.
+//
+// It is also the spend ceiling. Every profile carries its own slots of videos,
+// and reading a video is the single expensive thing this product does, so an
+// unbounded number of profiles is an unbounded transcription bill from one
+// signup. DAILY_TRANSCRIBE_LIMIT caps the rate; this caps the total.
+//
+// NOTHING about multi-channel was deleted to do this. profile_id still threads
+// through every model, route and query, and the UI pieces are still on disk,
+// just unmounted (Shell/TopBar.js, Profile/NewProfileDialog.js). Raising this
+// number, in env or here, plus remounting those two, brings it all back.
+export const MAX_PROFILES = Math.max(1, parseInt(process.env.MAX_PROFILES || "1", 10));
 
 const MAX_VOICE_VIDEOS = () => parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
 
@@ -207,7 +216,11 @@ export async function createProfile(userId, { name, categories } = {}) {
 
   const held = await Profile.countDocuments({ user: userId });
   if (held >= MAX_PROFILES) {
-    const err = new Error(`You can keep ${MAX_PROFILES} profiles. Delete one to add another.`);
+    const err = new Error(
+      MAX_PROFILES === 1
+        ? "An account has one channel."
+        : `You can keep ${MAX_PROFILES} profiles. Delete one to add another.`
+    );
     err.limit_reached = true;
     throw err;
   }

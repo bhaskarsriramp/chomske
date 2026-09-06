@@ -497,9 +497,8 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
               gap: 12, padding: `0 ${gut}px`,
             }}
           >
-            {/* No profile picker here, the app bar above carries it on every
-                screen, so a second copy would be a second answer to the same
-                question. See Shell/TopBar.js. */}
+            {/* No profile picker: the account has one channel, so this feed is
+                always its feed. See state/ProfileContext.js. */}
             <h1
               style={{
                 fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",

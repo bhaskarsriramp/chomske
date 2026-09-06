@@ -70,8 +70,7 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
           </p>
         </div>
 
-        {/* No profile picker here, the app bar above carries it on every
-            screen. See Shell/TopBar.js. */}
+        {/* No profile picker: the account has one channel. See state/ProfileContext.js. */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
 
           <div

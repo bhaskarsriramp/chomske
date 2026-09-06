@@ -2,63 +2,46 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo } 
 import api from "../api";
 
 /**
- * The creator's channels, and which one they are working in.
+ * The account's channel.
  *
- * ── ONE SELECTION, EVERYWHERE ───────────────────────────────────────────────
- * Topics, My voice, My scripts and Dashboard are all about ONE profile at a
- * time, and they share this single value on purpose. Someone running a tech
- * channel and a sports channel is working on one of them right now, reading its
- * feed, writing in its voice, checking how it is doing. Per-screen selections
- * would let those four silently disagree, and "why is my dashboard showing the
- * other channel" becomes a question with no visible cause.
+ * ── ONE CHANNEL PER ACCOUNT ─────────────────────────────────────────────────
+ * This used to hold a list of channels plus which one you were working in, kept
+ * in localStorage and switched from a menu in the app bar. It was built before
+ * there was anyone running two, and it charged every screen for a case that did
+ * not exist: a selection to read, a selection to keep in sync, and a way to add
+ * a video to the wrong channel and pay a transcription to undo it.
  *
- * The choice survives a reload (localStorage) because it is a working context,
- * not a filter someone re-applies every session. Reading it is wrapped: a
- * browser with storage disabled must not take the app down.
+ * So there is no selection. The server creates one profile on first read and
+ * never hands back an empty list for a signed-in account (ensureProfile), which
+ * makes profiles[0] the channel rather than a guess.
+ *
+ * ── THE SHAPE IS STILL A LIST, ON PURPOSE ───────────────────────────────────
+ * Nothing was deleted to collapse this. profile_id still threads through every
+ * model, route and query, consumers still read `profiles` and `activeId`, and
+ * the two UI pieces are still on disk and merely unmounted (Shell/TopBar.js,
+ * Profile/NewProfileDialog.js). Bringing channels back is MAX_PROFILES plus
+ * those two components, not a rebuild. See backend/services/profileService.js.
  */
 const Ctx = createContext(null);
 
-const KEY = "hg.profile";
-
 const FALLBACK = {
-  profiles: [], activeId: null, active: null, loading: false, max: 1,
-  setActive: () => {}, refresh: async () => [],
+  profiles: [], activeId: null, active: null, loading: false,
+  refresh: async () => [],
 };
 
 export function useProfiles() {
   return useContext(Ctx) || FALLBACK;
 }
 
-function readStored() {
-  try { return window.localStorage.getItem(KEY) || null; } catch { return null; }
-}
-function writeStored(id) {
-  try {
-    if (id) window.localStorage.setItem(KEY, id);
-    else window.localStorage.removeItem(KEY);
-  } catch { /* private mode, or storage blocked. The choice still works in-session */ }
-}
-
 export default function ProfileProvider({ children }) {
   const [profiles, setProfiles] = useState([]);
-  const [activeId, setActiveId] = useState(readStored);
   const [loading, setLoading] = useState(true);
-  const [max, setMax] = useState(1);
 
   const refresh = useCallback(async () => {
     try {
       const { data } = await api.get("/profiles");
       const list = data.profiles || [];
       setProfiles(list);
-      setMax(data.max || 1);
-
-      // Keep the current selection if it still exists; otherwise fall back to
-      // the server's default. A stored id can outlive the profile it names,
-      // deleted in another tab, or on another device.
-      setActiveId((prev) => {
-        if (prev && list.some((p) => p.id === prev)) return prev;
-        return data.active || list[0]?.id || null;
-      });
       return list;
     } catch {
       return [];
@@ -69,20 +52,12 @@ export default function ProfileProvider({ children }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const setActive = useCallback((id) => {
-    setActiveId(id);
-    writeStored(id);
-    // Tell the server too, so the next device (and the next session before the
-    // list loads) opens on the same channel.
-    if (id) api.patch(`/profiles/${id}`, { is_default: true }).catch(() => {});
-  }, []);
+  const active = useMemo(() => profiles[0] || null, [profiles]);
 
-  const active = useMemo(
-    () => profiles.find((p) => p.id === activeId) || profiles.find((p) => p.is_default) || profiles[0] || null,
-    [profiles, activeId]
+  const value = useMemo(
+    () => ({ profiles, active, activeId: active?.id || null, loading, refresh }),
+    [profiles, active, loading, refresh]
   );
-
-  const value = { profiles, activeId: active?.id || null, active, loading, max, setActive, refresh };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

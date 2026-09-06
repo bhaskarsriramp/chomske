@@ -3,28 +3,25 @@ import api, { errorMessage } from "../../api";
 import { categoryColor } from "../../theme";
 import Skeleton from "../Shell/Skeleton";
 import { useProfiles } from "../../state/ProfileContext";
-import NewProfileDialog from "./NewProfileDialog";
 
 /**
- * Your channels: the section that makes the rest of the app make sense.
+ * Your channel: what the account covers, and the state of its voice.
  *
- * One profile per YouTube channel. Each owns its categories, its one voice, that
- * voice's videos and the scripts written for it, so a creator running a tech
- * channel and a sports channel never sees one bleeding into the other.
+ * One channel per account (see state/ProfileContext.js). It owns the categories
+ * the feed is drawn from, the one voice, that voice's videos, and the scripts
+ * written in it.
  *
- * ── WHY THIS IS A LIST OF CARDS, NOT A SETTINGS FORM ────────────────────────
- * Everything a creator needs to decide "which of these am I working on" is state
- * they cannot see anywhere else: how many videos each holds, whether its voice
- * has been analysed, what it covers. A dropdown plus a form would hide exactly
- * that, so each channel is a card showing its own condition, and the one in use
- * is marked.
+ * ── WHY THIS IS STILL A CARD, NOT A SETTINGS FORM ───────────────────────────
+ * A form would show the name and the categories, which are the two things a
+ * creator already knows. The card shows what they cannot see anywhere else:
+ * how many videos are held, whether the voice has been analysed, whether it has
+ * gone stale. That is the reason to open this screen at all.
  */
 export default function ProfilesSection({ isPhone, onGoVoice }) {
-  const { profiles, activeId, max, setActive, refresh, loading } = useProfiles();
+  const { profiles, activeId, refresh, loading } = useProfiles();
 
   const [cats, setCats] = useState([]);
   const [maxCats, setMaxCats] = useState(3);
-  const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);     // profile id being edited
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -63,8 +60,7 @@ export default function ProfilesSection({ isPhone, onGoVoice }) {
     try {
       await api.delete(`/profiles/${confirmDelete.id}`);
       setConfirmDelete(null);
-      const list = await refresh();
-      if (list?.length && confirmDelete.id === activeId) setActive(list[0].id);
+      await refresh();
     } catch (err) {
       setError(errorMessage(err, "Couldn't delete that profile."));
       setConfirmDelete(null);
@@ -88,27 +84,13 @@ export default function ProfilesSection({ isPhone, onGoVoice }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 5 }}>
-            Your channels
+            Your channel
           </div>
           <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)", margin: 0 }}>
-            One profile per channel. Each has its own topics, its own voice and its
-            own scripts. Only your credits are shared.
+            What it covers decides the topics you are shown. Its voice decides how
+            every script is written.
           </p>
         </div>
-
-        {profiles.length < max && (
-          <button
-            onClick={() => setAdding(true)}
-            className="hg-btn-ghost"
-            style={{
-              fontSize: 13, fontWeight: 600, padding: "9px 15px", borderRadius: 10, flexShrink: 0,
-              border: "1px solid var(--line)", background: "var(--card)",
-              color: "var(--ink-body)", cursor: "pointer",
-            }}
-          >
-            + Add channel
-          </button>
-        )}
       </div>
 
       {error && (
@@ -129,7 +111,6 @@ export default function ProfilesSection({ isPhone, onGoVoice }) {
             editing={editing === p.id}
             busy={busy}
             canDelete={profiles.length > 1}
-            onUse={() => setActive(p.id)}
             onEdit={() => { setEditing(p.id); setError(""); }}
             onCancelEdit={() => setEditing(null)}
             onSave={(patch) => save(p.id, patch)}
@@ -138,26 +119,6 @@ export default function ProfilesSection({ isPhone, onGoVoice }) {
           />
         ))}
       </div>
-
-      {profiles.length >= max && (
-        <p style={{ fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.6, margin: "12px 0 0" }}>
-          {max} profiles is the limit. Each one keeps its own videos, and reading a
-          video is the expensive part, so delete one to add another.
-        </p>
-      )}
-
-      {adding && (
-        <NewProfileDialog
-          onCancel={() => setAdding(false)}
-          onCreated={async (created) => {
-            setAdding(false);
-            await refresh();
-            // Switch to it straight away: they made it to work in it, and the
-            // next video they add has to land in the right place.
-            if (created?.id) setActive(created.id);
-          }}
-        />
-      )}
 
       {confirmDelete && (
         <DeleteDialog
@@ -188,7 +149,7 @@ function Card({ isPhone, children }) {
 
 function ProfileCard({
   profile: p, active, isPhone, cats, maxCats, editing, busy, canDelete,
-  onUse, onEdit, onCancelEdit, onSave, onDelete, onGoVoice,
+  onEdit, onCancelEdit, onSave, onDelete, onGoVoice,
 }) {
   const [name, setName] = useState(p.name);
   const [picked, setPicked] = useState(p.categories || []);
@@ -268,7 +229,7 @@ function ProfileCard({
               </>
             ) : p.videos.ready > 0 ? (
               <button
-                onClick={() => { onUse(); onGoVoice?.(); }}
+                onClick={() => onGoVoice?.()}
                 style={{
                   border: "none", background: "none", padding: 0, cursor: "pointer",
                   font: "inherit", color: "var(--made)", fontWeight: 600,
@@ -279,7 +240,7 @@ function ProfileCard({
               </button>
             ) : (
               <button
-                onClick={() => { onUse(); onGoVoice?.(); }}
+                onClick={() => onGoVoice?.()}
                 style={{
                   border: "none", background: "none", padding: 0, cursor: "pointer",
                   font: "inherit", color: "var(--ink-mute)", fontWeight: 600,
@@ -293,19 +254,6 @@ function ProfileCard({
         </div>
 
         <div style={{ display: "flex", gap: 7, flexShrink: 0, flexWrap: "wrap" }}>
-          {!active && (
-            <button
-              onClick={onUse}
-              className="hg-btn-ghost"
-              style={{
-                fontSize: 12.5, fontWeight: 600, padding: "7px 13px", borderRadius: 9,
-                border: "1px solid var(--line)", background: "var(--card)",
-                color: "var(--ink-body)", cursor: "pointer",
-              }}
-            >
-              Use this
-            </button>
-          )}
           <button
             onClick={editing ? onCancelEdit : onEdit}
             className="hg-btn-ghost"

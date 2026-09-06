@@ -7,16 +7,11 @@ import { useProfiles } from "../../state/ProfileContext";
 /**
  * My voice: the videos that teach us how this creator talks.
  *
- * ── ONE VOICE PER CHANNEL ────────────────────────────────────────────────────
- * Everything on this screen belongs to the profile they are working in. A
- * creator running a Hindi tech channel and an English one keeps two profiles,
- * and each has its OWN five videos and its own single voice, because a voice
- * built from both is a voice that is nobody's.
- *
- * Which channel that is, is shown by the app bar above every screen
- * (Shell/TopBar.js) rather than by a picker here. Adding a video to the wrong
- * channel costs a transcription to undo, so it should be a thing you cannot
- * help seeing, not one you have to go and check.
+ * ── ONE VOICE PER ACCOUNT ────────────────────────────────────────────────────
+ * Every video here teaches the account's single voice. There is nothing to
+ * pick and nothing to get wrong, which is the point: adding a video costs a
+ * transcription, and a transcription spent on the wrong channel was the one
+ * mistake this screen could make. See ProfileContext.js.
  *
  * ── WHY THIS SCREEN IS ONE COLUMN AND TWO NUMBERED STEPS ────────────────────
  * It used to be a wide two-pane layout: a URL box and a lone "Re-analyse"
@@ -57,7 +52,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   const isPhone = useIsMobile(680);
 
   const {
-    profiles, activeId, active: activeProfile,
+    activeId, active: activeProfile,
     refresh: refreshProfiles, loading: profilesLoading,
   } = useProfiles();
 
@@ -304,8 +299,8 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   return (
     <div className="hg-scroll" style={{ flex: 1, minHeight: 0, width: "100%" }}>
       <div style={{ maxWidth: 880, margin: "0 auto", padding: `${isPhone ? 18 : 28}px ${gut}px ${isPhone ? 40 : 60}px` }}>
-        {/* No profile picker here, the app bar above carries it on every
-            screen. See Shell/TopBar.js. */}
+        {/* No profile picker: these videos teach the account's one voice.
+            See state/ProfileContext.js. */}
         <h1 style={{ fontSize: isPhone ? 21 : 25, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 5px" }}>
           My voice
         </h1>
@@ -330,7 +325,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
             <span style={{ fontSize: 13.5, color: "var(--ink-body)", lineHeight: 1.5 }}>
               These videos teach{" "}
               <strong style={{ color: "var(--ink)" }}>{activeProfile.name}</strong>
-              {profiles.length > 1 ? ". Each channel keeps its own." : ""}
             </span>
             <button
               onClick={onGoProfiles}
@@ -340,7 +334,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                 cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3,
               }}
             >
-              {profiles.length > 1 ? "Manage channels" : "Add another channel"}
+              Rename
             </button>
           </div>
         )}
