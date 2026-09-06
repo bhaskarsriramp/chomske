@@ -108,20 +108,29 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // past NEWS_STALE_HOURS. Not computed here on purpose, one browser deciding
   // to spend money is a decision every browser then makes separately.
   const [stale, setStale] = useState(false);
-  const [autoFetching, setAutoFetching] = useState(false);
+  // WHICH category is auto-fetching, not whether one is. The banner belongs to
+  // a feed, and a fetch that started on AI while the creator moved to Finance
+  // must not sit over Finance saying its topics are on the way.
+  const [autoFetching, setAutoFetching] = useState(null);
   const [sourceCount, setSourceCount] = useState(0);
   // One automatic attempt per category per mount. The server holds the real
   // gate (claimAutoFetch, per category, across everyone); this is the local half
   // that stops THIS pane retrying in a loop when the fetch comes back with
   // nothing and the feed is therefore still stale.
   const autoTried = useRef(new Set());
-  // In flight right now. A REF and not the `autoFetching` state, and that
-  // distinction is the whole bug this replaced: `autoFetching` was a dependency
-  // of the effect that sets it, so setting it re-ran the effect, whose cleanup
-  // then marked the running fetch cancelled, and the completion handler refused
-  // to clear the banner. It said "Fetching new topics" forever, over a server
-  // that had finished a minute ago.
-  const autoRunning = useRef(false);
+  // In flight right now, BY CATEGORY. A ref and not state, because it was state
+  // once: `autoFetching` was a dependency of the effect that sets it, so setting
+  // it re-ran the effect, whose cleanup marked the running fetch cancelled, and
+  // the banner then said "Fetching new topics" for ever over a server that had
+  // finished a minute ago.
+  //
+  // A SET and not one boolean, which was the next bug down. Switching category
+  // while a fetch was running made the new category return at this guard, and a
+  // ref is not reactive: clearing it later did not re-run the effect, and none
+  // of the effect's other dependencies changed at that moment either. So the
+  // second category a creator opened never fetched at all for the rest of the
+  // mount, which read as "the backend is working but the feed is empty".
+  const autoRunning = useRef(new Set());
   // What the last fetch produced, so the button can report back instead of
   // going quiet and leaving the reader to guess whether it did anything.
   const [fetched, setFetched] = useState(null);   // null | number of new stories
@@ -140,6 +149,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // `items` as a hook dependency there would rebuild load() on every result,
   // which the effect below calls, which sets items, which rebuilds load().
   const itemsRef = useRef([]);
+
+  // The category on screen RIGHT NOW, readable from inside a request that
+  // started before it changed. See load().
+  const catRef = useRef(cat);
+  catRef.current = cat;
 
   /**
    * Open a story, and record that it has been looked at.
@@ -191,6 +205,18 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // category server-side, which is why it is safe to call on every open: inside
   // the cooldown it returns in about a millisecond having spent nothing.
   const load = useCallback(async ({ refresh = false, auto = false, quiet = false } = {}) => {
+    // ── WHICH FEED THIS ANSWER IS FOR ─────────────────────────────────────
+    // A refresh collects and ranks, which is thirty to ninety seconds, and a
+    // creator can switch category several times inside one. Every write below
+    // is therefore gated on the category still being the one on screen.
+    //
+    // Without this the last request to FINISH won, not the last one asked for:
+    // open AI, switch to Finance, and AI's answer lands half a minute later and
+    // overwrites the Finance feed, its freshness verdict and its source count.
+    // The visible symptom is the one that matters here, the backend plainly
+    // doing the work for Finance while Finance shows nothing new.
+    const forCat = cat;
+    const mine = () => catRef.current === forCat;
     // `quiet` is for reads nobody asked for, a live update arriving because a
     // pass finished somewhere else. The list dims while `busy`, and dimming the
     // page under someone who is reading it, to deliver news they did not request,
@@ -215,7 +241,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
         // caught by its own refresh. Awaited, so the re-read below sees the
         // marks rather than racing them. A failure is not worth a word: the
         // worst case is a badge that lingers one cycle longer.
-        const shown = itemsRef.current.map(seenKey).filter(Boolean);
+        const shown = mine() ? itemsRef.current.map(seenKey).filter(Boolean) : [];
         if (shown.length) {
           try { await api.post("/news/seen", { stories: shown }); } catch { /* badges only */ }
         }
@@ -248,6 +274,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
         }
       }
 
+      // Switched away while the fetch was running. The work still happened and
+      // the other feed's own read will collect it; reading it here would only
+      // be a query whose answer is thrown away.
+      if (!mine()) return [];
+
       const base = { limit: MAX_CARDS };
       if (cat) base.category = cat;
       // Sent explicitly rather than left to the server's default: the creator
@@ -269,6 +300,8 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
         if ((retry.data.items || []).length) { data = retry.data; wide = true; }
       }
 
+      if (!mine()) return [];
+
       const next = data.items || [];
       setItems(next);
       itemsRef.current = next;
@@ -282,6 +315,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
       setSourceCount(data.sources_checked || 0);
       return next;
     } catch (err) {
+      if (!mine()) return [];
       setError(errorMessage(err, "Couldn't load today's topics."));
       setItems([]);
       itemsRef.current = [];
@@ -291,7 +325,9 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
       setStale(false);
       return [];
     } finally {
-      if (!quiet) setBusy(false);
+      // Only the request that still owns the screen may take the spinner down.
+      // An abandoned one clearing it would uncover a feed that is still loading.
+      if (!quiet && mine()) setBusy(false);
       setLoadedOnce(true);
     }
   }, [cat, profileId]);
@@ -357,7 +393,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
    */
   useEffect(() => {
     if (!loadedOnce || busy || error || !stale) return;
-    if (autoRunning.current) return;
+    if (autoRunning.current.has(cat)) return;
     // Nothing to refresh until the category strip has settled. Firing now would
     // send no category, and the server would have to guess which feed the
     // creator is looking at.
@@ -367,14 +403,14 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
     if (autoTried.current.has(key)) return;
     autoTried.current.add(key);
 
-    autoRunning.current = true;
-    setAutoFetching(true);
+    autoRunning.current.add(key);
+    setAutoFetching(key);
     // load() resolves either way; it catches its own failures and answers with
     // an empty list. So the banner always gets taken down, which is the one
     // thing the previous version could not promise.
     load({ refresh: true, auto: true }).finally(() => {
-      autoRunning.current = false;
-      setAutoFetching(false);
+      autoRunning.current.delete(key);
+      setAutoFetching((c) => (c === key ? null : c));
     });
   }, [loadedOnce, busy, error, stale, cat, load]);
 
@@ -532,7 +568,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
           {/* Above the scroller rather than inside it, so the list's own
               loading dim doesn't grey out the thing explaining the wait. */}
-          {autoFetching && <FetchingBanner gut={gut} isPhone={isPhone} sources={sourceCount} />}
+          {autoFetching === cat && <FetchingBanner gut={gut} isPhone={isPhone} sources={sourceCount} />}
         </div>
 
         <div

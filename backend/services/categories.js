@@ -34,6 +34,16 @@ export const CATEGORIES = [
     blurb: "Model launches, big tech moves, research that actually ships",
     locale: US,
     googleNews: ["artificial intelligence", "OpenAI", "Anthropic Claude", "Google Gemini AI", "AI model release"],
+    // Paid-source terms, deliberately broader than the Google News ones above.
+    // Those are tuned to a free feed that rewards a narrow phrase; this endpoint
+    // is one paid request for thirty articles, so a term naming a single company
+    // spends it on that company's week rather than on the category. See
+    // sources/apidirectNews.js, which rotates through this whole list.
+    apidirectNews: [
+      "artificial intelligence news", "technology news", "AI model launch",
+      "tech industry", "AI research breakthrough", "semiconductor chip industry",
+      "AI startup funding", "big tech company news",
+    ],
     hn: ["AI", "LLM", "OpenAI", "Anthropic", "machine learning", "GPU"],
     arxiv: true,
     github: true,
@@ -60,6 +70,16 @@ export const CATEGORIES = [
     blurb: "Markets, results season, IPOs, RBI, the rupee",
     locale: IN,
     googleNews: ["stock market India", "Nifty Sensex", "RBI policy", "IPO India", "quarterly results India"],
+    // Paid-source terms, deliberately broader than the Google News ones above.
+    // Those are tuned to a free feed that rewards a narrow phrase; this endpoint
+    // is one paid request for thirty articles, so a term naming a single company
+    // spends it on that company's week rather than on the category. See
+    // sources/apidirectNews.js, which rotates through this whole list.
+    apidirectNews: [
+      "Indian stock market", "Nifty Sensex today", "RBI monetary policy",
+      "India IPO listing", "quarterly earnings India", "rupee dollar rate",
+      "Indian economy news", "mutual funds India",
+    ],
     rss: [
       { source: "et-markets", kind: "outlet", url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms" },
       { source: "moneycontrol", kind: "outlet", url: "https://www.moneycontrol.com/rss/latestnews.xml" },
@@ -82,6 +102,16 @@ export const CATEGORIES = [
     blurb: "Funding rounds, founder moves, company shake-ups",
     locale: IN,
     googleNews: ["startup funding India", "acquisition India business", "unicorn startup", "layoffs company"],
+    // Paid-source terms, deliberately broader than the Google News ones above.
+    // Those are tuned to a free feed that rewards a narrow phrase; this endpoint
+    // is one paid request for thirty articles, so a term naming a single company
+    // spends it on that company's week rather than on the category. See
+    // sources/apidirectNews.js, which rotates through this whole list.
+    apidirectNews: [
+      "Indian startup funding", "India business news", "startup acquisition India",
+      "company layoffs India", "unicorn startup India", "venture capital India",
+      "Indian entrepreneurs", "small business India",
+    ],
     hn: ["startup", "funding", "acquisition"],
     rss: [
       { source: "inc42", kind: "outlet", url: "https://inc42.com/feed/" },
@@ -100,6 +130,16 @@ export const CATEGORIES = [
     blurb: "Prices with a cause, regulation, hacks, launches",
     locale: US,
     googleNews: ["bitcoin price", "ethereum", "crypto regulation", "crypto exchange hack"],
+    // Paid-source terms, deliberately broader than the Google News ones above.
+    // Those are tuned to a free feed that rewards a narrow phrase; this endpoint
+    // is one paid request for thirty articles, so a term naming a single company
+    // spends it on that company's week rather than on the category. See
+    // sources/apidirectNews.js, which rotates through this whole list.
+    apidirectNews: [
+      "cryptocurrency news", "bitcoin price", "ethereum news",
+      "crypto regulation India", "crypto exchange", "blockchain web3",
+      "altcoin market", "crypto tax India",
+    ],
     hn: ["bitcoin", "ethereum", "crypto"],
     rss: [
       { source: "coindesk", kind: "outlet", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" },

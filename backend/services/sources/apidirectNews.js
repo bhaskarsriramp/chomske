@@ -89,12 +89,34 @@ function localeFor(cat) {
 /**
  * Which queries to spend on. A category can name its own with `apidirectNews`
  * when the free-source query that reads well on Google News is not the one
- * worth paying for; otherwise the head of the Google News list, which is
- * ordered broadest-first already.
+ * worth paying for; otherwise the Google News list.
+ *
+ * ── ROTATE, DO NOT ALWAYS BUY THE HEAD OF THE LIST ──────────────────────────
+ * This used to be slice(0, n), which meant the same two terms on every pass for
+ * ever. ai_tech paid for "artificial intelligence" and "OpenAI" on every single
+ * fetch and never once asked about a model release, a chip, or anyone else's
+ * lab, so an entire category's paid view of the news was two search terms wide
+ * and the rest of its list was decoration. The duplicate rate says the same
+ * thing from the other side: buying the same query every ten minutes mostly
+ * buys articles already in the database.
+ *
+ * The cursor advances one pass at a time and wraps, so consecutive fetches walk
+ * the whole list. Seeded from the clock rather than from zero, so a restart
+ * does not send every instance back to the same two terms.
  */
+const cursor = new Map();
+
 function queriesFor(cat) {
   const list = (cat.apidirectNews?.length ? cat.apidirectNews : cat.googleNews) || [];
-  return list.slice(0, QUERIES_PER_PASS());
+  const n = QUERIES_PER_PASS();
+  if (list.length <= n) return list;
+
+  const start = cursor.has(cat.id)
+    ? cursor.get(cat.id)
+    : Math.floor(Date.now() / 3600000) % list.length;
+  cursor.set(cat.id, (start + n) % list.length);
+
+  return Array.from({ length: n }, (_, i) => list[(start + i) % list.length]);
 }
 
 /**
