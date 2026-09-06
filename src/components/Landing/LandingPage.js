@@ -1878,20 +1878,93 @@ function PlatformMarks({ size = 22 }) {
   );
 }
 
+/**
+ * The footer, and the only place on this page that is not selling.
+ *
+ * ── WHY THESE OPEN IN A NEW TAB ─────────────────────────────────────────────
+ * Somebody clicking "Cancellation & Refunds" is mid-decision about paying. Nav-
+ * igating them away from the page that was making the case, and asking them to
+ * find their way back, loses the sale to a policy document. A new tab lets them
+ * read it and close it.
+ *
+ * They are plain anchors rather than router links for the same reason: a new tab
+ * has to boot the app cold at that address, which the routes in App.js support
+ * precisely because they sit above the auth gate.
+ */
 function Footer({ pad, isMobile }) {
   return (
     <footer
       style={{
         borderTop: "1px solid var(--d-line-soft)",
-        padding: `26px ${pad}`,
-        display: "flex", flexWrap: "wrap", gap: 14,
-        alignItems: "center", justifyContent: "space-between",
+        padding: `${isMobile ? 30 : 38}px ${pad} 26px`,
         background: "rgba(255,255,255,.015)",
       }}
     >
-      <Logo color="var(--d-ink)" />
-      <div style={{ fontSize: 12.5, color: "var(--d-mute)", textAlign: isMobile ? "left" : "right" }}>
-        © {new Date().getFullYear()} Lipi · trylipi.online
+      <div
+        style={{
+          display: "flex", flexWrap: "wrap", gap: isMobile ? 30 : 48,
+          alignItems: "flex-start", justifyContent: "space-between",
+          marginBottom: isMobile ? 26 : 32,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <Logo color="var(--d-ink)" />
+          <p
+            style={{
+              fontSize: 13, lineHeight: 1.7, color: "var(--d-mute)",
+              margin: "12px 0 0", maxWidth: "34ch",
+            }}
+          >
+            Today's topics for your niche, written in your own voice.
+            A product of Betafounder Enterprises, Hyderabad.
+          </p>
+        </div>
+
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 11, fontWeight: 700, letterSpacing: "0.14em",
+              textTransform: "uppercase", color: "var(--d-mute)", marginBottom: 14,
+            }}
+          >
+            Company
+          </div>
+          <nav style={{ display: "grid", gap: 10 }}>
+            {[
+              { href: "/privacy",  label: "Privacy Policy" },
+              { href: "/terms",    label: "Terms of Service" },
+              { href: "/refunds",  label: "Cancellation & Refunds" },
+              { href: "/shipping", label: "Delivery Policy" },
+              { href: "/contact",  label: "Contact Us" },
+            ].map((l) => (
+              <a
+                key={l.href}
+                href={l.href}
+                target="_blank"
+                rel="noreferrer"
+                className="hg-d-link"
+                style={{
+                  fontSize: 13.5, color: "var(--d-body)", textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {l.label}
+              </a>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      <div
+        style={{
+          borderTop: "1px solid var(--d-line-soft)", paddingTop: 20,
+          display: "flex", flexWrap: "wrap", gap: 10,
+          alignItems: "center", justifyContent: "space-between",
+          fontSize: 12.5, color: "var(--d-mute)",
+        }}
+      >
+        <span>© {new Date().getFullYear()} Betafounder Enterprises</span>
+        <span style={{ textAlign: isMobile ? "left" : "right" }}>trylipi.online</span>
       </div>
     </footer>
   );
