@@ -474,25 +474,31 @@ function shape(d) {
   };
 }
 
+/**
+ * What the BROWSER is told about a built voice.
+ *
+ * ── WHY THIS IS THE SUMMARY AND NOT THE ANALYSIS ────────────────────────────
+ * Deliberately just enough to render "built, from 3 videos, Telugu-English":
+ * a count, a language, a confidence, a timestamp.
+ *
+ * The analysis itself stays on the server. The openings, the closings, the
+ * signature phrases, the stance, the pacing, the audience read: assembled,
+ * that is a working style prompt for this creator, and it is the one thing
+ * here that took a paid model call over their own videos to produce. Shipped
+ * to the client it can be lifted out of a network tab in ten seconds and
+ * pasted into any free chat assistant, which is the entire product given away
+ * by a screen that was only ever meant to be reassuring.
+ *
+ * Nothing is lost by withholding it. The writer reads the VoiceProfile
+ * document straight from the database (services/scriptWriterService.js), never
+ * through this shape, so scripts are written from the full analysis either way.
+ */
 function shapeProfile(p) {
   return {
     transcript_count: p.transcript_count || 0,
     language: p.language || "",
     language_label: p.language_label || "",
     confidence: p.confidence || "thin",
-    opening_patterns: p.opening_patterns || [],
-    sample_openings: p.sample_openings || [],
-    closing_patterns: p.closing_patterns || [],
-    sample_closings: p.sample_closings || [],
-    signature_phrases: p.signature_phrases || [],
-    recurring_moves: p.recurring_moves || [],
-    narration_arc: p.narration_arc || "",
-    vocabulary_notes: p.vocabulary_notes || "",
-    sentiment: p.sentiment || "",
-    pacing: p.pacing || "",
-    audience: p.audience || "",
-    topics: p.topics || [],
-    avoid: p.avoid || [],
     built_at: p.built_at,
   };
 }

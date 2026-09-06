@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
-import Chevron from "../Shell/Chevron";
 import { useProfiles } from "../../state/ProfileContext";
 
 /**
@@ -69,11 +68,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
   const [voice, setVoice] = useState(null);
   const [analysing, setAnalysing] = useState(false);
 
-  // Opens itself right after an analysis, because that is the one moment the
-  // creator is actively asking "so what did you find". On a later visit it
-  // starts shut: the summary line is what most people came for.
-  const [learnedOpen, setLearnedOpen] = useState(false);
-
   // Why the analyse button is unavailable, shown on hover and on click. See
   // the button itself for why it is not simply `disabled`.
   const [hint, setHint] = useState(false);
@@ -124,7 +118,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
   useEffect(() => {
     clearInterval(pollRef.current);
     setOpenVideo(null);
-    setLearnedOpen(false);
     setError("");
   }, [activeId]);
 
@@ -214,7 +207,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
     try {
       const { data } = await api.post(`/profiles/${activeId}/analyse`);
       setVoice((v) => ({ ...(v || {}), profile: data.voice, stale: false }));
-      setLearnedOpen(true);
       // Refreshes the shared list so every other screen sees this channel's
       // voice as built: the dashboard card, the order panel, the profile page.
       await refreshProfiles();
@@ -233,7 +225,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
     try {
       await api.delete(`/profiles/${activeId}/voice`);
       setVoice((v) => ({ ...(v || {}), profile: null, stale: false }));
-      setLearnedOpen(false);
       setConfirmVoiceDelete(false);
       await refreshProfiles();
       onVoiceChange?.();
@@ -500,74 +491,13 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
                 blends them into a voice that is nobody's. Keep one creator's videos here.
               </div>
             )}
-          </div>
 
-          {/* ── The detail ─────────────────────────────────────────────────
-              Before there is a voice, the videos are the only content and the
-              thing being worked on, so they are simply on the page. Once there
-              is one, they fold away together with what was learned from them,
-              because "what we learned" and "what we learned it from" are one
-              answer and a returning creator wants the summary first. */}
-          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
-            {built ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setLearnedOpen((v) => !v)}
-                  aria-expanded={learnedOpen}
-                  aria-controls="hg-voice-learned"
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    gap: 12, width: "100%", padding: 0, border: "none", background: "none",
-                    cursor: "pointer", fontFamily: "inherit", textAlign: "left",
-                    fontSize: 13, fontWeight: 650, color: "var(--ink)",
-                  }}
-                >
-                  <span>What we learned</span>
-                  <Chevron open={learnedOpen} />
-                </button>
-
-                {learnedOpen && (
-                  <div id="hg-voice-learned" className="hg-rise" style={{ marginTop: 14 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-                      {built.sample_openings?.length > 0 && (
-                        <VoiceRow label="How you open">
-                          <span className="indic">“{built.sample_openings[0]}”</span>
-                        </VoiceRow>
-                      )}
-                      {built.sample_closings?.length > 0 && (
-                        <VoiceRow label="How you close">
-                          <span className="indic">“{built.sample_closings[0]}”</span>
-                        </VoiceRow>
-                      )}
-                      {built.signature_phrases?.length > 0 && (
-                        <VoiceRow label="Your phrases">
-                          <span className="indic">{built.signature_phrases.slice(0, 6).join(" · ")}</span>
-                        </VoiceRow>
-                      )}
-                      {built.sentiment && <VoiceRow label="Your stance">{built.sentiment}</VoiceRow>}
-                      {built.pacing && <VoiceRow label="Your pacing">{built.pacing}</VoiceRow>}
-                      {built.audience && <VoiceRow label="Talking to">{built.audience}</VoiceRow>}
-                    </div>
-
-                    <div style={{ marginTop: 16 }}>
-                      <VoiceRow label="Learned from">
-                        <div style={{ marginTop: 7 }}>
-                          <Videos
-                            items={history}
-                            loading={!meta?.slots}
-                            openId={openVideo?.id}
-                            isPhone={isPhone}
-                            onOpen={toggleVideo}
-                            onDelete={setConfirmDelete}
-                          />
-                        </div>
-                      </VoiceRow>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
+            {/* The set, immediately under the box that changes it. Never
+                folded away: what is in here is the whole reason the analyse
+                button above is or is not available, and hiding the cause of a
+                disabled control behind a disclosure is how the first version
+                of this screen confused people. */}
+            <div style={{ marginTop: 14 }}>
               <Videos
                 items={history}
                 loading={!meta?.slots}
@@ -576,23 +506,40 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
                 onOpen={toggleVideo}
                 onDelete={setConfirmDelete}
               />
-            )}
+            </div>
+          </div>
 
-            {/* Quiet, and last. Destroying work should be findable without
-                being the thing your eye lands on. */}
-            {built && (
+          {/* ── WHY WHAT WE LEARNED IS NOT ON THIS PAGE ──────────────────
+              There used to be a panel here listing the openings, closings,
+              signature phrases, stance, pacing and audience the analysis found.
+              It read well and it was a mistake. Assembled, those lines ARE a
+              working style prompt for this creator: the one asset here that
+              cost a paid model call over their own videos, printed on screen
+              ready to be copied into a free chat assistant. A product whose
+              value is "it sounds like you" cannot hand over the description of
+              how they sound.
+
+              The server no longer sends it either (see shapeProfile in
+              backend/routes/script.js), because hiding a field the API still
+              returns is not hiding it. What stays is the part a creator
+              genuinely needs: whether it is built, from how many videos, and
+              in which language. */}
+          {/* Quiet, and last. Destroying work should be findable without being
+              the thing your eye lands on. */}
+          {built && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
               <button
                 onClick={() => setConfirmVoiceDelete(true)}
                 style={{
-                  marginTop: 14, border: "none", background: "none", padding: 0,
+                  border: "none", background: "none", padding: 0,
                   fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", color: "var(--ink-mute)",
                   cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3,
                 }}
               >
                 Delete this voice
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {openVideo && (
@@ -650,17 +597,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
           </p>
         </ConfirmDialog>
       )}
-    </div>
-  );
-}
-
-function VoiceRow({ label, children }) {
-  return (
-    <div>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--ink-mute)", marginBottom: 3 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)" }}>{children}</div>
     </div>
   );
 }

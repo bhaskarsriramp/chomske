@@ -173,8 +173,7 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
       success: true,
       profiles: profiles.map(withLabels),
       profile: withLabels(profiles.find((p) => p.id === String(profile._id)) || null),
-      // The full analysis, for the "here's what we learned" panel. Only ever
-      // returned from the call that produced it, the list endpoint stays small.
+      // The summary only, same as GET /script/voice. The analysis stays here.
       voice: shapeVoice(voice),
     });
   } catch (err) {
@@ -247,6 +246,8 @@ function withLabels(p) {
 }
 
 /** The learned detail, for the panel that shows what an analysis found. */
+/** The same summary the voice endpoint returns. See shapeProfile in
+ *  routes/script.js for why the analysis itself does not leave the server. */
 function shapeVoice(v) {
   if (!v) return null;
   return {
@@ -254,19 +255,6 @@ function shapeVoice(v) {
     language: v.language || "",
     language_label: v.language_label || "",
     confidence: v.confidence || "thin",
-    opening_patterns: v.opening_patterns || [],
-    sample_openings: v.sample_openings || [],
-    closing_patterns: v.closing_patterns || [],
-    sample_closings: v.sample_closings || [],
-    signature_phrases: v.signature_phrases || [],
-    recurring_moves: v.recurring_moves || [],
-    narration_arc: v.narration_arc || "",
-    vocabulary_notes: v.vocabulary_notes || "",
-    sentiment: v.sentiment || "",
-    pacing: v.pacing || "",
-    audience: v.audience || "",
-    topics: v.topics || [],
-    avoid: v.avoid || [],
     built_at: v.built_at,
   };
 }
