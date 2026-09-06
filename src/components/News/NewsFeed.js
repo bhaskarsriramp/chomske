@@ -217,6 +217,14 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
     // doing the work for Finance while Finance shows nothing new.
     const forCat = cat;
     const mine = () => catRef.current === forCat;
+    // ── WHAT IS ON SCREEN BEFORE THIS FETCH ─────────────────────────────────
+    // Captured here, spent after the read. NEW means "arrived in the latest
+    // batch", so the previous batch does have to stop wearing it, but only
+    // once there is a new batch to tell it apart from.
+    const beforeKeys = new Set(
+      refresh && mine() ? itemsRef.current.map(seenKey).filter(Boolean) : []
+    );
+
     // `quiet` is for reads nobody asked for, a live update arriving because a
     // pass finished somewhere else. The list dims while `busy`, and dimming the
     // page under someone who is reading it, to deliver news they did not request,
@@ -225,27 +233,6 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
     setError("");
     try {
       if (refresh) {
-        // ── THE BATCH BEING REPLACED STOPS BEING NEW ──────────────────────
-        // NEW used to mean "you have not opened this", which is a fact about
-        // the creator and never expires on its own, so a story they scrolled
-        // past this morning was still wearing the badge tonight, sitting under
-        // a timestamp reading 14h. The badge and the timestamp were describing
-        // different things and the badge was losing.
-        //
-        // It now means "this arrived in the latest batch". Everything on screen
-        // when a fetch starts has, by definition, already been offered; marking
-        // it read here is what leaves the badge free to mean the one thing a
-        // creator actually wants it to mean when the new cards land.
-        //
-        // Marked BEFORE the fetch, so a story that arrives during it is not
-        // caught by its own refresh. Awaited, so the re-read below sees the
-        // marks rather than racing them. A failure is not worth a word: the
-        // worst case is a badge that lingers one cycle longer.
-        const shown = mine() ? itemsRef.current.map(seenKey).filter(Boolean) : [];
-        if (shown.length) {
-          try { await api.post("/news/seen", { stories: shown }); } catch { /* badges only */ }
-        }
-
         setRanking(true);
         try {
           await api.post(
@@ -303,8 +290,34 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
       if (!mine()) return [];
 
       const next = data.items || [];
-      setItems(next);
-      itemsRef.current = next;
+
+      // ── RETIRE THE OLD BATCH ONLY IF A NEW ONE ARRIVED ────────────────────
+      // This used to happen BEFORE the fetch, on the reasoning that anything
+      // already on screen has already been offered. That is true, and it made
+      // the ordinary case actively worse. Most fetches bring in coverage that
+      // joins clusters already in the feed: source counts go up, no card is
+      // added, and the creator was left with the same list and every NEW badge
+      // stripped off it. A fetch that found nothing to show moved the screen
+      // BACKWARDS, which is indistinguishable from a broken pipeline, and is
+      // exactly what opening a second or third category looked like.
+      //
+      // So the previous batch is retired only when there is a new batch to
+      // distinguish it from. Marked locally as well as on the server so the
+      // badges are right on THIS render rather than on some later read, and
+      // not awaited: a badge is never worth holding the feed for.
+      let shaped = next;
+      if (refresh && beforeKeys.size) {
+        const arrived = next.some((it) => !beforeKeys.has(seenKey(it)));
+        if (arrived) {
+          api.post("/news/seen", { stories: [...beforeKeys] }).catch(() => {});
+          shaped = next.map((it) =>
+            beforeKeys.has(seenKey(it)) ? { ...it, seen: true } : it
+          );
+        }
+      }
+
+      setItems(shaped);
+      itemsRef.current = shaped;
       setWidened(wide);
       setCheckedAt(data.checked_at || null);
       setFeedCats(data.categories || []);
@@ -313,7 +326,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
       // "fresh enough" would suppress the one fetch most likely to help.
       setStale(!!data.stale || wide);
       setSourceCount(data.sources_checked || 0);
-      return next;
+      return shaped;
     } catch (err) {
       if (!mine()) return [];
       setError(errorMessage(err, "Couldn't load today's topics."));
