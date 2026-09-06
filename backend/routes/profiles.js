@@ -19,6 +19,7 @@ import express from "express";
 import mongoose from "mongoose";
 import Transcript from "../models/Transcript.js";
 import Script from "../models/Script.js";
+import VoiceProfile from "../models/VoiceProfile.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 import {
   listProfiles, ensureProfile, resolveProfile, createProfile, updateProfile,
@@ -179,6 +180,42 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("[profiles] analyse failed:", err);
     return res.status(500).json({ success: false, message: err.message || "Couldn't analyse this voice." });
+  }
+});
+
+/**
+ * DELETE /profiles/:id/voice, throw away this channel's voice analysis.
+ *
+ * The VIDEOS stay. That is the whole point of having this separate from
+ * deleting the channel: the thing a creator wants to undo is usually the
+ * analysis, not the hour they spent collecting links. Built from the wrong
+ * videos, built from one video when they meant to add three, built before they
+ * deleted the odd one out: all of those are fixed by removing the analysis and
+ * running it again over the set they actually want.
+ *
+ * Scripts already written keep working. They carry their own copy of the voice
+ * they were written in, so deleting the analysis cannot reach back and change
+ * anything a creator has already paid for.
+ */
+router.delete("/:id/voice", authenticateToken, async (req, res) => {
+  try {
+    const { profile } = await resolveProfile(req.user.id, req.params.id);
+    const { deletedCount } = await VoiceProfile.deleteMany({
+      user: req.user.id,
+      profile: profile._id,
+    });
+
+    const profiles = await listProfiles(req.user.id);
+    return res.json({
+      success: true,
+      // False when there was nothing to delete. The caller treats that as done
+      // rather than as an error: the end state they asked for is the end state.
+      deleted: deletedCount > 0,
+      profiles: profiles.map(withLabels),
+    });
+  } catch (err) {
+    console.error("[profiles] voice delete failed:", err);
+    return res.status(500).json({ success: false, message: "Couldn't delete this voice." });
   }
 });
 

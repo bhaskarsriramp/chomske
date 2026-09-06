@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import api, { errorMessage } from "../../api";
 import ScriptPanel from "./ScriptPanel";
 import { sourceLabel, timeAgo } from "./newsUtils";
+import Chevron from "../Shell/Chevron";
 import { categoryColor } from "../../theme";
 
 /**
@@ -389,35 +390,6 @@ function CategoryChip({ id, label }) {
       <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: c.solid }} />
       {label}
     </span>
-  );
-}
-
-/**
- * The open/shut marker on the sources header.
- *
- * Points down when the list is shut and up when it is open, so the arrow reads
- * as what the next click does rather than as decoration.
- */
-function Chevron({ open }) {
-  return (
-    <svg
-      aria-hidden="true"
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{
-        flexShrink: 0, color: "var(--ink-mute)",
-        transform: open ? "rotate(180deg)" : "none",
-        transition: "transform .16s ease",
-      }}
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
   );
 }
 

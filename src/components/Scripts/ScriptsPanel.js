@@ -3,6 +3,7 @@ import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton, { SkeletonText } from "../Shell/Skeleton";
 import { timeAgo, sourceLabel } from "../News/newsUtils";
+import Chevron from "../Shell/Chevron";
 import { categoryColor, cardBackground } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
 
@@ -306,6 +307,7 @@ function StatusMark({ status }) {
 
 function ScriptDetail({ script, onClose, compact }) {
   const [copied, setCopied] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   function copy() {
     if (!script.text) return;
@@ -455,34 +457,69 @@ function ScriptDetail({ script, onClose, compact }) {
           </div>
         )}
 
+        {/* ── Written from ────────────────────────────────────────────────
+            Shut by default, and the same control as the sources list under a
+            story in Topics (see News/StoryDetail.js). A script written from
+            eight outlets pushes a list that long under the thing a creator
+            actually opened this screen to read, and the count in the header is
+            what most of them came for. The rows are for the one who wants to
+            check a number before saying it out loud. */}
         {script.sources?.length > 0 && (
           <div>
-            <SectionLabel>Written from · {script.sources.length}</SectionLabel>
-            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-              {script.sources.map((c, i) => (
-                <a
-                  key={`${c.url}-${i}`}
-                  href={c.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="hg-row"
-                  style={{
-                    display: "block", padding: "12px 14px", borderRadius: 10,
-                    border: "1px solid var(--line)", background: "var(--card)", textDecoration: "none",
-                  }}
-                >
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>
-                    {c.source ? sourceLabel(c.source) : hostOf(c.url)}
-                  </div>
-                  <div style={{ fontSize: 14, lineHeight: 1.5, color: "var(--ink-body)" }}>
-                    {c.title || c.url}
-                  </div>
-                </a>
-              ))}
-            </div>
-            <p style={{ fontSize: 12, color: "var(--ink-mute)", margin: "12px 0 0", lineHeight: 1.6 }}>
-              Every fact in the script came from these. Check any number before you say it.
-            </p>
+            <button
+              type="button"
+              onClick={() => setSourcesOpen((v) => !v)}
+              aria-expanded={sourcesOpen}
+              aria-controls="hg-script-sources"
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                gap: 12, width: "100%", padding: "0 0 9px", margin: "0 0 11px",
+                // Reset first, then the one edge that stays. React writes these
+                // in key order, so a blanket `border` after `borderBottom`
+                // would erase it.
+                border: "none", borderBottom: "1px solid var(--line)",
+                background: "none", textAlign: "left", cursor: "pointer",
+                fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
+                textTransform: "uppercase", color: "var(--ink-mute)",
+                fontFamily: "inherit",
+              }}
+            >
+              <span>Written from · {script.sources.length}</span>
+              <Chevron open={sourcesOpen} />
+            </button>
+
+            {sourcesOpen && (
+              <div id="hg-script-sources">
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {script.sources.map((c, i) => (
+                    <a
+                      key={`${c.url}-${i}`}
+                      href={c.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hg-row"
+                      style={{
+                        display: "block", padding: "12px 14px", borderRadius: 10,
+                        border: "1px solid var(--line)", background: "var(--card)", textDecoration: "none",
+                      }}
+                    >
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>
+                        {c.source ? sourceLabel(c.source) : hostOf(c.url)}
+                      </div>
+                      <div style={{ fontSize: 14, lineHeight: 1.5, color: "var(--ink-body)" }}>
+                        {c.title || c.url}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+
+                {/* Inside the disclosure, because "these" is the list. Under a
+                    shut header it would be pointing at nothing. */}
+                <p style={{ fontSize: 12, color: "var(--ink-mute)", margin: "12px 0 0", lineHeight: 1.6 }}>
+                  Every fact in the script came from these. Check any number before you say it.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

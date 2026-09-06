@@ -1,5 +1,8 @@
+import { useState, useRef, useEffect } from "react";
 import { useProfiles } from "../../state/ProfileContext";
 import { categoryColor } from "../../theme";
+import NewProfileDialog from "../Profile/NewProfileDialog";
+import Chevron from "./Chevron";
 
 /**
  * The app bar: which channel you are working in, on every screen.
@@ -14,6 +17,16 @@ import { categoryColor } from "../../theme";
  * So it moved up here, above everything, where it is simply always true. The
  * per-screen pickers are gone: one control, one place, never two answers.
  *
+ * ── THE NAME IS THE CONTROL ─────────────────────────────────────────────────
+ * It used to be the word "PROFILE" beside a tinted chip, which spent the most
+ * valuable strip of the screen on a label nobody needed. What the channel is
+ * called already says what it is; the word in front of it said nothing twice.
+ *
+ * So the name IS the button now, with one chevron to say it opens. The menu
+ * behind it always has something to offer, which is the other half of the fix:
+ * with one channel it offers to make a second, and with several it lists them.
+ * A control that is sometimes dead teaches people to stop trying it.
+ *
  * ── EXCEPT ON PROFILE ───────────────────────────────────────────────────────
  * The Profile screen is where channels are created, renamed and switched, and
  * it shows all of them as cards with the active one marked. A bar above it
@@ -21,17 +34,45 @@ import { categoryColor } from "../../theme";
  * already is. See Dashboard.js, which does not mount this there.
  */
 export default function TopBar({ isNarrow }) {
-  const { profiles, active, activeId, setActive } = useProfiles();
+  const { profiles, active, activeId, setActive, refresh, max } = useProfiles();
+
+  const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const wrapRef = useRef(null);
+  const buttonRef = useRef(null);
+
+  // Shut on a click anywhere else and on Escape. Both are what a menu is
+  // expected to do, and a menu that can only be dismissed by picking something
+  // is a menu people are afraid to open.
+  useEffect(() => {
+    if (!open) return;
+
+    const onDown = (e) => {
+      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      buttonRef.current?.focus();
+    };
+
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   // Nothing to say yet. Rendering an empty bar during the first load would push
   // the page down and then let it snap back.
   if (!active) return null;
 
-  const many = profiles.length > 1;
-  // The channel's own first category colour. It costs nothing and makes the two
+  // The channel's own first category colour. It costs nothing and makes the
   // channels distinguishable at a glance rather than by reading, which is the
   // whole point of a thing you are meant to notice without looking at it.
   const col = categoryColor(active.categories?.[0]);
+  const canAdd = profiles.length < (max || 1);
 
   return (
     <div
@@ -44,61 +85,146 @@ export default function TopBar({ isNarrow }) {
         background: "var(--card)",
       }}
     >
-      <span
-        style={{
-          fontSize: 11, fontWeight: 700, letterSpacing: "0.11em",
-          textTransform: "uppercase", color: "var(--ink-mute)", whiteSpace: "nowrap",
-        }}
-      >
-        Profile
-      </span>
-
-      {many ? (
-        <span style={{ position: "relative", display: "inline-flex", alignItems: "center", minWidth: 0 }}>
-          <span
-            aria-hidden="true"
-            style={{
-              position: "absolute", left: 11, width: 7, height: 7, borderRadius: "50%",
-              background: col.solid, pointerEvents: "none",
-            }}
-          />
-          {/* A native select: on a phone this opens as the platform wheel, and it
-              works with a screen reader without a single aria attribute. */}
-          <select
-            value={activeId || ""}
-            onChange={(e) => setActive(e.target.value)}
-            aria-label="Working in"
-            style={{
-              fontSize: 13.5, fontWeight: 650, fontFamily: "inherit",
-              color: "var(--ink)", background: "var(--card)",
-              border: "1px solid var(--line)", borderRadius: 9,
-              padding: "7px 10px 7px 25px",
-              cursor: "pointer", outline: "none",
-              maxWidth: isNarrow ? 190 : 260, minWidth: 0, textOverflow: "ellipsis",
-            }}
-          >
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-        </span>
-      ) : (
-        // One channel: still shown, never as a dropdown. A select with a single
-        // option is a control that does nothing, and offering it teaches people
-        // to stop trying the ones that do.
-        <span
+      <div ref={wrapRef} style={{ position: "relative", minWidth: 0 }}>
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={`Working in ${active.name}. Change channel`}
+          className="hg-row"
           style={{
-            display: "inline-flex", alignItems: "center", gap: 7,
-            fontSize: 13.5, fontWeight: 650, color: "var(--ink)",
-            padding: "6px 12px", borderRadius: 999,
-            background: col.tint, border: `1px solid ${col.line}`,
-            minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            display: "inline-flex", alignItems: "center", gap: 8, maxWidth: isNarrow ? 210 : 300,
+            minWidth: 0, padding: "7px 10px 7px 12px", borderRadius: 10,
+            border: `1px solid ${open ? "#D0D0D0" : "transparent"}`,
+            background: open ? "#F4F4F4" : "transparent",
+            fontFamily: "inherit", cursor: "pointer",
           }}
         >
-          <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", background: col.solid, flexShrink: 0 }} />
-          {active.name}
-        </span>
+          <span
+            aria-hidden="true"
+            style={{ width: 8, height: 8, borderRadius: "50%", background: col.solid, flexShrink: 0 }}
+          />
+          <span
+            style={{
+              fontSize: 14, fontWeight: 650, color: "var(--ink)", minWidth: 0,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}
+          >
+            {active.name}
+          </span>
+          <Chevron open={open} />
+        </button>
+
+        {open && (
+          <div
+            role="menu"
+            aria-label="Channels"
+            className="hg-rise"
+            style={{
+              position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 60,
+              minWidth: 240, maxWidth: "min(320px, calc(100vw - 28px))",
+              padding: 6, borderRadius: 12,
+              background: "var(--card)", border: "1px solid var(--line)",
+              boxShadow: "0 24px 50px -24px rgba(15,15,15,.4)",
+            }}
+          >
+            {/* Listed only when there is a choice to make. One channel plus a
+                row saying so is a list of one, which reads as a control that
+                does nothing. */}
+            {profiles.length > 1 && (
+              <>
+                <MenuLabel>Switch to</MenuLabel>
+                {profiles.map((p) => {
+                  const c = categoryColor(p.categories?.[0]);
+                  const on = p.id === activeId;
+                  return (
+                    <button
+                      key={p.id}
+                      role="menuitemradio"
+                      aria-checked={on}
+                      onClick={() => { setActive(p.id); setOpen(false); }}
+                      className="hg-row"
+                      style={{
+                        display: "flex", alignItems: "center", gap: 9, width: "100%",
+                        padding: "9px 10px", borderRadius: 9, border: "none",
+                        background: on ? "#F4F4F4" : "transparent",
+                        textAlign: "left", cursor: "pointer", fontFamily: "inherit",
+                      }}
+                    >
+                      <span
+                        aria-hidden="true"
+                        style={{ width: 8, height: 8, borderRadius: "50%", background: c.solid, flexShrink: 0 }}
+                      />
+                      <span
+                        style={{
+                          flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: on ? 650 : 500,
+                          color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}
+                      >
+                        {p.name}
+                      </span>
+                      {on && (
+                        <span aria-hidden="true" style={{ fontSize: 13, color: "var(--made)", flexShrink: 0 }}>✓</span>
+                      )}
+                    </button>
+                  );
+                })}
+                <div style={{ height: 1, background: "var(--line)", margin: "6px 4px" }} />
+              </>
+            )}
+
+            {canAdd ? (
+              <button
+                role="menuitem"
+                onClick={() => { setOpen(false); setAdding(true); }}
+                className="hg-row"
+                style={{
+                  display: "flex", alignItems: "center", gap: 9, width: "100%",
+                  padding: "9px 10px", borderRadius: 9, border: "none", background: "transparent",
+                  textAlign: "left", cursor: "pointer", fontFamily: "inherit",
+                  fontSize: 13.5, fontWeight: 600, color: "var(--ink)",
+                }}
+              >
+                <span aria-hidden="true" style={{ fontSize: 15, lineHeight: 1, color: "var(--ink-mute)" }}>+</span>
+                Add channel
+              </button>
+            ) : (
+              <p style={{ fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.5, margin: 0, padding: "8px 10px" }}>
+                {max} channels is the limit.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {adding && (
+        <NewProfileDialog
+          onCancel={() => setAdding(false)}
+          onCreated={async (created) => {
+            setAdding(false);
+            await refresh();
+            // Switch to it straight away: they made it to work in it, and the
+            // next video or script has to land in the right place.
+            if (created?.id) setActive(created.id);
+          }}
+        />
       )}
+    </div>
+  );
+}
+
+function MenuLabel({ children }) {
+  return (
+    <div
+      style={{
+        fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em",
+        textTransform: "uppercase", color: "var(--ink-mute)",
+        padding: "6px 10px 4px",
+      }}
+    >
+      {children}
     </div>
   );
 }

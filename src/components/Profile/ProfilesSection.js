@@ -106,7 +106,7 @@ export default function ProfilesSection({ isPhone, onGoVoice }) {
               color: "var(--ink-body)", cursor: "pointer",
             }}
           >
-            + Add profile
+            + Add channel
           </button>
         )}
       </div>
