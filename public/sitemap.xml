@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Every URL here is a real address that works cold, with no app state behind it
+  (see the route table in src/App.js). The legal pages are listed deliberately:
+  a payment provider verifying us needs to reach them, and so does anyone
+  chasing a refund.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://trylipi.online/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url><loc>https://trylipi.online/contact</loc><priority>0.4</priority></url>
+  <url><loc>https://trylipi.online/privacy</loc><priority>0.3</priority></url>
+  <url><loc>https://trylipi.online/terms</loc><priority>0.3</priority></url>
+  <url><loc>https://trylipi.online/refunds</loc><priority>0.3</priority></url>
+  <url><loc>https://trylipi.online/shipping</loc><priority>0.3</priority></url>
+</urlset>

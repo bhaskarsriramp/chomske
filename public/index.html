@@ -7,20 +7,65 @@
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" href="%PUBLIC_URL%/logo192.png" />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
-    <title>Lipi · know what to post today</title>
+    <!-- ── TITLE AND DESCRIPTION ───────────────────────────────────────────
+         Two different jobs, which is why they are not the same sentence.
+
+         The <title> is a search result. Nobody searches "know what to post
+         today". The old one described the product to someone who already
+         knew what it was. What an Indian creator actually types is some
+         arrangement of "youtube script writer", "AI script", "in Hindi", so
+         the keywords lead and the brand, which nobody is searching for yet,
+         sits at the end. 53 characters, inside the ~60 Google will render
+         before it truncates.
+
+         og:title is a shared link, not a search result. There is no keyword to
+         win there, only a reason to click, so it uses the page's own headline
+         verbatim: what the visitor will read a second later. -->
+    <title>AI YouTube Script Writer in 9 Indian Languages | Lipi</title>
     <meta
       name="description"
-      content="Lipi watches the news in your niche, ranks what is actually worth a video today, and writes the first draft in your own speaking style."
+      content="Lipi ranks the news worth a video in your niche today and writes the whole script in your own voice, Hindi, Telugu, Tamil and 6 more. 100 free credits."
     />
+    <link rel="canonical" href="https://trylipi.online/" />
+    <!-- www and http both 301 to this apex (see deploy/nginx.conf); the
+         canonical says the same thing to a crawler that arrived some other way. -->
+    <meta name="robots" content="index, follow, max-image-preview:large" />
 
-    <meta property="og:title" content="Lipi · know what to post today" />
+    <meta property="og:site_name" content="Lipi" />
+    <meta property="og:title" content="Never spend more than 60s on a script" />
     <meta
       property="og:description"
-      content="Today's topics, ranked for your niche, with a script already written in the way you actually talk."
+      content="Lipi watches the news in your niche all day, ranks the handful of stories actually worth a video, and writes the script in your own speaking style and language."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://trylipi.online" />
-    <meta name="twitter:card" content="summary_large_image" />
+    <meta property="og:url" content="https://trylipi.online/" />
+    <meta property="og:locale" content="en_IN" />
+    <!-- A square logo, because that is the only social image that exists. The
+         card type matches it on purpose: summary_large_image was declared here
+         with no og:image at all, which renders as no card, and pointing it at a
+         512x512 logo would crop the top and bottom off to make 2:1. A real
+         1200x630 image is the upgrade, and then this becomes summary_large_image. -->
+    <meta property="og:image" content="https://trylipi.online/logo512.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta property="og:image:alt" content="Lipi" />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- Structured data. Deliberately only claims things the page itself says:
+         no ratings we do not have, no price, no invented review counts. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Lipi",
+        "url": "https://trylipi.online/",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Web",
+        "description": "Lipi tells Indian YouTube creators what is worth covering today and writes the script in their own voice, in their own language.",
+        "inLanguage": ["hi", "te", "ta", "mr", "kn", "bn", "gu", "ml", "pa", "en"],
+        "publisher": { "@type": "Organization", "name": "Betafounder Enterprises" }
+      }
+    </script>
 
     <!-- ── THE CRITICAL PATH ──────────────────────────────────────────────────
          Everything in this head is ordered by what the first paint actually

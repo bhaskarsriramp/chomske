@@ -59,6 +59,45 @@ const BRIEF_LIMIT = parseInt(process.env.NEWS_BRIEF_LIMIT || "15", 10);
 const RANK_ON_SCHEDULE =
   String(process.env.NEWS_RANK_ON_SCHEDULE || "false").toLowerCase() === "true";
 
+// ── THE QUIET WINDOW ─────────────────────────────────────────────────────────
+// Indian creators work afternoons and evenings; markets channels publish after
+// the 15:30 IST close. Between midnight and dawn essentially nobody opens the
+// product, and the scheduled pass was still running every fifteen minutes:
+// fanning out across a dozen feeds, and writing hundreds of rows the collector
+// then recognised as duplicates. One real pass logged 389 collected, 361 of
+// them already known.
+//
+// So the clock stops overnight. This does NOT starve the morning feed: the
+// first creator to open a category triggers an automatic fetch, which is
+// user-initiated and therefore runs the paid source and ranks immediately.
+// Anyone up at 3am gets the same, because that path is driven by a person
+// rather than by this timer.
+//
+// It saves no API money on its own now that the paid source is user-only. What
+// it saves is a third of a day of pointless fan-out, duplicate writes and Atlas
+// IOPS. Set NEWS_QUIET_START_IST = NEWS_QUIET_END_IST to switch it off.
+const QUIET_START = clampHour(process.env.NEWS_QUIET_START_IST, 0);
+const QUIET_END = clampHour(process.env.NEWS_QUIET_END_IST, 7);
+
+function clampHour(v, fallback) {
+  const n = parseInt(v, 10);
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback;
+}
+
+/** IST is UTC+5:30 with no daylight saving, so this is arithmetic, not a library. */
+function istHour(now = new Date()) {
+  return new Date(now.getTime() + (5 * 60 + 30) * 60000).getUTCHours();
+}
+
+/** Handles a window that wraps midnight, which the default one does. */
+function inQuietHours(now = new Date()) {
+  if (QUIET_START === QUIET_END) return false;
+  const h = istHour(now);
+  return QUIET_START < QUIET_END
+    ? h >= QUIET_START && h < QUIET_END
+    : h >= QUIET_START || h < QUIET_END;
+}
+
 /**
  * Try to claim the next run. Atomic: the update only matches when the existing
  * lock has expired, so exactly one instance can win.
@@ -329,6 +368,14 @@ async function runCategory(cat) {
 }
 
 async function runOnce() {
+  if (inQuietHours()) {
+    console.log(
+      `[news] quiet hours (${QUIET_START}:00-${QUIET_END}:00 IST), skipping the scheduled pass. ` +
+      "A creator opening the app still fetches on arrival."
+    );
+    return;
+  }
+
   const plan = await categoryPlan(INTERVAL_MIN);
   console.log(
     `[news] pass over ${plan.length} live categor${plan.length === 1 ? "y" : "ies"}: ` +

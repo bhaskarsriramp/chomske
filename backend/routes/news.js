@@ -186,7 +186,12 @@ router.get("/", authenticateToken, async (req, res) => {
       stale,
       // How many feeds a fetch would actually cover, so the banner can name a
       // real number instead of a reassuring one.
-      sources_checked: new Set(cats.flatMap((c) => allSources(c).map((s) => s.name))).size,
+      sources_checked: new Set(
+        // userInitiated, because this number describes what a FETCH covers, and
+        // a fetch is always something a person asked for. A scheduled pass runs
+        // one source fewer; see sources/index.js.
+        cats.flatMap((c) => allSources(c, { userInitiated: true }).map((s) => s.name))
+      ).size,
       // ALWAYS their full selection, not the filtered subset. The client draws a
       // category switcher from this, and echoing back only the category it just
       // asked for would collapse that switcher to one chip and strand them

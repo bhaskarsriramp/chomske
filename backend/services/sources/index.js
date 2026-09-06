@@ -31,6 +31,22 @@ import { fetchApidirectNews } from "./apidirectNews.js";
 import { getCategory } from "../categories.js";
 
 /**
+ * ── THE PAID SOURCE ONLY RUNS WHEN SOMEBODY IS THERE ─────────────────────────
+ * apidirect is the one source that costs money, and the one thing it buys is
+ * being MINUTES fresh instead of hours. That is worth paying for at the moment
+ * a creator opens the feed, and worth nothing at 3am: by the time anyone looks,
+ * a story fetched overnight is hours old anyway and the free sources have long
+ * since caught up with it.
+ *
+ * It used to run on the scheduler's clock, hourly, around the clock, for every
+ * category anyone had touched in two days. At two queries a pass that is 24 paid
+ * passes a day per category, roughly $0.38, buying freshness nobody consumed.
+ *
+ * So it is now gated on `userInitiated`, which is true on exactly two paths:
+ * the Fetch button, and the automatic fetch a stale feed triggers when a creator
+ * opens it. Both mean a person is looking at the screen right now. The free
+ * sources keep the scheduled clock and keep the feed stocked in between.
+ *
  * @param {string} categoryId
  * @param {object} opts
  * @param {boolean} opts.fast   only sources that answer in about a second. A
@@ -38,8 +54,8 @@ import { getCategory } from "../categories.js";
  *   far too long to hold a button press open, but the paid news source is a
  *   single HTTP request, so a Fetch can genuinely bring in new stories without
  *   the wait. See POST /news/refresh.
- * @param {boolean} opts.userInitiated  somebody is waiting on this, so the paid
- *   source uses its shorter gap between passes.
+ * @param {boolean} opts.userInitiated  somebody is waiting on this. Uses the
+ *   paid source's shorter gap, AND is what admits the paid source at all.
  * @returns {{name, run}[]}, run() resolves to normalized items, and is allowed
  *   to reject; the collector isolates failures per source.
  */
@@ -49,13 +65,18 @@ export function allSources(categoryId, { fast = false, userInitiated = false } =
 
   const list = [];
 
-  // The only paid source, and the only one that can be minutes fresh. First in
-  // the list because on a fast pass it is the whole list.
-  list.push({
-    name: "apidirect-news",
-    run: () => fetchApidirectNews(cat, { userInitiated }),
-  });
+  // First in the list because on a fast pass it is the whole list. Absent
+  // entirely on a scheduled pass; see the note above.
+  if (userInitiated) {
+    list.push({
+      name: "apidirect-news",
+      run: () => fetchApidirectNews(cat, { userInitiated: true }),
+    });
+  }
 
+  // `fast` exists to answer a button press quickly, and the only source quick
+  // enough is the paid one. A fast pass with nobody waiting has nothing to run,
+  // which is a caller mistake rather than a state worth serving.
   if (fast) return list;
 
   // Universal: works for any topic, no key, real freshness window.

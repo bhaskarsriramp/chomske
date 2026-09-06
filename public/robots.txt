@@ -1,0 +1,8 @@
+# Everything public is crawlable. The signed-in app is not: /app/* renders
+# nothing without a session (it redirects to /), so letting a crawler walk it
+# only spends crawl budget to arrive back at the landing page.
+User-agent: *
+Allow: /
+Disallow: /app/
+
+Sitemap: https://trylipi.online/sitemap.xml
