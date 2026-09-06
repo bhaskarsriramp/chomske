@@ -469,7 +469,7 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
             transitionDelay: ".12s",
           }}
         >
-          Chomske watches the latest news in your niche all day, ranks the
+          Lipi watches the latest news in your niche all day, ranks the
           handful of stories actually worth a video, and writes the entire
           script in your own speaking style &amp; language.
         </p>
@@ -785,7 +785,7 @@ function HeroDemo({ isMobile }) {
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}
         >
-          chomske.com/app/topics
+          trylipi.online/app/topics
         </span>
       </div>
 
@@ -1169,7 +1169,7 @@ function SceneWatching({ active }) {
   ];
 
   return (
-    <DemoFrame label="chomske.com/app/topics" tone={RED} height={252}>
+    <DemoFrame label="trylipi.online/app/topics" tone={RED} height={252}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--d-ink)" }}>What to cover today</span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: "var(--d-mute)" }}>
@@ -1891,7 +1891,7 @@ function Footer({ pad, isMobile }) {
     >
       <Logo color="var(--d-ink)" />
       <div style={{ fontSize: 12.5, color: "var(--d-mute)", textAlign: isMobile ? "left" : "right" }}>
-        © {new Date().getFullYear()} Chomske · chomske.com
+        © {new Date().getFullYear()} Lipi · trylipi.online
       </div>
     </footer>
   );

@@ -50,7 +50,7 @@ export default function BuyCredits({ rules, balance, onClose, onGranted }) {
       key: order.key_id,
       amount: order.amount,
       currency: order.currency,
-      name: "Chomske",
+      name: "Lipi",
       description: `${order.pack.label} (${order.pack.credits} credits)`,
       order_id: order.order_id,
       theme: { color: "#FF0000" },

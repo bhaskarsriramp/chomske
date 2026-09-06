@@ -1,7 +1,7 @@
 {
-  "name": "chomske-backend",
+  "name": "lipi-backend",
   "version": "1.0.0",
-  "description": "Chomske: today's topics for a creator's niche, written in their own voice.",
+  "description": "Lipi: today's topics for a creator's niche, written in their own voice.",
   "type": "module",
   "main": "server.js",
   "scripts": {

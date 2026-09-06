@@ -2,7 +2,7 @@
  * backfillCategories.js: one-time migration for the category release.
  *
  * Run once on the VM after deploying the category work:
- *   cd ~/chomske/backend && node scripts/backfillCategories.js
+ *   cd ~/lipi/backend && node scripts/backfillCategories.js
  *
  * ── WHY THIS IS NEEDED ───────────────────────────────────────────────────────
  * Two things broke for rows written before categories existed.

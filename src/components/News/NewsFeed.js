@@ -38,6 +38,11 @@ import { onNewsEvent } from "../../realtime/socket";
 // sits at the bottom where it belongs rather than distorting the top.
 const WINDOW_HOURS = 48;
 
+// How long a fetch is allowed to take. A full collection fans out across every
+// source and runs to about 90 seconds; api.js defaults to 30, which is right for
+// every other call in the app and far too short for this one.
+const REFRESH_TIMEOUT_MS = 180000;
+
 // Must stay in step with NEWS_BRIEF_MIN_SCORE on the server, which decides which
 // stories get a brief written ahead of time. When these drifted apart, a story
 // scoring exactly this much appeared here and never had a brief prepared, so it
@@ -110,6 +115,13 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // that stops THIS pane retrying in a loop when the fetch comes back with
   // nothing and the feed is therefore still stale.
   const autoTried = useRef(new Set());
+  // In flight right now. A REF and not the `autoFetching` state, and that
+  // distinction is the whole bug this replaced: `autoFetching` was a dependency
+  // of the effect that sets it, so setting it re-ran the effect, whose cleanup
+  // then marked the running fetch cancelled, and the completion handler refused
+  // to clear the banner. It said "Fetching new topics" forever, over a server
+  // that had finished a minute ago.
+  const autoRunning = useRef(false);
   // What the last fetch produced, so the button can report back instead of
   // going quiet and leaving the reader to guess whether it did anything.
   const [fetched, setFetched] = useState(null);   // null | number of new stories
@@ -210,14 +222,24 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
         setRanking(true);
         try {
-          await api.post("/news/refresh", {
-            ...(cat ? { category: cat } : {}),
-            ...(profileId ? { profile: profileId } : {}),
-            // Tells the server this was the feed's decision, not a press. It
-            // gates those separately, a person who asked is owed the attempt,
-            // a self-clearing condition is not. See POST /news/refresh.
-            ...(auto ? { auto: true } : {}),
-          });
+          await api.post(
+            "/news/refresh",
+            {
+              ...(cat ? { category: cat } : {}),
+              ...(profileId ? { profile: profileId } : {}),
+              // Tells the server this was the feed's decision, not a press. It
+              // gates those separately, a person who asked is owed the attempt,
+              // a self-clearing condition is not. See POST /news/refresh.
+              ...(auto ? { auto: true } : {}),
+            },
+            // ── WHY THIS ONE OVERRIDES THE SHARED TIMEOUT ─────────────────
+            // A cold fetch is a fan-out across a dozen sources and measured at
+            // 90 seconds in production. The shared 30s ceiling in api.js gave
+            // up a third of the way through, so the client reported failure
+            // while the server was still working, and the stories it was
+            // fetching only appeared on the next page load.
+            { timeout: REFRESH_TIMEOUT_MS },
+          );
         } catch {
           // The feed still renders everything already ranked. A failed refresh
           // is a missing update, not a broken screen.
@@ -334,24 +356,23 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
    * itself would leave them holding a spent button they never pressed.
    */
   useEffect(() => {
-    if (!loadedOnce || busy || error || !stale || autoFetching) return;
+    if (!loadedOnce || busy || error || !stale) return;
+    if (autoRunning.current) return;
 
     const key = cat || "all";
     if (autoTried.current.has(key)) return;
     autoTried.current.add(key);
 
-    let cancelled = false;
-    (async () => {
-      setAutoFetching(true);
-      try {
-        await load({ refresh: true, auto: true });
-      } finally {
-        if (!cancelled) setAutoFetching(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [loadedOnce, busy, error, stale, autoFetching, cat, load]);
+    autoRunning.current = true;
+    setAutoFetching(true);
+    // load() resolves either way; it catches its own failures and answers with
+    // an empty list. So the banner always gets taken down, which is the one
+    // thing the previous version could not promise.
+    load({ refresh: true, auto: true }).finally(() => {
+      autoRunning.current = false;
+      setAutoFetching(false);
+    });
+  }, [loadedOnce, busy, error, stale, cat, load]);
 
   /**
    * The live feed.

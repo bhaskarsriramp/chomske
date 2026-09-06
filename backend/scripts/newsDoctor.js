@@ -2,7 +2,7 @@
  * newsDoctor.js: why is the feed not showing anything new?
  *
  * Run on the VM, where the real env and the real database are:
- *   cd ~/chomske/backend && node scripts/newsDoctor.js
+ *   cd ~/lipi/backend && node scripts/newsDoctor.js
  *
  * ── WHAT IT IS FOR ───────────────────────────────────────────────────────────
  * "The top story is ten hours old" has five different causes and they look
