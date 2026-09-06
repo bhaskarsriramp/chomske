@@ -1,5 +1,5 @@
 /**
- * voiceMetrics.js — the part of a creator's voice you can COUNT.
+ * voiceMetrics.js: the part of a creator's voice you can COUNT.
  *
  * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
  * Asking a model to describe how somebody talks produces the average of every
@@ -81,7 +81,7 @@ export function sentences(text) {
 /** Word tokens, punctuation stripped, case preserved (case is style too). */
 export function words(text) {
   return String(text || "")
-    .replace(/[.,!?;:"“”'’()\[\]{}—–\-…।॥]/g, " ")
+    .replace(/[.,!?;:"“”'’()\[\]{}–\-…।॥]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
 }
@@ -162,7 +162,7 @@ function measureOne(t) {
     }
   }
 
-  // What each sentence STARTS with — connectors are the joints of a narration
+  // What each sentence STARTS with, connectors are the joints of a narration
   // and a creator reuses a very small set of them.
   const starters = new Map();
   for (const s of sents) {
@@ -199,7 +199,7 @@ function measureOne(t) {
   };
 }
 
-// Deliberately small. This is not an English stopword list for search — it only
+// Deliberately small. This is not an English stopword list for search, it only
 // removes the words that appear in Hinglish because English grammar came along
 // for the ride, never the nouns and verbs a creator chooses to keep in English.
 const STOP_EN = new Set([
@@ -344,7 +344,7 @@ export function gradeDraft(text, target) {
     drift.push(
       `English mixing is ${pc(measured.english_ratio)} but this creator uses ${pc(target.english_ratio)}. ` +
       (eGap < 0
-        ? `Put more English words back in — especially: ${(target.english_kept || []).slice(0, 10).join(", ")}.`
+        ? `Put more English words back in, especially: ${(target.english_kept || []).slice(0, 10).join(", ")}.`
         : `Too much English. Say more of it in ${target.script}.`)
     );
   }

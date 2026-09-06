@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 /**
- * NewsLock — the collector's single coordination row.
+ * NewsLock, the collector's single coordination row.
  *
  * It started life inside newsScheduler.js on the reasoning that a lease is
  * infrastructure rather than domain data. Three modules now read it (the
@@ -29,7 +29,7 @@ const NewsLockSchema = new mongoose.Schema({
   // both of those are bad in a way a stale timestamp is not.
   ranked: { type: mongoose.Schema.Types.Mixed, default: {} },
 
-  // Per-category "last time we spent money FETCHING this" — the paid apidirect
+  // Per-category "last time we spent money FETCHING this", the paid apidirect
   // news source. Same reasoning as `ranked`, and separate from it because the
   // two cost different amounts and run on different clocks: fetching is cheap
   // and wants to be recent, ranking is dearer and can wait.

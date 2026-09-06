@@ -1,5 +1,5 @@
 /**
- * Skeleton.js — the placeholder that stands in for data that has not arrived.
+ * Skeleton.js: the placeholder that stands in for data that has not arrived.
  *
  * ── WHY THIS EXISTS RATHER THAN @mui/material ────────────────────────────────
  * The API below is MUI's on purpose: `variant`, `width`, `height`, and text
@@ -8,12 +8,12 @@
  *
  * It is not the real one because this app has six dependencies and a 101KB
  * bundle. @mui/material plus its two emotion peers is roughly another 90KB
- * gzipped — doubling what a creator downloads, on a phone, in India, for one
+ * gzipped, doubling what a creator downloads, on a phone, in India, for one
  * component whose entire job is a grey box that pulses. If the rest of the app
  * ever moves to MUI, delete this file and change the imports.
  *
  * ── WHY SKELETONS AND NOT SPINNERS OR ZEROS ──────────────────────────────────
- * The dashboard used to render "—" in every metric until its request landed. A
+ * The dashboard used to render a bare dash in every metric until its request landed. A
  * placeholder that looks like a value is worse than no value: for the moment it
  * is on screen it is a claim, and someone glancing at it reads "0 scripts" and
  * believes it. A skeleton cannot be misread as data.

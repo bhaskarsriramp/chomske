@@ -1,5 +1,5 @@
 /**
- * apidirectNews.js — the only PAID source, and the only one that can be fresh.
+ * apidirectNews.js: the only PAID source, and the only one that can be fresh.
  *
  * ── WHY A PAID SOURCE EXISTS AT ALL ──────────────────────────────────────────
  * Every free source here has a floor on how new its newest item can be. Google
@@ -10,11 +10,11 @@
  * "cover it before everyone else" cannot be hours behind.
  *
  * apidirect's /v1/news/articles takes `time_published=1h` and answers with
- * articles minutes old — live-verified at 12 minutes on the first probe. That
+ * articles minutes old, live-verified at 12 minutes on the first probe. That
  * gap is the reason to spend money here.
  *
  * ── WHAT IT COSTS, AND THE THREE THINGS THAT KEEP IT SMALL ───────────────────
- * $0.008 per REQUEST — not per article — so:
+ * $0.008 per REQUEST, not per article, so:
  *
  *   1. ASK BIG, ONCE. limit=30 costs exactly what limit=1 costs. Paginating or
  *      splitting a topic into more queries is the only way to overspend here.
@@ -24,14 +24,14 @@
  *      fallback), so fifteen-minute collector ticks, four users signing in and
  *      three Fetch presses still add up to one paid pass an hour.
  *
- * At the defaults that is 2 requests an hour per category — about $0.38 a day,
+ * At the defaults that is 2 requests an hour per category, about $0.38 a day,
  * or roughly a third of what one ranking pass costs. Set APIDIRECT_NEWS_ENABLED
  * =false to turn it off entirely without a deploy; every free source keeps
  * working and the feed simply goes back to being a few hours behind.
  *
  * Failures are never fatal: no key, an exhausted key, or a bad response returns
  * [] and the collector carries on with the free sources. Which key failed and
- * why is recorded on the key's own row — see apidirectClient.markFailure.
+ * why is recorded on the key's own row, see apidirectClient.markFailure.
  */
 import { searchNewsArticles, isApidirectConfigured } from "../apidirectClient.js";
 import { claimApidirectNews } from "../newsCadence.js";
@@ -54,7 +54,7 @@ const GAP_MIN = () => Math.max(1, parseInt(process.env.APIDIRECT_NEWS_GAP_MIN ||
 
 // The gap when a person pressed Fetch new topics. Shorter, because somebody is
 // sitting there waiting and a refresh that cannot return anything new is the
-// bug this whole file was written to fix — but not zero, or the button becomes
+// bug this whole file was written to fix, but not zero, or the button becomes
 // a way to spend money by holding it down.
 const USER_GAP_MIN = () => Math.max(1, parseInt(process.env.APIDIRECT_NEWS_USER_GAP_MIN || "10", 10));
 
@@ -101,7 +101,7 @@ function queriesFor(cat) {
  * @param {object} cat  the category config from categories.js
  * @param {{ userInitiated?: boolean }} opts  a person is waiting, so use the
  *   shorter gap between paid passes
- * @returns {Promise<Array>} items in the collector's shape — [] on any problem
+ * @returns {Promise<Array>} items in the collector's shape, [] on any problem
  */
 export async function fetchApidirectNews(cat, { userInitiated = false } = {}) {
   if (!ENABLED()) return [];
@@ -110,7 +110,7 @@ export async function fetchApidirectNews(cat, { userInitiated = false } = {}) {
     // condition logged on a timer is how the line that matters gets buried.
     if (!warnedNoKey) {
       warnedNoKey = true;
-      console.warn("[apidirect-news] no key configured — skipping (free sources still run)");
+      console.warn("[apidirect-news] no key configured, skipping (free sources still run)");
     }
     return [];
   }
@@ -141,11 +141,11 @@ export async function fetchApidirectNews(cat, { userInitiated = false } = {}) {
     } catch (err) {
       failed++;
       // Loud, because this is the difference between "quiet news day" and "the
-      // paid source has been dead since Tuesday" — the exact confusion that a
+      // paid source has been dead since Tuesday", the exact confusion that a
       // silently-failing source creates.
       console.error(
         `[apidirect-news:${cat.id}] "${q}" failed: ${err.message}` +
-        (err.keyExhausted ? " — key out of credit or capped, see /stats/apidirect" : "")
+        (err.keyExhausted ? ", key out of credit or capped, see /stats/apidirect" : "")
       );
       continue;
     }

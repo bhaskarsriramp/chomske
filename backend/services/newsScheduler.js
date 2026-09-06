@@ -1,17 +1,17 @@
 /**
- * newsScheduler.js — keep the news coming in, and rank it when someone looks.
+ * newsScheduler.js: keep the news coming in, and rank it when someone looks.
  *
  * ── WHAT RUNS ON THE CLOCK, AND WHAT DOES NOT ────────────────────────────────
  * Collection does. It is free, and it is lossy to skip: Google News serves only
  * `when:1d` and HN Algolia reaches back 36 hours, so an unpolled window is gone
  * for good. It also owns `first_seen_at`, the clock behind "you are early on
- * this" — collect only when a user logs in and that timestamp starts recording
+ * this", collect only when a user logs in and that timestamp starts recording
  * when somebody happened to open the app instead of when the story broke.
  *
  * Ranking does not. It costs money, and running it ninety-six times a day per
  * category meant paying to judge stories for an empty room. It now fires from
- * ensureRanked() on sign-in — including a cookie session restore, which is what
- * "logging in" actually is most days — on Fetch, and when the feed reports that
+ * ensureRanked() on sign-in, including a cookie session restore, which is what
+ * "logging in" actually is most days, on Fetch, and when the feed reports that
  * its own newest story has aged past NEWS_STALE_HOURS. All of it sits behind a
  * ten-minute per-category throttle, and behind an existence check so an idle
  * category cannot spend that slot learning it had nothing to do.
@@ -19,13 +19,13 @@
  * Fetch also runs the ONE source cheap and fast enough to belong on a button
  * press (see fetchAndRank), so that pressing it can return a story the collector
  * has not been to look for yet. The automatic version of that press takes an
- * extra, longer claim — see claimAutoFetch — because a condition that retries
+ * extra, longer claim, see claimAutoFetch, because a condition that retries
  * itself is not the same risk as a person who clicked.
  *
  * ── WHY THERE'S A DATABASE CLAIM AND NOT JUST setInterval ────────────────────
  * Cloud Run (and anything else that autoscales) can run several instances of
  * this process at once. A bare interval in each of them would fetch every source
- * N times and, worse, spend N ranking calls — the cost multiplies silently with
+ * N times and, worse, spend N ranking calls, the cost multiplies silently with
  * traffic, which is the exact class of bug that makes an API bill surprising.
  *
  * So the interval only *attempts* a run; an atomic findOneAndUpdate decides who
@@ -44,8 +44,8 @@ import {
 
 const INTERVAL_MIN = parseInt(process.env.NEWS_POLL_MINUTES || "15", 10);
 
-// Briefs written per category per pass. Matched to MAX_CARDS in NewsFeed.js —
-// the number of cards the feed will actually show — so every visible story is
+// Briefs written per category per pass. Matched to MAX_CARDS in NewsFeed.js,
+// the number of cards the feed will actually show, so every visible story is
 // readable the moment it is opened rather than generating a brief with the
 // reader waiting on it. Raise both together or the tail of the feed pays for a
 // brief on every single open. Ranking is on-demand now, so this fires a few
@@ -88,7 +88,7 @@ async function claim(leaseMs) {
  * Collect one category. Free, and the half that must never be skipped.
  *
  * Google News only serves `when:1d` and HN Algolia only reaches back 36 hours,
- * so a window we do not poll is gone permanently — there is no way to ask for
+ * so a window we do not poll is gone permanently, there is no way to ask for
  * yesterday later. That is why collection stayed on a clock when ranking moved
  * off it: skipping a paid pass costs nothing but a few seconds of staleness,
  * while skipping a free one loses stories that cannot be recovered at any price.
@@ -121,7 +121,7 @@ async function collectCategory(cat) {
  */
 export async function ensureRanked(cat, { force = false, awaitBriefs = true } = {}) {
   // ── ONE PASS PER CATEGORY AT A TIME ───────────────────────────────────────
-  // claimRank is a COOLDOWN — "not too often" — and a forced pass is allowed to
+  // claimRank is a COOLDOWN, "not too often", and a forced pass is allowed to
   // step over it, which is right: a fetch that just brought news in must not be
   // held back by a slot taken thirty seconds earlier. What neither of those is,
   // is a MUTEX, and the difference started costing money the moment sign-in
@@ -137,7 +137,7 @@ export async function ensureRanked(cat, { force = false, awaitBriefs = true } = 
   // carrying genuinely new rows still gets to do it.
   //
   // In-process only. Across instances the Redis claims still apply, and the
-  // window this closes — two triggers from one person's page load — is by its
+  // window this closes, two triggers from one person's page load, is by its
   // nature on one instance.
   const running = inFlight.get(cat);
   if (running) await running.catch(() => {});
@@ -151,7 +151,7 @@ export async function ensureRanked(cat, { force = false, awaitBriefs = true } = 
   // ── WHY THE CALLER DOES NOT WAIT FOR BRIEFS ───────────────────────────────
   // Ranking is what puts cards on the page; briefs are what fills one card once
   // it is opened. Awaiting both meant a creator watched a spinner through five
-  // to ten sequential Gemini calls for prose they had not asked to read yet —
+  // to ten sequential Gemini calls for prose they had not asked to read yet,
   // the cards were ready and being withheld.
   //
   // Nothing is lost by letting them run on: a story opened before its brief
@@ -193,11 +193,11 @@ function rankAndBrief(cat, { force }) {
     // of a Mongo query and no tokens. The claim underneath does not: it hands
     // out one ten-minute slot per category whether or not the pass that took it
     // did anything. So a page load arriving on an idle category used to spend
-    // the slot learning there was nothing, and the fetch a minute later — the
-    // one carrying actual news — was told to wait nine.
+    // the slot learning there was nothing, and the fetch a minute later, the
+    // one carrying actual news, was told to wait nine.
     //
     // Wrapped because ensureRanked has never thrown and callers are written that
-    // way — fetchAndRank does not guard it, and POST /news/refresh would turn a
+    // way, fetchAndRank does not guard it, and POST /news/refresh would turn a
     // transient Mongo blip into a refresh that reported nothing happened. An
     // unreadable answer here means "assume there is work": the claim below is
     // still the thing standing between that assumption and a bill.
@@ -267,8 +267,8 @@ function rankAndBrief(cat, { force }) {
  * minute of fan-out and the scheduled collector had already been. Both halves of
  * that were true and the conclusion was still wrong: pressing a button named
  * "Fetch new topics" could not, under any circumstance, produce a topic that was
- * not already in the database. On a quiet collector — a restart, a cold
- * category, a source that started failing — the button was a no-op with a
+ * not already in the database. On a quiet collector, a restart, a cold
+ * category, a source that started failing, the button was a no-op with a
  * reassuring spinner, and the honest answer to "why is the top story ten hours
  * old" was invisible from the outside.
  *
@@ -279,7 +279,7 @@ function rankAndBrief(cat, { force }) {
  *
  * Ranking is FORCED when that fetch actually brought something in, and only
  * then. Otherwise a creator pays for fresh articles and still sees yesterday's
- * feed, because the ten-minute ranking cooldown was holding the scores back —
+ * feed, because the ten-minute ranking cooldown was holding the scores back,
  * which is the same bug one layer down. Nothing runs away: the fetch has its own
  * per-category gap, so the second press inside ten minutes inserts nothing, and
  * a forced rank cannot follow.
@@ -319,7 +319,7 @@ export async function fetchAndRank(cat) {
  */
 async function runCategory(cat) {
   // Skips the network entirely when the scheduled collector has been here
-  // recently — collection is over a minute of fan-out across a dozen sources,
+  // recently, collection is over a minute of fan-out across a dozen sources,
   // and repeating it because somebody signed in gains nothing.
   const fresh = await isFreshlyCollected(cat);
   const collected = fresh ? { inserted: 0, skipped: true } : await collectCategory(cat);
@@ -366,7 +366,7 @@ async function runOnce() {
       totalUsd += row.usd || 0;
       summary.push({ ...row, tier });
     } catch (err) {
-      // One category failing must never stop the others — the same reasoning as
+      // One category failing must never stop the others, the same reasoning as
       // Promise.allSettled inside the collector, one level up.
       console.error(`[news:${cat}] pass failed:`, err.message);
       summary.push({ category: cat, tier, error: err.message });
@@ -410,7 +410,7 @@ export function kickoffCategories(cats) {
     for (const cat of ids) {
       try {
         if (!(await claimKickoff(cat))) continue;   // someone else is already on it
-        console.log(`[news:${cat}] kickoff — a user just returned`);
+        console.log(`[news:${cat}] kickoff, a user just returned`);
         await runCategory(cat);
       } catch (err) {
         console.error(`[news:${cat}] kickoff failed:`, err.message);
@@ -441,7 +441,7 @@ export function startNewsScheduler() {
   setTimeout(tick, 20_000);
   setInterval(tick, intervalMs);
 
-  console.log(`[news] scheduler on — every ${INTERVAL_MIN} min`);
+  console.log(`[news] scheduler on, every ${INTERVAL_MIN} min`);
 }
 
 export default { startNewsScheduler, kickoffCategories, ensureRanked, fetchAndRank };

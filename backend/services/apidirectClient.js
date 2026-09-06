@@ -1,20 +1,20 @@
 /**
- * apidirectClient.js — read-only wrapper around apidirect.io.
+ * apidirectClient.js: read-only wrapper around apidirect.io.
  *
  * Two endpoints are used:
  *   GET /v1/youtube/video?url=<watch url>      →  video.duration (integer SECONDS)
  *   GET /v1/news/articles?query=…              →  fresh news, minutes old
  *
  * The duration is why this file first existed. Voice profiling only accepts
- * short-form videos, and there is no way to know a video's length from its URL —
+ * short-form videos, and there is no way to know a video's length from its URL,
  * so the check has to happen before we pay Gemini to read it. Rejecting a
  * 40-minute video for $0.005 instead of transcribing it for ₹60 is the trade.
  *
  * News articles came later, for a different reason: every free source in
  * services/sources has a floor on how fresh it can be (Google News RSS serves a
  * `when:1d` bucket, HN Algolia reaches back 36 hours), and this endpoint answers
- * `time_published=1h` with articles minutes old. It costs $0.008 per REQUEST —
- * not per result — so one call with limit=30 is one eighth of a cent for thirty
+ * `time_published=1h` with articles minutes old. It costs $0.008 per REQUEST,
+ * not per result, so one call with limit=30 is one eighth of a cent for thirty
  * stories. See sources/apidirectNews.js for how often it is allowed to run.
  *
  * Auth: X-API-Key. Keys come from the ApidirectAPIs collection plus the
@@ -22,10 +22,10 @@
  *
  * RATE LIMIT (apidirect.io/docs/rate-limits): 3 concurrent requests per endpoint
  * per key, with no RPM ceiling. So we hold a slot per (endpoint, key) below that
- * cap and rotate across keys — with N keys the ceiling is 3×N concurrent.
+ * cap and rotate across keys, with N keys the ceiling is 3×N concurrent.
  *
  * ── FAILURE HANDLING: THE STATUS IS NOT ENOUGH ───────────────────────────────
- * Keys are NEVER deleted — they carry prepaid credit and a billing state is
+ * Keys are NEVER deleted, they carry prepaid credit and a billing state is
  * usually temporary. What decides the response is apidirect's own `code`, not
  * the HTTP status, because 429 covers two opposite situations:
  *
@@ -41,7 +41,7 @@
  * Treating a spending cap as a 2.5-second blip (which is what "429 → brief
  * cooldown" did) means the pool keeps hammering a key that will refuse every
  * request until midnight, and the feed goes quiet with nothing in the logs
- * saying why. Every terminal outcome is now written to the key's row as well —
+ * saying why. Every terminal outcome is now written to the key's row as well,
  * see ApidirectAPIs and GET /stats/apidirect, which is how you tell a working
  * key from an exhausted one without reading logs.
  *
@@ -57,7 +57,7 @@ const NEWS_ARTICLES_URL = "https://apidirect.io/v1/news/articles";
 const MAX_RETRIES = 3;
 const REQUEST_TIMEOUT_MS = 20000;
 const KEY_COOLDOWN_SERVICE = "apidirect";
-const KEY_EXHAUSTED_COOLDOWN_MS = 60 * 60 * 1000;  // auth/billing/spend cap — 1 hour
+const KEY_EXHAUSTED_COOLDOWN_MS = 60 * 60 * 1000;  // auth/billing/spend cap, 1 hour
 const TRANSIENT_429_COOLDOWN_MS = 2500;
 const CANDIDATE_TTL_MS = 5 * 60 * 1000;
 
@@ -65,10 +65,10 @@ const CANDIDATE_TTL_MS = 5 * 60 * 1000;
 // A daily or monthly SPENDING cap arrives as 429, alongside codes that mean the
 // exact opposite, so the code is the only thing that separates them.
 const EXHAUSTED_CODES = new Set([
-  "payment_required",        // 402 — free tier used up, no card on file
-  "account_blocked",         // 403 — payment failure
-  "daily_limit_exceeded",    // 429 — spending limit
-  "monthly_limit_exceeded",  // 429 — spending limit
+  "payment_required",        // 402, free tier used up, no card on file
+  "account_blocked",         // 403, payment failure
+  "daily_limit_exceeded",    // 429, spending limit
+  "monthly_limit_exceeded",  // 429, spending limit
 ]);
 
 const INVALID_CODES = new Set([
@@ -138,7 +138,7 @@ async function candidates() {
   return _cands;
 }
 
-/** Synchronous gate for callers — an env key, or keys seen on a prior load. */
+/** Synchronous gate for callers, an env key, or keys seen on a prior load. */
 export function isApidirectConfigured() {
   return !!envKey() || _candCount > 0;
 }
@@ -146,7 +146,7 @@ export function isApidirectConfigured() {
 /**
  * Load the key collection once at boot so isApidirectConfigured() is true
  * immediately after a restart. Without this a deployment that stores its keys
- * only in Mongo would report "not configured" until something forced a load —
+ * only in Mongo would report "not configured" until something forced a load,
  * and nothing would, because the callers are gated by that very check.
  */
 export async function warmApidirectKeys() {
@@ -161,7 +161,7 @@ async function acquireKeySlot(endpoint) {
   const cands = await candidates();
   if (!cands.length) {
     throw new ApidirectNotConfiguredError(
-      "No apidirect keys configured — add one to the ApidirectAPIs collection or set APIDIRECT_API_KEY."
+      "No apidirect keys configured. Add one to the ApidirectAPIs collection or set APIDIRECT_API_KEY."
     );
   }
 
@@ -170,7 +170,7 @@ async function acquireKeySlot(endpoint) {
     if ((await cooldownRemainingMs(KEY_COOLDOWN_SERVICE, c.keyId)) <= 0) live.push(c);
   }
   if (!live.length) {
-    throw new ApidirectRateLimitedError("All apidirect keys are cooling down — try again shortly.");
+    throw new ApidirectRateLimitedError("All apidirect keys are cooling down, try again shortly.");
   }
 
   for (const c of live) {
@@ -193,7 +193,7 @@ async function acquireKeySlot(endpoint) {
 /**
  * Upserted, not updated. A key supplied through APIDIRECT_API_KEY has no row in
  * the collection, so a plain update would match nothing and every failure on the
- * env key — the one most deployments actually run on — would be recorded
+ * env key, the one most deployments actually run on, would be recorded
  * nowhere. Creating the row on first use means "which key is exhausted" has an
  * answer for every key that has ever served a request, however it was supplied.
  */
@@ -233,8 +233,8 @@ function markSuccess(slot, endpoint) {
 /**
  * Record a terminal failure on a key.
  *
- * `track_403` keeps its name and its meaning from the reference project — the
- * count of auth/credit strikes — so anything already reading it still works.
+ * `track_403` keeps its name and its meaning from the reference project, the
+ * count of auth/credit strikes, so anything already reading it still works.
  * It is incremented for the whole 401/402/403 + spend-cap family, because from
  * the operator's side those are one question: is this key still good?
  */
@@ -276,7 +276,7 @@ function parseError(body) {
  * Live health of every key in the pool, for GET /stats/apidirect.
  *
  * Reads the stored row and overlays the cooldown that is ACTUALLY in force
- * (Redis), because that is what rotation obeys — the row's `cooldown_until` is a
+ * (Redis), because that is what rotation obeys, the row's `cooldown_until` is a
  * copy for anyone looking from outside the VPC and can be a few minutes stale.
  * Secrets never leave: only the last four characters, which is enough to match a
  * row against a key in the apidirect dashboard.
@@ -296,8 +296,8 @@ export async function apidirectKeyHealth() {
       key_tail: `…${c.apiKey.slice(-4)}`,
       source: c.label === "env" ? "env" : "collection",
       // The row says WHY it last failed; the cooldown says whether rotation is
-      // skipping it right now. When those disagree — a key cooling with nothing
-      // recorded against it — the cooldown is the fact that matters.
+      // skipping it right now. When those disagree, a key cooling with nothing
+      // recorded against it, the cooldown is the fact that matters.
       status: cooling > 0 && stored === "ok" ? "cooling" : stored,
       usable_now: cooling <= 0,
       cooldown_ms_left: cooling,
@@ -321,7 +321,7 @@ export async function apidirectKeyHealth() {
  * ── TWO BUDGETS, NOT ONE ─────────────────────────────────────────────────────
  * Rotating past a dead key and retrying a network blip are different events and
  * used to share a single four-attempt allowance. With five keys where four were
- * out of credit, the fifth — the working one — was never reached: each 402
+ * out of credit, the fifth, the working one, was never reached: each 402
  * consumed an attempt and the request failed with a live key sitting untouched
  * in the pool. A couple of 502s ahead of it made it worse, because a backoff
  * spent the allowance that rotation then could not use.
@@ -333,7 +333,7 @@ export async function apidirectKeyHealth() {
  * the next request skips all of them without spending an attempt at all.
  */
 async function requestWithRetry({ url, endpoint, params, label }) {
-  // Every key deserves one chance at this request. Read once — the pool is
+  // Every key deserves one chance at this request. Read once, the pool is
   // cached for five minutes, so this is not a per-attempt lookup.
   const keyCount = (await candidates()).length || 1;
 
@@ -348,7 +348,7 @@ async function requestWithRetry({ url, endpoint, params, label }) {
     try {
       slot = await acquireKeySlot(endpoint);
     } catch (err) {
-      // Every key busy or cooling — wait a beat and try again rather than failing
+      // Every key busy or cooling, wait a beat and try again rather than failing
       // the user's request on a transient pool state.
       if (err instanceof ApidirectRateLimitedError && transient < MAX_RETRIES) {
         transient++;
@@ -378,7 +378,7 @@ async function requestWithRetry({ url, endpoint, params, label }) {
       const { code, message } = parseError(body);
 
       // Auth, billing, or a spending cap. All four mean the same thing to the
-      // pool — this key cannot serve for a while — so all four cool for an hour
+      // pool, this key cannot serve for a while, so all four cool for an hour
       // and rotate. The key is never deleted: a topped-up account, a raised
       // limit or the next UTC midnight brings it straight back, and the hourly
       // retry is what discovers that on its own.
@@ -395,7 +395,7 @@ async function requestWithRetry({ url, endpoint, params, label }) {
         });
         rotations++;
         console.error(
-          `[apidirect] ❌ KEY UNUSABLE (${status} ${code || "?"}) key=${slot.label} on /${endpoint} — ` +
+          `[apidirect] ❌ KEY UNUSABLE (${status} ${code || "?"}) key=${slot.label} on /${endpoint}, ` +
           `cooled 60min, rotating (${rotations}/${keyCount} keys tried). ${message || ""}`.trim()
         );
         lastErr = Object.assign(new Error(`apidirect ${status} ${code}`.trim()), { status, code, keyExhausted: true });
@@ -421,7 +421,7 @@ async function requestWithRetry({ url, endpoint, params, label }) {
 
       if ((status >= 500 || status === 408) && transient < MAX_RETRIES) {
         const backoff = 800 * 2 ** transient + Math.floor(Math.random() * 400);
-        console.warn(`[apidirect] ${status} ${code || ""} — backing off ${backoff}ms (retry ${transient + 1}/${MAX_RETRIES})`);
+        console.warn(`[apidirect] ${status} ${code || ""}, backing off ${backoff}ms (retry ${transient + 1}/${MAX_RETRIES})`);
         markFailure(slot, { endpoint, status, code, message });
         transient++;
         await sleep(backoff);
@@ -431,7 +431,7 @@ async function requestWithRetry({ url, endpoint, params, label }) {
 
       markFailure(slot, { endpoint, status, code, message });
       // `fatal` so the catch below rethrows instead of looping. Without it a hard
-      // 400 — a malformed query, say — was caught, not rethrown, and quietly
+      // 400: a malformed query, say, was caught, not rethrown, and quietly
       // retried against every remaining key: four identical rejections for a
       // request that could never succeed.
       throw Object.assign(new Error(`apidirect ${status}: ${message || body.slice(0, 200)}`), { status, code, fatal: true });
@@ -454,7 +454,7 @@ async function requestWithRetry({ url, endpoint, params, label }) {
   }
 
   // Fell out of the loop: either every key in the pool refused us, or the
-  // transient budget ran out. Both are worth naming — "all 3 keys are out of
+  // transient budget ran out. Both are worth naming, "all 3 keys are out of
   // credit" and "apidirect kept timing out" are different problems.
   if (rotations >= keyCount && keyCount > 0) {
     throw Object.assign(
@@ -468,7 +468,7 @@ async function requestWithRetry({ url, endpoint, params, label }) {
 /**
  * Video details for one YouTube URL.
  *
- * `duration` comes back as an integer number of SECONDS, or null — null is
+ * `duration` comes back as an integer number of SECONDS, or null, null is
  * documented for live streams, and callers must treat it as "unknown", never as
  * zero, or a live stream would sail through a short-form check.
  *
@@ -509,7 +509,7 @@ export async function getYouTubeVideoDetails(watchUrl) {
     description: v.description || "",
     duration: Number.isFinite(duration) ? duration : null,
     views: Number(v.views) || 0,
-    // "Music", "Entertainment", "Science & Technology" — YouTube's own label.
+    // "Music", "Entertainment", "Science & Technology", YouTube's own label.
     category: v.category || "",
     keywords: Array.isArray(v.keywords) ? v.keywords.filter((k) => typeof k === "string").slice(0, 25) : [],
     thumbnail: v.thumbnail || "",
@@ -524,7 +524,7 @@ export async function getYouTubeVideoDetails(watchUrl) {
  *
  * Two shapes are in the wild: the documented "2026-01-15 14:30:00" (UTC, no
  * zone marker) and the ISO "2026-09-04T00:02:47.000Z" the live endpoint
- * actually returns. The space form MUST be forced to UTC — left alone, `new
+ * actually returns. The space form MUST be forced to UTC, left alone, `new
  * Date("2026-01-15 14:30:00")` is read in the server's local zone, which on an
  * IST box would date every article five and a half hours early and quietly
  * push the freshest stories out of the collector's window.
@@ -538,7 +538,7 @@ function parseNewsDate(v) {
 }
 
 /**
- * Search news articles — GET /v1/news/articles.
+ * Search news articles, GET /v1/news/articles.
  *
  * ── WHY THIS IS WORTH PAYING FOR WHEN THE RSS SOURCES ARE FREE ───────────────
  * Freshness. Google News RSS answers `when:1d`, so its floor is "some time
@@ -546,7 +546,7 @@ function parseNewsDate(v) {
  * live-verified. For a product whose promise is "cover it before everyone
  * else", four hours of latency is the whole product.
  *
- * BILLED PER REQUEST ($0.008), NOT PER RESULT — so `limit` is free money and
+ * BILLED PER REQUEST ($0.008), NOT PER RESULT, so `limit` is free money and
  * splitting one query into three is not. Callers should ask for a high limit
  * once rather than paginating.
  *
@@ -554,7 +554,7 @@ function parseNewsDate(v) {
  * an exclusion returned zero results while the plain keyword returned twenty).
  * Pass plain keywords.
  *
- * An empty result set is a normal answer, not a failure — a narrow query in a
+ * An empty result set is a normal answer, not a failure, a narrow query in a
  * 1-hour window legitimately finds nothing.
  *
  * @param {string} query        plain keywords, max 500 chars

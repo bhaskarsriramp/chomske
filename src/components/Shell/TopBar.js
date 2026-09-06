@@ -2,13 +2,13 @@ import { useProfiles } from "../../state/ProfileContext";
 import { categoryColor } from "../../theme";
 
 /**
- * The app bar — which channel you are working in, on every screen.
+ * The app bar: which channel you are working in, on every screen.
  *
  * ── WHY THIS IS PERSISTENT AND NOT A CONTROL ON EACH SCREEN ─────────────────
  * Topics, My voice, My scripts and Dashboard all mean something different
  * depending on which channel is selected, and until now the answer lived in a
  * picker that each screen drew for itself. That is a fact you have to go and
- * check, on a screen where getting it wrong costs credits — a story written in
+ * check, on a screen where getting it wrong costs credits, a story written in
  * the wrong voice, for an audience that is not watching.
  *
  * So it moved up here, above everything, where it is simply always true. The
@@ -18,7 +18,7 @@ import { categoryColor } from "../../theme";
  * The Profile screen is where channels are created, renamed and switched, and
  * it shows all of them as cards with the active one marked. A bar above it
  * saying which is selected would be a second, smaller copy of what the page
- * already is — see Dashboard.js, which does not mount this there.
+ * already is. See Dashboard.js, which does not mount this there.
  */
 export default function TopBar({ isNarrow }) {
   const { profiles, active, activeId, setActive } = useProfiles();
@@ -29,7 +29,7 @@ export default function TopBar({ isNarrow }) {
 
   const many = profiles.length > 1;
   // The channel's own first category colour. It costs nothing and makes the two
-  // channels distinguishable at a glance rather than by reading — which is the
+  // channels distinguishable at a glance rather than by reading, which is the
   // whole point of a thing you are meant to notice without looking at it.
   const col = categoryColor(active.categories?.[0]);
 

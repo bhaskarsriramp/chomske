@@ -2,7 +2,7 @@
   "name": "chomske",
   "version": "1.0.0",
   "private": true,
-  "description": "Hear what they actually said — transcripts in the language it was spoken in.",
+  "description": "Hear what they actually said: transcripts in the language it was spoken in.",
   "dependencies": {
     "@react-oauth/google": "^0.12.1",
     "axios": "^1.7.9",

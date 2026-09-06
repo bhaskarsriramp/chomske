@@ -1,5 +1,5 @@
 /**
- * theme.js — the colour that carries meaning, and the colour that carries life.
+ * theme.js: the colour that carries meaning, and the colour that carries life.
  *
  * ── THE PALETTE IS FIXED BY THE BRAND, NOT CHOSEN HERE ───────────────────────
  * Both palettes below derive from seven brand colours and nothing else:
@@ -8,12 +8,12 @@
  *
  * This REPLACES the warm palette that used to live here (rust, clay, amber,
  * peach, rosewood) and the rule that came with it, which read "NO BLUE. AT
- * ALL." — on the reasoning that pale blue and lavender tints are the signature
+ * ALL.", on the reasoning that pale blue and lavender tints are the signature
  * of a generated interface. That rule is retired for the cards and the
  * categories: cyan and ice blue are in the set on purpose, because they are the
  * brand's. Do not "fix" them back to warm.
  *
- * HERO_WASH at the bottom is the one thing still warm, and deliberately so — it
+ * HERO_WASH at the bottom is the one thing still warm, and deliberately so, it
  * is the landing page's ground, seen before anyone signs in, and it is not
  * carrying the app's colour system. Move it too if the brand says so; leaving it
  * behind by accident is the failure mode to watch for.
@@ -46,7 +46,7 @@
  *
  * ── WHY THESE ARE NOT THE BRAND COLOURS AT FULL STRENGTH ─────────────────────
  * Four of the seven (#2A7C13, #2A835F, #00B7CD, #76C457) are mid-to-dark. A
- * card filled with any of them cannot carry near-black body text — #2A7C13
+ * card filled with any of them cannot carry near-black body text: #2A7C13
  * against the ink used here fails contrast outright, and a list that solved
  * that by flipping some cards to white text would read as four different
  * components rather than one feed. So each brand colour is mixed toward white
@@ -101,7 +101,7 @@ export function cardBackground(index, active = false) {
  *
  * ── THESE ARE NOT THE BRAND COLOURS AS GIVEN, AND CANNOT BE ──────────────────
  * `ink` is TEXT. #70FFD2 and #E3F2FD against white are contrast ratios of about
- * 1.2:1 and 1.1:1 — invisible, not merely faint. So each ink is its brand
+ * 1.2:1 and 1.1:1, invisible, not merely faint. So each ink is its brand
  * colour taken down in HSL, hue and saturation held, until it clears 4.5:1.
  * Every value below is at or above that; the ratio is written beside it. Same
  * for `solid`: a 6px dot in #70FFD2 on white is not there, so the dots sit at
@@ -115,7 +115,7 @@ export function cardBackground(index, active = false) {
  * are separated by DEPTH instead: finance sits at 7.2:1 and crypto at 4.6:1 off
  * the two greens, business at 5.4:1 and sports at 4.6:1 off the two teals. The
  * eighth (jobs_exams) has no colour left, so it is magenta taken much deeper
- * than entertainment's — a plum against a bright pink, with a deeper chip fill
+ * than entertainment's, a plum against a bright pink, with a deeper chip fill
  * as well, since two categories sharing one hue need every bit of separation
  * they can get.
  *

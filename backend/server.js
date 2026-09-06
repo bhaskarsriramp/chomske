@@ -1,5 +1,5 @@
 /**
- * server.js — Chomske API.
+ * server.js: Chomske API.
  *
  * Deliberately small: auth, transcribe, health. Everything expensive lives behind
  * a signed-in user and a daily cap, because reading a video is the only real cost
@@ -82,7 +82,7 @@ app.use(
   rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
   transcribeRoutes
 );
-// Reads only — the collection/ranking cost is on the scheduler's clock, not the
+// Reads only, the collection/ranking cost is on the scheduler's clock, not the
 // caller's, so this needs no per-user cap beyond the global limiter.
 app.use("/news", newsRoutes);
 app.use(
@@ -102,11 +102,11 @@ app.use(
   billingRoutes
 );
 // Managing channels: cheap reads and small writes, no model calls except
-// /profiles/:id/analyse — itself bounded by how many videos a profile holds.
+// /profiles/:id/analyse, itself bounded by how many videos a profile holds.
 app.use("/profiles", profileRoutes);
 app.use("/stats", statsRoutes);
 
-// 404 + error handler. Errors are logged in full and answered generically —
+// 404 + error handler. Errors are logged in full and answered generically,
 // stack traces and provider messages must never reach the browser.
 app.use((req, res) => res.status(404).json({ success: false, message: "Not found" }));
 app.use((err, req, res, _next) => {
@@ -131,15 +131,15 @@ function assertConfig() {
 
     // ── Drop the old one-voice-per-user unique index ────────────────────────
     // voice_profiles used to carry `unique: true` on `user`. Removing it from
-    // the schema does NOT remove it from a database that already has it —
-    // Mongoose creates missing indexes but never drops stale ones — so without
+    // the schema does NOT remove it from a database that already has it,
+    // Mongoose creates missing indexes but never drops stale ones, so without
     // this, a second profile's voice fails with E11000 in production while
     // working perfectly against a fresh local database. syncIndexes() makes the
     // collection match the schema exactly, and adds the unique index on
     // `profile` that now enforces one voice per channel.
     //
     // Cheap: voice_profiles holds a handful of rows per user. Failures are
-    // logged rather than fatal — a server that will not boot because an index
+    // logged rather than fatal, a server that will not boot because an index
     // could not be rebuilt is a worse outage than one profile failing.
     //
     // NOTE: this cannot create the unique { profile: 1 } index while rows still
@@ -150,7 +150,7 @@ function assertConfig() {
     );
 
     // http.createServer rather than app.listen, because Socket.IO attaches to
-    // the SERVER and not to the Express app — app.listen makes one internally
+    // the SERVER and not to the Express app, app.listen makes one internally
     // and gives no way to reach it. Everything else is unchanged: Express still
     // handles every ordinary request, the socket server only claims /socket.io.
     const server = http.createServer(app);
@@ -161,7 +161,7 @@ function assertConfig() {
       console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);
       startNewsScheduler();
       // Load the key pool once at boot. Without this, isApidirectConfigured()
-      // stays false until something forces a load — and nothing would, because
+      // stays false until something forces a load, and nothing would, because
       // the duration gate is itself behind that check, so it would silently
       // never run after a restart.
       warmApidirectKeys().catch((err) =>

@@ -1,5 +1,5 @@
 /**
- * newsDoctor.js — why is the feed not showing anything new?
+ * newsDoctor.js: why is the feed not showing anything new?
  *
  * Run on the VM, where the real env and the real database are:
  *   cd ~/chomske/backend && node scripts/newsDoctor.js
@@ -8,7 +8,7 @@
  * "The top story is ten hours old" has five different causes and they look
  * identical from the app:
  *
- *   1. Nothing is being COLLECTED — the scheduler is not running, or this
+ *   1. Nothing is being COLLECTED, the scheduler is not running, or this
  *      category went cold and is not being polled at all.
  *   2. Things are being collected but not RANKED, so they sit at ai_score -1
  *      and the feed's filter hides them. This is the quiet one: it costs money
@@ -18,11 +18,11 @@
  *   4. The apidirect key is out of credit, so the only minutes-fresh source is
  *      gone and everything left has a floor of hours.
  *   5. It is one running story, so new coverage keeps merging into a cluster
- *      whose timestamp is when it broke — the feed is updating and cannot show
+ *      whose timestamp is when it broke, the feed is updating and cannot show
  *      it. Look at "newest item" against "newest cluster start".
  *
  * Every number below separates one of those from the others. Nothing here
- * writes, spends, or calls an API — it reads the database and the key rows.
+ * writes, spends, or calls an API, it reads the database and the key rows.
  */
 import "dotenv/config";
 import mongoose from "mongoose";
@@ -49,13 +49,13 @@ async function main() {
   const lock = await NewsLock.findById(LOCK_ID).lean();
   console.log("SCHEDULER");
   console.log(`  last tick        ${ago(lock?.last_run_at)}`);
-  console.log(`  lease held until ${lock?.locked_until ? new Date(lock.locked_until).toISOString() : "—"}`);
+  console.log(`  lease held until ${lock?.locked_until ? new Date(lock.locked_until).toISOString() : ""}`);
   // A last tick older than NEWS_POLL_MINUTES means the process running the
-  // interval is not alive — which is the whole answer, and no per-category
+  // interval is not alive, which is the whole answer, and no per-category
   // number below will make sense until it is.
   const pollMin = parseInt(process.env.NEWS_POLL_MINUTES || "15", 10);
   if (!lock?.last_run_at || Date.now() - new Date(lock.last_run_at).getTime() > pollMin * 60000 * 2) {
-    console.log(`  ⚠️  NO TICK IN OVER ${pollMin * 2} MINUTES — the collector is not running.`);
+    console.log(`  ⚠️  NO TICK IN OVER ${pollMin * 2} MINUTES. The collector is not running.`);
   }
 
   console.log("\nCATEGORIES");
@@ -80,14 +80,14 @@ async function main() {
     console.log(`    paid fetch         ${ago(lock?.fetched?.[cat.id])}`);
     console.log(`    paid rank          ${ago(lock?.ranked?.[cat.id])}`);
     console.log(`    newest item        ${ago(newest?.first_seen_at)}  ${newest?.title?.slice(0, 55) || ""}`);
-    console.log(`    newest ON THE FEED ${ago(newestRanked?.first_seen_at)}  (score ${newestRanked?.ai_score ?? "—"})`);
+    console.log(`    newest ON THE FEED ${ago(newestRanked?.first_seen_at)}  (score ${newestRanked?.ai_score ?? ""})`);
     console.log(`    in last 24h        ${last24} items · ${above} above the bar · ${unranked} still unranked`);
 
     // The two readings that name the cause outright.
     if (last24 === 0) {
       console.log("    → NOTHING IS COMING IN. Collection, not ranking, is the problem.");
     } else if (unranked > 20 && above === 0) {
-      console.log("    → COLLECTED BUT NOT JUDGED. Ranking is failing or throttled — check AISTUDIO_KEY quota.");
+      console.log("    → COLLECTED BUT NOT JUDGED. Ranking is failing or throttled. Check AISTUDIO_KEY quota.");
     } else if (newest && newestRanked &&
                new Date(newest.first_seen_at) - new Date(newestRanked.first_seen_at) > 3 * 3600000) {
       console.log("    → Fresh items exist but none cleared the bar. Either a quiet day, or the ranker is scoring low.");
@@ -101,7 +101,7 @@ async function main() {
   // show when the newest write-up went out; the order is decided by how much
   // coverage is still arriving, decayed by age. Those two usually agree and
   // when they do not, the only honest answer to "why is that one above this
-  // one" is the actual arithmetic — so here it is, per cluster.
+  // one" is the actual arithmetic, so here it is, per cluster.
   const asked = process.argv[2];
   if (asked && picked.has(asked)) {
     const now = Date.now();
@@ -143,7 +143,7 @@ async function main() {
       );
     }
   } else if (asked) {
-    console.log(`\n(“${asked}” is not a category anyone has picked — skipping the feed-order breakdown)`);
+    console.log(`\n(“${asked}” is not a category anyone has picked, skipping the feed-order breakdown)`);
   }
 
   console.log("\nAPIDIRECT KEYS");
@@ -160,7 +160,7 @@ async function main() {
       `  ${tail} ${k.label || ""} [${k.status || "ok"}]${cooling}\n` +
       `      ok:${k.request_count || 0} err:${k.error_count || 0} strikes:${k.track_403 || 0} ` +
       `last ok ${ago(k.last_success_at)}` +
-      (k.last_error_code ? `\n      last error: ${k.last_status_code} ${k.last_error_code} — ${k.last_error} (${ago(k.last_error_at)})` : "")
+      (k.last_error_code ? `\n      last error: ${k.last_status_code} ${k.last_error_code}, ${k.last_error} (${ago(k.last_error_at)})` : "")
     );
   }
 

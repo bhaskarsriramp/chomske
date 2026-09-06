@@ -1,5 +1,5 @@
 /**
- * normalize.js — turn messy source data into stable dedupe keys.
+ * normalize.js: turn messy source data into stable dedupe keys.
  *
  * Everything here exists because the same story arrives looking different from
  * every direction: the same URL carrying different tracking params, the same
@@ -23,7 +23,7 @@ export function canonicalUrl(input) {
   try {
     u = new URL(raw);
   } catch {
-    return raw; // not parseable — hash it as-is rather than dropping the item
+    return raw; // not parseable, hash it as-is rather than dropping the item
   }
   u.hostname = u.hostname.toLowerCase().replace(/^www\./, "");
   u.hash = "";
@@ -49,7 +49,7 @@ export function canonicalUrl(input) {
  *
  * The scope is joined AFTER canonicalisation, never before. Prefixing the raw
  * string would make `new URL()` throw inside canonicalUrl, which falls back to
- * returning the input untouched — so tracking parameters would stop being
+ * returning the input untouched, so tracking parameters would stop being
  * stripped and every Google News link would re-insert on each poll.
  */
 export function urlHash(url, scope = "") {
@@ -73,7 +73,7 @@ const STOP = new Set([
  * (longest) words, sort them. "OpenAI Launches GPT-6 Today" and "GPT-6: OpenAI
  * launches its new model" collapse to the same key; unrelated stories don't.
  *
- * Six words is the tuned part — fewer collides unrelated stories, more and small
+ * Six words is the tuned part, fewer collides unrelated stories, more and small
  * wording differences split one event into several rows.
  */
 export function titleSignature(title) {
@@ -93,7 +93,7 @@ export function titleSignature(title) {
   return distinctive.join("-");
 }
 
-/** Collapse whitespace and cap length — feed text arrives with all sorts in it. */
+/** Collapse whitespace and cap length, feed text arrives with all sorts in it. */
 export function cleanText(s, max = 400) {
   return String(s || "")
     .replace(/<[^>]*>/g, " ")      // strip HTML that RSS summaries are full of

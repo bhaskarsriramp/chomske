@@ -1,5 +1,5 @@
 /**
- * api.js — the one axios instance.
+ * api.js: the one axios instance.
  *
  * withCredentials is the important line: the session lives in an httpOnly cookie,
  * so without it every authenticated call is anonymous and 401s.

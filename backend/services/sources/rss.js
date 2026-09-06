@@ -1,5 +1,5 @@
 /**
- * rss.js — one generic fetcher for every plain RSS/Atom feed.
+ * rss.js: one generic fetcher for every plain RSS/Atom feed.
  *
  * All of these were live-probed and returned 200. Two notes from that probe:
  *   • anthropic.com has NO feed (rss.xml → 404). Their announcements arrive
@@ -21,12 +21,12 @@ const parser = new Parser({
  * (services/categories.js), which is what lets a new category add its own
  * authorities without touching this file.
  *
- * @param {{source,kind,url,filter?}} feed — `filter: true` marks a broad feed
+ * @param {{source,kind,url,filter?}} feed, `filter: true` marks a broad feed
  *   (Ars Technica, The Verge) that carries plenty off-topic for the category, so
  *   it gets narrowed by `filterTerms` before reaching the ranker. Without that,
  *   a general-tech feed fills an AI channel's input with phone reviews and the
  *   token cost goes with it.
- * @param {RegExp|null} filterTerms — the category's on-topic test.
+ * @param {RegExp|null} filterTerms, the category's on-topic test.
  */
 export async function fetchRssFeed({ source, kind, url, filter = false }, filterTerms = null) {
   let feed;

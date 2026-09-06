@@ -3,7 +3,7 @@ import useIsMobile from "../../hooks/useIsMobile";
 import ProfilesSection from "./ProfilesSection";
 
 /**
- * Profile — the channels, and the account behind them.
+ * Profile: the channels, and the account behind them.
  *
  * The channels come first because they are what a creator actually manages here:
  * what each one covers, which one they are working in, and adding the next one.

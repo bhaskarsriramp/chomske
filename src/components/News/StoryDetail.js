@@ -8,13 +8,13 @@ import { categoryColor } from "../../theme";
  * One story: what happened, the hook, and every outlet that carried it.
  *
  * The coverage list is the reason this exists. The feed answers "what should I
- * cover"; this answers "what actually happened" — oldest source first, so the
+ * cover"; this answers "what actually happened", oldest source first, so the
  * top row is whoever broke it, and a creator can read more than one account
  * before recording instead of paraphrasing a single headline.
  *
  * Renders in two shapes off the same data:
- *   pane  — the right half of the desktop split, always on screen
- *   sheet — a full-screen layer on phones, where a split has nowhere to go
+ *   pane:  the right half of the desktop split, always on screen
+ *   sheet: a full-screen layer on phones, where a split has nowhere to go
  */
 export default function StoryDetail({ id, preview, mode = "pane", onClose, voice, onVoiceChange, onGoTranscribe }) {
   // Seeded from the feed row so the header paints immediately; the request only
@@ -48,7 +48,7 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
     })();
 
     // Stops a slow response for the previous story from overwriting the one the
-    // user has since clicked — easy to hit when arrowing down the list.
+    // user has since clicked, easy to hit when arrowing down the list.
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -86,7 +86,7 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
    * A brief that landed while this pane was open.
    *
    * The feed patches its row when the server pushes one (see the socket handler
-   * in NewsFeed.js), which changes `preview` under us — but `brief` was seeded
+   * in NewsFeed.js), which changes `preview` under us, but `brief` was seeded
    * from `preview` once, at mount, so without this the story a creator is
    * actually staring at is the one place the live update would not appear.
    *
@@ -149,7 +149,7 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
 
 function Body({ item, coverage, loading, error, brief, briefLoading, onClose, compact, voice, onVoiceChange, onGoTranscribe }) {
   // Shut by default. A well-covered story carries sixty-plus outlets, and an
-  // open list that long buries everything under it — including the fact that
+  // open list that long buries everything under it, including the fact that
   // the page has ended. The count in the header is what most people came for;
   // the rows are for the one who wants to read them.
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -229,7 +229,7 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
         {/* ── What actually happened ──────────────────────────────────────
             The reason this pane exists. A headline and a one-line angle is not
             enough to decide on, so the button underneath was being pressed
-            blind — and a script about something you did not care about is how
+            blind, and a script about something you did not care about is how
             people stop trusting the button. This is 100-120 words built only
             from the coverage listed below it. */}
         <Brief
@@ -268,7 +268,7 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
             display: "flex", alignItems: "center", justifyContent: "space-between",
             gap: 12, width: "100%", marginTop: 32,
             padding: "0 0 10px", marginBottom: 12,
-            // Reset first, then the one edge that stays — React writes these in
+            // Reset first, then the one edge that stays. React writes these in
             // key order, so a blanket `border` after `borderBottom` erases it.
             border: "none", borderBottom: "1px solid var(--line)",
             background: "none", textAlign: "left", cursor: "pointer",
@@ -311,9 +311,9 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
                   <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>
                     {sourceLabel(c.source)}
                   </span>
-                  {/* The API now sorts published_at DESCENDING — newest account
+                  {/* The API now sorts published_at DESCENDING, newest account
                       of the story first, which is the one worth reading when it
-                      is still developing — so the LAST row is the one that broke
+                      is still developing, so the LAST row is the one that broke
                       it, not the first. */}
                   {/* Plain text, not a badge. It is a footnote about ordering,
                       not a status worth a coloured chip of its own. */}

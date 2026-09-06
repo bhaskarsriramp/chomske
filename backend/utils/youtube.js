@@ -1,5 +1,5 @@
 /**
- * youtube.js — turn whatever the user pasted into a canonical video id + URL.
+ * youtube.js: turn whatever the user pasted into a canonical video id + URL.
  *
  * People paste every shape there is: youtu.be links, /shorts/, /live/, /embed/,
  * URLs carrying a playlist or a ?t= timestamp, mobile m.youtube.com, and plain

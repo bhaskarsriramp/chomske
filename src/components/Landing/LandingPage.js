@@ -9,7 +9,7 @@ import Logo from "../Shell/Logo";
  *
  * ── WHY THIS PAGE IS DARK WHEN THE APP IS NOT ────────────────────────────────
  * They are answering different questions. The app is a light, quiet workspace
- * somebody sits inside every morning, and its rule is that nothing moves — a
+ * somebody sits inside every morning, and its rule is that nothing moves: a
  * feed that twitches as the cursor crosses it is a feed you stop trusting. This
  * page has four seconds to convince a creator who has never heard of us that
  * the thing is real, current, and built by people who finish things. Stillness
@@ -20,7 +20,7 @@ import Logo from "../Shell/Logo";
  * ── WHAT IT SELLS ────────────────────────────────────────────────────────────
  * Not transcription, and not "AI". A creator's slowest hour is deciding what to
  * cover and then writing the thing. The headline is therefore a promise about
- * TIME, in the language they will actually record in — which is why the one
+ * TIME, in the language they will actually record in, which is why the one
  * animated element in the headline is the language itself, cycling through nine
  * scripts. It is the product's whole argument in one word.
  *
@@ -64,12 +64,12 @@ const LANGUAGES = [
  *
  * A note that OUTLIVED the green: nothing on this page may use colour alone to
  * carry meaning. In the ranking demo the kept stories and the dropped ones are
- * told apart by their score, their position and a strike-through — the tint is
+ * told apart by their score, their position and a strike-through, the tint is
  * the last of four signals, not the only one. That was written for red-green
  * colour blindness and it holds just as well for a red-only palette, where the
  * risk is instead that everything looks the same at a glance.
  */
-const RED = "255,0,0";        // YouTube red — the one that carries the brand
+const RED = "255,0,0";        // YouTube red, the one that carries the brand
 const DEEP = "196,12,12";     // deeper, for the elements that must recede
 const ROSE = "255,116,116";   // lighter, for small marks that would vibrate at full red
 const WHITE = "255,255,255";
@@ -86,8 +86,8 @@ const GLOW = { red: RED, deep: DEEP, rose: ROSE };
  *
  * ── IT FAILS OPEN, AND THAT IS DELIBERATE ────────────────────────────────────
  * The hidden state lives under `.hg-armed`, which is added HERE, after checking
- * the observer exists. Done the obvious way round — hidden in the stylesheet,
- * revealed by script — a browser without IntersectionObserver, or any error
+ * the observer exists. Done the obvious way round (hidden in the stylesheet,
+ * revealed by script), a browser without IntersectionObserver, or any error
  * thrown before this effect runs, leaves every section below the fold as a
  * blank black screen with the content sitting in the DOM unseen. Arming it from
  * script means the worst case is an unanimated page.
@@ -107,7 +107,7 @@ function useReveal() {
         for (const e of entries) {
           if (!e.isIntersecting) continue;
           e.target.classList.add("is-in");
-          io.unobserve(e.target);   // done with it — never watch it again
+          io.unobserve(e.target);   // done with it, never watch it again
         }
       },
       // Fires a little before the element is fully on screen, so the motion has
@@ -156,7 +156,7 @@ function useInView(ref, { once = false } = {}) {
  * The clock behind every demo: advance a phase counter while visible, loop, and
  * stop dead when scrolled away.
  *
- * Reduced motion pins it to the LAST phase rather than the first — the end of
+ * Reduced motion pins it to the LAST phase rather than the first, the end of
  * each scene is its finished state, which is the frame that actually explains
  * the product. Freezing on phase 0 would show an empty panel forever.
  */
@@ -170,7 +170,7 @@ function useSceneClock(phaseCount, { active, interval = 1100, hold = 2 }) {
     if (still) { setPhase(phaseCount - 1); return; }
     if (!active) return;
     // `hold` extra ticks at the end so the finished state is readable before it
-    // resets — a scene that restarts the instant it completes reads as a glitch.
+    // resets; a scene that restarts the instant it completes reads as a glitch.
     const t = setInterval(() => setPhase((p) => (p + 1) % (phaseCount + hold)), interval);
     return () => clearInterval(t);
   }, [active, phaseCount, interval, hold, still]);
@@ -216,7 +216,7 @@ function Cursor({ left, top, pressed, hidden }) {
   );
 }
 
-/** The frame every demo sits in — the app's window chrome, small. */
+/** The frame every demo sits in: the app's window chrome, small. */
 function DemoFrame({ children, label, tone, height }) {
   return (
     <div
@@ -328,7 +328,7 @@ export default function LandingPage({ onSignedIn, checking }) {
       {/* The red/green ground, held still behind everything. */}
       <div className="hg-wash" aria-hidden="true" />
 
-      {/* Everything else rides above it — see .hg-wash for why this z-index is
+      {/* Everything else rides above it. See .hg-wash for why this z-index is
           load-bearing rather than decoration. */}
       <div style={{ position: "relative", zIndex: 1 }}>
       <Nav pad={pad} isMobile={isMobile} />
@@ -360,7 +360,7 @@ export default function LandingPage({ onSignedIn, checking }) {
  * screen instead of below a header.
  *
  * It gains a border and a stronger blur once you scroll, which is the only way
- * a transparent bar stays legible over content — over the pale product window
+ * a transparent bar stays legible over content, over the pale product window
  * further down, an unbacked bar would be white text on white.
  */
 function Nav({ pad, isMobile }) {
@@ -380,7 +380,7 @@ function Nav({ pad, isMobile }) {
         padding: isMobile ? `12px ${pad}` : `16px ${pad}`,
         // Black at rest, not transparent. The bar is a SIBLING above the hero,
         // so at scroll 0 a transparent one shows the page's own red gradient
-        // through it — a red band across the top of an otherwise black hero,
+        // through it, a red band across the top of an otherwise black hero,
         // which reads as a rendering fault rather than a design. Black matches
         // the hero exactly, so the seam disappears; once scrolled it becomes the
         // translucent glass, over sections that are no longer black anyway.
@@ -531,7 +531,7 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
  * this reading as a generic gradient: it gives the light something to sit
  * behind, which is the difference between "futuristic" and "purple blur".
  *
- * `pointerEvents: none` throughout — a full-bleed decorative layer that eats
+ * `pointerEvents: none` throughout, a full-bleed decorative layer that eats
  * clicks would swallow the buttons underneath it.
  */
 function Aurora() {
@@ -552,7 +552,7 @@ function Aurora() {
 
       {/* Red, black and white only. Three densities of the same red rather than
           three different hues: on black, one colour at varying strength reads as
-          depth, where three would read as a gradient mesh — the thing every
+          depth, where three would read as a gradient mesh, the thing every
           other AI landing page is already doing. */}
       <div
         className="hg-aurora hg-aurora-a"
@@ -621,7 +621,7 @@ function Chip() {
  *
  * Every language occupies the SAME grid cell, so the container is as wide as the
  * widest of them and the line never reflows. A container that resized with each
- * word would drag the rest of the headline sideways nine times a minute — the
+ * word would drag the rest of the headline sideways nine times a minute, the
  * difference between a headline that breathes and one that twitches.
  *
  * The visible word is `aria-hidden` and the accessible name is fixed, because a
@@ -640,7 +640,7 @@ function LanguageFlip() {
 
   // Measure every word once, so the box can be given an explicit width and
   // TRANSITION between them. Measured from the real, rendered nodes rather than
-  // estimated from character counts — nine scripts with different glyph widths
+  // estimated from character counts, nine scripts with different glyph widths
   // is exactly the case a heuristic gets wrong.
   useEffect(() => {
     const measure = () => setWidths(items.current.map((el) => (el ? el.offsetWidth : 0)));
@@ -659,12 +659,12 @@ function LanguageFlip() {
   return (
     <span
       role="img"
-      aria-label="your language — Hindi, Telugu, Tamil, Marathi, Kannada, Bengali, Gujarati, Malayalam, Punjabi or English"
+      aria-label="your language: Hindi, Telugu, Tamil, Marathi, Kannada, Bengali, Gujarati, Malayalam, Punjabi or English"
       className="indic"
       style={{
         // ── EVERY WORD IS ABSOLUTELY POSITIONED, AND THAT IS THE POINT ────────
         // Stacked in normal flow, the box would be as wide as the widest of the
-        // nine — leaving "मराठी" floating a long way from the words before it,
+        // nine, leaving "मराठी" floating a long way from the words before it,
         // and, worse, making the headline wider than a phone screen because an
         // invisible "മലയാളം" still takes up space. Out of flow, only the
         // measured width below occupies the line.
@@ -678,7 +678,7 @@ function LanguageFlip() {
       {/* ── THE BASELINE ANCHOR ───────────────────────────────────────────────
           One copy of the current word, in normal flow and invisible. Without it
           the box has no in-flow content, so its baseline falls to its bottom
-          margin edge and the visible word sits below the line it belongs to —
+          margin edge and the visible word sits below the line it belongs to,
           which is exactly what happened, most visibly in Tamil, whose glyphs
           descend furthest. It also gives the box its height, so nine scripts
           with nine different ascender heights all sit correctly without a
@@ -696,7 +696,7 @@ function LanguageFlip() {
           className={n === i ? "hg-flip-on" : undefined}
           style={{
             // inset 0 rather than a centring transform: the box is already the
-            // width of the word it is showing, so the two coincide — and on the
+            // width of the word it is showing, so the two coincide, and on the
             // frames where the width is mid-transition, the word tracks the box
             // instead of jumping ahead of it.
             position: "absolute",
@@ -721,7 +721,7 @@ function LanguageFlip() {
  *
  * ── WHY IT MOVES ─────────────────────────────────────────────────────────────
  * A still screenshot of a feed says "this is a list of news". The product is
- * not the list — it is what happens when you pick one thing off it. So the
+ * not the list: it is what happens when you pick one thing off it. So the
  * pointer does what a creator does: reads the shortlist, opens a story, reads
  * why it ranks, presses "Write this in my voice", and the script arrives in
  * Hindi. Four seconds, no copy required, and every frame of it is a real
@@ -730,7 +730,7 @@ function LanguageFlip() {
  * Phases:
  *   0  the shortlist, cursor idle
  *   1  cursor travels to the top story
- *   2  press — the story opens on the right
+ *   2  press: the story opens on the right
  *   3  cursor travels to "Write this in my voice"
  *   4  press
  *   5  drafting
@@ -811,7 +811,7 @@ function HeroDemo({ isMobile }) {
             </div>
 
             {/* The selected row lifts on the press, exactly as the real feed's
-                selected row does — the demo has to match the product it shows. */}
+                selected row does. The demo has to match the product it shows. */}
             <div
               style={{
                 borderRadius: 10, marginBottom: 8,
@@ -876,7 +876,7 @@ function HeroDemo({ isMobile }) {
                 {!drafting && !written && (
                   <p style={{ fontSize: 11.5, lineHeight: 1.65, color: "var(--d-body)", margin: 0 }}>
                     <strong style={{ color: "var(--d-ink)" }}>Why it ranks.</strong>{" "}
-                    A frontier model that runs without a connection — the first one people can
+                    A frontier model that runs without a connection, the first one people can
                     actually try on their own laptop.
                   </p>
                 )}
@@ -905,7 +905,7 @@ function HeroDemo({ isMobile }) {
 }
 
 const SCRIPT_WORDS =
-  "तो दोस्तों, आज की सबसे बड़ी खबर — OpenAI ने एक ऐसा model निकाल दिया है जो आपके laptop पर बिना internet के चलेगा। मैंने खुद try किया, और सच बताऊँ तो...".split(
+  "तो दोस्तों, आज की सबसे बड़ी खबर: OpenAI ने एक ऐसा model निकाल दिया है जो आपके laptop पर बिना internet के चलेगा। मैंने खुद try किया, और सच बताऊँ तो...".split(
     " "
   );
 
@@ -915,8 +915,8 @@ const SCRIPT_WORDS =
  * ── WORD BY WORD, NEVER CHARACTER BY CHARACTER ───────────────────────────────
  * This text is Devanagari. A matra is a separate code point that attaches to
  * the consonant before it, so slicing a Hindi string one character at a time
- * renders half-formed clusters and stray floating vowel marks for a frame each
- * — broken-looking, in exactly the script the page is promising to handle well.
+ * renders half-formed clusters and stray floating vowel marks for a frame each,
+ * broken-looking, in exactly the script the page is promising to handle well.
  * Splitting on spaces means every frame shows whole, correctly shaped words.
  */
 function DemoScript({ isMobile }) {
@@ -998,7 +998,7 @@ const SOURCES = [
  * Deliberately NOT a wall of customer logos. Every reference page in this
  * category opens with "trusted by" and eight companies that have never heard of
  * them, and a creator has seen that trick often enough to discount the whole
- * page for it. These are real endpoints in services/sources — a claim that can
+ * page for it. These are real endpoints in services/sources, a claim that can
  * be checked, which is worth more than a claim that cannot.
  */
 function SourceBar() {
@@ -1054,7 +1054,7 @@ function SourceBar() {
  *
  * ── WHY THE COPY IS THIS SHORT ───────────────────────────────────────────────
  * This section used to be three paragraphs in three boxes. Nobody reads three
- * paragraphs on a landing page — they scan, decide, and leave. A creator can
+ * paragraphs on a landing page: they scan, decide, and leave. A creator can
  * watch a story get scored and a script get written in about four seconds, and
  * understand more from that than from sixty words explaining it. So the text is
  * a caption for the demo, not a substitute for one.
@@ -1157,7 +1157,7 @@ function StepRow({ step, index, isMobile }) {
 
 /* ── The three scenes ──────────────────────────────────────────────────────── */
 
-/** 01 — stories arriving on their own, with the clock running. */
+/** 01: stories arriving on their own, with the clock running. */
 function SceneWatching({ active }) {
   const phase = useSceneClock(5, { active, interval: 900, hold: 2 });
 
@@ -1195,7 +1195,7 @@ function SceneWatching({ active }) {
   );
 }
 
-/** 02 — the scoring pass, and what it throws away. */
+/** 02: the scoring pass, and what it throws away. */
 function SceneRanking({ active }) {
   const phase = useSceneClock(4, { active, interval: 1150, hold: 2 });
 
@@ -1246,7 +1246,7 @@ function SceneRanking({ active }) {
 }
 
 /**
- * 03 — the script being written.
+ * 03: the script being written.
  *
  * Drawn as a SCRIPT PAGE rather than a chat bubble: numbered lines, the
  * language it is in, and the two buttons a creator actually reaches for. This
@@ -1307,7 +1307,7 @@ function ScriptPage({ active }) {
   const LINES = [
     "तो दोस्तों, OpenAI ने GPT-6 Astra release कर दिया,",
     "और कहा कि हम AGI era में आ चुके हैं।",
-    "लेकिन असली बात ये है —",
+    "लेकिन असली बात ये है:",
     "ये आपके laptop पर offline चलता है।",
   ];
   const shown = useSceneClock(LINES.length + 1, { active, interval: 620, hold: 6 });
@@ -1453,7 +1453,7 @@ function SceneSources({ active }) {
   );
 }
 
-/** The voice set filling up — their own My voice screen. */
+/** The voice set filling up: their own My voice screen. */
 function SceneVoice({ active }) {
   const phase = useSceneClock(4, { active, interval: 900, hold: 3 });
   const added = Math.min(phase, 2);
@@ -1493,7 +1493,7 @@ function SceneVoice({ active }) {
         </div>
       ))}
 
-      {/* The slot dots from the real screen — five, filling as videos land. */}
+      {/* The slot dots from the real screen: five, filling as videos land. */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10 }}>
         {[0, 1, 2, 3, 4].map((d) => (
           <span
@@ -1570,7 +1570,7 @@ function VoiceProof({ isMobile, pad }) {
         isMobile={isMobile}
         eyebrow="Your voice"
         title="It sounds like you, not like a tool"
-        sub="Add a few of your own videos. The profile learns your hooks, your rhythm, and how much English you mix in — then writes that way."
+        sub="Add a few of your own videos. The profile learns your hooks, your rhythm, and how much English you mix in, then writes that way."
       />
 
       <div
@@ -1638,7 +1638,7 @@ function Niches({ isMobile, pad }) {
         isMobile={isMobile}
         eyebrow="Niches"
         title="Pick up to three"
-        sub="Each one is watched separately, with its own editorial bar — a rate decision is a 10 to a finance channel and a 0 to a film channel."
+        sub="Each one is watched separately, with its own editorial bar: a rate decision is a 10 to a finance channel and a 0 to a film channel."
       />
 
       <div
@@ -1732,7 +1732,7 @@ function ClosingCta({ isMobile, pad, onCredential, busy }) {
 /**
  * @param {string} glow  an rgb triple. A wide, very faint wash behind the
  *   section's heading. Without it the page below the hero is five identical
- *   black slabs — the content varies and the surface never does, which reads as
+ *   black slabs, the content varies and the surface never does, which reads as
  *   a template. One colour per section gives each its own light without
  *   introducing a second accent system.
  */
@@ -1824,16 +1824,16 @@ function Dot() {
  * This project has six dependencies. @mui/icons-material would be a seventh
  * that drags @mui/material and two emotion packages behind it, all so three
  * marks can be drawn. These are the official single-colour brand paths (the
- * Simple Icons geometry), inlined — same shapes, nothing installed.
+ * Simple Icons geometry), inlined: same shapes, nothing installed.
  *
  * The first attempt was hand-simplified versions of them, and it showed: the
  * Instagram mark came out as a filled blob at 19px, because that glyph is a
- * rounded square with a hole, a ring with a hole, and a dot — approximate any
+ * rounded square with a hole, a ring with a hole, and a dot, approximate any
  * of the three and it fills in solid.
  *
  * Each sits in a badge rather than floating loose in the line. At icon size on
  * a dark ground these were too small to identify, and the point of the row is
- * instant recognition — if you have to squint at it, it has said nothing.
+ * instant recognition: if you have to squint at it, it has said nothing.
  * YouTube keeps its own red; the other two are white, because three brand
  * colours in a row reads as a sponsor strip.
  */

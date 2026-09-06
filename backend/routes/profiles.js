@@ -1,5 +1,5 @@
 /**
- * profiles.js — the creator's channels.
+ * profiles.js: the creator's channels.
  *
  * A profile is one channel's workspace: its categories, its one voice, that
  * voice's videos, and the scripts written for it. Someone running three YouTube
@@ -31,7 +31,7 @@ import { getCategory } from "../services/categories.js";
 const router = express.Router();
 
 /**
- * GET /profiles — every channel this creator has, with the counts each screen needs.
+ * GET /profiles, every channel this creator has, with the counts each screen needs.
  *
  * ensureProfile() runs first so a brand new account, and an account that
  * predates profiles, both come back with something to select rather than an
@@ -53,7 +53,7 @@ router.get("/", authenticateToken, async (req, res) => {
   }
 });
 
-/** POST /profiles  { name, categories } — a new channel. */
+/** POST /profiles  { name, categories }, a new channel. */
 router.post("/", authenticateToken, async (req, res) => {
   try {
     const doc = await createProfile(req.user.id, {
@@ -124,7 +124,7 @@ router.patch("/:id", authenticateToken, async (req, res) => {
 });
 
 /**
- * DELETE /profiles/:id — the channel, its voice, and the videos that taught it.
+ * DELETE /profiles/:id, the channel, its voice, and the videos that taught it.
  *
  * Scripts written for it are kept and detached: they carry a copied
  * profile_name, so a creator tidying up their channels never loses writing they
@@ -147,7 +147,7 @@ router.delete("/:id", authenticateToken, async (req, res) => {
 });
 
 /**
- * POST /profiles/:id/analyse — learn this channel's voice from its videos.
+ * POST /profiles/:id/analyse, learn this channel's voice from its videos.
  *
  * Held open rather than polled, unlike transcription: this is one text-in
  * text-out call over at most ~18k characters, which lands in a few seconds.
@@ -162,7 +162,7 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
         success: false,
         message:
           reason === "no_transcripts"
-            ? "Add at least one video to this profile first — that's what its voice is learned from."
+            ? "Add at least one video to this profile first. That's what its voice is learned from."
             : "Couldn't build this voice.",
       });
     }
@@ -173,7 +173,7 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
       profiles: profiles.map(withLabels),
       profile: withLabels(profiles.find((p) => p.id === String(profile._id)) || null),
       // The full analysis, for the "here's what we learned" panel. Only ever
-      // returned from the call that produced it — the list endpoint stays small.
+      // returned from the call that produced it, the list endpoint stays small.
       voice: shapeVoice(voice),
     });
   } catch (err) {

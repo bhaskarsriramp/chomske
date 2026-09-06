@@ -1,16 +1,16 @@
 /**
- * newsRanker.js — decide what a creator should actually cover today.
+ * newsRanker.js: decide what a creator should actually cover today.
  *
  * The collector's raw_score only knows recency, source type and upvotes. It has
  * no idea whether a story is *interesting*, and it can't tell "Google ships a new
- * Gemini model" from "Apple renames a lake on Maps" — both were in the top 12 of
+ * Gemini model" from "Apple renames a lake on Maps", both were in the top 12 of
  * a real run.
  *
  * ── TWO STAGES, AND WHY ──────────────────────────────────────────────────────
  * This used to be one call that asked, for every candidate, a score AND a story
  * key AND an angle AND a reason. About 45 output tokens each. Output is billed
  * at six times the input rate, so nearly all the money went on writing editorial
- * copy — and roughly seven items in ten score below 3 and are never shown to
+ * copy, and roughly seven items in ten score below 3 and are never shown to
  * anyone. We were paying to write angles for noise.
  *
  *   Stage 1 (triage)  every candidate, `{i, score}` only. ~10 output tokens.
@@ -29,6 +29,7 @@ import { GoogleGenAI } from "@google/genai";
 import NewsItem from "../models/NewsItem.js";
 import { getCategory } from "./categories.js";
 import { publishNewsEvent } from "./newsEvents.js";
+import { noEmDash } from "../utils/prose.js";
 
 const MODEL = process.env.GEMINI_RANK_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 const BATCH = parseInt(process.env.NEWS_RANK_BATCH || "60", 10);
@@ -55,7 +56,7 @@ function client() {
  * The editorial brief is built per category, because "does this deserve a video"
  * is a domain judgement, not a general one. An RBI rate decision is a 10 to a
  * finance channel and a 0 to a film channel, and a single generic prompt would
- * flatten both into "is this interesting" — which is how a ranker ends up putting
+ * flatten both into "is this interesting", which is how a ranker ends up putting
  * a lake being renamed on Apple Maps in the top twelve.
  */
 export function buildPrompt(cat) {
@@ -66,17 +67,17 @@ For EACH item below, decide how much it deserves a video TODAY.
 score 0-10:
   9-10  A major, concrete event a lot of people will search for. ${cat.top}
   6-8   Genuinely interesting and specific. ${cat.mid}
-  3-5   Real but narrow — incremental updates, minor developments.
+  3-5   Real but narrow: incremental updates, minor developments.
   0-2   Not video material. ${cat.low} Also anything outside this channel's subject.
 
 Judge the EVENT, not the headline's excitement. Rules:
 - A rumour or speculation piece scores well below a confirmed event.
-- If several items are the same story, give them the SAME score — do not reward repetition.
+- If several items are the same story, give them the SAME score. Do not reward repetition.
 - An item outside this channel's subject scores 0, whatever its source.
 - Prefer things with a concrete, demonstrable "what changed" over commentary.
 ${cat.caution ? `\n${cat.caution}\n` : ""}
 Return STRICT JSON, an array with one object per item, in the same order, and
-NOTHING else. No angle, no explanation, no prose — only the number:
+NOTHING else. No angle, no explanation, no prose. Only the number:
 [{"i": 0, "score": 7}, {"i": 1, "score": 2}]
 
 ITEMS:`;
@@ -92,14 +93,14 @@ export function buildDetailPrompt(cat, existingKeys = []) {
   // The story key IS the cluster, and it is invented fresh on every pass. Asked
   // twice about the same event four hours apart, the model would coin
   // "nvidia-buys-hugging-face" once and "nvidia-hugging-face-acquisition" the
-  // next time — and since nothing ever re-merges clusters, one acquisition
+  // next time, and since nothing ever re-merges clusters, one acquisition
   // became three cards carrying 4, 18 and 20 sources, all near the top of the
   // feed. Handing back the keys already in use turns the second pass into a
   // lookup rather than a fresh invention. Costs a few dozen input tokens.
   const known = existingKeys.length
     ? `\nSTORY KEYS ALREADY IN USE for recent items in this category. If an item
-below is the SAME EVENT as one of these, return that key EXACTLY as written —
-character for character — rather than inventing a new one. Only coin a new key
+below is the SAME EVENT as one of these, return that key EXACTLY as written,
+character for character, rather than inventing a new one. Only coin a new key
 when the event genuinely is not in this list:
 ${existingKeys.map((k) => `  ${k}`).join("\n")}\n`
     : "";
@@ -110,11 +111,11 @@ These items have already been judged worth covering. For EACH one give:
 
   "story": a short lowercase-hyphenated key naming the underlying EVENT, not the
            headline. Items reporting the same event MUST get the exact same key,
-           however differently they are worded — "OpenAI's Astra Model" and
+           however differently they are worded: "OpenAI's Astra Model" and
            "OpenAI's Astra Sparks Safety Alarm" are both
            "openai-astra-safety-risk". Keep it 2-5 words.
 ${known}
-  "angle": one short line on what the video would actually be ABOUT — the hook,
+  "angle": one short line on what the video would actually be ABOUT: the hook,
            in plain words.
   "why":   a few words on why it is worth covering.
 
@@ -132,7 +133,7 @@ function renderList(items) {
     .map((it, i) => {
       const src = it.source_kind === "primary" ? `${it.source}, official` : it.source;
       const pts = it.meta?.points ? `, ${it.meta.points} pts` : "";
-      return `[${i}] (${src}${pts}) ${it.title}${it.summary ? ` — ${it.summary.slice(0, 160)}` : ""}`;
+      return `[${i}] (${src}${pts}) ${it.title}${it.summary ? ` | ${it.summary.slice(0, 160)}` : ""}`;
     })
     .join("\n");
 }
@@ -172,7 +173,7 @@ function parseArray(res, label, categoryId) {
  * Is there anything here that has been collected but not yet judged?
  *
  * ── WHY THIS IS ASKED BEFORE THE COOLDOWN IS TAKEN ───────────────────────────
- * rankNews already returns for free when it finds nothing — the early return
+ * rankNews already returns for free when it finds nothing, the early return
  * above the first API call means an empty pass costs a Mongo query and no
  * tokens. What it does NOT do is give the cooldown back, and ensureRanked claims
  * that cooldown before it knows whether there is any work. So an empty pass used
@@ -182,7 +183,7 @@ function parseArray(res, label, categoryId) {
  * That was survivable while ranking only fired from a button. It is not now that
  * a sign-in and a stale feed can both trigger it: the likeliest sequence is a
  * page load claiming the slot for zero items, immediately followed by the fetch
- * that actually brings news in — and finding itself throttled.
+ * that actually brings news in, and finding itself throttled.
  *
  * One indexed existence check, covered by { category, first_seen_at, ai_score }.
  */
@@ -283,7 +284,7 @@ export async function rankNews(categoryId, { force = false } = {}) {
     // The keys already standing in this category's recent window. Model-coined
     // keys only: a lexical title_sig would flood the list with near-duplicates
     // and teach it the wrong shape. Capped, because this is a hint, not a
-    // catalogue — and the newest are the ones a fresh item is likely to match.
+    // catalogue, and the newest are the ones a fresh item is likely to match.
     let existingKeys = [];
     try {
       const recent = await NewsItem.find({
@@ -314,14 +315,14 @@ export async function rankNews(categoryId, { force = false } = {}) {
           if (!item) continue;
 
           const set = {
-            ai_angle: String(d.angle || "").slice(0, 300),
-            ai_reason: String(d.why || "").slice(0, 200),
+            ai_angle: noEmDash(d.angle).slice(0, 300),
+            ai_reason: noEmDash(d.why).slice(0, 200),
           };
 
           // RE-CLUSTER ON THE MODEL'S STORY KEY. titleSignature only catches
           // stories whose WORDING overlaps, so "OpenAI's Astra Model" and
           // "OpenAI's Astra Sparks AI Safety Alarm Bells" stayed two clusters and
-          // both surfaced at 9/10 — the same story twice at the top of the feed.
+          // both surfaced at 9/10, the same story twice at the top of the feed.
           // The model already knows they are one event, so its key is a better
           // cluster than anything lexical.
           const story = String(d.story || "").trim().toLowerCase()
@@ -357,13 +358,13 @@ export async function rankNews(categoryId, { force = false } = {}) {
   );
 
   // ── TELL ANYONE WAITING THAT THE CARDS EXIST ─────────────────────────────
-  // Scores are what put a story in the feed — GET /news filters on ai_score — so
+  // Scores are what put a story in the feed, GET /news filters on ai_score, so
   // this is the moment the list a creator is watching actually changed, and
   // until now the only way to find that out was to ask again.
   //
   // The event carries a COUNT, not the cards. Everything that makes a card what
-  // it is — clustering, heat ordering, the profile's categories, this creator's
-  // own read state — is decided in GET /news, and a socket payload that tried to
+  // it is, clustering, heat ordering, the profile's categories, this creator's
+  // own read state, is decided in GET /news, and a socket payload that tried to
   // carry all of that would be a second, quietly diverging copy of that route.
   // So the browser is told what changed and re-reads, which is one cheap query
   // against a feed that has just been written.

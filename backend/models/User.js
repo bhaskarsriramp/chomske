@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema } = mongoose;
 
 /**
- * User — one row per Google account that has signed in.
+ * User, one row per Google account that has signed in.
  *
  * `google_sub` is the stable Google account id and the real identity key. Email is
  * stored for display and support, but is NOT the join key: a Google account can
@@ -17,7 +17,7 @@ const UserSchema = new Schema({
   // What this creator covers. Chosen once at first sign-in and changeable later.
   //
   // It decides which stories they see AND which categories the collector spends
-  // money on — services/newsScheduler.js reads a distinct() over this field and
+  // money on, services/newsScheduler.js reads a distinct() over this field and
   // only runs the ones somebody picked. So an empty array here is not just an
   // incomplete profile, it is the difference between a paid ranking pass running
   // and not running.

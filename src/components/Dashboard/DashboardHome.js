@@ -7,8 +7,8 @@ import { useProfiles } from "../../state/ProfileContext";
 /**
  * The Dashboard: how much voice we have, and how much you've made with it.
  *
- * The range selector only governs SCRIPTS. Videos are a current state — five
- * slots, some filled — not an activity total, so filtering them by "last 7 days"
+ * The range selector only governs SCRIPTS. Videos are a current state (five
+ * slots, some filled), not an activity total, so filtering them by "last 7 days"
  * would show zero for someone whose voice works perfectly but who set it up a
  * month ago. That reads as a broken product, so the card says so explicitly
  * rather than silently ignoring the filter.
@@ -30,13 +30,13 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
   const [error, setError] = useState("");
 
   // Defaults to the channel they are working in, not to "all". Unlike the script
-  // history, the numbers here answer "how is THIS channel doing" — and the voice
+  // history, the numbers here answer "how is THIS channel doing", and the voice
   // card underneath is meaningless without one channel to be about, since there
   // is no such thing as an average of two voices.
   const profileFilter = activeId || "all";
 
   const load = useCallback(async () => {
-    // A custom range with only one date chosen isn't a range yet — don't fetch
+    // A custom range with only one date chosen isn't a range yet. Don't fetch
     // and don't show an error for a half-finished action.
     if (range === "custom" && !(custom.from && custom.to)) return;
     setBusy(true);
@@ -70,7 +70,7 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
           </p>
         </div>
 
-        {/* No profile picker here — the app bar above carries it on every
+        {/* No profile picker here, the app bar above carries it on every
             screen. See Shell/TopBar.js. */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
 
@@ -270,7 +270,7 @@ function Stat({ label, value, suffix, note, onClick, actionLabel, tone = "normal
         {label}
       </div>
 
-      {/* Never a dash, never a zero. The old version rendered "—" until the
+      {/* Never a dash, never a zero. The old version rendered a bare dash until the
           request landed, and for that moment it was a claim someone could read
           and believe. A skeleton cannot be mistaken for a value. */}
       {loading ? (

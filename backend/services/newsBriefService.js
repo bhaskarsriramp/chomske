@@ -1,5 +1,5 @@
 /**
- * newsBriefService.js — the 100-120 words a creator reads before deciding.
+ * newsBriefService.js: the 100-120 words a creator reads before deciding.
  *
  * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
  * The feed used to show a headline and a one-line angle, then a button that
@@ -25,6 +25,7 @@
 import { GoogleGenAI } from "@google/genai";
 import NewsItem from "../models/NewsItem.js";
 import { publishNewsEvent } from "./newsEvents.js";
+import { noEmDash } from "../utils/prose.js";
 
 const MODEL = process.env.GEMINI_BRIEF_MODEL || process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
 
@@ -43,7 +44,7 @@ const MAX_TRIES = parseInt(process.env.NEWS_BRIEF_MAX_TRIES || "2", 10);
 // The score at which a story becomes worth writing a brief for. MUST match the
 // feed's own floor (MIN_SCORE in src/components/News/NewsFeed.js). It was 6
 // while the feed showed 5, so a story scoring exactly 5 was visible to readers
-// and invisible to this — it never got a brief prepared, and generated one from
+// and invisible to this, it never got a brief prepared, and generated one from
 // scratch every single time somebody opened it.
 const BRIEF_MIN_SCORE = parseInt(process.env.NEWS_BRIEF_MIN_SCORE || "5", 10);
 
@@ -161,8 +162,8 @@ async function generate(item) {
         temperature: 0.3,
         responseMimeType: "application/json",
         // 1024 was tight enough that a brief running slightly long came back as
-        // truncated JSON, failed to parse, and — before the attempt counter
-        // above — was retried forever. Headroom is free: only what is actually
+        // truncated JSON, failed to parse, and, before the attempt counter
+        // above, was retried forever. Headroom is free: only what is actually
         // generated is billed.
         maxOutputTokens: 4096,
         thinkingConfig: { thinkingBudget: 0 },
@@ -176,7 +177,7 @@ async function generate(item) {
 
   let brief = "";
   try {
-    brief = String(JSON.parse(res.text || "{}").brief || "").trim();
+    brief = noEmDash(JSON.parse(res.text || "{}").brief);
   } catch {
     const finish = res?.candidates?.[0]?.finishReason || "unknown";
     console.error(`[news-brief] unparseable response for ${item._id} · finishReason=${finish}`);
@@ -203,7 +204,7 @@ async function generate(item) {
 
 /**
  * Record the outcome on every row in the cluster, so whichever one represents
- * the story serves it — and so a failure is remembered rather than rediscovered.
+ * the story serves it, and so a failure is remembered rather than rediscovered.
  *
  * The attempt counter increments whether or not there is anything to show. That
  * is the whole point: an unrecorded failure is indistinguishable from never
@@ -224,7 +225,7 @@ async function stamp(item, brief, { failed = false } = {}) {
  * Pre-generate briefs for the stories a feed will actually show.
  *
  * hasPendingBriefs() is the same question as a cheap existence check, asked
- * before a paid slot is claimed — a pass with nothing to rank may still have
+ * before a paid slot is claimed, a pass with nothing to rank may still have
  * briefs owed from a previous one that hit its per-pass cap, and skipping on the
  * ranking answer alone would strand those. See ensureRanked in newsScheduler.js.
  *
@@ -254,7 +255,7 @@ export async function backfillBriefs(categoryId, { limit = 10, minScore = BRIEF_
     ai_score: { $gte: minScore },
     $or: [{ brief: { $exists: false } }, { brief: "" }],
     // Never re-pick a story that has already used its attempts. This was
-    // `brief_at: null`, which excluded successes but not failures — so every
+    // `brief_at: null`, which excluded successes but not failures, so every
     // story the model choked on came back round on the next pass, and the one
     // after that, at six per category per pass, indefinitely.
     $and: [{ $or: [{ brief_tries: { $exists: false } }, { brief_tries: { $lt: MAX_TRIES } }] }],
@@ -281,7 +282,7 @@ export async function backfillBriefs(categoryId, { limit = 10, minScore = BRIEF_
     // prose that was ready minutes ago. This hands each one over the moment it
     // exists.
     //
-    // Keyed on the CLUSTER, matching what the feed sends as `story` — the brief
+    // Keyed on the CLUSTER, matching what the feed sends as `story`, the brief
     // is written across every member (see the updateMany in ensureBrief), and
     // the row the feed happened to pick as representative is often not the row
     // the backfill happened to brief. `id` rides along for the unclustered case.

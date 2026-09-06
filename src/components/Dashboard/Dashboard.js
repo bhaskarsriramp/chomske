@@ -17,14 +17,14 @@ import TopBar from "../Shell/TopBar";
  * The app shell.
  *
  * A sidebar rather than tabs because there are now four destinations in two
- * different jobs — making today's video, and managing the account behind it —
+ * different jobs (making today's video, and managing the account behind it),
  * and a flat row of four tabs says nothing about which is which.
  *
  * ── WHY PANELS ARE HIDDEN, NOT UNMOUNTED ─────────────────────────────────────
  * Transcription polls a background job. Unmounting on navigation would clear the
  * interval and lose the result, so someone who checks Topics while a video
  * processes would come back to nothing. Each panel mounts the first time it is
- * opened and then stays mounted, hidden. Dashboard is the exception — it holds no
+ * opened and then stays mounted, hidden. Dashboard is the exception: it holds no
  * in-flight work and its numbers should be fresh on every visit, so it remounts.
  */
 export const TAB_IDS = ["topics", "voice", "scripts", "dashboard", "profile"];
@@ -33,7 +33,7 @@ export const TAB_IDS = ["topics", "voice", "scripts", "dashboard", "profile"];
  * Both providers wrap the whole shell rather than individual panels.
  *
  * The balance is read by the sidebar, the mobile header and the order panel, and
- * the selected profile by every screen — all of which are mounted at once here
+ * the selected profile by every screen, all of which are mounted at once here
  * (panels are hidden, not unmounted). Per-panel state would mean several copies
  * of each, disagreeing the moment one of them changed.
  */
@@ -70,13 +70,13 @@ function Shell({ user, onSignOut }) {
   }, [navigate]);
 
   // Panels are kept mounted once visited (see the note above), and the URL can
-  // now arrive from a link or the back button rather than only from openTab —
+  // now arrive from a link or the back button rather than only from openTab,
   // so registration happens here, on whatever tab is current.
   useEffect(() => {
     setMounted((m) => (m[tab] ? m : { ...m, [tab]: true }));
   }, [tab]);
 
-  // The profile's videos or voice changed — re-read the list (counts,
+  // The profile's videos or voice changed: re-read the list (counts,
   // staleness) and tell the panels to re-read the voice.
   const bumpVoice = useCallback(() => {
     setVoiceRev((n) => n + 1);
@@ -84,7 +84,7 @@ function Shell({ user, onSignOut }) {
   }, [refreshProfiles]);
 
   // Escape closes the drawer. Also close it if the viewport grows into the
-  // desktop layout — otherwise the overlay state survives the resize and blocks
+  // desktop layout; otherwise the overlay state survives the resize and blocks
   // the page behind a sidebar that is already permanently visible.
   useEffect(() => {
     if (!drawer) return;
@@ -109,7 +109,7 @@ function Shell({ user, onSignOut }) {
       />
 
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        {/* Wordmark left, menu control right — the drawer opens from the right,
+        {/* Wordmark left, menu control right. The drawer opens from the right,
             under the thumb that reaches the button. The header stays above the
             drawer and its backdrop so the close control never moves. */}
         {isNarrow && (
@@ -175,7 +175,7 @@ function Shell({ user, onSignOut }) {
 
           {mounted.voice && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "voice" ? "flex" : "none" }}>
-              {/* setQuota is a stable setState reference — an inline arrow would
+              {/* setQuota is a stable setState reference; an inline arrow would
                   change identity every render and re-fire the panel's fetch. */}
               <TranscribePanel
                 onQuota={setQuota}

@@ -1,13 +1,13 @@
 /**
- * github.js — releases from the repos that matter in AI tooling.
+ * github.js: releases from the repos that matter in AI tooling.
  *
- * A release tag is often the FIRST public evidence a thing shipped — hours
+ * A release tag is often the FIRST public evidence a thing shipped, hours
  * before a blog post, days before coverage. For a be-first product that makes
  * this one of the highest-value sources despite being the least glamorous.
  *
  * GITHUB_TOKEN is optional: without it GitHub allows 60 requests/hour
  * unauthenticated, which this stays under. With it, 5,000/hour. Nothing breaks
- * if it's absent — the fetcher just gets less headroom.
+ * if it's absent, the fetcher just gets less headroom.
  */
 import { cleanText, parseDate } from "../../utils/normalize.js";
 

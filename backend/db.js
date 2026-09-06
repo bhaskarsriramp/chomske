@@ -1,5 +1,5 @@
 /**
- * db.js — one Mongo connection for the process.
+ * db.js: one Mongo connection for the process.
  *
  * Chomske has its own Atlas cluster, so this is deliberately plain: username and
  * host sit in code, only the password comes from the environment. Same shape as
@@ -35,7 +35,7 @@ export default async function connectToMongo() {
   }
 
   if (!password) {
-    throw new Error("MONGODB_PASSWORD is not set — add it to backend/.env.");
+    throw new Error("MONGODB_PASSWORD is not set. Add it to backend/.env.");
   }
 
   mongoose.connection.on("error", (err) => console.error("[mongo] error:", err.message));

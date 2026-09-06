@@ -1,13 +1,13 @@
 /**
- * arxiv.js — new AI papers.
+ * arxiv.js: new AI papers.
  *
  * The earliest signal there is: a paper lands here days or weeks before anyone
- * writes it up. Most papers are not video material, which the ranker handles —
+ * writes it up. Most papers are not video material, which the ranker handles,
  * this fetcher's job is only to make sure the genuinely big ones (a new model,
  * a result that breaks a benchmark) aren't missed because we were waiting for
  * TechCrunch to notice.
  *
- * MUST be https — the http endpoint 301s and `fetch` won't follow it by default.
+ * MUST be https, the http endpoint 301s and `fetch` won't follow it by default.
  * Returns Atom XML, not JSON, so it's parsed with the shared RSS parser.
  */
 import Parser from "rss-parser";
@@ -16,7 +16,7 @@ import { cleanText, parseDate } from "../../utils/normalize.js";
 const parser = new Parser({ timeout: 15000 });
 
 // cs.AI (artificial intelligence), cs.LG (learning), cs.CL (language).
-// cs.CV is deliberately out — computer-vision volume is enormous and rarely
+// cs.CV is deliberately out, computer-vision volume is enormous and rarely
 // makes AI-news video content.
 const CATEGORIES = ["cs.AI", "cs.LG", "cs.CL"];
 const PER_CATEGORY = 25;

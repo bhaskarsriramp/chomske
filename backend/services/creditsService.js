@@ -1,5 +1,5 @@
 /**
- * creditsService.js — the only place credits move.
+ * creditsService.js: the only place credits move.
  *
  * Every grant and every spend goes through here. Routes never touch
  * CreditWallet directly, because the correctness of this system is entirely in
@@ -9,11 +9,11 @@
  * ── THE RULE: NEVER READ THEN WRITE ─────────────────────────────────────────
  * The obvious implementation is "read the balance, check it's enough, subtract,
  * save". It is also wrong. Two script requests from the same account arriving
- * together both read 30, both decide 30 ≥ 23, and both write 7 — two scripts
+ * together both read 30, both decide 30 ≥ 23, and both write 7, two scripts
  * for the price of one, forever, for anyone who double-clicks. It is not a rare
  * race: the frontend can fire it by itself on a slow connection.
  *
- * So a spend is ONE conditional update — match this user AND a balance at least
+ * So a spend is ONE conditional update, match this user AND a balance at least
  * the cost, decrement in the same operation. Mongo applies it atomically. If it
  * matches nothing, the balance was insufficient at that instant and no credits
  * moved. There is no window between the check and the write because there is no
@@ -40,7 +40,7 @@ export class InsufficientCredits extends Error {
  * `signup_granted_at` in $setOnInsert is what makes the grant single: on the
  * insert it is stamped and the credits are included; on every later call the
  * upsert matches an existing row and $setOnInsert does nothing at all. Two
- * simultaneous first-requests cannot both insert — the unique index on `user`
+ * simultaneous first-requests cannot both insert, the unique index on `user`
  * rejects the loser, which is caught below and re-read.
  */
 export async function getWallet(userId) {
@@ -69,7 +69,7 @@ export async function getWallet(userId) {
   }
 }
 
-/** Balance only — the number the header shows on every page load. */
+/** Balance only, the number the header shows on every page load. */
 export async function getBalance(userId) {
   const w = await getWallet(userId);
   return w?.balance ?? 0;
@@ -78,7 +78,7 @@ export async function getBalance(userId) {
 /**
  * Take credits for work about to be done.
  *
- * @throws {InsufficientCredits} when the balance will not cover it — nothing is
+ * @throws {InsufficientCredits} when the balance will not cover it, nothing is
  *   written, so the caller can answer with a "top up" prompt and no cleanup.
  * @returns {{ balance, spent }} the balance AFTER the spend
  */
@@ -89,7 +89,7 @@ export async function spend(userId, amount, { reason = "script", refType = "", r
   await getWallet(userId);   // ensures the row (and the signup grant) exists
 
   // THE atomic operation. `balance: { $gte: cost }` in the FILTER is the whole
-  // safety argument — a balance that dropped between this call and the last
+  // safety argument, a balance that dropped between this call and the last
   // read simply fails to match, and no credits move.
   const wallet = await CreditWallet.findOneAndUpdate(
     { user: userId, balance: { $gte: cost } },
@@ -120,7 +120,7 @@ export async function spend(userId, amount, { reason = "script", refType = "", r
 }
 
 /**
- * Put credits in — a purchase, or a refund for work that failed after billing.
+ * Put credits in, a purchase, or a refund for work that failed after billing.
  *
  * Unconditional: there is no balance a grant can fail against. The caller is
  * responsible for making sure it happens once (see verifyAndGrant in
@@ -133,7 +133,7 @@ export async function grant(userId, amount, { reason = "purchase", refType = "",
   await getWallet(userId);
 
   const inc = { balance: credits };
-  // Only real money bought counts toward lifetime_purchased — refunds and
+  // Only real money bought counts toward lifetime_purchased, refunds and
   // hand-adjustments would otherwise inflate the one number used to answer
   // "what has this account actually paid us".
   if (reason === "purchase") inc.lifetime_purchased = credits;
@@ -162,7 +162,7 @@ export async function grant(userId, amount, { reason = "purchase", refType = "",
  *
  * Called from the script runner's failure path. A creator who was billed for a
  * script that errored and has to email us to get 30 credits back will not be a
- * creator for long, and the alternative — charging only on success — means
+ * creator for long, and the alternative, charging only on success, means
  * every failure is a free retry loop against a metered model.
  */
 export async function refund(userId, amount, { refType = "", refId = null, note = "" } = {}) {
@@ -181,7 +181,7 @@ export async function history(userId, limit = 25) {
 /**
  * Does the stored balance match the sum of the ledger?
  *
- * Not called in the request path — this is for a support script or a nightly
+ * Not called in the request path, this is for a support script or a nightly
  * check. If these ever disagree the ledger is right by definition (it is the
  * append-only record) and the wallet is what gets repaired.
  */

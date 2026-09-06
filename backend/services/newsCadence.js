@@ -1,5 +1,5 @@
 /**
- * newsCadence.js — how often each category is worth working on, and when it
+ * newsCadence.js: how often each category is worth working on, and when it
  * was last worked on.
  *
  * ── THE PROBLEM THIS SOLVES ──────────────────────────────────────────────────
@@ -28,7 +28,7 @@
  * Every failure path here is deliberately FAIL-OPEN: if Redis is unreachable,
  * every live category is treated as hot and we poll exactly as often as we did
  * before this file existed. That spends money it did not need to, which is the
- * right way round — the alternative, failing closed, would silently stop
+ * right way round, the alternative, failing closed, would silently stop
  * collecting news and the first symptom would be an empty feed nobody could
  * explain.
  */
@@ -68,7 +68,7 @@ const CHECKED_TTL_SEC = 14 * 24 * 3600;
  *
  * last_seen_at is the real signal, but it only exists on accounts that have
  * opened the feed since this field shipped. The fallback to last_login covers
- * everyone else — without it, every pre-existing account would read as dormant
+ * everyone else, without it, every pre-existing account would read as dormant
  * on the first deploy and every category would go cold at once.
  */
 function activeSince(date) {
@@ -87,7 +87,7 @@ function activeSince(date) {
  * is a database write per page view, to record something whose resolution only
  * needs to be days. Redis holds the throttle, so the common case is one cheap
  * key check and nothing else. No Redis means no throttle, so it falls back to
- * writing every time — correct, just chattier, and the collector's tiers stay
+ * writing every time, correct, just chattier, and the collector's tiers stay
  * accurate either way.
  */
 export async function touchSeen(userId) {
@@ -153,7 +153,7 @@ export async function categoryPlan(intervalMin) {
 /**
  * Reserve this category's slot for the current pass.
  *
- * Hot categories run every tick, so they skip Redis entirely — the guard would
+ * Hot categories run every tick, so they skip Redis entirely, the guard would
  * expire exactly as often as it is asked, which is a round trip to learn "yes".
  *
  * @returns {Promise<boolean>} true when this pass should do the work
@@ -236,8 +236,8 @@ export async function lastCheckedAt(cats) {
  * Bring categories back from cold, because one of their people just showed up.
  *
  * Clearing the guard is what makes the next scheduled tick pick them up. The
- * caller usually also wants an immediate pass — see kickoffCategories in the
- * scheduler — because a category that has been cold for a fortnight may have
+ * caller usually also wants an immediate pass, see kickoffCategories in the
+ * scheduler, because a category that has been cold for a fortnight may have
  * nothing left inside the feed's window, and a returning creator should not
  * meet an empty page while a timer runs down.
  */
@@ -253,7 +253,7 @@ export async function wakeCategories(cats) {
  * Take the right to SPEND MONEY ranking one category.
  *
  * This is the throttle the whole on-demand model rests on. Ranking now fires
- * from user actions — opening Topics, pressing Refresh, signing in — and those
+ * from user actions, opening Topics, pressing Refresh, signing in, and those
  * are things a person does repeatedly and several people do at once. Without a
  * guard, three refreshes are three ranking calls, and ten users sharing a
  * category multiply that again.
@@ -274,7 +274,7 @@ export async function claimRank(cat, seconds = RANK_COOLDOWN_SEC) {
  *
  * The paid news source is what makes the feed minutes-fresh instead of hours
  * behind, and it is called from three places that a person can trigger over and
- * over — the collector's tick, a sign-in kickoff, and the Fetch button. Same
+ * over, the collector's tick, a sign-in kickoff, and the Fetch button. Same
  * guard as ranking, its own clock: fetching is an eighth of a cent and wants to
  * be recent, ranking is dearer and can wait.
  *
@@ -289,12 +289,12 @@ export async function claimApidirectNews(cat, minutes = 60) {
  *
  * ── WHY THIS IS NOT claimApidirectNews, AND NOT THE BUTTON'S BUDGET ──────────
  * The feed now fetches by itself when its newest story has gone stale, which
- * makes the trigger a CONDITION rather than a click — and a condition that the
+ * makes the trigger a CONDITION rather than a click, and a condition that the
  * fetch is supposed to clear. When it works that is self-limiting: news comes
  * in, the top card is fresh, the condition goes false and nothing fires again.
  *
  * When it does NOT work it is a loop. A quiet Sunday, a source outage, a
- * category where nothing has been published in six hours — the fetch runs, finds
+ * category where nothing has been published in six hours, the fetch runs, finds
  * nothing newer, the top card is still stale, and the next page load asks again.
  * At the paid source's user-initiated gap of ten minutes that is 144 paid passes
  * a day per category instead of the scheduled 24, for a fetch that is by
@@ -357,7 +357,7 @@ async function claimPaid(cat, field, redisKey, seconds) {
  * Has this category been collected recently enough that a refresh does not need
  * to go out to the sources again?
  *
- * Collection is free but slow — a full multi-source pass is over a minute, which
+ * Collection is free but slow, a full multi-source pass is over a minute, which
  * is far too long to hold a button press open. The scheduled collector runs
  * every 15 minutes, so a refresh almost never needs to collect; it needs to RANK
  * what the collector already brought in.
@@ -373,7 +373,7 @@ export async function isFreshlyCollected(cat, withinMin = 20) {
  * Fifty people returning at once must not become fifty collections. Without
  * Redis there is no cheap way to coordinate that across instances, so the
  * kickoff simply does not run and the category waits for the next scheduled
- * tick — the safe direction to fail for something that only saves waiting.
+ * tick, the safe direction to fail for something that only saves waiting.
  */
 export async function claimKickoff(cat, seconds = 300) {
   if (!redis) return false;

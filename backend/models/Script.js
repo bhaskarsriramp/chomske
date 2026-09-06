@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema } = mongoose;
 
 /**
- * Script — one generated video script: a news story, written in a creator's voice.
+ * Script, one generated video script: a news story, written in a creator's voice.
  *
  * Async and polled for the same reason transcription is (see routes/transcribe.js):
  * writing a full script is a slow generation, and a request held open that long
@@ -24,7 +24,7 @@ const ScriptSchema = new Schema({
 
   status: { type: String, enum: ["processing", "done", "failed"], default: "processing", index: true },
 
-  // The script itself, in the creator's own language and script — Devanagari stays
+  // The script itself, in the creator's own language and script, Devanagari stays
   // Devanagari, the English words they habitually keep in English stay English.
   text:  { type: String, default: "" },
   // The opening line, pulled out separately: it is the part a creator judges the
@@ -40,7 +40,7 @@ const ScriptSchema = new Schema({
   // indistinguishable later from one written after the creator added ten.
   //
   // The name is COPIED, not looked up through the ref. A creator who renames or
-  // deletes a profile must not find their old scripts relabelled or unlabelled —
+  // deletes a profile must not find their old scripts relabelled or unlabelled,
   // what a script was written as is a fact about the past, and history that
   // rewrites itself is not history.
   profile:          { type: Schema.Types.ObjectId, ref: "Profile", default: null, index: true },

@@ -2,7 +2,7 @@
 
 Paste a YouTube link, get the transcript **in the language it was spoken in**.
 Hindi comes back in Devanagari, Telugu in Telugu script, and Hinglish keeps its
-code-mixing exactly as said — no translation, no romanisation.
+code-mixing exactly as said: no translation, no romanisation.
 
 Production domain: **chomske.com**
 
@@ -18,7 +18,7 @@ Hinglish/
 │   ├── models/         User, Transcript
 │   ├── middleware/     session cookie auth
 │   ├── routes/         auth (Google), transcribe
-│   ├── services/       geminiClient — the actual video read
+│   ├── services/       geminiClient: the actual video read
 │   └── utils/          YouTube URL parsing
 └── src/                React frontend (CRA)
     ├── components/Landing/     marketing page
@@ -34,7 +34,7 @@ Hinglish/
 ```bash
 cd backend
 npm install
-cp .env.example .env      # then fill it in — see below
+cp .env.example .env      # then fill it in, see below
 npm start                 # http://localhost:5000
 ```
 
@@ -67,7 +67,7 @@ npm start                 # http://localhost:3000
 In Google Cloud Console → Credentials → your OAuth client, add:
 
 - **Authorised JavaScript origins**: `http://localhost:3000`, `https://chomske.com`
-- **Authorised redirect URIs**: not needed — `@react-oauth/google` uses the
+- **Authorised redirect URIs**: not needed: `@react-oauth/google` uses the
   popup/ID-token flow, not a redirect.
 
 ---
@@ -79,7 +79,7 @@ In Google Cloud Console → Credentials → your OAuth client, add:
 This connects to the **same Atlas cluster** as betaFounderProduction but its own
 database (`hinglish`). That's not a style choice: betaFounderProduction connects
 with no database in its URI, so it lands in the cluster's default database, and
-its `User` model writes to a collection called `users` — the same name this
+its `User` model writes to a collection called `users`, the same name this
 project uses. One shared database would mean Hinglish signups landing in
 betaFounder's live user table.
 
@@ -92,15 +92,15 @@ MONGODB_URI without /db  → MONGODB_URI has no database name in it …
 
 ### Gemini's YouTube constraints are user-facing
 
-The video is read straight from its URL — no download, no ffmpeg, no storage.
+The video is read straight from its URL: no download, no ffmpeg, no storage.
 The limits that come with that surface as real error messages:
 
 - **Public videos only.** Unlisted and private both fail.
-- **Free tier caps at ~8 hours of video per day**, per API key — a per-key
+- **Free tier caps at ~8 hours of video per day**, per API key, a per-key
   ceiling, not per-user. Add more keys to `AISTUDIO_KEY` to raise it.
 - Long videos take minutes, which is why transcription is asynchronous: `POST
   /transcribe` returns a row immediately and the client polls it. Don't "simplify"
-  that into one blocking request — it dies on proxy idle timeouts.
+  that into one blocking request: it dies on proxy idle timeouts.
 
 ---
 
@@ -110,7 +110,7 @@ Reading a video is the only real cost in this product, so it's gated three ways:
 
 1. Sign-in required on every `/transcribe` route
 2. `DAILY_TRANSCRIBE_LIMIT` per user per rolling 24h (default 10)
-3. A unique index on `(user, video_id)` — the same video is never paid for twice,
+3. A unique index on `(user, video_id)`, the same video is never paid for twice,
    enforced by the database rather than by application logic that a double-click
    can race
 
@@ -120,7 +120,7 @@ Reading a video is the only real cost in this product, so it's gated three ways:
 
 | Method | Route | Notes |
 |---|---|---|
-| `POST` | `/auth/google` | Body `{ credential }` — the Google ID token. Verified server-side. |
+| `POST` | `/auth/google` | Body `{ credential }`: the Google ID token. Verified server-side. |
 | `GET` | `/auth/me` | Current user, or 401 |
 | `POST` | `/auth/logout` | Clears the cookie |
 | `POST` | `/transcribe` | Body `{ url }`. Returns `202` + a `processing` row, or the cached one |
@@ -138,7 +138,7 @@ Reading a video is the only real cost in this product, so it's gated three ways:
 - YouTube parser: 14/14 cases (watch, youtu.be, Shorts, live, embed, m., bare id,
   playlist/timestamp params, and correct rejection of non-YouTube URLs)
 - Frontend: production build compiles clean (85 kB gzipped)
-- **End-to-end transcription, on a real video** — `youtube.com/shorts/re5iwZ5tigw`,
+- **End-to-end transcription, on a real video**: `youtube.com/shorts/re5iwZ5tigw`,
   a Hindi tech Short. 11.4s, 1,988 chars, detected as `hi-en` / "Hinglish
   (Hindi-English)". Hindi returned in Devanagari; `AI`, `Nvidia`, `GPUs`,
   `Colossus`, `SMIC`, `Huawei` and a whole English sentence stayed in English,

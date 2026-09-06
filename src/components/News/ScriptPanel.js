@@ -21,7 +21,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
-  // The balance lives in one place for the whole app (see CreditsContext) — it
+  // The balance lives in one place for the whole app (see CreditsContext). It
   // is shown in the sidebar and the mobile header at the same time as here, and
   // three components each holding their own copy is three numbers that drift.
   const { setBalance, refresh: refreshCredits } = useCredits();
@@ -50,7 +50,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
         if (data.script.status !== "processing") {
           clearInterval(pollRef.current);
           setBusy(false);
-          // The first run builds the voice profile as a side effect — refresh the
+          // The first run builds the voice profile as a side effect, refresh the
           // header so it stops saying "no voice yet".
           onVoiceChange?.();
           // A failed script is refunded (routes/script.js), and so is an add-on
@@ -67,7 +67,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
   }, [onVoiceChange, refreshCredits]);
 
   /**
-   * @param {object} order  { seconds, english, packaging } — what they chose in
+   * @param {object} order  { seconds, english, packaging }: what they chose in
    *   ScriptOrder. Absent on a regenerate, which repeats the original order.
    */
   async function generate(force = false, order = null) {
@@ -87,7 +87,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
         body.packaging = order.packaging;
       } else if (script?.duration_seconds) {
         // A regenerate repeats what was bought the first time, including the
-        // add-ons — it is a redo, not a downgrade, and it is charged again.
+        // add-ons: it is a redo, not a downgrade, and it is charged again.
         body.seconds = script.duration_seconds;
         body.english = !!script.english_text;
         body.packaging = !!script.description;
@@ -130,7 +130,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
     <section style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid var(--line)" }}>
       {/* Just the heading. The balance moved to the sidebar card, where it is on
           screen permanently instead of only while this section is; and the
-          language chip went with it — the order panel below already says which
+          language chip went with it, the order panel below already says which
           voice is writing, and the finished script's own header repeats the
           language. Three copies of one fact is noise, not reassurance. */}
       <h3
@@ -155,7 +155,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
         </div>
       )}
 
-      {/* No transcripts yet — the voice has nothing to be learned from. */}
+      {/* No transcripts yet, the voice has nothing to be learned from. */}
       {(script?.status === "needs_voice" || (!hasVoice && voice && voice.transcripts_available === 0)) && (
         <NeedsVoice onGoTranscribe={onGoTranscribe} />
       )}
@@ -216,7 +216,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */
 
-/** "8 min", "90s" — the duration they ordered, shown as they chose it. */
+/** "8 min", "90s": the duration they ordered, shown as they chose it. */
 function fmtDuration(seconds) {
   const s = Number(seconds) || 0;
   return s >= 120 ? `${Math.round(s / 60)} min` : `${s}s`;

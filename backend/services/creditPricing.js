@@ -1,9 +1,9 @@
 /**
- * creditPricing.js — what things cost, in one place.
+ * creditPricing.js: what things cost, in one place.
  *
  * ── WHY THIS IS A MODULE AND NOT NUMBERS SPRINKLED THROUGH ROUTES ────────────
  * Every number below is money. A price that exists in two files WILL disagree
- * eventually — the route charges 30 and the pricing page promises 20, and the
+ * eventually, the route charges 30 and the pricing page promises 20, and the
  * first anyone hears of it is a refund request. The API serves its pack list
  * from this file, the script route charges from this file, and the frontend
  * renders whatever the API sent rather than hardcoding a rupee figure.
@@ -11,7 +11,7 @@
  * ── THE UNIT: ONE CREDIT BUYS TWO SECONDS OF FINISHED SCRIPT ─────────────────
  * Duration is the honest cost driver in both directions. An eight-minute script
  * costs us roughly eight times a Short in output tokens, and it is worth far
- * more to the creator — long-form earns ₹50-200 per 1,000 views in India where
+ * more to the creator, long-form earns ₹50-200 per 1,000 views in India where
  * Shorts earn ₹5-30. Charging per script instead would mean the same price for
  * both, which overcharges for a Short and hands away the long-form value.
  *
@@ -24,7 +24,7 @@
  *
  * The ceiling is real and low: Indian group-buy services sell forty premium
  * tools for ₹449-499 a month, so a single tool priced above that loses on sight.
- * These packs sit under it deliberately, and they are ONE-TIME — credits never
+ * These packs sit under it deliberately, and they are ONE-TIME, credits never
  * expire, because "tired of stacking subscriptions" is the actual complaint
  * this pricing exists to answer.
  */
@@ -59,8 +59,8 @@ export const DURATION_PRESETS = [
 /**
  * The English twin, at half price.
  *
- * The expensive half of a script is the research — the ranked story, the
- * coverage, the voice profile — and that is already paid for by the first
+ * The expensive half of a script is the research, the ranked story, the
+ * coverage, the voice profile, and that is already paid for by the first
  * language. The twin is one more model call over the same material.
  *
  * It is discounted rather than free because it is the single most valuable
@@ -70,15 +70,15 @@ export const DURATION_PRESETS = [
  */
 export const ENGLISH_TWIN_RATE = 0.5;
 
-/** Title, description, hashtags and thumbnail lines. Flat — it does not scale
+/** Title, description, hashtags and thumbnail lines. Flat, it does not scale
  *  with length, it is one short call whatever the script's duration. */
 export const PACKAGING_CREDITS = 15;
 
 /**
  * What a new account starts with: three 60-second scripts.
  *
- * Enough to reach the moment the product is actually judged on — a finished
- * script in their own voice — without being enough to run a channel on. A
+ * Enough to reach the moment the product is actually judged on, a finished
+ * script in their own voice, without being enough to run a channel on. A
  * trial that ends before that moment tells them nothing about whether to pay.
  */
 export const SIGNUP_FREE_CREDITS = 90;
@@ -110,7 +110,7 @@ export function clampSeconds(v) {
  *
  * Rounded UP: a 45-second script is 22.5 credits and we charge 23. Rounding
  * down would mean the shortest scripts are sold fractionally below cost, and
- * fractional credits in a wallet are a rounding-error bug waiting to happen —
+ * fractional credits in a wallet are a rounding-error bug waiting to happen,
  * balances are integers everywhere.
  *
  * @param {number} seconds        requested length, pre-clamp is fine
@@ -133,7 +133,7 @@ export function quote({ seconds, englishTwin = false, packaging = false } = {}) 
  * voiceMetrics.js). A generic 150-words-per-minute would be wrong for
  * everybody: the measured range across Indic short-form runs from a little
  * over 2 to nearly 5 words a second, which is a two-fold error at the extremes
- * — and for a Short, an over-long script is one that gets cut off mid-sentence.
+ * and for a Short, an over-long script is one that gets cut off mid-sentence.
  *
  * The fallback is only used when the profile has no measured pace yet.
  */

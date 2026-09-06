@@ -1,9 +1,9 @@
 /**
- * news.js — the ranked feed.
+ * news.js: the ranked feed.
  *
  * Reads collapse by cluster: five outlets covering one launch return ONE entry
  * with a `sources` count, rather than five rows that make the feed look like
- * noise. The count isn't cosmetic — how many outlets picked a story up is itself
+ * noise. The count isn't cosmetic, how many outlets picked a story up is itself
  * a signal of how big it is, so it's returned and used for ordering.
  */
 import express from "express";
@@ -30,7 +30,7 @@ const router = express.Router();
  * plumbing. This is a fact about the PRODUCT: whatever we last ran, the freshest
  * thing a creator can actually see is four hours old, and on a hot category that
  * is either a quiet morning or a pipeline that has quietly stopped serving. The
- * creator cannot tell those apart and should not have to — so the feed spends
+ * creator cannot tell those apart and should not have to, so the feed spends
  * one gated fetch finding out, rather than leaving them to guess at a button.
  *
  * Measured on `latest_at` (the newest publisher timestamp in a cluster), which
@@ -43,11 +43,11 @@ const STALE_HOURS = parseFloat(process.env.NEWS_STALE_HOURS || "3");
 /**
  * GET /news
  *   ?hours=24        window on first_seen_at (default 24, max 72)
- *   ?min_score=4     lowest ai_score to include (default 4 — below that is noise)
+ *   ?min_score=4     lowest ai_score to include (default 4, below that is noise)
  *   ?limit=25        max clusters (default 25, max 100)
  *   ?source=hn       optional single-source filter
  *
- * Ordering is by how live a story is, not by the single newest link — see
+ * Ordering is by how live a story is, not by the single newest link, see
  * services/newsHeat.js for the formula and why it exists.
  */
 router.get("/", authenticateToken, async (req, res) => {
@@ -59,7 +59,7 @@ router.get("/", authenticateToken, async (req, res) => {
     // The feed is whatever THIS PROFILE covers, not what the account covers.
     // A creator running a sports channel and a tech channel must never see AI
     // stories in the sports feed just because the same person also runs the
-    // other one — that is the whole reason profiles exist.
+    // other one, that is the whole reason profiles exist.
     //
     // Falling back to the default category rather than returning nothing keeps a
     // not-yet-onboarded account from seeing an empty product and concluding it
@@ -98,12 +98,12 @@ router.get("/", authenticateToken, async (req, res) => {
           // `earliest` is pinned to when it broke. That is a true fact and it
           // was the wrong one to lead with: a story with twenty outlets on it,
           // the freshest two hours old, displayed and sorted as seventeen hours
-          // old — below stories whose newest coverage was half a day older. The
+          // old, below stories whose newest coverage was half a day older. The
           // feed read as frozen while it was in fact moving.
           //
           // Publisher time where there is one, our own clock where there isn't,
           // for every member. `latest` and `heat` are both derived from this in
-          // Node — see below for why that is not done here.
+          // Node, see below for why that is not done here.
           times: { $push: { $ifNull: ["$published_at", "$first_seen_at"] } },
 
           // Never null, so the pipeline always has something to order by even
@@ -135,7 +135,7 @@ router.get("/", authenticateToken, async (req, res) => {
     rows.sort((a, b) => b.heat - a.heat || new Date(b.latest) - new Date(a.latest));
 
     // ── IS THIS FEED STALE? ────────────────────────────────────────────────
-    // The MAXIMUM latest_at, not rows[0]'s — the list is ordered by heat, so the
+    // The MAXIMUM latest_at, not rows[0]'s, the list is ordered by heat, so the
     // top card is the liveliest story rather than the newest one, and reading
     // its timestamp would call a feed stale while a fresher story sat third.
     // No rows at all counts as stale: an empty feed is the strongest possible
@@ -146,7 +146,7 @@ router.get("/", authenticateToken, async (req, res) => {
     const stale = !freshestAt || Date.now() - freshestAt.getTime() > STALE_HOURS * 3600000;
 
     // When the collector last went and looked. The footer used to claim
-    // "Rechecked every 15 minutes", which is a promise, not evidence — a creator
+    // "Rechecked every 15 minutes", which is a promise, not evidence, a creator
     // staring at an eight-hour-old top card could not tell a quiet news day from
     // a broken collector. Read from Redis, so this costs nothing on a page load.
     const checkedAt = await lastCheckedAt(cats);
@@ -158,7 +158,7 @@ router.get("/", authenticateToken, async (req, res) => {
 
     // Which of these this creator has already opened, in one query over the
     // fifteen keys actually being returned. A story stays badged NEW until they
-    // click it — not until it gets old — so this flag is the badge.
+    // click it, not until it gets old, so this flag is the badge.
     let seen = new Set();
     try {
       const keys = rows.map((r) => storyKey(r.doc));
@@ -180,7 +180,7 @@ router.get("/", authenticateToken, async (req, res) => {
       checked_at: checkedAt,
       // The newest story on offer, and whether that is old enough to be worth
       // going and looking. The client acts on `stale` by calling POST /refresh
-      // with { auto: true } — the decision is made here, and the spend is gated
+      // with { auto: true }, the decision is made here, and the spend is gated
       // there, so no browser can turn a page load into an unbounded fetch.
       freshest_at: freshestAt,
       stale,
@@ -208,9 +208,9 @@ router.get("/", authenticateToken, async (req, res) => {
  * Go and get the newest stories, then judge them.
  *
  * ── THIS USED TO ONLY RE-SCORE, AND THAT WAS THE BUG ─────────────────────────
- * The reasoning was sound — a full collection is over a minute of fan-out across
+ * The reasoning was sound, a full collection is over a minute of fan-out across
  * a dozen sources, far too long to hold a button press open, and the collector
- * runs on its own clock anyway — but the result was a button called "Fetch new
+ * runs on its own clock anyway, but the result was a button called "Fetch new
  * topics" that could not fetch a topic. Everything it could show you was already
  * in the database before you pressed it. When the collector was quiet, for any
  * of the several reasons it can be quiet, pressing it did nothing and said
@@ -222,8 +222,8 @@ router.get("/", authenticateToken, async (req, res) => {
  * three presses, ten page loads and four people sharing a category still add up
  * to one paid fetch and one paid ranking pass.
  *
- * Coming back inside a cooldown is not an error — it means the feed is already
- * current — so the response says what happened rather than failing.
+ * Coming back inside a cooldown is not an error, it means the feed is already
+ * current, so the response says what happened rather than failing.
  */
 router.post("/refresh", authenticateToken, async (req, res) => {
   try {
@@ -238,14 +238,14 @@ router.post("/refresh", authenticateToken, async (req, res) => {
     // { auto: true } means the feed decided this for itself, because its newest
     // story had aged past NEWS_STALE_HOURS. That is a trigger the fetch is meant
     // to CLEAR, so when the fetch finds nothing the condition is still true and
-    // the next page load — from this creator, another tab, or anyone else who
-    // picked the category — asks again. Left ungated that is a paid retry loop
+    // the next page load, from this creator, another tab, or anyone else who
+    // picked the category, asks again. Left ungated that is a paid retry loop
     // whose rate is set by how many people are looking.
     //
     // So an automatic fetch has to take claimAutoFetch first, held per category
     // across every user, and a lost claim returns quietly rather than as an
     // error: the feed is not stale enough to be worth paying twice for.
-    // A press skips this entirely — a person asked, and is owed the attempt.
+    // A press skips this entirely, a person asked, and is owed the attempt.
     const auto = req.body?.auto === true;
 
     let inserted = 0;
@@ -265,7 +265,7 @@ router.post("/refresh", authenticateToken, async (req, res) => {
 
     // `collected` is what actually came in off the wire. The client reports new
     // CARDS, which is a different and smaller number (most stories score too low
-    // to reach the feed) — but when the two disagree loudly, this is the field
+    // to reach the feed), but when the two disagree loudly, this is the field
     // that says whether the fetch worked and the bar was high, or the fetch
     // never happened at all.
     return res.json({ success: true, collected: inserted, ranked, briefs, refreshed: paid });
@@ -278,7 +278,7 @@ router.post("/refresh", authenticateToken, async (req, res) => {
 });
 
 /**
- * GET /news/:id/brief — the 100-120 word read on this story.
+ * GET /news/:id/brief, the 100-120 word read on this story.
  *
  * Its own endpoint rather than part of /news/:id because generating one takes a
  * few seconds the first time. Folded into the main read, it would hold back the
@@ -305,7 +305,7 @@ router.get("/:id/brief", authenticateToken, async (req, res) => {
   }
 });
 
-/** GET /news/:id — one story, plus every source that covered it. */
+/** GET /news/:id, one story, plus every source that covered it. */
 router.get("/:id", authenticateToken, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });
@@ -314,7 +314,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
   if (!doc) return res.status(404).json({ success: false, message: "Not found" });
 
   // NEWEST FIRST. The list used to open with whoever broke the story, which put
-  // the oldest account of a developing event at the top of the reading list —
+  // the oldest account of a developing event at the top of the reading list,
   // the one most likely to have been overtaken by the time anyone opened it.
   const coverage = doc.cluster_id
     ? await NewsItem.find({ category: doc.category, cluster_id: doc.cluster_id })
@@ -332,7 +332,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
       earliest: coverage.length ? coverage[coverage.length - 1].published_at : doc.first_seen_at,
       latest: coverage.length ? coverage[0].published_at : doc.first_seen_at,
     }),
-    // Every link that covered it — this is what a creator opens to grab
+    // Every link that covered it, this is what a creator opens to grab
     // screenshots and check facts before recording.
     coverage: coverage.map((c) => ({
       source: c.source, title: c.title, url: c.url, published_at: c.published_at,
@@ -343,7 +343,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
 /**
  * What the read-state is keyed on: the cluster, falling back to the row.
  *
- * Must match what the client posts back, so both sides derive it the same way —
+ * Must match what the client posts back, so both sides derive it the same way,
  * shape() sends the same two fields out as `story` and `id`.
  */
 function storyKey(d) {
@@ -354,7 +354,7 @@ function storyKey(d) {
  * POST /news/seen  { story } | { stories: [...] }
  *
  * "I have been shown this one." Called from two places, both of which clear the
- * NEW badge: opening a card, and starting a fetch — the feed marks the batch it
+ * NEW badge: opening a card, and starting a fetch, the feed marks the batch it
  * is about to replace, so NEW means "arrived in the latest batch" rather than
  * "never clicked". See models/StorySeen.js.
  *
@@ -363,13 +363,13 @@ function storyKey(d) {
  * ── WHY THE BADGE WAITS FOR A CLICK AND NOT A TIMER ──────────────────────────
  * The reference project dismisses its NEW chip after a card has been in the
  * viewport for 2.5 seconds, which suits a feed that is scrolled through. This
- * one is a shortlist of fifteen where the whole job is choosing between them —
+ * one is a shortlist of fifteen where the whole job is choosing between them,
  * a creator reads every headline before picking, so a dwell timer would clear
  * every badge on the list during the very scan the badges exist to help with.
  * Opening a story is the moment they actually dealt with it.
  *
  * Idempotent and cheap: an upsert per story, and re-marking one already marked
- * changes nothing. Failure is answered with success — losing a read mark means
+ * changes nothing. Failure is answered with success, losing a read mark means
  * a badge lingers, which is not worth an error in front of somebody.
  */
 router.post("/seen", authenticateToken, async (req, res) => {
@@ -431,7 +431,7 @@ function shape(d, cluster = {}) {
     // reasoning and for anything that wants the break time, but a card leading
     // with it told creators a live story was seventeen hours stale.
     latest_at: cluster.latest || d.published_at || d.first_seen_at,
-    // How many separate sources carried this story — the "how big is it" signal.
+    // How many separate sources carried this story, the "how big is it" signal.
     sources: cluster.sources || [d.source],
     source_count: cluster.count || 1,
     points: d.meta?.points ?? null,

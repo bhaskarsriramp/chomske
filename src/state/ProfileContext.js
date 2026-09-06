@@ -7,7 +7,7 @@ import api from "../api";
  * ── ONE SELECTION, EVERYWHERE ───────────────────────────────────────────────
  * Topics, My voice, My scripts and Dashboard are all about ONE profile at a
  * time, and they share this single value on purpose. Someone running a tech
- * channel and a sports channel is working on one of them right now — reading its
+ * channel and a sports channel is working on one of them right now, reading its
  * feed, writing in its voice, checking how it is doing. Per-screen selections
  * would let those four silently disagree, and "why is my dashboard showing the
  * other channel" becomes a question with no visible cause.
@@ -36,7 +36,7 @@ function writeStored(id) {
   try {
     if (id) window.localStorage.setItem(KEY, id);
     else window.localStorage.removeItem(KEY);
-  } catch { /* private mode, or storage blocked — the choice still works in-session */ }
+  } catch { /* private mode, or storage blocked. The choice still works in-session */ }
 }
 
 export default function ProfileProvider({ children }) {
@@ -53,7 +53,7 @@ export default function ProfileProvider({ children }) {
       setMax(data.max || 1);
 
       // Keep the current selection if it still exists; otherwise fall back to
-      // the server's default. A stored id can outlive the profile it names —
+      // the server's default. A stored id can outlive the profile it names,
       // deleted in another tab, or on another device.
       setActiveId((prev) => {
         if (prev && list.some((p) => p.id === prev)) return prev;
@@ -72,8 +72,8 @@ export default function ProfileProvider({ children }) {
   const setActive = useCallback((id) => {
     setActiveId(id);
     writeStored(id);
-    // Tell the server too, so the next device — and the next session before the
-    // list loads — opens on the same channel.
+    // Tell the server too, so the next device (and the next session before the
+    // list loads) opens on the same channel.
     if (id) api.patch(`/profiles/${id}`, { is_default: true }).catch(() => {});
   }, []);
 

@@ -5,7 +5,7 @@ import { useCredits } from "../../state/CreditsContext";
  *
  * ── WHY IT IS PINNED RATHER THAN IN THE LIST ────────────────────────────────
  * Credits are the one number that changes what a creator can do next, and it
- * changes without them acting — every script spends some. Scrolled out of view
+ * changes without them acting: every script spends some. Scrolled out of view
  * it becomes something they find out about at the moment they are refused, which
  * is the worst possible time to learn it. So it is outside the scrolling region:
  * the nav list scrolls under it, this stays.
@@ -14,7 +14,7 @@ import { useCredits } from "../../state/CreditsContext";
  * "Low" means "fewer than two of the cheapest script", measured against the
  * server's own price list. A hardcoded number goes wrong the moment prices move:
  * with a fixed threshold of 30 and a 23-credit minimum, a balance of 18 was
- * being told it was "enough for about one more short script" — a claim that was
+ * being told it was "enough for about one more short script", a claim that was
  * simply false, from the one component whose entire job is to say what you can
  * still do.
  */
@@ -71,7 +71,7 @@ export default function CreditsCard({ compact = false }) {
               lineHeight: 1, color: low ? "#AB2C41" : "var(--ink)",
             }}
           >
-            {known ? balance : "—"}
+            {known ? balance : "…"}
           </span>
           <span style={{ fontSize: 11.5, color: "var(--ink-mute)" }}>available</span>
         </div>
@@ -83,7 +83,7 @@ export default function CreditsCard({ compact = false }) {
               : cantWrite
               // Said plainly. Anything softer here is a promise the next screen
               // has to break.
-              ? `Not enough for a script — the shortest costs ${cheapest}.`
+              ? `Not enough for a script. The shortest costs ${cheapest}.`
               : "Enough for about one more short script."}
           </div>
         )}
@@ -126,7 +126,7 @@ export function CreditsPill() {
         cursor: canBuy ? "pointer" : "default",
       }}
     >
-      {known ? balance : "—"}
+      {known ? balance : "…"}
       <span style={{ fontWeight: 500, opacity: 0.75 }}>cr</span>
     </button>
   );

@@ -1,9 +1,9 @@
 /**
- * newsCollector.js — run every source, dedupe, store.
+ * newsCollector.js: run every source, dedupe, store.
  *
  * ── ONE DEAD SOURCE MUST NEVER KILL A RUN ────────────────────────────────────
  * Promise.allSettled, not Promise.all. Each source reads a different surface and
- * fails for its own reasons — a feed goes 503, GitHub rate-limits, arXiv is slow.
+ * fails for its own reasons, a feed goes 503, GitHub rate-limits, arXiv is slow.
  * With Promise.all, one rejection throws away every item the other ten sources
  * already fetched successfully. (Exactly the outage the reference project hit in
  * xWarmListService: a single ReferenceError inside one source took down all four.)
@@ -37,7 +37,7 @@ function scoreItem(item) {
   const when = item.published_at || new Date();
   const ageHours = Math.max(0, (Date.now() - when.getTime()) / 3600000);
 
-  // Half-life of 8 hours — a story is worth half as much by the end of the day.
+  // Half-life of 8 hours, a story is worth half as much by the end of the day.
   const recency = Math.pow(0.5, ageHours / 8);
   const kind = KIND_WEIGHT[item.source_kind] ?? 0.5;
 
@@ -54,7 +54,7 @@ function scoreItem(item) {
  *
  * @param {string} categoryId
  * @param {object} opts
- * @param {boolean} opts.fast  paid source only — about a second instead of the
+ * @param {boolean} opts.fast  paid source only, about a second instead of the
  *   full fan-out's minute and a half. What the Fetch button runs, so a person
  *   pressing it actually gets new stories rather than a re-score of old ones.
  * @param {boolean} opts.userInitiated  somebody is waiting; the paid source
@@ -95,7 +95,7 @@ export async function collectNews(categoryId, { fast = false, userInitiated = fa
   for (const item of items) {
     if (!item?.url || !item?.title) { skipped++; continue; }
 
-    // Undated items are treated as "now" — most feeds date correctly, and
+    // Undated items are treated as "now", most feeds date correctly, and
     // dropping the few that don't would lose real stories.
     const published = item.published_at || new Date();
     if (published.getTime() < cutoff) { skipped++; continue; }
@@ -113,7 +113,7 @@ export async function collectNews(categoryId, { fast = false, userInitiated = fa
       // silently starve the other's feed of that story.
       url_hash: urlHash(item.url, categoryId),
       title_sig: titleSignature(item.title),
-      // The cluster IS the title signature. Rows are never merged or dropped —
+      // The cluster IS the title signature. Rows are never merged or dropped,
       // five outlets covering one launch stay five rows, because that count is
       // itself a signal that the story is big. The feed collapses them at READ
       // time to one entry with a coverage count, which is both a better display
@@ -125,7 +125,7 @@ export async function collectNews(categoryId, { fast = false, userInitiated = fa
     };
 
     try {
-      // A field may appear in $setOnInsert OR $set, never both — Mongo rejects the
+      // A field may appear in $setOnInsert OR $set, never both, Mongo rejects the
       // update outright with "would create a conflict at <path>", and because the
       // whole doc was in $setOnInsert while meta.points was in $set, EVERY upsert
       // failed. So the split is explicit: identity fields are insert-only, and the
@@ -167,7 +167,7 @@ export async function collectNews(categoryId, { fast = false, userInitiated = fa
     `${skipped} stale in ${(out.ms / 1000).toFixed(1)}s` + (errors.length ? ` · ${errors.length} error(s)` : "")
   );
   // Grouped, not one line each. A single systematic bug produces one error per
-  // item — the first run of this printed the same message 694 times and buried
+  // item, the first run of this printed the same message 694 times and buried
   // everything else. Distinct message + count is what's actually diagnostic.
   if (errors.length) {
     const grouped = new Map();

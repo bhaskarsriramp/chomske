@@ -5,8 +5,8 @@ import BuyCredits from "../components/Billing/BuyCredits";
 /**
  * One balance, one buy dialog, for the whole app.
  *
- * The balance is now shown in three places at once — the sidebar card, the order
- * panel and the mobile header — and they have to agree. Three components each
+ * The balance is now shown in three places at once (the sidebar card, the order
+ * panel and the mobile header) and they have to agree. Three components each
  * fetching their own copy is three numbers that drift apart the moment a script
  * is generated, and the one a creator believes is whichever they happen to be
  * looking at.

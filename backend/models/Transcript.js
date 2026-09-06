@@ -2,10 +2,10 @@ import mongoose from "mongoose";
 const { Schema } = mongoose;
 
 /**
- * Transcript — one row per (user, video) transcription.
+ * Transcript, one row per (user, video) transcription.
  *
  * Cached on purpose. Reading a video is the single expensive operation in this
- * product, so re-opening a video you already ran must never pay for it twice —
+ * product, so re-opening a video you already ran must never pay for it twice,
  * the unique index below is what enforces that, not application logic that can
  * be raced by a double-click.
  *
@@ -17,7 +17,7 @@ const TranscriptSchema = new Schema({
 
   // Which channel this video teaches. A creator running a Hindi tech channel and
   // an English one keeps two profiles, and a video only ever belongs to one of
-  // them — the slot count, the analysis input and the "your videos" list are all
+  // them, the slot count, the analysis input and the "your videos" list are all
   // scoped by this. Null only on rows written before profiles existed; the
   // migration and ensureProfile() both adopt those into the default profile.
   profile:  { type: Schema.Types.ObjectId, ref: "Profile", default: null, index: true },
@@ -27,7 +27,7 @@ const TranscriptSchema = new Schema({
 
   status: { type: String, enum: ["processing", "done", "failed"], default: "processing", index: true },
 
-  // What the model heard, in the language it was spoken in — Devanagari stays
+  // What the model heard, in the language it was spoken in, Devanagari stays
   // Devanagari, Telugu stays Telugu. Never translated to English.
   text: { type: String, default: "" },
 
@@ -44,14 +44,14 @@ const TranscriptSchema = new Schema({
   // URL tells you nothing about length. Checking for $0.005 beats transcribing a
   // 40-minute video for ₹60 and then rejecting it.
   //
-  // null means UNKNOWN, not zero — apidirect returns null for live streams, and
+  // null means UNKNOWN, not zero, apidirect returns null for live streams, and
   // treating that as 0 would let a stream through a "under 60 seconds" check.
   duration_seconds: { type: Number, default: null },
   channel:          { type: String, default: "" },
   thumbnail:        { type: String, default: "" },
 
   // The rest of what that same (already paid for) lookup returns. Stored
-  // because the call has been made either way — throwing the answer away and
+  // because the call has been made either way, throwing the answer away and
   // asking again later would be paying twice for one fact. `category` and
   // `keywords` are YouTube's own labels for the video, which say what this
   // creator actually makes; `views` is the closest thing to a reach signal we
@@ -64,7 +64,7 @@ const TranscriptSchema = new Schema({
   published_at: { type: Date,   default: null },
 
   // What this row actually cost to produce. Stored per transcript because reading
-  // video is the only real cost here and it varies enormously with length — a
+  // video is the only real cost here and it varies enormously with length, a
   // 60-second Short and a 40-minute talk are two different businesses. Keeping
   // the true numbers makes "what does my average user cost me" a query instead
   // of a guess. See readUsage() in services/geminiClient.js.
@@ -80,7 +80,7 @@ const TranscriptSchema = new Schema({
   updated_at: { type: Date, default: Date.now },
 });
 
-// One transcript per user per video — the cache key, enforced by the database.
+// One transcript per user per video, the cache key, enforced by the database.
 //
 // Deliberately still keyed on (user, video_id) rather than (user, profile,
 // video_id) now that profiles exist. Widening it would let the same video be

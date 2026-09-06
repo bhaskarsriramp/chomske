@@ -1,12 +1,12 @@
 /**
- * stats.js — the Dashboard's numbers.
+ * stats.js: the Dashboard's numbers.
  *
  * Two counts a creator actually cares about: how many videos are teaching us
  * their voice, and how many scripts they've generated. Everything is scoped to
  * the caller and to a date range.
  *
  * ── WHY VIDEO COUNT IGNORES THE RANGE ────────────────────────────────────────
- * The voice set is a CURRENT state, not an activity total — there are five slots
+ * The voice set is a CURRENT state, not an activity total, there are five slots
  * and some number are filled right now. Filtering it by "last 7 days" would show
  * 0 for a user whose voice is working perfectly but who added their videos a
  * month ago, which reads as a broken product. Scripts are genuine activity, so
@@ -26,7 +26,7 @@ const router = express.Router();
 const MAX_VOICE_VIDEOS = parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
 
 // Who may read operational state. Comma-separated addresses; empty means nobody,
-// which is the right default for a public deployment — a signed-in stranger has
+// which is the right default for a public deployment, a signed-in stranger has
 // no business knowing whether our news budget is spent, and "no addresses
 // configured" must never quietly mean "everyone".
 const ADMIN_EMAILS = new Set(
@@ -38,7 +38,7 @@ const ADMIN_EMAILS = new Set(
 
 /**
  * Resolve ?range=7d|28d|custom (+ ?from&?to) into real dates.
- * Bad input falls back to 7 days rather than erroring — a dashboard should
+ * Bad input falls back to 7 days rather than erroring, a dashboard should
  * always render something.
  */
 function resolveRange(q) {
@@ -93,7 +93,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
         Script.countDocuments({ user: userId, ...scope, status: "done", created_at: inRange }),
         Script.countDocuments({ user: userId, ...scope, status: "done" }),
         // With no profile selected this reports the DEFAULT channel's voice, not
-        // a blend of every channel — there is no such thing as an average of two
+        // a blend of every channel, there is no such thing as an average of two
         // voices, and inventing one would be the exact failure profiles exist to
         // prevent.
         profileId
@@ -118,7 +118,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
         $group: {
           // UTC day keys. Deliberately not toLocaleDateString: that only returns
           // ISO on a full-ICU Node build, and silently produces a different format
-          // elsewhere — a bug this codebase's sibling project has already hit.
+          // elsewhere, a bug this codebase's sibling project has already hit.
           _id: { $dateToString: { format: "%Y-%m-%d", date: "$created_at", timezone: "UTC" } },
           n: { $sum: 1 },
         },
@@ -137,7 +137,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
         left: Math.max(0, MAX_VOICE_VIDEOS - videosHeld),
       },
       scripts: { in_range: scriptsInRange, all_time: scriptsAll },
-      // built_at is what "analysed" means — the row exists from the moment the
+      // built_at is what "analysed" means, the row exists from the moment the
       // channel is created, so its presence alone says nothing.
       voice: profile?.built_at
         ? {
@@ -145,7 +145,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
             language_label: profile.language_label || "",
             transcript_count: profile.transcript_count || 0,
             built_at: profile.built_at,
-            // The voice is behind if videos were added or removed since it ran —
+            // The voice is behind if videos were added or removed since it ran,
             // only meaningful when the numbers describe the same channel.
             stale: !!profileId && (profile.transcript_count || 0) !== videosReady,
           }
@@ -165,12 +165,12 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
 });
 
 /**
- * GET /stats/apidirect — which apidirect key is working, and which is spent.
+ * GET /stats/apidirect, which apidirect key is working, and which is spent.
  *
  * ── WHY THIS IS A ROUTE AND NOT A LOG LINE ───────────────────────────────────
  * With several keys in rotation, "the news stopped updating" and "one key ran
  * out of credit" look identical from the app. The client already cools a failing
- * key for an hour, rotates past it and records why on its row — this is the
+ * key for an hour, rotates past it and records why on its row, this is the
  * window onto that, so the answer to "which key do I need to top up" is one
  * request instead of an hour of log archaeology.
  *
@@ -179,11 +179,11 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
  *
  * `status` per key:
  *   ok           serving normally
- *   exhausted    free tier used up, or a daily/monthly spending cap hit — the
+ *   exhausted    free tier used up, or a daily/monthly spending cap hit, the
  *                one that means TOP THIS UP (402, or 429 with a limit code)
  *   blocked      account blocked for a payment failure (403)
  *   invalid      key revoked or deleted (401)
- *   rate_limited too many at once — transient, clears in seconds
+ *   rate_limited too many at once, transient, clears in seconds
  */
 router.get("/apidirect", authenticateToken, async (req, res) => {
   try {

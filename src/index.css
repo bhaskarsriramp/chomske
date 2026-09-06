@@ -58,7 +58,7 @@ body {
    Windows and covers Devanagari, Telugu, Tamil, Kannada, Gujarati, Malayalam,
    Bengali and Gurmukhi in one face. The landing page cycles through nine
    languages in their own scripts, and without this a Windows visitor would meet
-   a headline of empty boxes — the exact opposite of the point being made. */
+   a headline of empty boxes, the exact opposite of the point being made. */
 .indic {
   font-family: "Noto Sans Devanagari", "Noto Sans Telugu", "Noto Sans Tamil",
     "Noto Sans Kannada", "Noto Sans Gujarati", "Noto Sans Malayalam",
@@ -74,7 +74,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 
 /* ── iOS ZOOM ────────────────────────────────────────────────────────────────
    Safari on iPhone zooms the whole page when a focused field's text is under
-   16px, and it does NOT zoom back out — the user is left scrolled sideways in a
+   16px, and it does NOT zoom back out: the user is left scrolled sideways in a
    layout they now have to pinch out of. 16px is the exact threshold, so every
    field goes to 16px on small screens regardless of what it renders at on
    desktop. !important is required, not lazy: these sizes are set inline on the
@@ -83,11 +83,11 @@ input, textarea, select { font-family: inherit; color: inherit; }
   input, textarea, select { font-size: 16px !important; }
 }
 
-/* Focus ring: visible for keyboard users, absent for mouse clicks. Not red —
+/* Focus ring: visible for keyboard users, absent for mouse clicks. Not red:
    a red ring around the thing you just tabbed to looks like a rejection. */
 :focus-visible { outline: 2px solid var(--made); outline-offset: 2px; }
 
-/* Text fields get a real focus state rather than only the keyboard ring —
+/* Text fields get a real focus state rather than only the keyboard ring:
    clicking into a box should visibly claim it. */
 input:focus, textarea:focus { border-color: var(--ink) !important; outline: none; }
 input::placeholder, textarea::placeholder { color: #9A9A9A; }
@@ -106,7 +106,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    translate.
    hg-sheet-up cannot be used there. It ends at `transform: none` and runs with
    fill-mode `both`, so once it finishes the animation KEEPS overriding the
-   element's own inline translate(-50%,-50%) — and the dialog settles with its
+   element's own inline translate(-50%,-50%), and the dialog settles with its
    top-left corner at the middle of the screen instead of its centre. This
    version animates inside the centring transform rather than replacing it. */
 @keyframes hg-dialog-in {
@@ -126,7 +126,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 .hg-nav-item { transition: background .12s ease; }
 .hg-nav-item:hover { background: #F2F2F2 !important; }
 
-/* Destructive icon buttons stay quiet until pointed at — a row of red bins
+/* Destructive icon buttons stay quiet until pointed at, a row of red bins
    reads as a warning screen rather than a list. */
 .hg-icon-btn { transition: background .12s ease, color .12s ease, border-color .12s ease; }
 .hg-icon-btn:hover {
@@ -147,7 +147,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    dvh second so mobile browser chrome doesn't cut off the last row. */
 .hg-app { height: 100vh; height: 100dvh; }
 
-/* Scoped hover states — inline styles can't do :hover. */
+/* Scoped hover states: inline styles can't do :hover. */
 .hg-btn-primary:hover { background: var(--primary-hover) !important; }
 .hg-btn-ghost:hover { border-color: #A6A6A6 !important; background: #F9F9F9 !important; }
 
@@ -159,7 +159,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 .hg-row { transition: background .12s ease, border-color .12s ease; }
 .hg-row:hover { background: #F9F9F9 !important; border-color: #D0D0D0 !important; }
 
-/* Selectable cards (onboarding, category editing) — same idea, no motion. */
+/* Selectable cards (onboarding, category editing): same idea, no motion. */
 .hg-pick { transition: background .12s ease, border-color .12s ease; }
 .hg-pick:hover { border-color: #A6A6A6 !important; }
 
@@ -167,7 +167,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    A native <input type="range">, not a hand-rolled drag handler. Touch,
    keyboard (arrows, Home/End, PageUp/Dn) and screen-reader announcement all
    come free with the element, and every one of them is something a div with a
-   pointermove listener has to reinvent — usually badly, and usually only on the
+   pointermove listener has to reinvent, usually badly, and usually only on the
    platform the author happened to test.
 
    Only the paint is ours. The filled portion is drawn from --hg-range-pct, set
@@ -237,7 +237,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 }
 
 /* Category pills carry their own hue when selected, so hover only touches the
-   unselected ones — otherwise pointing at "Crypto" would grey out its amber. */
+   unselected ones, otherwise pointing at "Crypto" would grey out its amber. */
 .hg-pill { transition: background .12s ease, border-color .12s ease, color .12s ease; }
 .hg-pill[aria-pressed="false"]:hover {
   border-color: #B8B8B8 !important;
@@ -281,8 +281,8 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    inside the app. The two are deliberately different: the app is a light, quiet
    workspace a creator sits in every morning and its own rule is that nothing
    moves ("NOTHING LIFTS ON HOVER", above, still stands in there). The landing
-   page has one job the app does not — convincing somebody in four seconds that
-   this is a real, current product — and motion is most of how that is done.
+   page has one job the app does not: convincing somebody in four seconds that
+   this is a real, current product, and motion is most of how that is done.
    Keeping the two rule sets apart is why the app can stay still while the
    front door moves.
 
@@ -305,7 +305,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
      One warning that comes with the pairing: red and green are the classic
      confusable pair for the ~8% of men with a red-green deficiency, so neither
      may ever be the ONLY thing separating two meanings on this page. They are
-     decorative here — position, label and shape carry the meaning — and it must
+     decorative here (position, label and shape carry the meaning) and it must
      stay that way. */
   --d-red: #FF0000;
   --d-deep: #C40C0C;
@@ -316,8 +316,8 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
      tinted ground under every panel turns each card's own quiet border and glow
      into mud, and a green wash behind white body copy reads as murk rather than
      as brand. Black gives the red and the green somewhere to actually be
-     bright — the step numbers, the NEW badge, the score chips, the section
-     glows, the card edges — which is where colour carries meaning on this page
+     bright (the step numbers, the NEW badge, the score chips, the section
+     glows, the card edges), which is where colour carries meaning on this page
      anyway.
 
      Exactly #000, matching the hero and the resting nav, so no seam appears
@@ -331,7 +331,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    them. The gradient above supplies the colour; these supply the movement, so
    the ground is never the same twice as you scroll down it.
 
-   It sits at z-index 0 and the page content at z-index 1 — a positioned element
+   It sits at z-index 0 and the page content at z-index 1, a positioned element
    paints above non-positioned siblings regardless of source order, so without
    that pairing this layer would cover the entire page. */
 .hg-wash {
@@ -383,7 +383,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    ── AND WHY THE HIDDEN STATE IS ARMED BY JAVASCRIPT ─────────────────────────
    `.hg-reveal` on its own does NOTHING. The hidden state only applies inside
    `.hg-armed`, which the component adds after confirming IntersectionObserver
-   exists. Written the obvious way round — hidden in CSS, revealed by JS — the
+   exists. Written the obvious way round (hidden in CSS, revealed by JS), the
    page fails CLOSED: any browser without the observer, any error before the
    effect runs, and every section below the fold is a blank black screen with
    the content still in the DOM. This way the worst case is that the animation
@@ -428,7 +428,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 .hg-ping { animation: hg-ping 2.4s cubic-bezier(.2,.7,.3,1) infinite; }
 
 /* ── The hero's own palette ──────────────────────────────────────────────────
-   YouTube red, black and white — and nothing else. The rest of the page carries
+   YouTube red, black and white, and nothing else. The rest of the page carries
    the brand seven, but the first screen speaks the language of the platform
    these creators actually publish on: a red they recognise before they have
    read a word. Scoped to .hg-hero so it cannot leak into the sections below,
@@ -448,7 +448,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 .hg-drift { animation: hg-drift 7s ease-in-out infinite; }
 
 /* A light sweeping across a border, for the primary CTA. Sized 200% and moved
-   across, rather than animating a gradient's colour stops — stops are not
+   across, rather than animating a gradient's colour stops. Stops are not
    compositable and animating them repaints the button every frame. */
 @keyframes hg-sweep { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 .hg-sweep {
@@ -456,7 +456,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
   animation: hg-sweep 3.4s linear infinite;
 }
 
-/* Equaliser bars under the voice sample — five bars, staggered, so it reads as
+/* Equaliser bars under the voice sample: five bars, staggered, so it reads as
    audio rather than as a loading state. */
 @keyframes hg-eq { 0%, 100% { transform: scaleY(.32); } 50% { transform: scaleY(1); } }
 .hg-eq span {
@@ -478,7 +478,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
 
 @media (prefers-reduced-motion: reduce) {
   /* The global rule above collapses animation DURATION, which is enough for a
-     spinner but leaves a reveal stuck at opacity 0 — its end state comes from a
+     spinner but leaves a reveal stuck at opacity 0. Its end state comes from a
      transition, not an animation. So the reveals are forced to their finished
      state here, and the decorative loops are stopped outright rather than run
      at 0.01ms forever. */

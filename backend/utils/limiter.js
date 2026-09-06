@@ -1,9 +1,9 @@
 /**
- * limiter.js — concurrency slots and cooldowns for external API keys.
+ * limiter.js: concurrency slots and cooldowns for external API keys.
  *
  * Backed by the shared Redis client (backend/redis.js) so limits hold across
  * processes, exactly as the reference project's apiRateLimiter.js does. Redis is
- * imported once from that module rather than connected here — one connection for
+ * imported once from that module rather than connected here, one connection for
  * the process, one place that knows the host.
  *
  * ── REDIS DOWN MEANS DEGRADED, NEVER BROKEN ──────────────────────────────────
@@ -11,7 +11,7 @@
  * failure. That matters because these limits guard a paid API: if Redis is
  * unreachable the correct behaviour is to keep serving with slightly weaker
  * coordination, not to fail every request. With one server the in-process path is
- * exactly as correct anyway — Redis only starts earning its place at two.
+ * exactly as correct anyway, Redis only starts earning its place at two.
  */
 import redis, { isRedisEnabled } from "../redis.js";
 
@@ -52,7 +52,7 @@ export async function cooldownRemainingMs(service, keyId) {
 
 // ── Concurrency slots ────────────────────────────────────────────────────────
 // apidirect's documented limit is concurrency per (endpoint, key), not requests
-// per minute — so this counts in-flight calls, it does not meter a rate.
+// per minute, so this counts in-flight calls, it does not meter a rate.
 
 const _inflight = new Map(); // service -> count
 

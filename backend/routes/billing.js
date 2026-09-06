@@ -1,5 +1,5 @@
 /**
- * billing.js — buying credits.
+ * billing.js: buying credits.
  *
  * Razorpay, in INR, because the buyer is an Indian creator and INR is what
  * surfaces UPI. Card-only checkout in a market that runs on UPI is a checkout
@@ -40,7 +40,7 @@ const router = express.Router();
 const RZP_KEY_ID = String(process.env.RZP_KEY_ID || "").trim();
 const RZP_KEY_SECRET = String(process.env.RZP_KEY_SECRET || "").trim();
 
-// Built lazily so the server still boots without payment keys — the rest of the
+// Built lazily so the server still boots without payment keys, the rest of the
 // product works fine, only buying is unavailable, and a missing key should not
 // take down news collection and script writing with it.
 let _rz = null;
@@ -55,7 +55,7 @@ export function isBillingConfigured() {
 }
 
 /**
- * GET /billing/packs — the price list, plus the rules that produced it.
+ * GET /billing/packs, the price list, plus the rules that produced it.
  *
  * The frontend renders whatever this returns and hardcodes no rupee figure.
  * A price that lives in two places disagrees eventually, and the version the
@@ -69,7 +69,7 @@ router.get("/packs", authenticateToken, async (req, res) => {
     packs: PACKS.map((p) => ({
       ...p,
       // Shown as "≈ ₹21 per 60s script", which is the comparison a creator
-      // actually makes — against what they pay an editor, not per credit.
+      // actually makes, against what they pay an editor, not per credit.
       per_short_inr: +(p.inr / (p.credits / (60 / SECONDS_PER_CREDIT))).toFixed(1),
       shorts: Math.floor(p.credits / (60 / SECONDS_PER_CREDIT)),
     })),
@@ -85,7 +85,7 @@ router.get("/packs", authenticateToken, async (req, res) => {
   });
 });
 
-/** GET /billing/wallet — balance and recent movements. */
+/** GET /billing/wallet, balance and recent movements. */
 router.get("/wallet", authenticateToken, async (req, res) => {
   try {
     const [balance, rows] = await Promise.all([
@@ -134,7 +134,7 @@ router.post("/order", authenticateToken, async (req, res) => {
 
     const order = await rz.orders.create({
       // Razorpay counts in paise. A rupee figure sent here charges 1/100th of
-      // the intended amount — the classic way to give a product away.
+      // the intended amount, the classic way to give a product away.
       amount: pack.inr * 100,
       currency: "INR",
       receipt: `lipi_${String(req.user.id).slice(-8)}_${Date.now().toString(36)}`,
@@ -175,7 +175,7 @@ router.post("/order", authenticateToken, async (req, res) => {
  * leaks, over many attempts, how much of a guess was right.
  *
  * ── AND IT MUST GRANT ONLY ONCE ─────────────────────────────────────────────
- * The client can call this twice — a double-click, a retry after a timeout, a
+ * The client can call this twice, a double-click, a retry after a timeout, a
  * refresh. The guard is a conditional update on the payment row: flip
  * initiated → success and grant only if we were the one who flipped it.
  */
@@ -225,7 +225,7 @@ router.post("/verify", authenticateToken, async (req, res) => {
     );
 
     if (!claimed) {
-      // Either already granted (a retry — answer success, the credits are
+      // Either already granted (a retry, answer success, the credits are
       // there) or no such order for this user (answer honestly).
       const existing = await CreditPayment.findOne({ rzp_order_id: order_id, user: req.user.id }).lean();
       if (existing?.status === "success") {
@@ -251,7 +251,7 @@ router.post("/verify", authenticateToken, async (req, res) => {
 
 /**
  * POST /billing/abandoned  { order_id }
- * The modal was closed without paying. Best-effort bookkeeping only — it keeps
+ * The modal was closed without paying. Best-effort bookkeeping only, it keeps
  * "initiated" rows from looking like payments that vanished.
  */
 router.post("/abandoned", authenticateToken, async (req, res) => {

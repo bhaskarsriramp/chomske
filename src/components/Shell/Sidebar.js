@@ -1,19 +1,19 @@
 /**
- * Sidebar.js — the app's navigation.
+ * Sidebar.js: the app's navigation.
  *
  * Structured like the reference project's: grouped sections with quiet labels, a
  * solid pill on the active item, and monochrome icons throughout. Icons carry no
- * per-item colour on purpose — colour in a nav means "this one is different", and
+ * per-item colour on purpose: colour in a nav means "this one is different", and
  * when every item has its own hue the signal is gone and only noise is left.
  *
  * Below the split point it becomes an overlay drawer rather than shrinking: a
  * 240px rail on a phone leaves nothing for the content it is navigating to.
  * The drawer enters from the RIGHT, under the hamburger that opened it, and sits
- * below the app header so the logo and close control stay put — same arrangement
+ * below the app header so the logo and close control stay put, same arrangement
  * as the reference project.
  *
  * The credits card is pinned below the list, outside the scrolling region, in
- * both layouts — see CreditsCard.js for why it is never allowed to scroll away.
+ * both layouts. See CreditsCard.js for why it is never allowed to scroll away.
  * On a phone the header also carries a compact version of it, because the whole
  * nav is behind a hamburger there and a number nobody can see is not a warning.
  */
@@ -56,7 +56,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
         borderLeft: isNarrow ? "1px solid var(--line)" : "none",
       }}
     >
-      {/* The app header already shows the wordmark on mobile — repeating it at
+      {/* The app header already shows the wordmark on mobile, repeating it at
           the top of the drawer just pushes the nav down. */}
       {!isNarrow && (
         <div style={{ padding: "16px 18px 18px" }}>
@@ -107,7 +107,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
 
       {/* Credits, pinned. Still no account card: that showed a face, a name and
           an email address to the one person who already knows all three, on
-          every screen, permanently — and Profile exists precisely to hold that.
+          every screen, permanently, and Profile exists precisely to hold that.
           A balance is the opposite kind of fact. It changes without them acting,
           and it decides whether the next thing they try will work. */}
       <CreditsCard compact={isNarrow} />

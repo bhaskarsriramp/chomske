@@ -1,5 +1,5 @@
 /**
- * migrateProfiles.js — move existing accounts onto profiles.
+ * migrateProfiles.js: move existing accounts onto profiles.
  *
  *   node scripts/migrateProfiles.js          # report only, changes nothing
  *   node scripts/migrateProfiles.js --apply  # write
@@ -13,7 +13,7 @@
  *   · at most ONE VoiceProfile, enforced by a unique index on `user`
  *   · transcripts and scripts pointing at neither
  *
- * A Profile is now the container for a channel — its categories, its one voice,
+ * A Profile is now the container for a channel, its categories, its one voice,
  * that voice's videos, and the scripts written for it. This gives every account
  * exactly one profile named "My Profile" that owns all of the above, so nobody
  * opens the app after the deploy to find their feed, their videos or their
@@ -23,10 +23,10 @@
  * ensureProfile() adopts orphans lazily on the first request that needs a
  * profile, so the app works either way. But the new UNIQUE index on
  * voice_profiles.profile cannot be built while existing rows all have
- * profile: null — they collide with each other on null. Running this first is
+ * profile: null, they collide with each other on null. Running this first is
  * what lets that index exist. server.js logs the failure rather than crashing,
  * so a skipped migration degrades to "one voice per account" instead of an
- * outage — but it is a real degradation.
+ * outage, but it is a real degradation.
  *
  * Safe to run repeatedly: every step is idempotent.
  */
@@ -49,7 +49,7 @@ const LEGACY_NAME = "My Profile";
 
 async function main() {
   await connectToMongo();
-  console.log(APPLY ? "APPLYING changes\n" : "DRY RUN — nothing will be written (pass --apply to write)\n");
+  console.log(APPLY ? "APPLYING changes\n" : "DRY RUN: nothing will be written (pass --apply to write)\n");
 
   const db = mongoose.connection.db;
 
@@ -72,7 +72,7 @@ async function main() {
     const id = new mongoose.Types.ObjectId(uid);
     let profiles = await Profile.find({ user: id }).sort({ created_at: 1 }).lean();
 
-    // 1a. No profile yet — build one from whatever the account already watched,
+    // 1a. No profile yet, build one from whatever the account already watched,
     // so their feed survives the deploy rather than resetting to nothing.
     if (!profiles.length) {
       const u = await User.findById(id).select("categories").lean();
@@ -119,7 +119,7 @@ async function main() {
       }
       if (oV) {
         // A user could in principle hold more than one unclaimed voice row (an
-        // interrupted earlier migration). Only the newest is worth keeping —
+        // interrupted earlier migration). Only the newest is worth keeping,
         // the unique index below allows exactly one per profile, and the rest
         // are stale duplicates of the same account's single legacy voice.
         const rows = await VoiceProfile.find({ user: id, ...unclaimed }).sort({ built_at: -1, created_at: -1 });
@@ -160,7 +160,7 @@ async function main() {
         // Refused rather than attempted: several rows sharing profile: null all
         // collide, and the resulting E11000 names one arbitrary row while saying
         // nothing about the other twenty.
-        console.log(`  SKIPPED — ${orphans} voice rows still have no profile. Re-run this script.`);
+        console.log(`  SKIPPED: ${orphans} voice rows still have no profile. Re-run this script.`);
       } else {
         await VoiceProfile.collection.createIndex({ profile: 1 }, { unique: true });
         console.log("  created");

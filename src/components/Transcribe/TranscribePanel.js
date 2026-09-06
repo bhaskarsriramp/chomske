@@ -5,17 +5,17 @@ import Skeleton from "../Shell/Skeleton";
 import { useProfiles } from "../../state/ProfileContext";
 
 /**
- * My voice — the videos that teach us how this creator talks.
+ * My voice: the videos that teach us how this creator talks.
  *
  * ── ONE VOICE PER CHANNEL ────────────────────────────────────────────────────
  * Everything on this screen belongs to the profile they are working in. A
  * creator running a Hindi tech channel and an English one keeps two profiles,
- * and each has its OWN five videos and its own single voice — because a voice
+ * and each has its OWN five videos and its own single voice, because a voice
  * built from both is a voice that is nobody's, the failure the mixed-language
  * warning below used to only be able to warn about.
  *
  * Which channel that is, is shown by the app bar above every screen
- * (Shell/TopBar.js) rather than by a picker here — adding a video to the wrong
+ * (Shell/TopBar.js) rather than by a picker here, adding a video to the wrong
  * channel costs a transcription to undo, so it should be a thing you cannot help
  * seeing, not one you have to go and check. Channels themselves are created and
  * named under Profile; this screen is about the videos.
@@ -70,7 +70,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
         maxSeconds: data.max_seconds || 60,
       });
       onQuota?.(data.quota || null);
-    } catch { /* secondary — never block the main flow on it */ }
+    } catch { /* secondary, never block the main flow on it */ }
   }, [onQuota, activeId]);
 
   const loadVoice = useCallback(async () => {
@@ -84,7 +84,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
 
   // Held until the profile list arrives. Fetching against "whatever the server
   // thinks is default" and then again against the real selection would show one
-  // channel's videos for a moment before swapping to another's — the exact
+  // channel's videos for a moment before swapping to another's, the exact
   // confusion this screen has to avoid.
   useEffect(() => {
     if (profilesLoading) return;
@@ -132,7 +132,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
     setSubmitting(true);
     try {
       // The profile is named explicitly. Letting the server pick would mean a
-      // video landing in whichever channel it considers default — and paying to
+      // video landing in whichever channel it considers default, and paying to
       // transcribe it into the wrong one.
       const { data } = await api.post("/transcribe", { url: value, profile: activeId || undefined });
       setOpenVideo(data.transcript);
@@ -176,7 +176,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
       setVoice((v) => ({ ...(v || {}), profile: data.voice, stale: false }));
       setAnalysed(true);
       // Refreshes the shared list so every other screen sees this channel's
-      // voice as built — the dashboard card, the order panel, the profile page.
+      // voice as built: the dashboard card, the order panel, the profile page.
       await refreshProfiles();
       onVoiceChange?.();
     } catch (err) {
@@ -204,7 +204,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
         className="hg-scroll"
         style={{ flex: "1 1 0", minWidth: 0, minHeight: 0, padding: `${isPhone ? 18 : 28}px ${gut}px ${isPhone ? 40 : 60}px` }}
       >
-        {/* No profile picker here — the app bar above carries it on every
+        {/* No profile picker here, the app bar above carries it on every
             screen. See Shell/TopBar.js. */}
         <h1 style={{ fontSize: isPhone ? 21 : 25, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 5px" }}>
           My voice
@@ -216,7 +216,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
           then write new scripts that sound like you.
         </p>
 
-        {/* One voice per channel — so a creator who needs a second voice needs a
+        {/* One voice per channel, so a creator who needs a second voice needs a
             second channel, and that is created under Profile where its
             categories get set at the same time. */}
         {activeProfile && (
@@ -230,7 +230,7 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
             <span style={{ fontSize: 13.5, color: "var(--ink-body)", lineHeight: 1.5 }}>
               These videos teach{" "}
               <strong style={{ color: "var(--ink)" }}>{activeProfile.name}</strong>
-              {profiles.length > 1 ? " — each channel keeps its own." : ""}
+              {profiles.length > 1 ? ". Each channel keeps its own." : ""}
             </span>
             <button
               onClick={onGoProfiles}
@@ -409,7 +409,7 @@ function SlotDots({ used, max }) {
 
 function AnalyseBlock({ voice, voiceName, canAnalyse, readyCount, analysing, analysed, onAnalyse }) {
   const profile = voice?.profile;
-  // Behind if the profile never saw the current set — either the server says so,
+  // Behind if the profile never saw the current set: either the server says so,
   // or a video was added or deleted since it last ran.
   const stale = profile && (voice?.stale || profile.transcript_count !== readyCount);
 
@@ -425,7 +425,7 @@ function AnalyseBlock({ voice, voiceName, canAnalyse, readyCount, analysing, ana
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 4 }}>
             {profile
-              ? voiceName ? `“${voiceName}” — what we learned` : "Your voice profile"
+              ? voiceName ? `“${voiceName}”: what we learned` : "Your voice profile"
               : "Analyse this voice"}
           </div>
           <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink-body)" }}>

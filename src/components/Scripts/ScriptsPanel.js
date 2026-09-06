@@ -7,12 +7,12 @@ import { categoryColor, cardBackground } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
 
 /**
- * My scripts — everything this creator has written, and what it was written from.
+ * My scripts: everything this creator has written, and what it was written from.
  *
  * ── WHY THE TOPIC TRAVELS WITH THE SCRIPT ────────────────────────────────────
  * A script read back three days later is a page of text with no way to check it.
  * The product's whole promise is "these are the facts, here is where they came
- * from, check the numbers before you say them out loud" — and that promise has
+ * from, check the numbers before you say them out loud", and that promise has
  * to survive being read later, not just at the moment of generation. So every
  * script carries its story's brief and every source link, permanently.
  *
@@ -35,7 +35,7 @@ export default function ScriptsPanel({ onGoTopics }) {
   // ── THIS IS A SCOPE TOGGLE, NOT A PROFILE PICKER ──────────────────────────
   // Which channel you are working in is decided once, in the app bar at the top
   // of every screen. A second dropdown here that could point somewhere else
-  // would let the bar say "Tech channel" while the list showed sports — two
+  // would let the bar say "Tech channel" while the list showed sports, two
   // controls for one idea, and one of them wrong.
   //
   // So the list follows the bar, and the only extra choice is whether to widen
@@ -131,7 +131,7 @@ export default function ScriptsPanel({ onGoTopics }) {
             )}
           </div>
           <p style={{ fontSize: 13.5, color: "var(--ink-body)", margin: 0, lineHeight: 1.6 }}>
-            {/* Deliberately not rendered until the count is known — see Skeleton.js.
+            {/* Deliberately not rendered until the count is known. See Skeleton.js.
                 "0 scripts" shown for half a second is a claim, and a wrong one. */}
             {loadedOnce
               ? scripts.length
@@ -277,7 +277,7 @@ function ScriptRow({ script, index, isPhone, active, onOpen }) {
       >
         {[
           timeAgo(script.created_at),
-          // The voice it was written in, as it was CALLED at the time — the name
+          // The voice it was written in, as it was CALLED at the time, the name
           // is copied onto the script, so renaming a voice never rewrites the
           // history of what was already made in it.
           script.profile_name,

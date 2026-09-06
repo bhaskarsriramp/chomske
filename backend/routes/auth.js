@@ -1,5 +1,5 @@
 /**
- * auth.js — Google sign-in.
+ * auth.js: Google sign-in.
  *
  * ── WHY THIS DIFFERS FROM THE REFERENCE PROJECT ──────────────────────────────
  * betaFounderProduction's /user-login-gmail takes `email`, `firstName`, `picture`
@@ -54,7 +54,7 @@ router.post("/google", async (req, res) => {
     const googleSub = payload.sub;
     const now = new Date();
 
-    // Keyed on `sub`, never on email — Google accounts can change their address,
+    // Keyed on `sub`, never on email, Google accounts can change their address,
     // and an address can be reassigned to a different person over time.
     const user = await User.findOneAndUpdate(
       { google_sub: googleSub },
@@ -80,7 +80,7 @@ router.post("/google", async (req, res) => {
 
     res.cookie(COOKIE_NAME, token, cookieOptions());
 
-    // Their categories may have gone cold while they were away — the collector
+    // Their categories may have gone cold while they were away, the collector
     // stops polling a category nobody has opened in a fortnight. This wakes them
     // and collects immediately, so the feed has something in it by the time they
     // finish signing in. Fire-and-forget: sign-in never waits on the network.
@@ -94,11 +94,11 @@ router.post("/google", async (req, res) => {
 });
 
 /**
- * GET /auth/me — who am I? The frontend's only way to know, since the cookie is httpOnly.
+ * GET /auth/me, who am I? The frontend's only way to know, since the cookie is httpOnly.
  *
  * ── THIS IS WHAT "LOGGING IN FOR THE DAY" ACTUALLY LOOKS LIKE ────────────────
  * POST /auth/google runs once a fortnight. The cookie lasts 14 days, so every
- * other visit — opening the app in the morning, a new tab, a reload — arrives
+ * other visit, opening the app in the morning, a new tab, a reload, arrives
  * here instead, and for a long time here did nothing but answer the question.
  *
  * That was the whole staleness bug. The kickoff lives on the sign-in path, the
@@ -111,7 +111,7 @@ router.post("/google", async (req, res) => {
  * Fire-and-forget for the same reason it is there: nobody should wait on a
  * network-bound collection to find out who they are. It is safe to call on
  * every page load because claimKickoff holds a five-minute per-category slot
- * and claimRank a ten-minute one — fifty tabs are still one pass.
+ * and claimRank a ten-minute one, fifty tabs are still one pass.
  */
 router.get("/me", authenticateToken, async (req, res) => {
   const user = await User.findById(req.user.id).lean();
@@ -125,7 +125,7 @@ router.get("/me", authenticateToken, async (req, res) => {
   return res.json({ success: true, user: publicUser(user) });
 });
 
-/** GET /auth/categories — the catalogue, for the onboarding cards. */
+/** GET /auth/categories, the catalogue, for the onboarding cards. */
 router.get("/categories", (req, res) => {
   return res.json({ success: true, categories: publicCategories(), max: MAX_CATEGORIES });
 });
@@ -133,8 +133,8 @@ router.get("/categories", (req, res) => {
 /**
  * PUT /auth/categories  { categories: [ids], profile_name? }
  *
- * First-run onboarding. It answers two questions in one screen — what this
- * channel covers, and what to call it — because they are the same decision:
+ * First-run onboarding. It answers two questions in one screen, what this
+ * channel covers, and what to call it, because they are the same decision:
  * a profile with no categories has no feed, and one with no name cannot be told
  * apart from the next one they make.
  *
@@ -142,7 +142,7 @@ router.get("/categories", (req, res) => {
  * account. Later edits go through PATCH /profiles/:id, which is where a creator
  * with several channels changes them one at a time.
  *
- * Validated server-side and capped — the client enforces the same limit, but a
+ * Validated server-side and capped, the client enforces the same limit, but a
  * direct call must not be able to subscribe to all eight and quietly multiply
  * the collection bill.
  */
@@ -159,7 +159,7 @@ router.put("/categories", authenticateToken, async (req, res) => {
 
   // The name is optional HERE and only here: the first profile is pre-filled
   // with "My Profile" so a new account is never blocked on naming something it
-  // has not seen yet. Every profile after this one has to be named — see
+  // has not seen yet. Every profile after this one has to be named, see
   // services/profileService.js createProfile().
   const name = String(req.body?.profile_name || "").trim().slice(0, 60);
   await Profile.updateOne(
@@ -167,13 +167,13 @@ router.put("/categories", authenticateToken, async (req, res) => {
     { $set: { categories: chosen, ...(name ? { name } : {}) } }
   );
 
-  // Kept in step so the collector keeps scheduling off one field — see
+  // Kept in step so the collector keeps scheduling off one field, see
   // profileService.syncUserCategories() for why this denormalisation exists.
   await syncUserCategories(req.user.id);
 
   // onboarded_at is stamped once and never moved, so it records when they first
   // chose rather than when they last edited. Done as an aggregation-pipeline
-  // update so $ifNull can read the existing value in the same atomic operation —
+  // update so $ifNull can read the existing value in the same atomic operation,
   // a read-then-write would let two concurrent saves race and reset it.
   const user = await User.findOneAndUpdate(
     { _id: req.user.id },
@@ -196,7 +196,7 @@ router.post("/logout", (req, res) => {
   return res.json({ success: true });
 });
 
-// Never ship the whole Mongo document to the browser — send only what the UI draws.
+// Never ship the whole Mongo document to the browser, send only what the UI draws.
 function publicUser(u) {
   return {
     id: String(u._id),
@@ -208,7 +208,7 @@ function publicUser(u) {
     // back through first-run onboarding.
     //
     // `categories` here is the UNION across every profile, not one channel's
-    // list — it is what the collector schedules off. Screens that show or edit
+    // list, it is what the collector schedules off. Screens that show or edit
     // what a channel covers read it from GET /profiles instead.
     categories: u.categories || [],
     onboarded: !!u.onboarded_at,

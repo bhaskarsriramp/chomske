@@ -2,7 +2,7 @@ import { useState } from "react";
 import api, { errorMessage } from "../../api";
 
 /**
- * BuyCredits — the pack chooser and the Razorpay handoff.
+ * BuyCredits: the pack chooser and the Razorpay handoff.
  *
  * ── NO RUPEE FIGURE IS WRITTEN IN THIS FILE ─────────────────────────────────
  * Every price, credit count and per-script comparison comes from
@@ -10,11 +10,11 @@ import api, { errorMessage } from "../../api";
  * eventually, and the version the customer saw is the one they hold you to.
  *
  * Lives here rather than inside the script panel because credits are now bought
- * from three places — the sidebar, the order panel, and the "not enough" state.
+ * from three places: the sidebar, the order panel, and the "not enough" state.
  * Three copies of a payment flow is three chances to get a payment flow wrong.
  */
 
-/** Razorpay's widget, loaded on demand — not in index.html, where it would cost
+/** Razorpay's widget, loaded on demand, not in index.html, where it would cost
  *  every visitor a script they will mostly never use. */
 function loadCheckout() {
   return new Promise((resolve, reject) => {
@@ -51,7 +51,7 @@ export default function BuyCredits({ rules, balance, onClose, onGranted }) {
       amount: order.amount,
       currency: order.currency,
       name: "Chomske",
-      description: `${order.pack.label} — ${order.pack.credits} credits`,
+      description: `${order.pack.label} (${order.pack.credits} credits)`,
       order_id: order.order_id,
       theme: { color: "#FF0000" },
       handler: async (resp) => {
@@ -65,12 +65,12 @@ export default function BuyCredits({ rules, balance, onClose, onGranted }) {
           onGranted?.(data.balance);
           onClose?.();
         } catch (err) {
-          // The money may well have left their account — never say "payment
+          // The money may well have left their account. Never say "payment
           // failed" here, because we do not know that. Say what we know.
           setBuying(false);
           setError(errorMessage(
             err,
-            "Payment went through but we couldn't confirm it. Refresh in a moment — if the credits aren't there, contact us with your payment id."
+            "Payment went through but we couldn't confirm it. Refresh in a moment. If the credits aren't there, contact us with your payment id."
           ));
         }
       },

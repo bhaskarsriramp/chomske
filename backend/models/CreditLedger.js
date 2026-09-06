@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema } = mongoose;
 
 /**
- * CreditLedger — every credit that ever moved, and why.
+ * CreditLedger, every credit that ever moved, and why.
  *
  * ── WHY A LEDGER AND NOT JUST A BALANCE ─────────────────────────────────────
  * The first support email will be "I bought 700 credits and I have 340, where
@@ -13,7 +13,7 @@ const { Schema } = mongoose;
  *
  * Append-only by convention: nothing in the codebase updates or deletes a row
  * here. A correction is a new row with a positive or negative delta, exactly
- * as an accountant would do it — because a mutable audit trail audits nothing.
+ * as an accountant would do it, because a mutable audit trail audits nothing.
  */
 const CreditLedgerSchema = new Schema({
   user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
@@ -37,7 +37,7 @@ const CreditLedgerSchema = new Schema({
   // replay of every prior row, and it makes a corrupted balance obvious.
   balance_after: { type: Number, required: true },
 
-  // What it was spent on or paid for — a Script id, a CreditPayment id. Kept
+  // What it was spent on or paid for, a Script id, a CreditPayment id. Kept
   // loose because it points at different collections depending on `reason`.
   ref_type: { type: String, default: "" },
   ref_id:   { type: Schema.Types.ObjectId, default: null },

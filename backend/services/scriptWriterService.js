@@ -1,5 +1,5 @@
 /**
- * scriptWriterService.js — today's story, written in one creator's voice.
+ * scriptWriterService.js: today's story, written in one creator's voice.
  *
  * This is the product. Everything upstream (reading videos, collecting news,
  * ranking it) exists to make this one call good.
@@ -7,7 +7,7 @@
  * ── THE TWO WAYS THIS FAILS ──────────────────────────────────────────────────
  * 1. It writes a correct script that sounds like nobody. Guarded by feeding the
  *    creator's VERBATIM openings and closings as anchors, not just a description
- *    of their style — a described style produces the average of all creators.
+ *    of their style, a described style produces the average of all creators.
  * 2. It writes in the wrong language. A Hinglish creator receiving polished Hindi
  *    or English gets something they cannot read aloud. The language rule is stated
  *    three separate ways below for the same reason geminiClient.js repeats itself:
@@ -21,12 +21,13 @@ import { GoogleGenAI } from "@google/genai";
 import NewsItem from "../models/NewsItem.js";
 import { metricsBlock, gradeDraft } from "./voiceMetrics.js";
 import { wordTarget } from "./creditPricing.js";
+import { noEmDash, noEmDashAll, dropDashes } from "../utils/prose.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
 // Length is no longer a constant. It used to be a fixed 180-260 words for every
 // script (SCRIPT_TARGET_WORDS), which could not serve a long-form order at all
-// and was wrong per creator even for a Short — a word count is only a duration
+// and was wrong per creator even for a Short: a word count is only a duration
 // if you know the speaking rate. It is now derived per request from the seconds
 // ordered and that creator's own measured pace: see the lengthRule block below.
 
@@ -54,7 +55,10 @@ const ANTI_TELL = `NEVER write like an AI. Specifically banned:
 - Neat three-item lists where a real person would say two things or four.
 - Perfectly balanced sentences. Real speech is lopsided.
 - Summarising at the end what you just said.
-- Any sentence that could appear in any video about any topic.`;
+- Any sentence that could appear in any video about any topic.
+- Em-dashes. Not one, anywhere. A creator reads this out loud and a dash has
+  no spoken form, and it is the clearest tell that a machine wrote it. Use a
+  comma, a full stop, or start a new sentence.`;
 
 /**
  * Write one script.
@@ -62,18 +66,18 @@ const ANTI_TELL = `NEVER write like an AI. Specifically banned:
  * @param {object} args.profile   VoiceProfile document
  * @param {object} args.item      NewsItem document (the cluster representative)
  * @param {number} args.seconds   how long it should run when spoken. Priced per
- *   two seconds, so this is the number the creator paid against — writing 40
+ *   two seconds, so this is the number the creator paid against, writing 40
  *   seconds of script for an eight-minute order is a refund, not a style choice.
  * @returns {{ text, hook, title_suggestions, language, language_label, sources_used, usage }}
  */
 export async function writeScript({ profile, item, seconds = 60 }) {
-  if (!profile) throw new Error("No voice profile — transcribe a video first.");
+  if (!profile) throw new Error("No voice profile. Transcribe a video first.");
   if (!item) throw new Error("Story not found.");
 
   // Every outlet that carried this story. More angles than the one headline, and
   // the only facts the model is allowed to use.
   // Scoped by category as well as cluster. cluster_id is the model's own story
-  // key ("openai-astra-safety-risk"), which is only unique WITHIN a category —
+  // key ("openai-astra-safety-risk"), which is only unique WITHIN a category,
   // unscoped, a finance story could pull a tech story's facts into its script.
   const coverage = item.cluster_id
     ? await NewsItem.find({ category: item.category, cluster_id: item.cluster_id })
@@ -104,10 +108,10 @@ export async function writeScript({ profile, item, seconds = 60 }) {
   const target = wordTarget(seconds, profile.metrics?.words_per_second);
   const mins = seconds >= 120 ? `${Math.round(seconds / 60)} minutes` : `${seconds} seconds`;
   const lengthRule =
-    `${target.low}-${target.high} words — this script must run about ${mins} when spoken ` +
+    `${target.low}-${target.high} words. This script must run about ${mins} when spoken ` +
     `at their measured pace of ${target.wps} words per second. ` +
     (seconds >= 180
-      ? `This is a LONG-FORM script: it needs real structure — an opening, two or three ` +
+      ? `This is a LONG-FORM script: it needs real structure: an opening, two or three ` +
         `developed sections that each add something new from the source material, and their ` +
         `usual close. Do not pad, and do not repeat a point in different words to reach the ` +
         `count; if the sources cannot support this length, write the honest shorter version.`
@@ -119,7 +123,7 @@ export async function writeScript({ profile, item, seconds = 60 }) {
 ════════ THE CREATOR'S VOICE ════════
 ${profile.style_brief || "(no brief available)"}
 ${profile.metrics ? `
-MEASURED FROM THEIR OWN VIDEOS — match these, they are not suggestions:
+MEASURED FROM THEIR OWN VIDEOS. Match these, they are not suggestions:
 ${metricsBlock(profile.metrics)}
 ` : ""}
 
@@ -128,12 +132,12 @@ Their usual stance: ${profile.sentiment || "unknown"}
 Pacing: ${profile.pacing || "unknown"}
 Talking to: ${profile.audience || "their audience"}
 
-HOW THEY OPEN — study these, they are real openings from their own videos:
+HOW THEY OPEN. Study these, they are real openings from their own videos:
 ${bullets(profile.sample_openings) || "(none captured)"}
 
 Opening patterns: ${list(profile.opening_patterns)}
 
-HOW THEY CLOSE — real endings from their own videos:
+HOW THEY CLOSE: real endings from their own videos:
 ${bullets(profile.sample_closings) || "(none captured)"}
 
 Closing patterns: ${list(profile.closing_patterns)}
@@ -172,13 +176,13 @@ SOURCE MATERIAL ENDS.
      thing this can do to them, and a short honest script beats a padded one.
    - Where the sources disagree or call something unconfirmed, say so the way
      this creator would say it.
-3. VOICE. Open the way THEY open — same energy and structure as their real openings, about today's story. Close the way THEY close. This is the whole job.
+3. VOICE. Open the way THEY open, same energy and structure as their real openings, about today's story. Close the way THEY close. This is the whole job.
 4. LENGTH. ${lengthRule}
 5. ${ANTI_TELL}
 
 Return STRICT JSON only:
 {
-  "hook": "the opening line(s), in their language and script — this must sound like them",
+  "hook": "the opening line(s), in their language and script. This must sound like them",
   "script": "the full script including the hook, in their language and script, paragraph breaks at natural pauses",
   "title_suggestions": ["3 video titles in their language, in their style"]
 }`;
@@ -186,8 +190,8 @@ Return STRICT JSON only:
   // ── Write, grade, and correct ───────────────────────────────────────────
   //
   // The grader is the reason this is more than a good prompt. A draft is
-  // measured on the same axes the profile was measured on — how much English is
-  // in it, how long the sentences run, whether it asks the viewer anything — and
+  // measured on the same axes the profile was measured on (how much English is
+  // in it, how long the sentences run, whether it asks the viewer anything) and
   // compared to the creator's own numbers. Where it has drifted, the specific
   // gap is handed back and the draft is rewritten once.
   //
@@ -218,7 +222,7 @@ Return STRICT JSON only:
           maxOutputTokens: 8192,
           // Thinking off by default, matching the measured finding elsewhere in
           // this codebase. Script quality is the one place it might genuinely pay
-          // for itself — set GEMINI_SCRIPT_THINKING to a budget and compare
+          // for itself, set GEMINI_SCRIPT_THINKING to a budget and compare
           // output side by side before leaving it on, because it bills at the
           // output rate.
           thinkingConfig: {
@@ -252,7 +256,7 @@ Return STRICT JSON only:
       parsed = { script: unescapeJsonish(salvaged[1]), hook: "", title_suggestions: [] };
     }
 
-    text = String(parsed.script || "").trim();
+    text = noEmDash(parsed.script);
     if (!text) {
       const e = new Error("Empty script");
       e.userMessage = "The model returned an empty script. Please try again.";
@@ -273,7 +277,7 @@ Return STRICT JSON only:
       break;
     }
 
-    console.log(`[script] rewriting once — ${drift.length} style gap(s)`);
+    console.log(`[script] rewriting once, ${drift.length} style gap(s)`);
     correction = [
       "════════ THAT DRAFT MISSED THEIR VOICE ════════",
       "You already wrote this once and it did not match how this person actually",
@@ -287,10 +291,8 @@ Return STRICT JSON only:
 
   return {
     text,
-    hook: String(parsed.hook || "").trim(),
-    title_suggestions: Array.isArray(parsed.title_suggestions)
-      ? parsed.title_suggestions.map((t) => String(t || "").trim()).filter(Boolean).slice(0, 5)
-      : [],
+    hook: noEmDash(parsed.hook),
+    title_suggestions: noEmDashAll(parsed.title_suggestions).slice(0, 5),
     language: profile.language || "",
     language_label: profile.language_label || "",
     sources_used: coverage.map((c) => c.url).filter(Boolean),
@@ -335,7 +337,7 @@ function readUsage(res) {
 }
 
 /**
- * The English twin — the same story, for a global audience.
+ * The English twin, the same story, for a global audience.
  *
  * ── WHY THIS EXISTS, IN ONE NUMBER ──────────────────────────────────────────
  * India-facing content earns roughly ₹50-200 per thousand views. The same story
@@ -346,14 +348,14 @@ function readUsage(res) {
  *
  * ── IT IS A REWRITE, NOT A TRANSLATION ──────────────────────────────────────
  * Translating the Hindi script word for word produces something no English
- * speaker would say — the idioms, the code-switching and the direct address all
+ * speaker would say, the idioms, the code-switching and the direct address all
  * arrive mangled. Worse, the references land wrong: an audience in the US does
  * not know the Indian brands, prices in rupees, or "as you know" framing that
  * assumed an Indian viewer. So the model is given the FACTS and the creator's
  * structural habits, and told to write the same story fresh for a different
  * room. Their energy survives; their language does not have to.
  *
- * @returns {{ text, hook, usage }|null} null on failure — the primary script is
+ * @returns {{ text, hook, usage }|null} null on failure, the primary script is
  *   already written and delivered, and a failed twin must not lose it.
  */
 export async function writeEnglishTwin({ profile, item, seconds = 60, sourceScript = "" }) {
@@ -379,14 +381,14 @@ export async function writeEnglishTwin({ profile, item, seconds = 60, sourceScri
 
   const prompt = `Write a video script in ENGLISH for an international audience, covering the story below.
 
-This creator already has a version in their own language. You are NOT translating it — you are writing the same story for a different room. Keep their energy and their structure; write natural English a US or global viewer would hear as normal.
+This creator already has a version in their own language. You are NOT translating it. You are writing the same story for a different room. Keep their energy and their structure; write natural English a US or global viewer would hear as normal.
 
 ════════ THE CREATOR'S HABITS (structure only, not language) ════════
 How they open: ${list(profile?.opening_patterns) || "direct, straight into the story"}
 How they close: ${list(profile?.closing_patterns) || "a short sign-off"}
 Their stance: ${profile?.sentiment || "plain-spoken"}
 Their audience: ${profile?.audience || "people who follow this topic"}
-${sourceScript ? `\nTheir version of this script, for structure and emphasis ONLY — do not translate it:\n"""${String(sourceScript).slice(0, 2000)}"""\n` : ""}
+${sourceScript ? `\nTheir version of this script, for structure and emphasis ONLY. Do not translate it:\n"""${String(sourceScript).slice(0, 2000)}"""\n` : ""}
 SOURCE MATERIAL BEGINS. This is the complete and only record of this story.
 ${facts}
 SOURCE MATERIAL ENDS.
@@ -395,7 +397,7 @@ SOURCE MATERIAL ENDS.
 1. ENGLISH ONLY. Natural, spoken, contemporary. No Hindi or Telugu words, no transliteration.
 2. FACTS. Every claim must trace to the source material above. Invent no numbers, dates, prices, versions, names or quotes. Nothing from your training about this topic.
 3. AUDIENCE. Written for someone with no Indian context. Do not assume they know Indian brands, prices, or references. Do not mention India unless the sources do.
-4. LENGTH. ${target.low}-${target.high} words — about ${mins} spoken. A script, not an article: no headings, no bullets, no stage directions.
+4. LENGTH. ${target.low}-${target.high} words, about ${mins} spoken. A script, not an article: no headings, no bullets, no stage directions.
 5. ${ANTI_TELL}
 
 Return STRICT JSON only:
@@ -416,9 +418,9 @@ Return STRICT JSON only:
       },
     });
     const parsed = JSON.parse(res.text || "{}");
-    const text = String(parsed.script || "").trim();
+    const text = noEmDash(parsed.script);
     if (!text) return null;
-    return { text, hook: String(parsed.hook || "").trim(), usage: readUsage(res) };
+    return { text, hook: noEmDash(parsed.hook), usage: readUsage(res) };
   } catch (err) {
     console.error("[script] english twin failed:", err.message);
     return null;
@@ -426,7 +428,7 @@ Return STRICT JSON only:
 }
 
 /**
- * The packaging pack — everything the upload form asks for.
+ * The packaging pack, everything the upload form asks for.
  *
  * The tedious twenty minutes after the script is finished: a title that earns
  * the click, a description nobody wants to write, hashtags, and the three or
@@ -434,7 +436,7 @@ Return STRICT JSON only:
  * this at $7.50-39 a month; here it is one call for a flat fifteen credits.
  *
  * Titles come back in BOTH languages because that is how these channels
- * actually publish — the title in their script's language, and an English one
+ * actually publish, the title in their script's language, and an English one
  * for search, which is where discovery happens even for Indic-language videos.
  *
  * @returns {{ titles, description, hashtags, thumbnail_lines }|null}
@@ -462,7 +464,7 @@ Return STRICT JSON only:
   "titles": ["5 title options. Mix: some in their language, at least 2 in English for search. Under 70 characters each. No clickbait they'd be embarrassed by, no ALL CAPS, no '(SHOCKING)'."],
   "description": "A YouTube description: 2-3 short paragraphs summarising what the video covers, written plainly. Then a blank line. Do NOT invent links, timestamps, or social handles.",
   "hashtags": ["8-12 hashtags, no # symbol, lowercase, mixing their language and English. Relevant to this story specifically, not generic 'viral trending' tags."],
-  "thumbnail_lines": ["4 thumbnail text options. Three to five words MAX each — they have to be readable at phone size. In their language where it fits."]
+  "thumbnail_lines": ["4 thumbnail text options. Three to five words MAX each. They have to be readable at phone size. In their language where it fits."]
 }
 
 Rules: every factual claim traces to the script above. Invent nothing. ${ANTI_TELL}`;
@@ -480,25 +482,25 @@ Rules: every factual claim traces to the script above. Invent nothing. ${ANTI_TE
     });
     const p = JSON.parse(res.text || "{}");
 
-    // The source links are appended by US, not written by the model — asked for
+    // The source links are appended by US, not written by the model, asked for
     // URLs it will happily invent plausible ones, and a description full of dead
     // links is worse than a description with none.
     const links = sources.map((s) => s.url).filter(Boolean).slice(0, 5);
     const description = [
-      String(p.description || "").trim(),
+      noEmDash(p.description),
       links.length ? `\nSources:\n${links.join("\n")}` : "",
     ].filter(Boolean).join("\n");
 
     return {
-      titles: (Array.isArray(p.titles) ? p.titles : []).map((t) => String(t).slice(0, 100)).slice(0, 5),
+      titles: noEmDashAll(p.titles).map((t) => t.slice(0, 100)).slice(0, 5),
       description: description.slice(0, 4000),
+      // A dash inside a hashtag is not a pause, so it is dropped rather than
+      // turned into a comma that would split one tag into two.
       hashtags: (Array.isArray(p.hashtags) ? p.hashtags : [])
-        .map((h) => String(h).replace(/^#/, "").trim().toLowerCase())
+        .map((h) => dropDashes(h).replace(/^#/, "").trim().toLowerCase())
         .filter(Boolean)
         .slice(0, 12),
-      thumbnail_lines: (Array.isArray(p.thumbnail_lines) ? p.thumbnail_lines : [])
-        .map((t) => String(t).slice(0, 40))
-        .slice(0, 4),
+      thumbnail_lines: noEmDashAll(p.thumbnail_lines).map((t) => t.slice(0, 40)).slice(0, 4),
       usage: readUsage(res),
     };
   } catch (err) {

@@ -6,7 +6,7 @@ import { useProfiles } from "../../state/ProfileContext";
 import NewProfileDialog from "./NewProfileDialog";
 
 /**
- * Your channels — the section that makes the rest of the app make sense.
+ * Your channels: the section that makes the rest of the app make sense.
  *
  * One profile per YouTube channel. Each owns its categories, its one voice, that
  * voice's videos and the scripts written for it, so a creator running a tech
@@ -92,7 +92,7 @@ export default function ProfilesSection({ isPhone, onGoVoice }) {
           </div>
           <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)", margin: 0 }}>
             One profile per channel. Each has its own topics, its own voice and its
-            own scripts — only your credits are shared.
+            own scripts. Only your credits are shared.
           </p>
         </div>
 
@@ -142,7 +142,7 @@ export default function ProfilesSection({ isPhone, onGoVoice }) {
       {profiles.length >= max && (
         <p style={{ fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.6, margin: "12px 0 0" }}>
           {max} profiles is the limit. Each one keeps its own videos, and reading a
-          video is the expensive part — delete one to add another.
+          video is the expensive part, so delete one to add another.
         </p>
       )}
 
@@ -286,7 +286,7 @@ function ProfileCard({
                   textDecoration: "underline", textUnderlineOffset: 3,
                 }}
               >
-                no voice yet — add a video
+                no voice yet, add a video
               </button>
             )}
           </div>
@@ -436,7 +436,7 @@ function DeleteDialog({ profile, busy, onCancel, onConfirm }) {
             they press this. */}
         <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-mute)", margin: "0 0 18px" }}>
           Scripts you wrote for this channel are{" "}
-          <strong style={{ color: "var(--ink)" }}>kept</strong> — they stay in My scripts
+          <strong style={{ color: "var(--ink)" }}>kept</strong>. They stay in My scripts
           under the name they were written for.
         </p>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>

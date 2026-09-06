@@ -1,5 +1,5 @@
 /**
- * categories.js — the single source of truth for what a creator can cover.
+ * categories.js: the single source of truth for what a creator can cover.
  *
  * One entry here drives FOUR things, so a new category is a config change and
  * never a code change:
@@ -16,7 +16,7 @@
  * top where a domain has obvious authorities worth reading first.
  *
  * Every RSS URL below was live-probed and returned items. Feeds still die, and
- * that is survivable — fetchRssFeed returns [] rather than throwing, and the
+ * that is survivable, fetchRssFeed returns [] rather than throwing, and the
  * collector isolates each source.
  *
  * `locale` matters more than it looks. An Indian creator covering markets wants
@@ -192,7 +192,7 @@ export function isValidCategory(id) {
   return BY_ID.has(String(id || ""));
 }
 
-/** Only what the UI needs — the fetch config is server-side detail. */
+/** Only what the UI needs, the fetch config is server-side detail. */
 export function publicCategories() {
   return CATEGORIES.map((c) => ({ id: c.id, label: c.label, blurb: c.blurb }));
 }
@@ -200,7 +200,7 @@ export function publicCategories() {
 /**
  * Clean a user's selection: valid ids only, deduped, capped, order preserved.
  * Returns [] for nothing usable so callers can tell "not chosen yet" from "chose
- * something invalid" — the onboarding gate depends on that difference.
+ * something invalid", the onboarding gate depends on that difference.
  */
 export function sanitizeSelection(ids) {
   if (!Array.isArray(ids)) return [];

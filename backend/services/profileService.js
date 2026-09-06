@@ -1,5 +1,5 @@
 /**
- * profileService.js — the creator's channels.
+ * profileService.js: the creator's channels.
  *
  * A Profile (models/Profile.js) is the container everything else hangs off:
  * categories, one voice, that voice's videos, and the scripts written for it.
@@ -21,7 +21,7 @@ import { sanitizeSelection, isValidCategory } from "./categories.js";
 //
 // This is a spend ceiling, not a tidiness rule. Every profile carries its own
 // slots of videos, and reading a video is the single expensive thing this
-// product does — an unbounded number of profiles is an unbounded transcription
+// product does, an unbounded number of profiles is an unbounded transcription
 // bill from one account. DAILY_TRANSCRIBE_LIMIT caps the rate; this caps the
 // total.
 export const MAX_PROFILES = Math.max(1, parseInt(process.env.MAX_PROFILES || "5", 10));
@@ -105,7 +105,7 @@ export function shapeProfile(p, voice, count) {
  * Adopt rows written before profiles existed.
  *
  * A transcript, script or voice with no `profile` predates this feature. Left
- * alone it would vanish from every per-profile list — a creator would open the
+ * alone it would vanish from every per-profile list, a creator would open the
  * app after the deploy and find their five videos gone. So the first profile a
  * user has takes ownership of everything unclaimed.
  *
@@ -129,7 +129,7 @@ async function adoptOrphans(userId, profileId) {
   ).catch(() => {});
 
   // And the voice itself. Before profiles this was one row per user, so an
-  // existing analysis has no profile to belong to — without this the creator
+  // existing analysis has no profile to belong to, without this the creator
   // would be told to analyse a voice we already have.
   await VoiceProfile.updateMany(
     { user: userId, $or: [{ profile: null }, { profile: { $exists: false } }] },
@@ -165,7 +165,7 @@ export async function ensureProfile(userId) {
     profiles = await Profile.find({ user: userId }).sort({ created_at: 1 });
   }
 
-  // Exactly one default. Repaired rather than assumed — a stale flag decides
+  // Exactly one default. Repaired rather than assumed, a stale flag decides
   // which channel a script gets written for, so "probably right" is not enough.
   const defaults = profiles.filter((p) => p.is_default);
   const active = defaults[0] || profiles[0];
@@ -216,7 +216,7 @@ export async function createProfile(userId, { name, categories } = {}) {
     user: userId,
     name: clean,
     categories: sanitizeSelection(categories),
-    // Never steals the default from an existing profile — switching which
+    // Never steals the default from an existing profile, switching which
     // channel you are working on is a choice, not a side effect of making one.
     is_default: held === 0,
     created_at: new Date(),
@@ -271,7 +271,7 @@ export async function setDefaultProfile(userId, profileId) {
  *
  * Scripts are NOT deleted. They are the thing the creator paid for, and losing
  * six months of writing because they tidied up their channels would be
- * unforgivable — they keep the copied profile_name and simply stop matching
+ * unforgivable, they keep the copied profile_name and simply stop matching
  * that filter.
  *
  * The last profile cannot be deleted: with none left there is nowhere for the
@@ -281,7 +281,7 @@ export async function setDefaultProfile(userId, profileId) {
 export async function deleteProfile(userId, profileId) {
   // Ownership is checked BEFORE the "is this your last one" rule, and both
   // before anything is removed. The other order answers "this is your only
-  // profile" to someone deleting a profile that isn't theirs — a confusing
+  // profile" to someone deleting a profile that isn't theirs, a confusing
   // reply to the wrong question, reporting on their account instead of simply
   // saying the id was not found.
   const target = await Profile.findOne({ _id: profileId, user: userId });
@@ -312,14 +312,14 @@ export async function deleteProfile(userId, profileId) {
  *
  * ── WHY THIS DENORMALISATION EXISTS ─────────────────────────────────────────
  * The collector decides what to spend money on by reading
- * `User.distinct("categories", { last_seen_at: … })` — a handful of ids however
+ * `User.distinct("categories", { last_seen_at: … })`, a handful of ids however
  * many accounts exist (services/newsCadence.js). Doing that across profiles
  * would mean joining profiles to their users on every scheduler tick to answer
  * a question that changes only when someone edits their categories.
  *
  * So the per-profile list is the truth for what a creator SEES, and this field
  * is the union of it, for what we PAY TO COLLECT. This function is the only
- * place that writes it — anywhere else and the two drift, which shows up as a
+ * place that writes it, anywhere else and the two drift, which shows up as a
  * category that quietly stopped being collected.
  */
 export async function syncUserCategories(userId) {
@@ -331,7 +331,7 @@ export async function syncUserCategories(userId) {
   // channel may watch. This field is the union across every channel, so a
   // creator with three profiles of three categories legitimately reaches nine.
   // Running it through sanitizeSelection truncated the union to three and
-  // silently stopped collecting for every category past the cut — a paying user
+  // silently stopped collecting for every category past the cut, a paying user
   // watching a category that quietly never updates again, with nothing anywhere
   // saying why. The per-profile cap is still enforced where it belongs, on the
   // profile itself.
@@ -345,7 +345,7 @@ export async function syncUserCategories(userId) {
  * The VoiceProfile row for a profile, created empty if it has never had one.
  *
  * Upserted rather than found-or-created so two requests arriving together
- * cannot make two — the unique index on `profile` would reject the second, and
+ * cannot make two, the unique index on `profile` would reject the second, and
  * this way there is no second.
  */
 export async function voiceFor(userId, profileId) {

@@ -12,7 +12,7 @@ import { onNewsEvent } from "../../realtime/socket";
  *
  * The backend pulls a few thousand items a day from free sources and scores each
  * for whether it actually deserves a video. Rows arrive already collapsed, so one
- * launch covered by six outlets is ONE card reading "6 sources" — the count being
+ * launch covered by six outlets is ONE card reading "6 sources", the count being
  * itself a signal of how big the story is, not just deduplication.
  *
  * ── WHY THERE ARE NO FILTERS ANY MORE ────────────────────────────────────────
@@ -45,7 +45,7 @@ const WINDOW_HOURS = 48;
 const MIN_SCORE = 5;
 
 // A hard ceiling, not a page size. The whole promise is "we already decided for
-// you", and forty ranked cards is a list to triage — which is the thing a
+// you", and forty ranked cards is a list to triage, which is the thing a
 // creator already has in four other apps. Most days genuinely have two or three
 // stories worth a video; fifteen leaves real choice without becoming a feed.
 //
@@ -70,7 +70,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
-  // The categories of the profile they are working in — NOT of the account. A
+  // The categories of the profile they are working in, NOT of the account. A
   // creator running a sports channel and a tech channel must never see AI
   // stories in the sports feed just because the same person also runs the other
   // one. The server enforces this too (routes/news.js resolves the profile);
@@ -80,7 +80,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   const categoriesKey = profileCats.join(",");
 
   // Opens on their first category rather than on everything. A mixed feed of
-  // three subjects has no shape — a creator sits down to make a markets video
+  // three subjects has no shape, a creator sits down to make a markets video
   // or a tech video, not "a video".
   const [cat, setCat] = useState(profileCats[0] || "");
   const [feedCats, setFeedCats] = useState([]);
@@ -96,11 +96,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   const [ranking, setRanking] = useState(false);
   // Read by the socket handler below. A piece of state there would put `ranking`
   // in that effect's dependencies and tear the listeners down and back up on
-  // every fetch — which is the exact moment they need to be up.
+  // every fetch, which is the exact moment they need to be up.
   const rankingRef = useRef(false);
   const [emptyTries, setEmptyTries] = useState(0);
   // The server's verdict on its own feed: the newest story on offer has aged
-  // past NEWS_STALE_HOURS. Not computed here on purpose — one browser deciding
+  // past NEWS_STALE_HOURS. Not computed here on purpose, one browser deciding
   // to spend money is a decision every browser then makes separately.
   const [stale, setStale] = useState(false);
   const [autoFetching, setAutoFetching] = useState(false);
@@ -125,7 +125,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
   // What is on screen right now, readable without making it a dependency.
   // load() clears the badges of whatever it is about to replace, and taking
-  // `items` as a hook dependency there would rebuild load() on every result —
+  // `items` as a hook dependency there would rebuild load() on every result,
   // which the effect below calls, which sets items, which rebuilds load().
   const itemsRef = useRef([]);
 
@@ -158,11 +158,11 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
         params: profileId ? { profile: profileId } : {},
       });
       setVoice(data);
-    } catch { /* the panel degrades to "transcribe first" — never block the feed */ }
+    } catch { /* the panel degrades to "transcribe first"; never block the feed */ }
   }, [profileId]);
 
   // voiceRev changes when videos are added, deleted or re-analysed on the other
-  // screen — without it this pane would keep offering to write in a profile that
+  // screen. Without it this pane would keep offering to write in a profile that
   // no longer matches, or keep saying "transcribe first" after they just did.
   // voiceId changes when they switch which voice writes, which is a different
   // profile with a different set of videos behind it.
@@ -179,7 +179,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // category server-side, which is why it is safe to call on every open: inside
   // the cooldown it returns in about a millisecond having spent nothing.
   const load = useCallback(async ({ refresh = false, auto = false, quiet = false } = {}) => {
-    // `quiet` is for reads nobody asked for — a live update arriving because a
+    // `quiet` is for reads nobody asked for, a live update arriving because a
     // pass finished somewhere else. The list dims while `busy`, and dimming the
     // page under someone who is reading it, to deliver news they did not request,
     // is worse than the update is good.
@@ -189,7 +189,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
       if (refresh) {
         // ── THE BATCH BEING REPLACED STOPS BEING NEW ──────────────────────
         // NEW used to mean "you have not opened this", which is a fact about
-        // the creator and never expires on its own — so a story they scrolled
+        // the creator and never expires on its own, so a story they scrolled
         // past this morning was still wearing the badge tonight, sitting under
         // a timestamp reading 14h. The badge and the timestamp were describing
         // different things and the badge was losing.
@@ -214,7 +214,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
             ...(cat ? { category: cat } : {}),
             ...(profileId ? { profile: profileId } : {}),
             // Tells the server this was the feed's decision, not a press. It
-            // gates those separately — a person who asked is owed the attempt,
+            // gates those separately, a person who asked is owed the attempt,
             // a self-clearing condition is not. See POST /news/refresh.
             ...(auto ? { auto: true } : {}),
           });
@@ -254,7 +254,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
       setCheckedAt(data.checked_at || null);
       setFeedCats(data.categories || []);
       // `wide` means the normal bar found nothing and this is the fallback pass,
-      // so its rows are already the bottom of the barrel — treating that as
+      // so its rows are already the bottom of the barrel, treating that as
       // "fresh enough" would suppress the one fetch most likely to help.
       setStale(!!data.stale || wide);
       setSourceCount(data.sources_checked || 0);
@@ -276,10 +276,10 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
   // categoriesKey is a refetch trigger, not an input: the server derives the
   // categories from the selected profile, so the request never carries them.
-  // It belongs on the effect rather than in load()'s deps — without it, editing
+  // It belongs on the effect rather than in load()'s deps. Without it, editing
   // a profile's categories leaves Topics serving the previous set.
   //
-  // A plain read, ALWAYS. Opening Topics never ranks by itself — ranking is the
+  // A plain read, ALWAYS. Opening Topics never ranks by itself: ranking is the
   // paid half, and it should not fire every time somebody glances at the page.
   // What happens instead is that this read comes back carrying the server's own
   // verdict on its freshness (`stale`), and the effect further down acts on that
@@ -293,7 +293,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   /**
    * An empty feed right after signing up is usually work still in flight, not an
    * empty product: choosing categories fires a collection, that takes about a
-   * minute and a half, and it holds the ranking slot while it runs — so the
+   * minute and a half, and it holds the ranking slot while it runs, so the
    * refresh this pane just asked for was correctly told "already in hand".
    *
    * So look again a few times before believing the emptiness. Deliberately a
@@ -310,12 +310,12 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   }, [loadedOnce, items.length, error, emptyTries, load]);
 
   /**
-   * The feed has gone stale — go and get news without being asked.
+   * The feed has gone stale: go and get news without being asked.
    *
    * ── WHY THIS FIRES ON WHAT THE CREATOR CAN SEE ───────────────────────────
    * The collector runs every fifteen minutes and is almost never the problem.
    * What a creator meets in the morning is the RANKED feed, and that only moved
-   * when somebody pressed a button — so the honest signal is not "when did we
+   * when somebody pressed a button, so the honest signal is not "when did we
    * last poll" but "how old is the newest thing I am being offered". When that
    * is over three hours on a live category, either the news is genuinely quiet
    * or the pipeline has stopped serving, and a creator cannot tell those apart
@@ -363,7 +363,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
    * on after the fetch has already answered. None of that could reach this page
    * before, so the only way to find out was to load it again.
    *
-   * `news:ranked` says the list changed — and carries a count, not cards.
+   * `news:ranked` says the list changed, and carries a count, not cards.
    * Clustering, heat ordering and this creator's own read state are all decided
    * in GET /news, so the page re-reads rather than trying to keep a second copy
    * of that logic in sync over a socket. Quietly, because nobody asked.
@@ -377,7 +377,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
     const offRanked = onNewsEvent("news:ranked", (ev) => {
       if (!ev?.category || !mine.has(ev.category)) return;
       // A fetch this pane started will re-read the moment its POST answers, and
-      // that answer lands within a second of this event — the ranking is what
+      // that answer lands within a second of this event, the ranking is what
       // both of them are reporting. Reading twice would be two queries and a
       // race over which result renders.
       if (rankingRef.current) return;
@@ -404,7 +404,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
   // The profile's categories change when they edit it, and switching profiles
   // replaces them wholesale. Either way, a category tab that is no longer one of
-  // THIS channel's falls back to the first that is — otherwise switching to the
+  // THIS channel's falls back to the first that is; otherwise switching to the
   // sports channel leaves the feed pinned to an AI tab it no longer has.
   useEffect(() => {
     const ids = profileCats.filter(Boolean);
@@ -413,7 +413,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   }, [categoriesKey]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // On a split layout the right pane is always visible, so leaving it empty
-  // wastes half the screen — open the top story by default, and re-open it if a
+  // wastes half the screen. Open the top story by default, and re-open it if a
   // filter change drops whatever was selected.
   useEffect(() => {
     if (isNarrow || !items.length) return;
@@ -472,7 +472,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
               gap: 12, padding: `0 ${gut}px`,
             }}
           >
-            {/* No profile picker here — the app bar above carries it on every
+            {/* No profile picker here, the app bar above carries it on every
                 screen, so a second copy would be a second answer to the same
                 question. See Shell/TopBar.js. */}
             <h1
@@ -493,7 +493,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
                 setFetched(null);
                 // Counted here rather than taken from the server: the endpoint
                 // knows how many stories it SCORED, which is not the same as how
-                // many reached this feed — most score too low to appear, and
+                // many reached this feed, most score too low to appear, and
                 // reporting those as new would be a number that flatters itself.
                 const before = new Set(items.map((i) => i.id));
                 const next = await load({ refresh: true });
@@ -553,7 +553,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
               </div>
               {/* Evidence, not a promise. This used to say "Rechecked every 15
                   minutes", which a creator looking at an eight-hour-old top card
-                  had no way to believe — they could not tell a quiet news day
+                  had no way to believe: they could not tell a quiet news day
                   from a collector that had silently died. The real timestamp
                   makes the difference visible. */}
               <p style={{ margin: "18px 2px 0", fontSize: 12, color: "var(--ink-mute)", lineHeight: 1.6 }}>
@@ -607,7 +607,7 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 }
 
 /**
- * The key read state is marked against — cluster first, so a story stays read
+ * The key read state is marked against: cluster first, so a story stays read
  * when a sixth outlet joins it and changes the representative row.
  *
  * Module scope rather than a closure: load() needs it, and a function rebuilt
@@ -624,7 +624,7 @@ function seenKey(it) {
  * "We noticed this feed was stale and went to look."
  *
  * ── WHY THE PAGE SAYS THIS OUT LOUD ──────────────────────────────────────────
- * The fetch is automatic, which is the point — a creator should not have to know
+ * The fetch is automatic, which is the point: a creator should not have to know
  * that ranking is a separate paid step from collection, or diagnose a ten-hour-
  * old top card by pressing a button and seeing whether the number changes. But
  * work that happens on somebody's behalf and says nothing is indistinguishable
@@ -633,7 +633,7 @@ function seenKey(it) {
  *
  * So it names what is happening and what it is reading, and then it goes away.
  * The source count is the server's real number (allSources for the categories in
- * play), not a decorative one — a banner that claimed twelve while checking one
+ * play), not a decorative one, a banner that claimed twelve while checking one
  * would be worse than no banner.
  */
 function FetchingBanner({ gut, isPhone, sources }) {
@@ -665,7 +665,7 @@ function FetchingBanner({ gut, isPhone, sources }) {
         </div>
         {!isPhone && (
           <div style={{ fontSize: 11.5, color: "var(--ink-mute)", marginTop: 1.5, fontWeight: 500 }}>
-            The newest story here had gone quiet — checking for something fresher.
+            The newest story here had gone quiet. Checking for something fresher.
           </div>
         )}
       </div>
@@ -689,7 +689,7 @@ function FetchingBanner({ gut, isPhone, sources }) {
  * Fetch new topics.
  *
  * ── WHY THIS IS A NAMED ACTION AND NOT "REFRESH" ─────────────────────────────
- * It used to say Refresh, and refresh means "redraw what you already have" —
+ * It used to say Refresh, and refresh means "redraw what you already have":
  * free, instant, expected. This is not that. Pressing it asks the ranker to read
  * everything the collector has gathered since anyone last looked and decide what
  * deserves a video, which takes a few seconds and costs real money. Naming it
@@ -703,7 +703,7 @@ function FetchingBanner({ gut, isPhone, sources }) {
  * Once spent it is NOT given the `disabled` attribute, deliberately: a disabled
  * button fires no mouse events in Chrome, so hovering it would say nothing and
  * the person would keep clicking a dead control. It stays live, looks spent, and
- * explains itself — on hover for a pointer, on tap for a thumb, since a phone
+ * explains itself, on hover for a pointer, on tap for a thumb, since a phone
  * has no hover to explain anything with.
  */
 function FetchButton({ busy, running, spent, fetched, onFetch }) {
@@ -881,13 +881,13 @@ function StoryRow({ item, index, isPhone, active, unread, rowRef, onOpen }) {
   const more = (item.sources || []).length - 2;
 
   // One muted line, joined with middots. Metadata as separate coloured chips is
-  // how a rundown turns into a sticker album — a creator scans this line, they
+  // how a rundown turns into a sticker album: a creator scans this line, they
   // don't read it, and every badge added is one more thing to look past.
   //
   // ONE TIME, AND IT IS THE NEWEST WRITE-UP. Not when the story broke: a story
   // twenty outlets are still filing on is live whatever hour it started, and
   // leading with the break time made a moving feed read as a frozen one. It
-  // briefly showed both ("17h ago · more 2h ago"), which was worse — two
+  // briefly showed both ("17h ago · more 2h ago"), which was worse: two
   // timestamps on a card is a puzzle, not information.
   const meta = [
     item.source_count > 1 ? `${item.source_count} sources` : null,
@@ -914,7 +914,7 @@ function StoryRow({ item, index, isPhone, active, unread, rowRef, onOpen }) {
     >
       {/* ── NEW MEANS "YOU HAVE NOT OPENED THIS", NOT "THIS IS RECENT" ──────
           It used to mean the latter, on a three-hour clock, which answered a
-          question the timestamp on the same card already answered — and cleared
+          question the timestamp on the same card already answered, and cleared
           itself on stories nobody had read while a creator was away for an
           afternoon. Now it survives until the story is opened, so the list
           shows what is left to get through. Cleared on click, in StoryRow's
@@ -992,7 +992,7 @@ function FeedSkeleton() {
 
 /**
  * Nothing to show. There is no "widen the search" button any more because the
- * widening already happened automatically before this rendered — offering it
+ * widening already happened automatically before this rendered, offering it
  * again would be a button that does what was just done.
  */
 function EmptyState({ settling }) {

@@ -11,7 +11,7 @@ import { categoryColor } from "../../theme";
  * stopped to name something you have not seen is a bad first minute.
  *
  * The second one is different. From here on the name is the ONLY thing telling
- * two profiles apart in the dropdown where credits get spent — "Untitled" beside
+ * two profiles apart in the dropdown where credits get spent, "Untitled" beside
  * "Untitled" is how a creator pays for a story written for the wrong channel, in
  * the wrong voice, about a category that channel does not cover. So it is typed,
  * and the button stays dead until it is.

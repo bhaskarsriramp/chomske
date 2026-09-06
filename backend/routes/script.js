@@ -1,5 +1,5 @@
 /**
- * script.js — generate a script for a story, and read the voice profile behind it.
+ * script.js: generate a script for a story, and read the voice profile behind it.
  *
  * Async and polled, same shape as /transcribe and for the same reason: writing a
  * full script (plus a profile rebuild on the first run) outlives what a proxy will
@@ -26,11 +26,11 @@ const router = express.Router();
 const DAILY_SCRIPT_LIMIT = parseInt(process.env.DAILY_SCRIPT_LIMIT || "30", 10);
 
 /**
- * GET /script/voice?profile=… — what we know about how this creator talks.
+ * GET /script/voice?profile=…, what we know about how this creator talks.
  *
  * Managing the channels themselves lives in routes/profiles.js; this stays
- * because it is the shape the writing screens read — "is there a voice to write
- * in, and how much of one" — for whichever profile is selected.
+ * because it is the shape the writing screens read, "is there a voice to write
+ * in, and how much of one", for whichever profile is selected.
  */
 router.get("/voice", authenticateToken, async (req, res) => {
   try {
@@ -49,7 +49,7 @@ router.get("/voice", authenticateToken, async (req, res) => {
   }
 });
 
-/** POST /script/voice/rebuild  { profile? } — re-learn from that channel's videos. */
+/** POST /script/voice/rebuild  { profile? }, re-learn from that channel's videos. */
 router.post("/voice/rebuild", authenticateToken, async (req, res) => {
   try {
     const { profile, built, reason } = await buildVoiceProfile(req.user.id, req.body?.profile);
@@ -58,7 +58,7 @@ router.post("/voice/rebuild", authenticateToken, async (req, res) => {
         success: false,
         message:
           reason === "no_transcripts"
-            ? "Transcribe at least one video first — that's what your voice is learned from."
+            ? "Transcribe at least one video first. That's what your voice is learned from."
             : "Couldn't build a voice profile.",
       });
     }
@@ -84,12 +84,12 @@ router.post("/", authenticateToken, async (req, res) => {
 
     // Which channel this is for. Resolved before the cache check, because the
     // same story written for a creator's Hindi tech channel and their English
-    // one are two different deliverables — treating them as one would hand back
+    // one are two different deliverables, treating them as one would hand back
     // the wrong script and charge for neither.
     const { profile: channel } = await resolveProfile(userId, req.body?.profile_id || req.body?.profile);
 
     // Already written it for this channel? Hand it back rather than billing for
-    // the same story twice — regenerating has to be an explicit choice.
+    // the same story twice, regenerating has to be an explicit choice.
     if (!req.body?.force) {
       const existing = await Script.findOne({
         user: userId, news_item: item._id, profile: channel._id, status: { $ne: "failed" },
@@ -123,7 +123,7 @@ router.post("/", authenticateToken, async (req, res) => {
       packaging: !!req.body?.packaging,
     });
 
-    // Fail before creating a row if there is nothing to write in the voice of —
+    // Fail before creating a row if there is nothing to write in the voice of,
     // a "processing" script that can never succeed is a worse experience than a
     // clear message here.
     const profile = await getUsableProfile(userId, { profileId: channel._id, autoBuild: false });
@@ -133,7 +133,7 @@ router.post("/", authenticateToken, async (req, res) => {
         success: false,
         needs_transcript: true,
         profile_id: String(channel._id),
-        message: "Add a video to this profile first — that's how we learn how you talk.",
+        message: "Add a video to this profile first. That's how we learn how you talk.",
       });
     }
 
@@ -155,7 +155,7 @@ router.post("/", authenticateToken, async (req, res) => {
     // After, so the ledger entry can point at a real script id and a creator
     // asking "what was this 60 credits for" gets an answer. Before the work, so
     // a story that fails repeatedly cannot be retried without limit against a
-    // metered model — the failure path refunds in full.
+    // metered model, the failure path refunds in full.
     let charged = 0;
     try {
       const spent = await spend(userId, order.total, {
@@ -170,7 +170,7 @@ router.post("/", authenticateToken, async (req, res) => {
       if (err instanceof InsufficientCredits) {
         // The row was created a moment ago and nothing was charged for it, so
         // it is removed rather than left as a "processing" script that never
-        // runs — a ghost in their history is worse than no row at all.
+        // runs, a ghost in their history is worse than no row at all.
         await Script.deleteOne({ _id: doc._id }).catch(() => {});
         return res.status(402).json({
           success: false,
@@ -202,7 +202,7 @@ router.post("/", authenticateToken, async (req, res) => {
 });
 
 /**
- * GET /script — everything this creator has written, newest first.
+ * GET /script, everything this creator has written, newest first.
  *
  * Each row carries the topic it came from, not just the headline stored on the
  * script. A script read back a week later is unusable without the story behind
@@ -221,7 +221,7 @@ router.get("/", authenticateToken, async (req, res) => {
 
     // Filtering is opt-in. "All profiles" is a real answer to "which of my
     // scripts do I want to see", and it is the right default for someone who
-    // only ever had one — they should never have to discover a filter to find
+    // only ever had one, they should never have to discover a filter to find
     // work they wrote before profiles existed.
     const profileParam = String(req.query.profile || "").trim();
     if (profileParam && profileParam !== "all" && mongoose.Types.ObjectId.isValid(profileParam)) {
@@ -248,7 +248,7 @@ router.get("/", authenticateToken, async (req, res) => {
     const byItem = new Map(items.map((i) => [String(i._id), i]));
 
     // Real names for the source links. sources_used holds bare URLs, and a list
-    // of raw hrefs is something a creator has to hover to read — these are the
+    // of raw hrefs is something a creator has to hover to read, these are the
     // rows those URLs came from, so the outlet and its headline come free.
     const urls = [...new Set(docs.flatMap((d) => d.sources_used || []))];
     const srcRows = urls.length
@@ -295,7 +295,7 @@ router.get("/", authenticateToken, async (req, res) => {
   }
 });
 
-/** GET /script/:id — poll target. */
+/** GET /script/:id, poll target. */
 router.get("/:id", authenticateToken, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });
@@ -314,7 +314,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
  * ── THE ADD-ONS CANNOT LOSE THE SCRIPT ──────────────────────────────────────
  * The twin and the packaging run AFTER the main script is saved as done, and
  * each soft-fails to null. A creator who paid for all three and hits a Gemini
- * hiccup on the packaging call still has their script — losing the paid-for
+ * hiccup on the packaging call still has their script, losing the paid-for
  * main deliverable because an optional extra failed would be the worst possible
  * trade. What they did not receive is refunded, line by line.
  */
@@ -327,7 +327,7 @@ async function runScript(id, userId, item, order) {
     // voice build without the request waiting on both.
     const profile = await getUsableProfile(userId, { profileId, autoBuild: true });
     if (!profile) throw Object.assign(new Error("no profile"), {
-      userMessage: "Add a video to this profile first — that's how we learn how you talk.",
+      userMessage: "Add a video to this profile first. That's how we learn how you talk.",
     });
 
     const out = await writeScript({ profile, item, seconds });
@@ -362,7 +362,7 @@ async function runScript(id, userId, item, order) {
     //
     // Wrapped so nothing in here can reach the outer catch. If it could, a
     // failure while refunding the twin would fall through to the "script
-    // failed" handler and refund the WHOLE order a second time — on top of the
+    // failed" handler and refund the WHOLE order a second time, on top of the
     // partial refund that had already gone through, for a script the creator
     // has in their hands. The main deliverable is saved and paid for by this
     // point; the extras can only ever adjust around it.
@@ -378,7 +378,7 @@ async function runScript(id, userId, item, order) {
         const back = quote({ seconds, englishTwin: true }).twin;
         await refund(userId, back, { refType: "Script", refId: id, note: "English version failed" });
         await Script.updateOne({ _id: id }, { $inc: { credits_refunded: back } }).catch(() => {});
-        console.warn(`[script] ${id} twin failed — refunded ${back} credits`);
+        console.warn(`[script] ${id} twin failed, refunded ${back} credits`);
       }
     }
 
@@ -404,7 +404,7 @@ async function runScript(id, userId, item, order) {
       } else {
         await refund(userId, PACKAGING_CREDITS, { refType: "Script", refId: id, note: "Packaging failed" });
         await Script.updateOne({ _id: id }, { $inc: { credits_refunded: PACKAGING_CREDITS } }).catch(() => {});
-        console.warn(`[script] ${id} packaging failed — refunded ${PACKAGING_CREDITS} credits`);
+        console.warn(`[script] ${id} packaging failed, refunded ${PACKAGING_CREDITS} credits`);
       }
     }
     } catch (extrasErr) {
@@ -425,8 +425,8 @@ async function runScript(id, userId, item, order) {
     ).catch(() => {});
 
     // The whole order is refunded, not just the base. They received nothing.
-    // Charging on start and refunding on failure — rather than charging on
-    // success — is deliberate: it keeps a failing story from being an unlimited
+    // Charging on start and refunding on failure, rather than charging on
+    // success, is deliberate: it keeps a failing story from being an unlimited
     // free retry loop against a metered model, while never billing for a
     // deliverable that did not arrive.
     const charged = Number(order?.charged) || 0;
@@ -434,7 +434,7 @@ async function runScript(id, userId, item, order) {
       await refund(userId, charged, { refType: "Script", refId: id, note: "Script failed" });
       await Script.updateOne({ _id: id }, { $inc: { credits_refunded: charged } }).catch(() => {});
     }
-    console.error(`[script] ${id} failed: ${err.message}${charged ? ` — refunded ${charged} credits` : ""}`);
+    console.error(`[script] ${id} failed: ${err.message}${charged ? `, refunded ${charged} credits` : ""}`);
   }
 }
 
@@ -456,7 +456,7 @@ function shape(d) {
     sources_used: d.sources_used || [],
     error: d.error || "",
 
-    // What was ordered and what it cost — the history list shows this, so a
+    // What was ordered and what it cost, the history list shows this, so a
     // creator can see why one script cost 30 credits and another 255.
     duration_seconds: d.duration_seconds || 60,
     credits_charged: d.credits_charged || 0,

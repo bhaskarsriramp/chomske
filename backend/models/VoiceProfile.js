@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema } = mongoose;
 
 /**
- * VoiceProfile — how one creator actually talks, learned from their transcripts.
+ * VoiceProfile, how one creator actually talks, learned from their transcripts.
  *
  * This is the asset the product is really built around. Anyone can generate a
  * script about today's news; the only thing worth paying for is a script that
@@ -16,19 +16,19 @@ const { Schema } = mongoose;
  * which is what makes the output land in a specific voice rather than a plausible
  * average of all Hindi tech creators.
  *
- * Rebuilt when they add videos — cheap to regenerate (a few thousand input
+ * Rebuilt when they add videos, cheap to regenerate (a few thousand input
  * tokens), so it is never patched incrementally.
  *
  * ── ONE VOICE PER PROFILE ────────────────────────────────────────────────────
  * This used to be one row per USER, enforced by a unique index on `user`. That
  * was wrong for how creators actually work: one person runs a Hindi tech channel
  * and an English one, and blending those into a single profile produces a voice
- * that is nobody's — the same failure the mixed-language warning in
+ * that is nobody's, the same failure the mixed-language warning in
  * routes/transcribe.js already had to warn about.
  *
  * It is now one row per PROFILE (models/Profile.js), which is the container for
  * a whole channel: its categories, its videos, its scripts and this. A profile
- * has exactly one voice, so this row carries no name of its own — what it is
+ * has exactly one voice, so this row carries no name of its own, what it is
  * called is the profile's name, and storing that twice is storing it wrong.
  *
  * The unique index on `user` is therefore gone, replaced by a unique index on
@@ -42,7 +42,7 @@ const VoiceProfileSchema = new Schema({
   // overwrite somebody else's voice.
   user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
 
-  // The channel this voice belongs to. One voice per profile — enforced by the
+  // The channel this voice belongs to. One voice per profile, enforced by the
   // unique index below, not by application logic that a double-click can race.
   profile: { type: Schema.Types.ObjectId, ref: "Profile", required: true },
 
@@ -52,7 +52,7 @@ const VoiceProfileSchema = new Schema({
   transcript_count: { type: Number, default: 0 },
 
   // The language the scripts must come back in. Taken from their transcripts, not
-  // guessed — a Hinglish creator must never receive a pure-Hindi or English script.
+  // guessed, a Hinglish creator must never receive a pure-Hindi or English script.
   language:       { type: String, default: "" },   // hi-en, te-en, hi, en …
   language_label: { type: String, default: "" },
 
@@ -87,7 +87,7 @@ const VoiceProfileSchema = new Schema({
   // Counted, not described. Code-mixing ratio, sentence lengths, question rate,
   // the English words they actually keep, the phrases repeated across videos.
   // Computed by services/voiceMetrics.js with no model involved, which is why
-  // these are the only fields here that cannot be hallucinated — and why the
+  // these are the only fields here that cannot be hallucinated, and why the
   // script writer can be held to them numerically instead of asked nicely.
   metrics: { type: mongoose.Schema.Types.Mixed, default: null },
 
@@ -105,12 +105,12 @@ const VoiceProfileSchema = new Schema({
 
   // When an automatic rebuild last failed. The inputs do not change between one
   // script and the next, so a rebuild that just failed will fail again for the
-  // same reason and at the same price — this is what stops every press of
+  // same reason and at the same price, this is what stops every press of
   // "Write this in my voice" paying for the identical doomed analysis.
   build_failed_at: { type: Date, default: null },
 
-  // Null until the first successful analysis. This — not the presence of the row
-  // — is what "this voice is ready" means: a profile that has collected videos
+  // Null until the first successful analysis. This, not the presence of the row
+  // is what "this voice is ready" means: a profile that has collected videos
   // but has never been analysed has no style to write from.
   built_at:   { type: Date, default: null },
   created_at: { type: Date, default: Date.now },

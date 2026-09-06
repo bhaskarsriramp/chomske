@@ -1,8 +1,8 @@
 /**
- * newsUtils.js — display helpers shared by the feed and the story drawer.
+ * newsUtils.js: display helpers shared by the feed and the story drawer.
  *
  * Lives in its own module rather than at the bottom of NewsFeed.js because
- * StoryDetail needs them too, and NewsFeed imports StoryDetail — putting them in
+ * StoryDetail needs them too, and NewsFeed imports StoryDetail, putting them in
  * either component would make the two files import each other.
  */
 
@@ -33,7 +33,7 @@ export function sourceLabel(slug) {
   );
 }
 
-/** Compact relative time. Feeds are scanned, not read — "3h" beats a timestamp. */
+/** Compact relative time. Feeds are scanned, not read: "3h" beats a timestamp. */
 export function timeAgo(value) {
   if (!value) return "";
   const ms = Date.now() - new Date(value).getTime();
@@ -52,7 +52,7 @@ export function timeAgo(value) {
 
 // isFresh() lived here: true while a story was under three hours old, which is
 // what the NEW badge used to mean. The badge now means "you have not opened
-// this" (per-user read state — see StorySeen on the server), and nothing else
+// this" (per-user read state, see StorySeen on the server), and nothing else
 // wanted a freshness boolean, so the helper went with it rather than staying as
 // an export with no callers.
 

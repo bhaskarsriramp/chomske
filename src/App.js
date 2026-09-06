@@ -81,7 +81,7 @@ function Booting() {
   );
 }
 
-/** A missing client id breaks sign-in in a way that's invisible at runtime — say so. */
+/** A missing client id breaks sign-in in a way that's invisible at runtime. Say so. */
 function ConfigError() {
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>

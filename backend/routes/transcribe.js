@@ -1,5 +1,5 @@
 /**
- * transcribe.js — paste a YouTube link, get back what was said.
+ * transcribe.js: paste a YouTube link, get back what was said.
  *
  * ── WHY THIS IS ASYNC RATHER THAN ONE REQUEST ────────────────────────────────
  * Reading a video takes anywhere from ~20 seconds to several minutes. Holding an
@@ -34,7 +34,7 @@ const DAILY_LIMIT = parseInt(process.env.DAILY_TRANSCRIBE_LIMIT || "10", 10);
 const MAX_VOICE_VIDEOS = parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
 
 // Short-form only. Voice profiling learns hooks and sign-offs, which are dense in
-// a Short and diluted across twenty minutes of a long video — and a long video
+// a Short and diluted across twenty minutes of a long video, and a long video
 // costs roughly 20× more to read for a weaker signal.
 //
 // NOTE: YouTube raised the Shorts ceiling to 180s in late 2024, so a creator's own
@@ -55,15 +55,15 @@ router.post("/", authenticateToken, async (req, res) => {
     const userId = req.user.id;
 
     // Which channel this video teaches. An unknown or missing id lands on the
-    // user's default profile rather than failing — see resolveProfile().
+    // user's default profile rather than failing, see resolveProfile().
     const { profile } = await resolveProfile(userId, req.body?.profile);
 
-    // Already have it? Return the cached row — free, instant, and the reason a
+    // Already have it? Return the cached row, free, instant, and the reason a
     // second look at yesterday's video costs nothing.
     const existing = await Transcript.findOne({ user: userId, video_id: parsed.videoId }).lean();
     if (existing && existing.status !== "failed") {
       // It may belong to a DIFFERENT profile. Adding it here would mean
-      // transcribing and paying for text we already hold, so it is refused —
+      // transcribing and paying for text we already hold, so it is refused,
       // but named, because "you already added this" while looking at an empty
       // list is the kind of message that reads as a bug.
       if (String(existing.profile || "") !== String(profile._id)) {
@@ -111,7 +111,7 @@ router.post("/", authenticateToken, async (req, res) => {
     // Reading video is this product's whole cost, and it scales with duration.
     // One $0.005 lookup here is the difference between rejecting a 40-minute
     // video and transcribing it first to discover it was too long. Gemini is
-    // never asked how long something is — that would be paying the expensive
+    // never asked how long something is, that would be paying the expensive
     // model to answer a question the cheap endpoint already answers.
     let meta = null;
     let lookupError = null;
@@ -132,8 +132,8 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 
     // ── THIS GATE FAILS CLOSED ──────────────────────────────────────────────
-    // It used to fall through to Gemini whenever the lookup was unavailable —
-    // no key configured, key out of credit, endpoint down, video not found — on
+    // It used to fall through to Gemini whenever the lookup was unavailable,
+    // no key configured, key out of credit, endpoint down, video not found, on
     // the reasoning that an unknown length should not block a valid Short. That
     // is the wrong way round for the one check standing between an arbitrary
     // URL and the most expensive call this product makes. "Unknown" is exactly
@@ -181,7 +181,7 @@ router.post("/", authenticateToken, async (req, res) => {
       views: Number.isFinite(meta.views) ? meta.views : null,
       category: meta.category || "",
       keywords: meta.keywords || [],
-      // "2009-10-25 06:57:33" is UTC without a marker — left alone it would be
+      // "2009-10-25 06:57:33" is UTC without a marker, left alone it would be
       // read in the server's local zone and land 5.5 hours out on an IST box.
       // An unparseable value becomes null rather than an Invalid Date, which
       // Mongoose would reject and take the whole insert down with it.
@@ -189,7 +189,7 @@ router.post("/", authenticateToken, async (req, res) => {
       ...(meta.title ? { title: meta.title } : {}),
     };
 
-    // A previous attempt failed — reuse the row rather than fighting the unique index.
+    // A previous attempt failed, reuse the row rather than fighting the unique index.
     let doc;
     if (existing) {
       doc = await Transcript.findOneAndUpdate(
@@ -238,19 +238,19 @@ router.post("/", authenticateToken, async (req, res) => {
   }
 });
 
-/** GET /transcribe/:id — poll target. */
+/** GET /transcribe/:id, poll target. */
 router.get("/:id", authenticateToken, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });
   }
-  // Scoped to the caller — an id alone must never be enough to read someone
+  // Scoped to the caller, an id alone must never be enough to read someone
   // else's transcript.
   const doc = await Transcript.findOne({ _id: req.params.id, user: req.user.id }).lean();
   if (!doc) return res.status(404).json({ success: false, message: "Not found" });
   return res.json({ success: true, transcript: shape(doc) });
 });
 
-/** GET /transcribe?profile=… — the videos in one profile, newest first. */
+/** GET /transcribe?profile=…, the videos in one profile, newest first. */
 router.get("/", authenticateToken, async (req, res) => {
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 
@@ -262,7 +262,7 @@ router.get("/", authenticateToken, async (req, res) => {
     .lean();
 
   // The daily cap stays per ACCOUNT, across every profile. It is a spend control
-  // — reading video is the whole cost of this product — and making it per-profile
+  // reading video is the whole cost of this product, and making it per-profile
   // would multiply the ceiling by however many channels someone chose to create.
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const usedToday = await Transcript.countDocuments({
@@ -275,7 +275,7 @@ router.get("/", authenticateToken, async (req, res) => {
   const ready = docs.filter((d) => d.status === "done" && d.text);
 
   // A voice is one person. Videos in two different languages produce a blended
-  // profile that is nobody's — the reason a Telugu Short and a Hindi Short in the
+  // profile that is nobody's, the reason a Telugu Short and a Hindi Short in the
   // same list yielded "Telugu-English and Hinglish" as a single voice. Surfaced
   // rather than silently blocked, because a genuinely bilingual creator exists.
   const languages = [...new Set(ready.map((d) => d.language_label).filter(Boolean))];
@@ -294,7 +294,7 @@ router.get("/", authenticateToken, async (req, res) => {
 });
 
 /**
- * DELETE /transcribe/:id — drop one video from its profile.
+ * DELETE /transcribe/:id, drop one video from its profile.
  *
  * The stored VoiceProfile is left alone but marked behind by its own count check
  * (services/voiceProfileService.js), so the next analysis re-learns from what
@@ -305,7 +305,7 @@ router.delete("/:id", authenticateToken, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });
   }
-  // Scoped to the caller — an id alone must never delete someone else's row.
+  // Scoped to the caller, an id alone must never delete someone else's row.
   const doc = await Transcript.findOneAndDelete({ _id: req.params.id, user: req.user.id });
   if (!doc) return res.status(404).json({ success: false, message: "Not found" });
 

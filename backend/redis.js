@@ -1,5 +1,5 @@
 /**
- * redis.js — the one Redis connection for the process.
+ * redis.js: the one Redis connection for the process.
  *
  * Same shape as the reference project's src/realtime/redis.js: a single module
  * owns the client, and every other file imports this default rather than
@@ -8,7 +8,7 @@
  *
  * ── THIS IS A SHARED INSTANCE ────────────────────────────────────────────────
  * The same GCP Memorystore node serves betaFounderProduction. One Redis, one
- * keyspace, two applications — so every key this project writes MUST carry the
+ * keyspace, two applications, so every key this project writes MUST carry the
  * `hg:` prefix (see utils/limiter.js). Without it, a name that happens to match
  * one of the other project's keys silently corrupts its counters, and the symptom
  * would surface over there as a rate limiter behaving strangely for no local
@@ -22,7 +22,7 @@
  * ── ONE DELIBERATE DIFFERENCE FROM THE REFERENCE ─────────────────────────────
  * `enableOfflineQueue: false`. The reference client queues commands while it is
  * disconnected, which is why its clients HANG instead of erroring when Redis is
- * unreachable — the documented behaviour outside the VPC, and a well-known pain
+ * unreachable, the documented behaviour outside the VPC, and a well-known pain
  * during local development. With the queue off, a command against a dead Redis
  * rejects in about a millisecond, and every caller here already treats a Redis
  * failure as "fall back to in-process". On the VM, where Redis is reachable,
@@ -30,13 +30,13 @@
  */
 import Redis from "ioredis";
 
-// The Memorystore private IP — the same node betaFounderProduction uses.
+// The Memorystore private IP, the same node betaFounderProduction uses.
 // Reachable only from inside the VPC. REDIS_HOST overrides it without a deploy.
 const HOST = String(process.env.REDIS_HOST || "10.3.176.99").trim();
 const PORT = parseInt(process.env.REDIS_PORT || "6379", 10);
 
 // The host above is a VPC-private address, so off the VM it is unreachable by
-// definition. REDIS_DISABLED skips the client entirely for local development —
+// definition. REDIS_DISABLED skips the client entirely for local development,
 // without it, ioredis reconnects forever and buries real errors under a wall of
 // ETIMEDOUT. Requests still work either way; this only quiets the logs.
 const DISABLED = String(process.env.REDIS_DISABLED || "").toLowerCase() === "true";
@@ -44,7 +44,7 @@ const DISABLED = String(process.env.REDIS_DISABLED || "").toLowerCase() === "tru
 let client = null;
 
 if (DISABLED) {
-  console.log("[redis] disabled (REDIS_DISABLED=true) — limits held in-process");
+  console.log("[redis] disabled (REDIS_DISABLED=true), limits held in-process");
 } else {
   client = new Redis({
     host: HOST,

@@ -1,5 +1,5 @@
 /**
- * newsHeat.js — how a story's place in the feed is decided.
+ * newsHeat.js: how a story's place in the feed is decided.
  *
  * Its own module because two things need to agree about it exactly: the feed
  * route that orders by it, and scripts/newsDoctor.js, which exists to explain
@@ -14,7 +14,7 @@
 // This started at two, and two produced an order nobody could read off the
 // screen: a cluster of 28 write-ups bunched around eleven hours old outranked a
 // story whose newest article was four hours old, because at a two-hour
-// half-life ONE article at 4h is worth ELEVEN at 11h — so 28 old ones still
+// half-life ONE article at 4h is worth ELEVEN at 11h, so 28 old ones still
 // won on total. Defensible arithmetic, invisible from the page, and the exact
 // question it prompted was "why is the 11h card above the 4h card".
 //
@@ -67,7 +67,7 @@ export function latestOf(times, now = Date.now()) {
  *    1 article 5 minutes ago       →  0.95   one outlet, just now
  *   28 articles bunched at 11h     →  0.01   this morning's news, however big
  *
- * (Measured, not estimated — those are the values this function returns.)
+ * (Measured, not estimated, those are the values this function returns.)
  */
 export function heatOf(times, now = Date.now()) {
   let heat = 0;
@@ -75,7 +75,7 @@ export function heatOf(times, now = Date.now()) {
     if (!t) continue;
     const ms = now - new Date(t).getTime();
     if (Number.isNaN(ms)) continue;
-    // Future-dated coverage counts as "now" rather than scoring above 1 — a
+    // Future-dated coverage counts as "now" rather than scoring above 1, a
     // scheduled post or a skewed clock must not be able to buy the top slot.
     const hours = Math.max(0, ms / 3600000);
     heat += Math.pow(0.5, hours / HEAT_HALF_LIFE_H);

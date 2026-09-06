@@ -1,5 +1,5 @@
 /**
- * voiceProfileService.js — learn how a creator talks, from their own transcripts.
+ * voiceProfileService.js: learn how a creator talks, from their own transcripts.
  *
  * ── WHY THE TRANSCRIPT IS SAMPLED HEAD/MIDDLE/TAIL, NOT TRUNCATED ────────────
  * The two highest-signal parts of any video are the first fifteen seconds and the
@@ -13,7 +13,7 @@
  * Shorts, because only ~2.2k characters of each is ever sent.
  *
  * ── ONE PROFILE AT A TIME ────────────────────────────────────────────────────
- * Everything here is scoped to ONE profile (models/Profile.js) — a single
+ * Everything here is scoped to ONE profile (models/Profile.js), a single
  * channel, with a single voice, learned from the videos in that profile only.
  * The containers themselves are managed in services/profileService.js; this file
  * only analyses one of them.
@@ -50,7 +50,7 @@ function client() {
 
 /**
  * Pull the three parts of one transcript that actually carry voice.
- * Short transcripts are sent whole — slicing a 900-character Short into three
+ * Short transcripts are sent whole, slicing a 900-character Short into three
  * overlapping pieces would just repeat it.
  */
 function sample(text) {
@@ -69,7 +69,7 @@ const PROMPT_HEAD = `You are a voice analyst. Below are transcripts from ONE cre
 
 Your job: describe how THIS SPECIFIC PERSON talks, precisely enough that a writer could produce a new script nobody could tell apart from theirs.
 
-Be concrete and specific. "Energetic and engaging" is useless — every creator sounds like that in a description. "Opens by addressing the viewer as भाई and asking a question that assumes they already disagree" is useful.
+Be concrete and specific. "Energetic and engaging" is useless, every creator sounds like that in a description. "Opens by addressing the viewer as भाई and asking a question that assumes they already disagree" is useful.
 
 CRITICAL RULES:
 - Quote verbatim. Every example you give must be copied EXACTLY from the transcripts, in the original script (Devanagari stays Devanagari). Never translate, never transliterate, never tidy up.
@@ -79,21 +79,21 @@ CRITICAL RULES:
 
 Return STRICT JSON only:
 {
-  "language": "BCP-47-ish code of how they speak — hi-en for Hinglish, te-en, hi, en",
+  "language": "BCP-47-ish code of how they speak, hi-en for Hinglish, te-en, hi, en",
   "language_label": "human-readable, e.g. Hinglish (Hindi-English)",
-  "opening_patterns": ["how they start, described concretely — 2 to 4 items"],
+  "opening_patterns": ["how they start, described concretely, 2 to 4 items"],
   "sample_openings": ["ONE verbatim opening sentence per transcript, original script, at most 25 words each"],
   "narration_arc": "how they move through a topic start to finish, in 2-3 sentences",
-  "recurring_moves": ["rhetorical devices they reuse — 3 to 6 items"],
+  "recurring_moves": ["rhetorical devices they reuse, 3 to 6 items"],
   "closing_patterns": ["how they end, described concretely"],
   "sample_closings": ["ONE verbatim closing sentence per transcript, original script, at most 25 words each"],
-  "signature_phrases": ["VERBATIM catchphrases, fillers and connectors they repeat — up to 10"],
+  "signature_phrases": ["VERBATIM catchphrases, fillers and connectors they repeat, up to 10"],
   "vocabulary_notes": "which words stay English vs the base language, with real examples",
-  "sentiment": "their habitual stance — skeptical, hyped, contrarian, explanatory, alarmed",
+  "sentiment": "their habitual stance, skeptical, hyped, contrarian, explanatory, alarmed",
   "pacing": "sentence length, rhythm, use of questions, how they address the viewer",
   "audience": "who they are clearly talking to",
   "topics": ["what subjects they gravitate toward"],
-  "avoid": ["things this creator never does — be specific"],
+  "avoid": ["things this creator never does, be specific"],
   "style_brief": "A dense instruction block, written TO a ghostwriter, telling them exactly how to write as this person. 150-250 words. Include the concrete details: how to open, what to keep in English, tics to include, how to close, what to never do. This is the single most important field."
 }
 
@@ -115,7 +115,7 @@ Quote verbatim, in the original script. Never translate, never transliterate, ne
 
 Keep every field SHORT. Return STRICT JSON only, no markdown fences:
 {
-  "language": "BCP-47-ish code — hi-en, te-en, hi, en",
+  "language": "BCP-47-ish code, hi-en, te-en, hi, en",
   "language_label": "human-readable, e.g. Telugu-English",
   "sample_openings": ["one verbatim opening per transcript, max 20 words each"],
   "sample_closings": ["one verbatim closing per transcript, max 20 words each"],
@@ -178,7 +178,7 @@ async function analyse(body, compact) {
       `${raw.length} chars · starts: ${JSON.stringify(raw.slice(0, 120))} · ends: ${JSON.stringify(raw.slice(-120))}`
     );
   } else if (finish && finish !== "STOP") {
-    console.warn(`[voice] salvaged a ${finish} response (compact=${compact}) — ${Object.keys(parsed).length} fields recovered`);
+    console.warn(`[voice] salvaged a ${finish} response (compact=${compact}), ${Object.keys(parsed).length} fields recovered`);
   }
 
   return { parsed, res };
@@ -189,7 +189,7 @@ async function analyse(body, compact) {
  *
  * The salvage matters because the tokens are already paid for. A response that
  * stopped at MAX_TOKENS still holds most of a usable profile, and throwing it
- * away bills the user twice for the same analysis — the same reasoning as the
+ * away bills the user twice for the same analysis, the same reasoning as the
  * transcription salvage in geminiClient.js.
  */
 export function parseLooseJson(raw) {
@@ -201,7 +201,7 @@ export function parseLooseJson(raw) {
   if (start > 0) s = s.slice(start);
   if (start === -1) return null;
 
-  try { return JSON.parse(s); } catch { /* truncated — fall through */ }
+  try { return JSON.parse(s); } catch { /* truncated, fall through */ }
 
   // Walk the text tracking string state and nesting, and remember the last comma
   // that separated two TOP-LEVEL fields. Everything before it is a run of
@@ -233,7 +233,7 @@ export function parseLooseJson(raw) {
 /**
  * Is this parse good enough to write scripts from?
  *
- * A salvage can succeed at the JSON level and still be worthless — recovering
+ * A salvage can succeed at the JSON level and still be worthless, recovering
  * `{"language": "te-en"}` is valid JSON and tells a ghostwriter nothing. Storing
  * that would be worse than failing, because the user would see a built profile
  * and get generic scripts from it with no idea why. style_brief is what the
@@ -295,7 +295,7 @@ export async function buildVoiceProfile(userId, profileId) {
   // because Indic scripts tokenise far denser than Latin. The retry asks for the
   // short form, which fits comfortably even in the worst case.
   if (!usable(parsed)) {
-    console.warn("[voice] first pass unusable — retrying with the compact schema");
+    console.warn("[voice] first pass unusable, retrying with the compact schema");
     ({ parsed, res } = await analyse(body, true));
   }
 
@@ -304,14 +304,14 @@ export async function buildVoiceProfile(userId, profileId) {
   }
 
   // Fall back to the transcripts' own language rather than whatever the analyser
-  // decided — the transcriber saw the actual audio, this pass only saw text.
+  // decided, the transcriber saw the actual audio, this pass only saw text.
   const language = parsed.language || transcripts[0].language || "";
   const languageLabel = parsed.language_label || transcripts[0].language_label || "";
 
   const usage = readUsage(res);
   const confidence = transcripts.length >= 5 ? "good" : transcripts.length >= 3 ? "fair" : "thin";
 
-  // Counted, not described — code-mixing ratio, sentence lengths, the English
+  // Counted, not described, code-mixing ratio, sentence lengths, the English
   // words they actually keep, their measured speaking rate. This line was
   // MISSING while `metrics` was still referenced in the $set below, so every
   // call to this function threw a ReferenceError before it could write anything:
@@ -404,7 +404,7 @@ export async function getUsableProfile(userId, { profileId, autoBuild = true } =
     });
     const seen = existing.transcript_count || 0;
     // Only rebuild when there is genuinely more to learn from, and stop counting
-    // past the cap — otherwise every new video past the eighth triggers a rebuild
+    // past the cap, otherwise every new video past the eighth triggers a rebuild
     // that reads the same eight transcripts.
     if (total > seen && seen < MAX_TRANSCRIPTS) {
       // A rebuild that failed a minute ago will fail again now: same transcripts,

@@ -1,15 +1,15 @@
 /**
- * sources/index.js — build the fetcher list for ONE category.
+ * sources/index.js: build the fetcher list for ONE category.
  *
  * Every fetcher returns the SAME shape so the collector never special-cases:
  *   { source, source_kind, title, url, summary, published_at, meta }
  *
  * `source_kind` drives the ranker's weighting, and the distinction is the whole
  * point of a be-first product:
- *   primary   — the org itself announcing. Earliest possible signal.
- *   paper     — arXiv. Earlier still, but most papers are not video material.
- *   community — HN. Not first, but the best free proxy for "will people care".
- *   outlet    — written for humans, so closest to video material, and latest.
+ *   primary:    the org itself announcing. Earliest possible signal.
+ *   paper:      arXiv. Earlier still, but most papers are not video material.
+ *   community:  HN. Not first, but the best free proxy for "will people care".
+ *   outlet:     written for humans, so closest to video material, and latest.
  *
  * ── WHY THIS TAKES A CATEGORY ────────────────────────────────────────────────
  * The source mix is not universal. HN knows tech and nothing about cricket;
@@ -35,12 +35,12 @@ import { getCategory } from "../categories.js";
  * @param {object} opts
  * @param {boolean} opts.fast   only sources that answer in about a second. A
  *   full pass fans out across a dozen feeds and takes over a minute, which is
- *   far too long to hold a button press open — but the paid news source is a
+ *   far too long to hold a button press open, but the paid news source is a
  *   single HTTP request, so a Fetch can genuinely bring in new stories without
  *   the wait. See POST /news/refresh.
  * @param {boolean} opts.userInitiated  somebody is waiting on this, so the paid
  *   source uses its shorter gap between passes.
- * @returns {{name, run}[]} — run() resolves to normalized items, and is allowed
+ * @returns {{name, run}[]}, run() resolves to normalized items, and is allowed
  *   to reject; the collector isolates failures per source.
  */
 export function allSources(categoryId, { fast = false, userInitiated = false } = {}) {

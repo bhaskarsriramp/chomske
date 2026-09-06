@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema } = mongoose;
 
 /**
- * CreditPayment — one row per Razorpay order, successful or not.
+ * CreditPayment, one row per Razorpay order, successful or not.
  *
  * Same shape and reasoning as the reference project's LtdPayment: a record is
  * written when the order is CREATED, not when it succeeds, so a payment that

@@ -1,5 +1,5 @@
 /**
- * backfillCategories.js — one-time migration for the category release.
+ * backfillCategories.js: one-time migration for the category release.
  *
  * Run once on the VM after deploying the category work:
  *   cd ~/chomske/backend && node scripts/backfillCategories.js
@@ -8,7 +8,7 @@
  * Two things broke for rows written before categories existed.
  *
  * 1. NO `category` FIELD. The schema gained `category: { default: "ai_tech" }`,
- *    but a Mongoose default only applies when a NEW document is created — it
+ *    but a Mongoose default only applies when a NEW document is created, it
  *    does not touch rows already in the database. The feed matches with
  *    `{ category: { $in: [...] } }`, and a document with no `category` field
  *    does not match $in at all. So every pre-existing story became invisible,
@@ -16,7 +16,7 @@
  *
  * 2. STALE `url_hash`. Dedupe keys are now scoped by category, so an old row's
  *    hash no longer matches what the collector computes for the same URL. Left
- *    alone, the next pass would re-insert every story as "new" — duplicating the
+ *    alone, the next pass would re-insert every story as "new", duplicating the
  *    feed and resetting first_seen_at, which would mark week-old news as
  *    Breaking. Recomputing keeps the existing rows as the dedupe targets.
  *
@@ -61,7 +61,7 @@ async function main() {
     try {
       await NewsItem.bulkWrite(ops, { ordered: false });
     } catch (err) {
-      // 11000 here would mean two rows genuinely share a (category, url) pair —
+      // 11000 here would mean two rows genuinely share a (category, url) pair,
       // report it rather than dying, since the rest of the batch still applied.
       const dupes = err?.writeErrors?.filter((e) => e.code === 11000)?.length ?? 0;
       if (dupes) console.warn(`[backfill]   ${dupes} duplicate key(s) skipped in this batch`);
@@ -98,7 +98,7 @@ async function main() {
   });
   console.log(`\n[backfill] ${fresh} rows would show in a 72h "Everything" feed.`);
   if (!fresh) {
-    console.log("[backfill] Nothing recent enough — the next collector pass (≤15 min) will fill it.");
+    console.log("[backfill] Nothing recent enough, the next collector pass (≤15 min) will fill it.");
   }
 
   await mongoose.disconnect();

@@ -10,13 +10,13 @@ import Logo from "../Shell/Logo";
  * ── WHY THIS BLOCKS THE APP ──────────────────────────────────────────────────
  * It is not a preference screen. The selection decides which sources get polled
  * and which categories the ranker spends money on, so a user who skips it has no
- * feed to look at — the product is empty until this is answered. A dismissible
+ * feed to look at: the product is empty until this is answered. A dismissible
  * version would let people reach an app that cannot work yet and conclude it is
  * broken. So there is no close control and no route past it; the only way out is
  * to choose, or to sign out.
  *
  * ── WHY THE NAME IS PRE-FILLED RATHER THAN DEMANDED ─────────────────────────
- * This creates their first profile — one channel's workspace, with its own
+ * This creates their first profile, one channel's workspace, with its own
  * topics, voice and scripts. Later profiles must be named, because by then the
  * name is the only thing telling two of them apart in the dropdown where credits
  * are spent. But stopping someone in their first minute to name a thing they
@@ -65,7 +65,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
   async function submit() {
     if (!picked.length || saving) return;
     const profileName = name.trim();
-    if (!profileName) return setError("Give this profile a name — “My Profile” is fine.");
+    if (!profileName) return setError("Give this profile a name. “My Profile” is fine.");
 
     setSaving(true);
     setError("");
@@ -135,7 +135,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
       </p>
 
       {/* The channel this is all for. Run more than one? Add the rest from
-          Profile later — each keeps its own topics, voice and scripts. */}
+          Profile later. Each keeps its own topics, voice and scripts. */}
       <div style={{ maxWidth: 420, marginBottom: 26 }}>
         <label
           htmlFor="hg-profile-name"
@@ -159,7 +159,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
           }}
         />
         <p style={{ fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.55, margin: "8px 0 0" }}>
-          Run more than one channel? Add the others from Profile later — each keeps
+          Run more than one channel? Add the others from Profile later. Each keeps
           its own topics, its own voice and its own scripts.
         </p>
       </div>

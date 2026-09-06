@@ -1,9 +1,9 @@
 /**
- * authenticateToken.js — reads our own session JWT from the httpOnly cookie.
+ * authenticateToken.js: reads our own session JWT from the httpOnly cookie.
  *
  * The cookie is httpOnly on purpose: JS on the page can't read it, so an XSS bug
  * can't walk off with a session. That also means the frontend can never "check if
- * logged in" locally — it asks GET /auth/me instead, which is the intended flow.
+ * logged in" locally, it asks GET /auth/me instead, which is the intended flow.
  */
 import jwt from "jsonwebtoken";
 
@@ -18,14 +18,14 @@ export default function authenticateToken(req, res, next) {
     req.user = { id: payload.sub, email: payload.email };
     return next();
   } catch {
-    // Expired or tampered — clear it so the browser stops sending a dead cookie.
+    // Expired or tampered, clear it so the browser stops sending a dead cookie.
     res.clearCookie(COOKIE_NAME, cookieOptions());
     return res.status(401).json({ success: false, message: "Session expired. Please sign in again." });
   }
 }
 
 /**
- * Shared cookie settings — the single source of truth for set AND clear.
+ * Shared cookie settings, the single source of truth for set AND clear.
  * They must match exactly or clearCookie silently fails to remove anything.
  */
 export function cookieOptions() {
@@ -33,7 +33,7 @@ export function cookieOptions() {
   const domain = (process.env.COOKIE_DOMAIN || "").trim();
   return {
     httpOnly: true,
-    // SameSite=None requires Secure, and Secure requires HTTPS — which localhost
+    // SameSite=None requires Secure, and Secure requires HTTPS, which localhost
     // isn't. So dev uses Lax over http, production uses None over https.
     secure: isProd,
     sameSite: isProd ? "none" : "lax",

@@ -1,11 +1,11 @@
 /**
- * socket/index.js — the live half of the feed.
+ * socket/index.js: the live half of the feed.
  *
  * ── ROOMS ARE CATEGORIES, NOT USERS ──────────────────────────────────────────
  * The reference project rooms per creator (`u:<id>:c:<conv>`) because each
  * conversation belongs to one founder. Nothing here does. A category is
- * collected, ranked and briefed ONCE and serves every creator who picked it —
- * that sharing is why this product is affordable — so the natural room is the
+ * collected, ranked and briefed ONCE and serves every creator who picked it,
+ * that sharing is why this product is affordable, so the natural room is the
  * category, and one emit reaches everybody waiting on that pass instead of one
  * emit per subscriber.
  *
@@ -18,7 +18,7 @@
  * holding that browser's socket: a sign-in kickoff is fire-and-forget, the
  * scheduler runs wherever the lock was won, and PM2 or Cloud Run will happily
  * put the two on different processes. So services publish to Redis and every
- * instance subscribes — see services/newsEvents.js.
+ * instance subscribes, see services/newsEvents.js.
  */
 import { Server } from "socket.io";
 import redis from "../redis.js";
@@ -62,7 +62,7 @@ export function initSocketServer(httpServer, { allowedOrigins = [] } = {}) {
    * Deliver one event to whoever is listening on this instance.
    *
    * `type` doubles as the client-side event name, so adding an event server-side
-   * needs no change here — the browser either has a handler for it or ignores it.
+   * needs no change here, the browser either has a handler for it or ignores it.
    */
   const emit = (payload) => {
     if (!payload?.category || !payload?.type) return;

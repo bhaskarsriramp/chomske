@@ -1,9 +1,9 @@
 /**
- * geminiClient.js — read a YouTube video and return what was actually said.
+ * geminiClient.js: read a YouTube video and return what was actually said.
  *
  * Gemini accepts a YouTube URL directly (fileData.fileUri), so there is no
  * download, no ffmpeg, no audio hosting anywhere in this product. Constraints
- * that come with that, straight from the API docs — worth knowing because each
+ * that come with that, straight from the API docs, worth knowing because each
  * one becomes a user-facing error rather than a mystery:
  *   • the video must be PUBLIC (unlisted and private both fail)
  *   • one video per request on pre-2.5 models; later models allow more, but we
@@ -25,7 +25,7 @@ const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
 // Rotate across keys so one key's per-minute (and per-day video) limit isn't the
 // whole app's ceiling. Same idea as the reference project's key pool, minus the
-// Redis coordination — a single process can round-robin in memory.
+// Redis coordination, a single process can round-robin in memory.
 let _keys = null;
 let _cursor = 0;
 function nextKey() {
@@ -35,7 +35,7 @@ function nextKey() {
       .map((k) => k.trim())
       .filter(Boolean);
   }
-  if (!_keys.length) throw new Error("AISTUDIO_KEY is not set — add a Google AI Studio key to .env");
+  if (!_keys.length) throw new Error("AISTUDIO_KEY is not set. Add a Google AI Studio key to .env");
   const key = _keys[_cursor % _keys.length];
   _cursor++;
   return key;
@@ -49,17 +49,17 @@ function clientFor(apiKey) {
 
 const PROMPT = `You are transcribing a video. Return ONLY what the speaker actually says.
 
-ABSOLUTE RULES — breaking any one of these makes the output useless:
+ABSOLUTE RULES. Breaking any one of these makes the output useless:
 1. Transcribe in the SPOKEN language, in its OWN script. Hindi → Devanagari. Telugu → Telugu script. Bengali → Bengali script. Tamil → Tamil script.
-2. DO NOT translate. DO NOT transliterate into English letters. If the speaker says "मैं आपको बताता हूँ", write exactly that — never "main aapko batata hoon" and never "let me tell you".
-3. Keep code-mixing EXACTLY as spoken. Indian creators mix English words into Hindi sentences constantly ("basically हम इसको deploy कर देंगे") — keep the English words in English and the Hindi in Devanagari, precisely as said. Do not "clean up" the mixing.
+2. DO NOT translate. DO NOT transliterate into English letters. If the speaker says "मैं आपको बताता हूँ", write exactly that, never "main aapko batata hoon" and never "let me tell you".
+3. Keep code-mixing EXACTLY as spoken. Indian creators mix English words into Hindi sentences constantly ("basically हम इसको deploy कर देंगे"), keep the English words in English and the Hindi in Devanagari, precisely as said. Do not "clean up" the mixing.
 4. Keep their real speech: filler words, repeated words, their catchphrases, the way they open and close. Do not smooth it into written prose. This transcript exists to capture how THIS person actually talks.
 5. Break into readable paragraphs at natural pauses or topic changes. No timestamps, no speaker labels, no bullet points, no commentary of your own.
 6. Transcribe the WHOLE video from start to finish. Do not summarise, do not stop early, do not write "[continues]".
 
 Return STRICT JSON, nothing else:
 {
-  "language": "BCP-47-ish code of the dominant spoken language — hi, te, bn, ta, mr, en. Use hi-en for Hindi-English code-mixing (Hinglish), te-en for Telugu-English, and so on.",
+  "language": "BCP-47-ish code of the dominant spoken language: hi, te, bn, ta, mr, en. Use hi-en for Hindi-English code-mixing (Hinglish), te-en for Telugu-English, and so on.",
   "language_label": "human-readable name, e.g. Hindi, Hinglish (Hindi-English), Telugu, Bengali",
   "title": "the video's apparent title or subject, in the spoken language",
   "text": "the full transcript, following every rule above"
@@ -88,16 +88,16 @@ export async function transcribeYouTube(watchUrl) {
         },
       ],
       config: {
-        temperature: 0.1,          // transcription, not writing — near-deterministic
+        temperature: 0.1,          // transcription, not writing, near-deterministic
         responseMimeType: "application/json",
         // Long videos produce long transcripts. Too small a ceiling truncates
         // mid-sentence and the JSON then fails to parse, which reads to the user
         // as a total failure rather than "the video was long".
         maxOutputTokens: 65536,
-        // THINKING OFF — measured, not assumed. Transcription is mechanical: the
+        // THINKING OFF, measured, not assumed. Transcription is mechanical: the
         // model is writing down what it hears, not reasoning about it. With
         // thinking on, a 60s Short burned 1,596 thinking tokens against just 630
-        // real output tokens — and thinking bills at the OUTPUT rate, so it was
+        // real output tokens, and thinking bills at the OUTPUT rate, so it was
         // 44% of the bill for no benefit. Measured on the same video:
         //   thinking on : 11.4s, ₹2.90, 1,993 chars
         //   thinking off:  4.1s, ₹1.53, 1,976 chars  ← same transcript
@@ -160,7 +160,7 @@ export async function transcribeYouTube(watchUrl) {
  * product, and video tokenizes far heavier than text (roughly 260-300 tokens per
  * SECOND of footage), so a "cheap" flat subscription can invert on a single user
  * who feeds it long videos. Storing the true numbers per row means the unit
- * economics are a query, not a guess — and you find out in week one, not when
+ * economics are a query, not a guess, and you find out in week one, not when
  * the invoice lands.
  *
  * Prices are per MILLION tokens, in USD, and live in env because they change.
@@ -169,7 +169,7 @@ function readUsage(res) {
   const u = res?.usageMetadata || {};
   const input = Number(u.promptTokenCount) || 0;
   const output = Number(u.candidatesTokenCount) || 0;
-  // Thinking tokens bill at the OUTPUT rate but are reported separately — miss
+  // Thinking tokens bill at the OUTPUT rate but are reported separately, miss
   // them and every cost figure is quietly low.
   const thinking = Number(u.thoughtsTokenCount) || 0;
   const total = Number(u.totalTokenCount) || input + output + thinking;
@@ -202,7 +202,7 @@ function mapProviderError(err) {
   const out = new Error(err?.message || "Gemini request failed");
 
   if (msg.includes("private") || msg.includes("unlisted") || msg.includes("not accessible") || msg.includes("forbidden")) {
-    out.userMessage = "This video isn't public. Gemini can only read public YouTube videos — unlisted and private ones don't work.";
+    out.userMessage = "This video isn't public. Gemini can only read public YouTube videos. Unlisted and private ones don't work.";
   } else if (status === 429 || msg.includes("quota") || msg.includes("rate limit") || msg.includes("resource_exhausted")) {
     out.userMessage = "We've hit today's video-processing limit. Please try again later.";
     out.retryable = true;

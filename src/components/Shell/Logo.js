@@ -1,5 +1,5 @@
 /**
- * Logo.js — the mark and the name, in one place.
+ * Logo.js: the mark and the name, in one place.
  *
  * Four screens draw this (landing, onboarding, the sidebar, the mobile header),
  * and before this they each drew their own. That is how a rename ends up half
@@ -11,7 +11,7 @@
  */
 /**
  * @param {string} color  wordmark colour. Defaults to the app's ink, which is
- *   near-black and therefore invisible on the landing page's dark ground — that
+ *   near-black and therefore invisible on the landing page's dark ground, that
  *   page passes its own. The mark itself is a PNG and reads on both.
  */
 export default function Logo({ size = 27, text = true, fontSize = 16.5, color = "var(--ink)" }) {

@@ -1,5 +1,5 @@
 /**
- * newsEvents.js — telling the browser something happened, from wherever it did.
+ * newsEvents.js: telling the browser something happened, from wherever it did.
  *
  * ── THE PROBLEM ──────────────────────────────────────────────────────────────
  * The work a creator is waiting on does not happen in the request they are
@@ -16,7 +16,7 @@
  * services publish FACTS to Redis, socket/index.js subscribes on every instance,
  * and each one delivers to whichever sockets it happens to be holding. Same
  * shape as the reference project's inbox fan-out, one channel instead of a
- * pattern — there are a handful of categories, not a conversation per founder.
+ * pattern, there are a handful of categories, not a conversation per founder.
  *
  * Without Redis (REDIS_DISABLED, local development) the publish falls back to
  * emitting straight into this process, which is correct for the one-instance
@@ -30,7 +30,7 @@ import redis from "../redis.js";
 export const NEWS_CHANNEL = "hg:news:events";
 
 // Registered by socket/index.js at boot. Null on any process without a socket
-// server — a script, a migration — where publishing is a no-op rather than an
+// server, a script, a migration, where publishing is a no-op rather than an
 // error.
 let deliver = null;
 

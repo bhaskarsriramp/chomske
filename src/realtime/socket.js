@@ -1,11 +1,11 @@
 /**
- * socket.js — the one live connection, and the only place that knows it exists.
+ * socket.js: the one live connection, and the only place that knows it exists.
  *
  * ── WHY THERE IS NO TOKEN IN HERE ────────────────────────────────────────────
  * The reference project reads its JWT out of localStorage and hands it to the
  * server in `auth: { token }`. This app cannot and should not: the session is an
  * httpOnly cookie, unreadable to page JS on purpose, so that an XSS bug cannot
- * walk off with it. `withCredentials` is what replaces that line — the browser
+ * walk off with it. `withCredentials` is what replaces that line, the browser
  * attaches the cookie to the handshake itself, and backend/socket/auth.js parses
  * it there.
  *
@@ -37,8 +37,8 @@ export function getSocket() {
       reconnectionDelayMax: 10000,
     });
 
-    // Logged, never surfaced. Every screen here works without a socket — the
-    // live updates are an improvement on polling, not a dependency — so a
+    // Logged, never surfaced. Every screen here works without a socket, the
+    // live updates are an improvement on polling, not a dependency, so a
     // failed connection must never become an error in front of somebody.
     socket.on("connect_error", (err) => {
       if (process.env.NODE_ENV !== "production") {

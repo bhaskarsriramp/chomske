@@ -1,5 +1,5 @@
 /**
- * googleNews.js — Google News RSS.
+ * googleNews.js: Google News RSS.
  *
  * Free, no key, and supports a `when:1d` operator so we get a real freshness
  * window rather than whatever the feed felt like returning.
@@ -7,7 +7,7 @@
  * Two quirks worth knowing:
  *   1. Links are news.google.com redirectors, not the publisher's URL. They still
  *      dedupe consistently (the redirector is stable per article), but the
- *      canonical publisher URL isn't available without following each one — not
+ *      canonical publisher URL isn't available without following each one, not
  *      worth a request per item. If the same story also arrives from HN or an
  *      outlet feed with its real URL, titleSignature is what collapses them.
  *   2. Titles carry a " - Publisher" suffix, stripped below so the signature
@@ -19,7 +19,7 @@ import { cleanText, parseDate } from "../../utils/normalize.js";
 const parser = new Parser({ timeout: 15000 });
 
 /**
- * @param {string[]} queries  what to search for — comes from the category catalog
+ * @param {string[]} queries  what to search for, comes from the category catalog
  * @param {{hl,gl,ceid}} locale  which Google News edition. An Indian creator
  *   covering markets wants Indian coverage; AI news reads better from the US
  *   edition. Getting this wrong is the difference between local and irrelevant.
