@@ -126,8 +126,8 @@ export function CreditsPill() {
         cursor: canBuy ? "pointer" : "default",
       }}
     >
+      <span style={{ fontWeight: 500, opacity: 0.8 }}>Credits left:</span>
       {known ? balance : "…"}
-      <span style={{ fontWeight: 500, opacity: 0.75 }}>cr</span>
     </button>
   );
 }

@@ -50,7 +50,7 @@ import { useProfiles } from "../../state/ProfileContext";
  * Transcription still happens per video on add, because that is the part that
  * genuinely is per-video and it lets someone read each transcript as they go.
  */
-export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }) {
+export default function TranscribePanel({ onVoiceChange, onGoProfiles }) {
   const isPhone = useIsMobile(680);
 
   const {
@@ -74,6 +74,10 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
   // starts shut: the summary line is what most people came for.
   const [learnedOpen, setLearnedOpen] = useState(false);
 
+  // Why the analyse button is unavailable, shown on hover and on click. See
+  // the button itself for why it is not simply `disabled`.
+  const [hint, setHint] = useState(false);
+
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmVoiceDelete, setConfirmVoiceDelete] = useState(false);
@@ -93,9 +97,8 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
         mixed: data.mixed_languages,
         maxSeconds: data.max_seconds || 60,
       });
-      onQuota?.(data.quota || null);
     } catch { /* secondary, never block the main flow on it */ }
-  }, [onQuota, activeId]);
+  }, [activeId]);
 
   const loadVoice = useCallback(async () => {
     try {
@@ -126,6 +129,21 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
   }, [activeId]);
 
   useEffect(() => () => clearInterval(pollRef.current), []);
+
+  // ── WHY THE LIST POLLS ITSELF ─────────────────────────────────────────────
+  // A video added a second ago is still being transcribed, and a transcribing
+  // video cannot be analysed. Without this the creator adds a link, sees the
+  // analyse button stay off, and has no way to know it will come on: the only
+  // poll we had followed the open transcript, not the set. `waiting` is a
+  // boolean rather than the list itself so this re-arms when the answer
+  // changes, not on every refresh.
+  const waiting = history.some((h) => h.status === "processing");
+
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setInterval(loadHistory, 4000);
+    return () => clearInterval(t);
+  }, [waiting, loadHistory]);
 
   const startPolling = useCallback((id) => {
     clearInterval(pollRef.current);
@@ -227,6 +245,10 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
     }
   }
 
+  function toggleVideo(v) {
+    setOpenVideo((cur) => (cur?.id === v.id ? null : v));
+  }
+
   function copyText() {
     if (!openVideo?.text) return;
     navigator.clipboard.writeText(openVideo.text).then(
@@ -243,6 +265,38 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
   // Behind if the analysis never saw the current set: either the server says
   // so, or a video was added or deleted since it last ran.
   const stale = !!built && (voice?.stale || built.transcript_count !== readyCount);
+
+  // ── WHEN ANALYSING IS WORTH OFFERING ──────────────────────────────────────
+  // Re-reading the same set produces the same voice and costs a model call, so
+  // the action is only live when the answer could actually differ: nothing has
+  // been built yet, or the set has moved since it was. Everything else is a
+  // button that looks like it does something and does not.
+  const analyseBlocked = !canAnalyse || (!!built && !stale);
+
+  // `waiting` comes first: a video added a moment ago is the likeliest reason
+  // someone is prodding a button that will not move, and "add a video" is a
+  // maddening thing to be told by a screen that is holding the one you added.
+  const blockedReason = waiting
+    ? "Still reading the video you added. This turns on by itself once it is ready."
+    : !canAnalyse
+    ? built
+      ? "The videos this voice was built from are gone. Add one below and this turns on."
+      : "Add one of your videos below first. That is what your voice is learned from."
+    : `This voice is already built from these ${readyCount} video${readyCount === 1 ? "" : "s"}. Add another below, or delete one, and this turns on.`;
+
+  const summaryLine = !canAnalyse
+    ? built
+      // Built once, and every video it was built from has since been deleted.
+      // The voice still works; there is nothing left to rebuild it from.
+      ? `Learned from ${built.transcript_count} video${built.transcript_count === 1 ? "" : "s"} that are no longer here.`
+      : waiting
+      ? "Reading the video you added. You can analyse as soon as it is ready."
+      : "Add a video below, then analyse."
+    : stale
+    ? `Your videos changed since this was built. Analyse again to use all ${readyCount} of them.`
+    : built
+    ? `${built.language_label || "Learned"} · from ${built.transcript_count} video${built.transcript_count === 1 ? "" : "s"}`
+    : `Ready to read ${readyCount} video${readyCount === 1 ? "" : "s"}. This runs once over the set, not once per video.`;
 
   return (
     <div className="hg-scroll" style={{ flex: 1, minHeight: 0, width: "100%" }}>
@@ -301,88 +355,245 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
           </div>
         )}
 
-        {/* ── 1. The set ─────────────────────────────────────────────────── */}
-        <Step
-          n="1"
-          title="Your videos"
-          aside={
-            meta?.slots
-              ? `${meta.slots.used} of ${meta.slots.max} added`
-              : <Skeleton variant="text" width={78} height={10} />
-          }
+        {/* ── One card, because it is one job ───────────────────────────
+            This was two numbered steps: the videos, then the voice. Splitting
+            them made the page look like two features sharing a screen, when
+            what a creator has here is a single thing with a single state. The
+            voice IS the videos, read; separating them put the button in one
+            box and the reason it is or is not available in another.
+
+            So: the state and its one action on top, the way to change the set
+            underneath it, and the detail folded away until asked for. */}
+        <div
+          style={{
+            padding: isPhone ? 16 : 20, borderRadius: "var(--radius)",
+            background: "var(--card)", border: "1px solid var(--line)",
+          }}
         >
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: isPhone ? "column" : "row", gap: 9 }}>
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.youtube.com/shorts/…"
-              aria-label="YouTube video URL"
-              disabled={submitting || full}
-              style={{
-                flex: 1, minWidth: 0, fontSize: 14.5, padding: "13px 15px",
-                border: "1px solid var(--line)", borderRadius: 11,
-                background: full ? "#F2F2F2" : "var(--card)",
-                color: "var(--ink)", outline: "none",
-              }}
-            />
+          <div
+            style={{
+              display: "flex", alignItems: isPhone ? "stretch" : "flex-start",
+              flexDirection: isPhone ? "column" : "row",
+              justifyContent: "space-between", gap: 14,
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 4 }}>
+                {built ? "Built" : "Not built yet"}
+              </div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)" }}>
+                {summaryLine}
+              </div>
+              {built && !stale && built.confidence === "thin" && (
+                <div style={{ fontSize: 12.5, color: "var(--ink-mute)", marginTop: 6, lineHeight: 1.55 }}>
+                  One video is a hint, not a voice. Three or more is where scripts start
+                  genuinely sounding like you.
+                </div>
+              )}
+            </div>
+
+            {/* ── WHY THIS IS NOT A `disabled` BUTTON ──────────────────────
+                A disabled control cannot be hovered, focused or clicked in
+                most browsers, so it cannot explain itself. That is exactly
+                backwards here: the whole question a creator has is "why can't
+                I press this", and the answer is one sentence long.
+
+                So it LOOKS unavailable and refuses to run, but it still takes
+                a pointer and a click, and both say why. */}
             <button
-              type="submit"
-              className="hg-btn-primary"
-              disabled={submitting || full}
+              onClick={() => { if (analysing) return; analyseBlocked ? setHint(true) : analyseVoice(); }}
+              onMouseEnter={() => !analysing && analyseBlocked && setHint(true)}
+              onMouseLeave={() => setHint(false)}
+              onFocus={() => !analysing && analyseBlocked && setHint(true)}
+              onBlur={() => setHint(false)}
+              aria-disabled={analyseBlocked || analysing}
+              aria-describedby={analyseBlocked ? "hg-analyse-hint" : undefined}
+              className={analyseBlocked || analysing ? undefined : "hg-btn-primary"}
               style={{
-                fontSize: 14.5, fontWeight: 600, padding: "13px 22px", borderRadius: 11,
-                border: "none", background: "var(--primary)", color: "#fff",
-                cursor: submitting || full ? "default" : "pointer",
-                opacity: submitting || full ? 0.55 : 1, whiteSpace: "nowrap",
+                fontSize: 14, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
+                border: "none", flexShrink: 0, whiteSpace: "nowrap",
+                background: analyseBlocked || analysing ? "#E5E5E5" : "var(--primary)",
+                color: analyseBlocked || analysing ? "var(--ink-mute)" : "#fff",
+                cursor: analysing ? "default" : analyseBlocked ? "help" : "pointer",
+                fontFamily: "inherit",
               }}
             >
-              {submitting ? "Adding…" : "Add video"}
+              {analysing ? "Analysing…" : built ? "Analyse again" : "Analyse my voice"}
             </button>
-          </form>
+          </div>
 
-          {full && (
-            <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.55 }}>
-              All {meta.slots.max} slots used. Delete one below to add another.
+          {analyseBlocked && hint && !analysing && (
+            <p
+              id="hg-analyse-hint"
+              role="status"
+              className="hg-rise"
+              style={{
+                fontSize: 12.5, lineHeight: 1.6, color: "var(--ink-body)",
+                margin: "12px 0 0", padding: "9px 12px", borderRadius: 9,
+                background: "#FBF5E8", border: "1px solid #EEDCB6",
+              }}
+            >
+              {blockedReason}
             </p>
           )}
 
-          {meta?.mixed && (
-            <div
-              style={{
-                marginTop: 13, padding: "12px 14px", borderRadius: 10,
-                // Amber, not red. Nothing has failed here; they are being told
-                // the result will be worse than it could be, which is a
-                // different thing from an error.
-                background: "#FBF5E8", border: "1px solid #EEDCB6",
-                fontSize: 13, lineHeight: 1.6, color: "var(--ink-body)",
-              }}
-            >
-              <strong style={{ color: "var(--ink)" }}>These videos are in different languages</strong>{" "}
-              ({meta.mixed.join(", ")}). A voice profile is one person, so mixing languages
-              blends them into a voice that is nobody's. Keep one creator's videos here.
+          {/* ── Change the set ─────────────────────────────────────────── */}
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 9 }}>
+              <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>
+                Add a video
+              </span>
+              <span style={{ fontSize: 12.5, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
+                {meta?.slots
+                  ? `${meta.slots.used} of ${meta.slots.max} added`
+                  : <Skeleton variant="text" width={74} height={10} />}
+              </span>
             </div>
-          )}
 
-          {/* Held back until the real list arrives. "No videos yet" shown for
-              half a second to someone who has four is a claim, and a wrong one. */}
-          {!meta?.slots ? (
-            <div style={{ marginTop: 16 }}><VideoSkeleton /></div>
-          ) : history.length ? (
-            <div style={{ marginTop: 16 }}>
-              <VideoList
+            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: isPhone ? "column" : "row", gap: 9 }}>
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://www.youtube.com/shorts/…"
+                aria-label="YouTube video URL"
+                disabled={submitting || full}
+                style={{
+                  flex: 1, minWidth: 0, fontSize: 14.5, padding: "12px 14px",
+                  border: "1px solid var(--line)", borderRadius: 11,
+                  background: full ? "#F2F2F2" : "var(--card)",
+                  color: "var(--ink)", outline: "none",
+                }}
+              />
+              <button
+                type="submit"
+                className="hg-btn-primary"
+                disabled={submitting || full}
+                style={{
+                  fontSize: 14.5, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
+                  border: "none", background: "var(--primary)", color: "#fff",
+                  cursor: submitting || full ? "default" : "pointer",
+                  opacity: submitting || full ? 0.55 : 1, whiteSpace: "nowrap",
+                }}
+              >
+                {submitting ? "Adding…" : "Add video"}
+              </button>
+            </form>
+
+            {full && (
+              <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.55 }}>
+                All {meta.slots.max} slots used. Delete one below to add another.
+              </p>
+            )}
+
+            {meta?.mixed && (
+              <div
+                style={{
+                  marginTop: 11, padding: "11px 13px", borderRadius: 10,
+                  // Amber, not red. Nothing has failed here; they are being told
+                  // the result will be worse than it could be.
+                  background: "#FBF5E8", border: "1px solid #EEDCB6",
+                  fontSize: 13, lineHeight: 1.6, color: "var(--ink-body)",
+                }}
+              >
+                <strong style={{ color: "var(--ink)" }}>These videos are in different languages</strong>{" "}
+                ({meta.mixed.join(", ")}). A voice profile is one person, so mixing languages
+                blends them into a voice that is nobody's. Keep one creator's videos here.
+              </div>
+            )}
+          </div>
+
+          {/* ── The detail ─────────────────────────────────────────────────
+              Before there is a voice, the videos are the only content and the
+              thing being worked on, so they are simply on the page. Once there
+              is one, they fold away together with what was learned from them,
+              because "what we learned" and "what we learned it from" are one
+              answer and a returning creator wants the summary first. */}
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+            {built ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setLearnedOpen((v) => !v)}
+                  aria-expanded={learnedOpen}
+                  aria-controls="hg-voice-learned"
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    gap: 12, width: "100%", padding: 0, border: "none", background: "none",
+                    cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+                    fontSize: 13, fontWeight: 650, color: "var(--ink)",
+                  }}
+                >
+                  <span>What we learned</span>
+                  <Chevron open={learnedOpen} />
+                </button>
+
+                {learnedOpen && (
+                  <div id="hg-voice-learned" className="hg-rise" style={{ marginTop: 14 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+                      {built.sample_openings?.length > 0 && (
+                        <VoiceRow label="How you open">
+                          <span className="indic">“{built.sample_openings[0]}”</span>
+                        </VoiceRow>
+                      )}
+                      {built.sample_closings?.length > 0 && (
+                        <VoiceRow label="How you close">
+                          <span className="indic">“{built.sample_closings[0]}”</span>
+                        </VoiceRow>
+                      )}
+                      {built.signature_phrases?.length > 0 && (
+                        <VoiceRow label="Your phrases">
+                          <span className="indic">{built.signature_phrases.slice(0, 6).join(" · ")}</span>
+                        </VoiceRow>
+                      )}
+                      {built.sentiment && <VoiceRow label="Your stance">{built.sentiment}</VoiceRow>}
+                      {built.pacing && <VoiceRow label="Your pacing">{built.pacing}</VoiceRow>}
+                      {built.audience && <VoiceRow label="Talking to">{built.audience}</VoiceRow>}
+                    </div>
+
+                    <div style={{ marginTop: 16 }}>
+                      <VoiceRow label="Learned from">
+                        <div style={{ marginTop: 7 }}>
+                          <Videos
+                            items={history}
+                            loading={!meta?.slots}
+                            openId={openVideo?.id}
+                            isPhone={isPhone}
+                            onOpen={toggleVideo}
+                            onDelete={setConfirmDelete}
+                          />
+                        </div>
+                      </VoiceRow>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <Videos
                 items={history}
-                activeId={openVideo?.id}
+                loading={!meta?.slots}
+                openId={openVideo?.id}
                 isPhone={isPhone}
-                onOpen={(v) => setOpenVideo((cur) => (cur?.id === v.id ? null : v))}
+                onOpen={toggleVideo}
                 onDelete={setConfirmDelete}
               />
-            </div>
-          ) : (
-            <p style={{ fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.6, margin: "16px 0 0" }}>
-              Nothing added yet. Paste a link to one of your own Shorts above.
-            </p>
-          )}
-        </Step>
+            )}
+
+            {/* Quiet, and last. Destroying work should be findable without
+                being the thing your eye lands on. */}
+            {built && (
+              <button
+                onClick={() => setConfirmVoiceDelete(true)}
+                style={{
+                  marginTop: 14, border: "none", background: "none", padding: 0,
+                  fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", color: "var(--ink-mute)",
+                  cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3,
+                }}
+              >
+                Delete this voice
+              </button>
+            )}
+          </div>
+        </div>
 
         {openVideo && (
           <Result
@@ -394,22 +605,6 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
             onRetry={() => { setUrl(openVideo.url); setOpenVideo(null); }}
           />
         )}
-
-        {/* ── 2. What we make of them ────────────────────────────────────── */}
-        <Step n="2" title="Your voice">
-          <VoiceBlock
-            built={built}
-            stale={stale}
-            readyCount={readyCount}
-            canAnalyse={canAnalyse}
-            analysing={analysing}
-            learnedOpen={learnedOpen}
-            onToggleLearned={() => setLearnedOpen((v) => !v)}
-            onAnalyse={analyseVoice}
-            onDeleteVoice={() => setConfirmVoiceDelete(true)}
-            isPhone={isPhone}
-          />
-        </Step>
       </div>
 
       {confirmDelete && (
@@ -459,194 +654,6 @@ export default function TranscribePanel({ onQuota, onVoiceChange, onGoProfiles }
   );
 }
 
-/* ── Layout ────────────────────────────────────────────────────────────── */
-
-/**
- * One numbered step.
- *
- * The number is doing real work, not decoration: it says there is an order to
- * this, and which end of it you are at. Without it the two cards read as two
- * unrelated features that happen to share a page, which is how someone ends up
- * pressing analyse without knowing what it will run over.
- */
-function Step({ n, title, aside, children }) {
-  return (
-    <section style={{ marginTop: 26 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <span
-          aria-hidden="true"
-          style={{
-            display: "grid", placeItems: "center", flexShrink: 0,
-            width: 22, height: 22, borderRadius: "50%",
-            background: "var(--ink)", color: "#fff",
-            fontSize: 11.5, fontWeight: 700,
-          }}
-        >
-          {n}
-        </span>
-        <h2
-          style={{
-            fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
-            textTransform: "uppercase", color: "var(--ink-mute)", margin: 0,
-          }}
-        >
-          {title}
-        </h2>
-        {aside != null && (
-          <span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--ink-mute)" }}>{aside}</span>
-        )}
-      </div>
-      <div
-        style={{
-          padding: 18, borderRadius: "var(--radius)",
-          background: "var(--card)", border: "1px solid var(--line)",
-        }}
-      >
-        {children}
-      </div>
-    </section>
-  );
-}
-
-/* ── The voice ─────────────────────────────────────────────────────────── */
-
-/**
- * What we learned, and the one button that builds it.
- *
- * The summary line answers the question a returning creator actually has,
- * which is "is this built, and is it built from what I have now". The button
- * label follows from that rather than from whether a profile exists: "Analyse
- * my voice" when there is nothing, "Analyse again" when the set has moved on.
- */
-function VoiceBlock({
-  built, stale, readyCount, canAnalyse, analysing,
-  learnedOpen, onToggleLearned, onAnalyse, onDeleteVoice, isPhone,
-}) {
-  const label = analysing
-    ? "Analysing…"
-    : !built
-    ? "Analyse my voice"
-    : "Analyse again";
-
-  return (
-    <div>
-      <div
-        style={{
-          display: "flex", alignItems: isPhone ? "stretch" : "center",
-          flexDirection: isPhone ? "column" : "row",
-          justifyContent: "space-between", gap: 14,
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 4 }}>
-            {built ? "Built" : "Not built yet"}
-          </div>
-          <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)" }}>
-            {!canAnalyse
-              ? built
-                // Built once, and every video it was built from has since been
-                // deleted. The voice still works; there is just nothing left to
-                // rebuild it from until they add something.
-                ? `Learned from ${built.transcript_count} video${built.transcript_count === 1 ? "" : "s"} that are no longer here. Add one above to analyse again.`
-                : "Add a video above first. That is what your voice is learned from."
-              : stale
-              ? `Your videos changed since this was built. Analyse again to use all ${readyCount} of them.`
-              : built
-              ? `${built.language_label || "Learned"} · from ${built.transcript_count} video${built.transcript_count === 1 ? "" : "s"}`
-              : `Ready to read ${readyCount} video${readyCount === 1 ? "" : "s"}. This runs once over the set, not once per video.`}
-          </div>
-          {built && !stale && built.confidence === "thin" && (
-            <div style={{ fontSize: 12.5, color: "var(--ink-mute)", marginTop: 6, lineHeight: 1.55 }}>
-              One video is a hint, not a voice. Three or more is where scripts start
-              genuinely sounding like you.
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={onAnalyse}
-          disabled={!canAnalyse || analysing}
-          className={!canAnalyse || analysing ? undefined : "hg-btn-primary"}
-          style={{
-            fontSize: 14, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
-            border: "none", flexShrink: 0, whiteSpace: "nowrap",
-            background: !canAnalyse || analysing ? "#E5E5E5" : "var(--primary)",
-            color: !canAnalyse || analysing ? "var(--ink-mute)" : "#fff",
-            cursor: !canAnalyse || analysing ? "default" : "pointer",
-          }}
-        >
-          {label}
-        </button>
-      </div>
-
-      {/* ── What we learned ──────────────────────────────────────────────
-          On the page permanently once a voice exists, not only in the seconds
-          after it was built. A creator coming back a week later wants to check
-          what this thing thinks they sound like, and previously there was no
-          way to ask. */}
-      {built && (
-        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
-          <button
-            type="button"
-            onClick={onToggleLearned}
-            aria-expanded={learnedOpen}
-            aria-controls="hg-voice-learned"
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              gap: 12, width: "100%", padding: 0, border: "none", background: "none",
-              cursor: "pointer", fontFamily: "inherit", textAlign: "left",
-              fontSize: 13, fontWeight: 650, color: "var(--ink)",
-            }}
-          >
-            <span>What we learned</span>
-            <Chevron open={learnedOpen} />
-          </button>
-
-          {learnedOpen && (
-            <div
-              id="hg-voice-learned"
-              className="hg-rise"
-              style={{ marginTop: 13, display: "flex", flexDirection: "column", gap: 11 }}
-            >
-              {built.sample_openings?.length > 0 && (
-                <VoiceRow label="How you open">
-                  <span className="indic">“{built.sample_openings[0]}”</span>
-                </VoiceRow>
-              )}
-              {built.sample_closings?.length > 0 && (
-                <VoiceRow label="How you close">
-                  <span className="indic">“{built.sample_closings[0]}”</span>
-                </VoiceRow>
-              )}
-              {built.signature_phrases?.length > 0 && (
-                <VoiceRow label="Your phrases">
-                  <span className="indic">{built.signature_phrases.slice(0, 6).join(" · ")}</span>
-                </VoiceRow>
-              )}
-              {built.sentiment && <VoiceRow label="Your stance">{built.sentiment}</VoiceRow>}
-              {built.pacing && <VoiceRow label="Your pacing">{built.pacing}</VoiceRow>}
-              {built.audience && <VoiceRow label="Talking to">{built.audience}</VoiceRow>}
-            </div>
-          )}
-
-          {/* Quiet, and last. Destroying work should be findable without being
-              the thing your eye lands on. */}
-          <button
-            onClick={onDeleteVoice}
-            style={{
-              marginTop: 14, border: "none", background: "none", padding: 0,
-              fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", color: "var(--ink-mute)",
-              cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3,
-            }}
-          >
-            Delete this voice
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function VoiceRow({ label, children }) {
   return (
     <div>
@@ -655,6 +662,37 @@ function VoiceRow({ label, children }) {
       </div>
       <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)" }}>{children}</div>
     </div>
+  );
+}
+
+/**
+ * The set, whatever state it is in.
+ *
+ * One component rather than three call sites deciding between a skeleton, an
+ * empty line and a list, because it appears in two places now: on its own
+ * before there is a voice, and folded into what we learned once there is.
+ */
+function Videos({ items, loading, openId, isPhone, onOpen, onDelete }) {
+  // Held back until the real list arrives. "Nothing added yet" shown for half a
+  // second to someone who has four videos is a claim, and a wrong one.
+  if (loading) return <VideoSkeleton />;
+
+  if (!items.length) {
+    return (
+      <p style={{ fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.6, margin: 0 }}>
+        Nothing added yet. Paste a link to one of your own Shorts above.
+      </p>
+    );
+  }
+
+  return (
+    <VideoList
+      items={items}
+      activeId={openId}
+      isPhone={isPhone}
+      onOpen={onOpen}
+      onDelete={onDelete}
+    />
   );
 }
 

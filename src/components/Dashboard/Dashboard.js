@@ -57,7 +57,6 @@ function Shell({ user, onSignOut }) {
   const tab = tabParam;
   const [mounted, setMounted] = useState({ [tabParam]: true });
   const [drawer, setDrawer] = useState(false);
-  const [quota, setQuota] = useState(null);
   // Bumped whenever the voice set changes, so the script panel re-reads the
   // profile instead of offering to write in a voice that no longer exists.
   const [voiceRev, setVoiceRev] = useState(0);
@@ -124,15 +123,12 @@ function Shell({ user, onSignOut }) {
             <Logo size={26} fontSize={15.5} />
 
             <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              {/* Credits before the daily quota: it is the number that decides
-                  whether the next thing they try will work at all, and on a
-                  narrow header only one of the two survives. */}
+              {/* Credits only. The daily transcription quota used to sit beside
+                  this as a bare "0/10", which on a header with no room for a
+                  label is a fraction of nothing: two numbers, neither saying
+                  what it counts. The one that decides whether the next thing
+                  they try will work at all is the balance. */}
               {!drawer && <CreditsPill />}
-              {quota && !drawer && (
-                <span style={{ fontSize: 12, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
-                  {quota.used}/{quota.limit}
-                </span>
-              )}
               <button
                 onClick={() => setDrawer((d) => !d)}
                 aria-label={drawer ? "Close menu" : "Open menu"}
@@ -175,10 +171,7 @@ function Shell({ user, onSignOut }) {
 
           {mounted.voice && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "voice" ? "flex" : "none" }}>
-              {/* setQuota is a stable setState reference; an inline arrow would
-                  change identity every render and re-fire the panel's fetch. */}
               <TranscribePanel
-                onQuota={setQuota}
                 onVoiceChange={bumpVoice}
                 onGoProfiles={() => openTab("profile")}
               />
