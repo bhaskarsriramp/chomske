@@ -405,13 +405,35 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
     autoRunning.current.add(key);
     setAutoFetching(key);
+    setFetched(null);
+
+    // ── AN AUTOMATIC FETCH HAS TO REPORT BACK TOO ─────────────────────────
+    // Only the button used to say what a fetch produced. This path, which is
+    // the one that actually runs when a creator opens a category, finished in
+    // silence: the server collected sixty articles, scored them, and the screen
+    // said nothing at all. When most of what came in joins an existing cluster
+    // rather than making a new card, which is the common case, that silence is
+    // indistinguishable from a pipeline that is broken.
+    //
+    // Counted here rather than taken from the server for the same reason the
+    // button counts it: the endpoint knows what it SCORED, not what reached
+    // this feed.
+    const before = new Set(itemsRef.current.map((i) => i.id));
+
     // load() resolves either way; it catches its own failures and answers with
     // an empty list. So the banner always gets taken down, which is the one
     // thing the previous version could not promise.
-    load({ refresh: true, auto: true }).finally(() => {
-      autoRunning.current.delete(key);
-      setAutoFetching((c) => (c === key ? null : c));
-    });
+    load({ refresh: true, auto: true })
+      .then((next) => {
+        // Report only into the feed still on screen. load() already answers []
+        // for an abandoned request, and 0 new is a claim, not a non-answer.
+        if (catRef.current !== key) return;
+        setFetched((next || []).filter((i) => !before.has(i.id)).length);
+      })
+      .finally(() => {
+        autoRunning.current.delete(key);
+        setAutoFetching((c) => (c === key ? null : c));
+      });
   }, [loadedOnce, busy, error, stale, cat, load]);
 
   /**
