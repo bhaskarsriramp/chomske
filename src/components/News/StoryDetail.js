@@ -148,6 +148,12 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
 /* ── Content ───────────────────────────────────────────────────────────── */
 
 function Body({ item, coverage, loading, error, brief, briefLoading, onClose, compact, voice, onVoiceChange, onGoTranscribe }) {
+  // Shut by default. A well-covered story carries sixty-plus outlets, and an
+  // open list that long buries everything under it — including the fact that
+  // the page has ended. The count in the header is what most people came for;
+  // the rows are for the one who wants to read them.
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+
   const links = coverage.length
     ? coverage
     : [{ source: item.source, title: item.title, url: item.url, published_at: item.published_at }];
@@ -253,11 +259,19 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
           compact={compact}
         />
 
-        <div
+        <button
+          type="button"
+          onClick={() => setSourcesOpen((v) => !v)}
+          aria-expanded={sourcesOpen}
+          aria-controls="hg-sources-list"
           style={{
-            display: "flex", alignItems: "baseline", justifyContent: "space-between",
-            gap: 12, marginTop: 32,
-            paddingBottom: 10, borderBottom: "1px solid var(--line)", marginBottom: 12,
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            gap: 12, width: "100%", marginTop: 32,
+            padding: "0 0 10px", marginBottom: 12,
+            // Reset first, then the one edge that stays — React writes these in
+            // key order, so a blanket `border` after `borderBottom` erases it.
+            border: "none", borderBottom: "1px solid var(--line)",
+            background: "none", textAlign: "left", cursor: "pointer",
           }}
         >
           <h3
@@ -268,7 +282,8 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
           >
             {loading ? "Sources" : `Sources · ${links.length}`}
           </h3>
-        </div>
+          <Chevron open={sourcesOpen} />
+        </button>
 
         {error && (
           <div style={{ fontSize: 13.5, color: "var(--bad)", lineHeight: 1.6, marginBottom: 12 }}>
@@ -276,10 +291,10 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
           </div>
         )}
 
-        {loading ? (
+        {!sourcesOpen ? null : loading ? (
           <SourceSkeleton />
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+          <div id="hg-sources-list" style={{ display: "flex", flexDirection: "column", gap: 7 }}>
             {links.map((c, i) => (
               <a
                 key={`${c.url}-${i}`}
@@ -374,6 +389,35 @@ function CategoryChip({ id, label }) {
       <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: c.solid }} />
       {label}
     </span>
+  );
+}
+
+/**
+ * The open/shut marker on the sources header.
+ *
+ * Points down when the list is shut and up when it is open, so the arrow reads
+ * as what the next click does rather than as decoration.
+ */
+function Chevron({ open }) {
+  return (
+    <svg
+      aria-hidden="true"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{
+        flexShrink: 0, color: "var(--ink-mute)",
+        transform: open ? "rotate(180deg)" : "none",
+        transition: "transform .16s ease",
+      }}
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
   );
 }
 

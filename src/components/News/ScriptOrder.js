@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import api from "../../api";
 import { useCredits } from "../../state/CreditsContext";
 
@@ -21,7 +21,7 @@ import { useCredits } from "../../state/CreditsContext";
  * afford reads as broken; a button that says "Not enough credits", next to one
  * that fixes it, reads as an answer.
  */
-export default function ScriptOrder({ busy, onGenerate }) {
+export default function ScriptOrder({ busy, onGenerate, compact }) {
   const { balance, setBalance, openBuy, canBuy, rules } = useCredits();
 
   const [seconds, setSeconds] = useState(60);
@@ -50,7 +50,21 @@ export default function ScriptOrder({ busy, onGenerate }) {
 
   useEffect(() => { refreshQuote(); }, [refreshQuote]);
 
-  const presets = rules?.durations || [];
+  // The bounds are the server's, not ours — it clamps to them anyway, and a
+  // slider that travels somewhere the API refuses is a control that lies.
+  const stops = useMemo(
+    () => buildStops(rules?.min_seconds, rules?.max_seconds),
+    [rules?.min_seconds, rules?.max_seconds],
+  );
+
+  const idx = nearestIndex(stops, seconds);
+
+  // Only fires if the server's bounds moved under a selection that is no longer
+  // on the scale. Without it the thumb would sit on one value while a different
+  // one gets quoted and billed.
+  useEffect(() => {
+    if (stops[idx] !== seconds) setSeconds(stops[idx]);
+  }, [stops, idx, seconds]);
 
   // Affordability is decided HERE, against the shared live balance, rather than
   // read off `q.affordable`. The quote's copy of the balance was true when the
@@ -74,28 +88,48 @@ export default function ScriptOrder({ busy, onGenerate }) {
       {/* ── Length ───────────────────────────────────────────────────────── */}
       <div style={{ marginBottom: 14 }}>
         <Label>How long should it run?</Label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-          {presets.map((d) => {
-            const on = d.seconds === seconds;
-            return (
-              <button
-                key={d.seconds}
-                onClick={() => setSeconds(d.seconds)}
-                aria-pressed={on}
-                className="hg-pill"
-                style={{
-                  display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 1,
-                  padding: "7px 12px", borderRadius: 10, cursor: "pointer",
-                  border: `1px solid ${on ? "var(--ink)" : "var(--line)"}`,
-                  background: on ? "var(--ink)" : "var(--card)",
-                  color: on ? "#fff" : "var(--ink-body)",
-                }}
-              >
-                <span style={{ fontSize: 13, fontWeight: 650 }}>{d.label}</span>
-                <span style={{ fontSize: 10.5, opacity: on ? 0.75 : 0.6 }}>{d.credits} cr</span>
-              </button>
-            );
-          })}
+
+        {/* The chosen length, said once and said large. It used to be the
+            highlighted pill in a row of six, which made the reader compare
+            options when the question at this point is only "how long is the
+            one I am about to buy". */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 9, marginBottom: 2 }}>
+          <span
+            style={{
+              fontSize: 25, fontWeight: 700, letterSpacing: "-0.025em",
+              color: "var(--ink)", lineHeight: 1.1, fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {durationLabel(seconds)}
+          </span>
+          <span style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>{formatNote(seconds)}</span>
+        </div>
+
+        {/* No price under the thumb. The cost is on the button that spends it,
+            where it is read at the moment of the decision instead of tracking a
+            second number that changes as you drag. */}
+        <input
+          type="range"
+          className="hg-range"
+          min={0}
+          max={stops.length - 1}
+          step={1}
+          value={idx}
+          onChange={(e) => setSeconds(stops[Number(e.target.value)])}
+          aria-label="How long should it run?"
+          aria-valuetext={durationLabel(seconds)}
+          style={{ "--hg-range-pct": `${stops.length > 1 ? (idx / (stops.length - 1)) * 100 : 0}%` }}
+        />
+
+        <div
+          aria-hidden="true"
+          style={{
+            display: "flex", justifyContent: "space-between",
+            fontSize: 11.5, color: "var(--ink-mute)", marginTop: -2,
+          }}
+        >
+          <span>{durationLabel(stops[0])}</span>
+          <span>{durationLabel(stops[stops.length - 1])}</span>
         </div>
         {seconds >= 180 && (
           <p style={{ fontSize: 12, color: "var(--ink-mute)", margin: "8px 0 0", lineHeight: 1.55 }}>
@@ -128,10 +162,10 @@ export default function ScriptOrder({ busy, onGenerate }) {
 
       {/* ── The ask ────────────────────────────────────────────────────────
           Two states for one row. When they can afford it, the write button is
-          the filled one and the balance sits beside it. When they cannot, the
-          refusal goes flat and quiet and BUY becomes the filled button — the
-          only thing on the row that still does anything should be the one that
-          looks like it does.
+          the filled one, carrying the price. When they cannot, the refusal goes
+          flat and quiet and BUY becomes the filled button — the only thing on
+          the row that still does anything should be the one that looks like it
+          does.
 
           The dead state is deliberately not white-on-grey. Disabled controls are
           exempt from the contrast rules, which is not the same as being readable,
@@ -168,11 +202,12 @@ export default function ScriptOrder({ busy, onGenerate }) {
           >
             Buy credits
           </button>
-        ) : (
-          <span style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>
-            {typeof have === "number" ? `${have} credits left` : ""}
-          </span>
-        )}
+        ) : compact && typeof have === "number" ? (
+          // Phones only. On desktop the sidebar carries the balance permanently,
+          // a few centimetres away and always on screen, so repeating it here
+          // was one number maintained in two places for no added information.
+          <span style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>{have} credits left</span>
+        ) : null}
       </div>
 
       {!affordable && cost !== null && (
@@ -183,6 +218,58 @@ export default function ScriptOrder({ busy, onGenerate }) {
       )}
     </div>
   );
+}
+
+/* ── Length ───────────────────────────────────────────────────────────────── */
+
+/**
+ * The stops the slider can land on.
+ *
+ * Not free-form seconds. Nobody wants a 137-second script — they want "about
+ * two minutes", and a continuous slider makes a creator fight the thumb for a
+ * round number they were always going to choose. So: fine steps down where the
+ * format is decided by seconds (a Short lives or dies on 45 vs 60), then half
+ * minutes once it is long-form and no one is counting.
+ *
+ * Bounds come from the server so this cannot offer a length the API clamps away.
+ */
+function buildStops(minSeconds, maxSeconds) {
+  const min = Number(minSeconds) > 0 ? Number(minSeconds) : 45;
+  const max = Number(maxSeconds) > 0 ? Number(maxSeconds) : 480;
+
+  const out = [45, 60].filter((s) => s >= min && s <= max);
+  for (let s = 90; s <= max; s += 30) if (s >= min) out.push(s);
+
+  return out.length ? out : [min];
+}
+
+/** The stop nearest a given length — the thumb always has somewhere real to sit. */
+function nearestIndex(stops, seconds) {
+  let best = 0;
+  for (let i = 1; i < stops.length; i++) {
+    if (Math.abs(stops[i] - seconds) < Math.abs(stops[best] - seconds)) best = i;
+  }
+  return best;
+}
+
+/**
+ * Seconds up to a minute, minutes past it.
+ *
+ * "150s" is arithmetic the reader has to do; "2 min 30s" is the number they
+ * already think in once a script is long enough to have sections.
+ */
+function durationLabel(seconds) {
+  if (seconds <= 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `${mins} min ${rest}s` : `${mins} min`;
+}
+
+/** What this length is FOR — the one thing the old pills said that a number can't. */
+function formatNote(seconds) {
+  if (seconds <= 60) return "Reel / Short";
+  if (seconds < 180) return "Short-form";
+  return "Long-form";
 }
 
 /* ── Pieces ───────────────────────────────────────────────────────────────── */

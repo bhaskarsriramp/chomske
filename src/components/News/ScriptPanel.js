@@ -162,7 +162,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
 
       {!script && (hasVoice || voice?.transcripts_available > 0) && (
         <div>
-          <ScriptOrder busy={busy} onGenerate={(order) => generate(false, order)} />
+          <ScriptOrder busy={busy} onGenerate={(order) => generate(false, order)} compact={compact} />
           {!hasVoice && (
             <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
               First run also learns your voice from your {voice.transcripts_available === 1 ? "video" : "videos"}, so it takes a little longer.
