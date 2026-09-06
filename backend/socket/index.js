@@ -73,16 +73,43 @@ export function initSocketServer(httpServer, { allowedOrigins = [] } = {}) {
   onNewsEvent(emit);
 
   if (redis) {
-    // A dedicated connection: a client in subscriber mode cannot run ordinary
+    // ── A DEDICATED CONNECTION, WITH THE QUEUE BACK ON ───────────────────────
+    // Dedicated because a client in subscriber mode cannot run ordinary
     // commands, and the shared one is busy holding every cooldown in the app.
-    const sub = redis.duplicate();
+    //
+    // `enableOfflineQueue: true` overrides the parent, deliberately. The shared
+    // client has it OFF because it sits on the request path, where a command
+    // against a dead Redis should reject in a millisecond so the caller falls
+    // back in-process. A subscriber is on no request path: it issues exactly one
+    // command, at boot, and queueing that until the socket is writable is what
+    // it should do. duplicate() copies the parent's options, so without this
+    // override the subscribe below was rejected with "Stream isn't writeable
+    // and enableOfflineQueue options is false" before the handshake finished.
+    const sub = redis.duplicate({ enableOfflineQueue: true });
 
     sub.on("error", (err) => console.warn("[socket] event subscriber:", err.message));
 
-    sub.subscribe(NEWS_CHANNEL, (err) => {
-      if (err) console.error("[socket] couldn't subscribe to news events:", err.message);
-      else console.log(`[socket] subscribed to ${NEWS_CHANNEL}`);
-    });
+    // ── WHY THIS WAITS FOR `ready` ───────────────────────────────────────────
+    // Subscribing inline lost a race with the connection on every boot, and the
+    // failure was quiet in the worst way. publishNewsEvent returns as soon as
+    // Redis ACCEPTS the publish, so with nobody subscribed the events went into
+    // Redis and reached no browser at all: ranking finished and the feed did not
+    // move, briefs landed and cards stayed empty, until the creator reloaded.
+    // The local fallback in newsEvents.js could not help either, because it only
+    // fires when the publish itself fails, and it had not.
+    //
+    // On `ready` rather than once at boot, so a reconnect after an outage
+    // re-subscribes. A dropped subscription that never comes back is the same
+    // silent failure arriving later.
+    const listen = () => {
+      sub.subscribe(NEWS_CHANNEL, (err) => {
+        if (err) console.error("[socket] couldn't subscribe to news events:", err.message);
+        else console.log(`[socket] subscribed to ${NEWS_CHANNEL}`);
+      });
+    };
+
+    if (sub.status === "ready") listen();
+    sub.on("ready", listen);
 
     sub.on("message", (_channel, message) => {
       try {
