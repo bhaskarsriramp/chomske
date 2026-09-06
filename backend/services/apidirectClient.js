@@ -55,6 +55,12 @@ const YOUTUBE_VIDEO_URL = "https://apidirect.io/v1/youtube/video";
 const NEWS_ARTICLES_URL = "https://apidirect.io/v1/news/articles";
 
 const MAX_RETRIES = 3;
+
+// Separate from MAX_RETRIES on purpose. A busy pool is other people's requests
+// finishing, not a fault, so it is worth waiting noticeably longer for. Five
+// attempts on a doubling backoff from 400ms is roughly six seconds, which a
+// person adding a video will wait through without wondering if it is broken.
+const BUSY_RETRIES = parseInt(process.env.APIDIRECT_BUSY_RETRIES || "4", 10);
 const REQUEST_TIMEOUT_MS = 20000;
 const KEY_COOLDOWN_SERVICE = "apidirect";
 const KEY_EXHAUSTED_COOLDOWN_MS = 60 * 60 * 1000;  // auth/billing/spend cap, 1 hour
@@ -339,8 +345,9 @@ async function requestWithRetry({ url, endpoint, params, label }) {
 
   let lastErr;
   let rotations = 0;   // keys written off on THIS request (auth, billing, caps)
-  let transient = 0;   // blips: 5xx, timeouts, concurrency 429s, a busy pool
-  let attempt = 0;     // both together, for the log line and the backoff curve
+  let transient = 0;   // blips: 5xx, timeouts, concurrency 429s
+  let busy = 0;        // the pool was simply full; see below
+  let attempt = 0;     // for the log line and the backoff curve
 
   while (rotations < keyCount && transient <= MAX_RETRIES) {
     attempt++;
@@ -348,11 +355,27 @@ async function requestWithRetry({ url, endpoint, params, label }) {
     try {
       slot = await acquireKeySlot(endpoint);
     } catch (err) {
-      // Every key busy or cooling, wait a beat and try again rather than failing
-      // the user's request on a transient pool state.
-      if (err instanceof ApidirectRateLimitedError && transient < MAX_RETRIES) {
-        transient++;
-        await sleep(400 + Math.floor(Math.random() * 400));
+      // ── A FULL POOL IS A QUEUE, NOT A FAILURE ────────────────────────────
+      // This used to share the transient budget: three tries, ~600ms apart,
+      // then give up. That is right for a 502, which is a fault, and wrong for
+      // "all three concurrency slots are in use", which resolves on its own as
+      // soon as an in-flight request finishes.
+      //
+      // It mattered most where it hurt most. On the video-add path this error
+      // becomes a 503 telling a creator "new videos are paused", when the real
+      // situation was that two other people were adding a video at that instant
+      // and a second of patience would have served all three.
+      //
+      // So a busy pool gets its own, longer budget with a rising backoff, worth
+      // about eight seconds. Still far inside the 20s request timeout and the
+      // client's own ceiling, so nothing downstream waits on a dead connection.
+      if (err instanceof ApidirectRateLimitedError && busy < BUSY_RETRIES) {
+        const wait = 400 * 2 ** busy + Math.floor(Math.random() * 300);
+        busy++;
+        if (busy === BUSY_RETRIES) {
+          console.warn(`[apidirect] pool full on /${endpoint}, last wait ${wait}ms before giving up`);
+        }
+        await sleep(wait);
         continue;
       }
       throw err;

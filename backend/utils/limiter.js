@@ -172,4 +172,20 @@ export async function takeRate(service, keyId, limit, windowSec, count = 1) {
 
 const _rateLocal = new Map();
 
-export default { setCooldown, cooldownRemainingMs, acquireSlot, takeRate, NoSlotError };
+/**
+ * Milliseconds until the current fixed window rolls and budgets reset.
+ *
+ * The caller uses this to WAIT for capacity instead of giving up, which is the
+ * whole reason the window is fixed rather than sliding: with a fixed window the
+ * reset time is arithmetic, and a caller can be told exactly how long to sleep.
+ *
+ * Jittered, because every key resets at the same instant. Without it a hundred
+ * requests that all queued during one minute would fire together on the tick,
+ * take the whole budget in one burst, and half of them would 429.
+ */
+export function msUntilWindowReset(windowSec, jitterMs = 750) {
+  const w = windowSec * 1000;
+  return (w - (Date.now() % w)) + Math.floor(Math.random() * jitterMs);
+}
+
+export default { setCooldown, cooldownRemainingMs, acquireSlot, takeRate, msUntilWindowReset, NoSlotError };

@@ -27,7 +27,7 @@
  */
 import { createHash } from "crypto";
 import TinyfishAPIs from "../models/TinyfishAPIs.js";
-import { setCooldown, cooldownRemainingMs, takeRate } from "../utils/limiter.js";
+import { setCooldown, cooldownRemainingMs, takeRate, msUntilWindowReset } from "../utils/limiter.js";
 
 const SERVICE = "tinyfish";
 
@@ -46,6 +46,17 @@ const RATE_COOLDOWN_MS = parseInt(process.env.TINYFISH_RATE_COOLDOWN_MS || "6000
 const DEAD_COOLDOWN_MS = 60 * 60 * 1000;
 
 const REQUEST_TIMEOUT_MS = parseInt(process.env.TINYFISH_TIMEOUT_MS || "45000", 10);
+
+// ── HOW LONG A SCRIPT WILL QUEUE FOR CAPACITY ────────────────────────────────
+// Script generation is already asynchronous: the route returns 202 and the
+// client polls, so nothing is holding an HTTP request open while this waits.
+// That makes waiting strictly better than degrading. A creator would rather
+// wait ninety seconds for a script written from real articles than get one
+// written from headlines in five.
+//
+// Bounded, because it cannot be unbounded: past this the fallback to snippets
+// is the honest answer, and it still produces a script.
+const MAX_QUEUE_MS = parseInt(process.env.TINYFISH_MAX_QUEUE_MS || "120000", 10);
 
 const KEYS_TTL_MS = 5 * 60 * 1000;
 let _keysCache = null;
@@ -139,12 +150,28 @@ export async function fetchArticles(urls, { maxChars = 2500 } = {}) {
     return out;
   }
 
-  // One attempt per key. A 429 or a dead key rotates; anything else is not the
-  // key's fault and retrying it on another one would just fail again.
-  for (const cand of pool) {
-    if (await cooldownRemainingMs(SERVICE, cand.keyId)) continue;
-    if (!(await takeRate(SERVICE, cand.keyId, RPM, 60, list.length))) {
-      await setCooldown(SERVICE, cand.keyId, RATE_COOLDOWN_MS);
+  // ── WAIT FOR CAPACITY, DO NOT DEGRADE ON THE FIRST MISS ──────────────────
+  // Every key being busy is a queue, not a failure. Under load the budgets
+  // refill on the next window, so this sleeps until they do and tries again,
+  // rather than falling back to snippets while capacity was seconds away.
+  const deadline = Date.now() + MAX_QUEUE_MS;
+  let waited = 0;
+
+  while (true) {
+    const cand = await takeAnyKey(pool, list.length);
+
+    if (!cand) {
+      const wait = msUntilWindowReset(60);
+      if (Date.now() + wait > deadline) {
+        console.warn(
+          `[tinyfish] all ${pool.length} key(s) saturated for ${(waited / 1000).toFixed(0)}s, ` +
+          "writing from source snippets instead"
+        );
+        return out;
+      }
+      waited += wait;
+      console.log(`[tinyfish] all keys busy, waiting ${(wait / 1000).toFixed(1)}s for the window to roll`);
+      await sleep(wait);
       continue;
     }
 
@@ -177,6 +204,7 @@ export async function fetchArticles(urls, { maxChars = 2500 } = {}) {
         note(cand, { status: "rate_limited", last_error: "429", last_error_at: new Date(),
                      cooldown_until: new Date(Date.now() + RATE_COOLDOWN_MS), $inc: { error_count: 1 } });
         console.warn(`[tinyfish] 429 on ${cand.label}, rotating`);
+        if (Date.now() > deadline) return out;
         continue;
       }
       if (isDeadKey(err)) {
@@ -185,6 +213,7 @@ export async function fetchArticles(urls, { maxChars = 2500 } = {}) {
                      last_error_at: new Date(), cooldown_until: new Date(Date.now() + DEAD_COOLDOWN_MS),
                      $inc: { error_count: 1 } });
         console.warn(`[tinyfish] key ${cand.label} rejected, cooled 1h`);
+        if (Date.now() > deadline) return out;
         continue;
       }
       // Not the key's fault. Give up rather than replay a bad request across
@@ -196,8 +225,31 @@ export async function fetchArticles(urls, { maxChars = 2500 } = {}) {
     }
   }
 
-  console.warn("[tinyfish] every key is cooling down, falling back to snippets");
-  return out;
+}
+
+/**
+ * The first key with cooldown clear AND budget left in this window.
+ *
+ * ── WHY A SPENT BUDGET IS NOT A COOLDOWN ────────────────────────────────────
+ * These were conflated in the first version: running out of per-minute budget
+ * set a sixty second cooldown on the key. But the budget refills when the
+ * window rolls, which may be four seconds away, so a key that had simply done
+ * its share for the minute was benched for a full minute afterwards. With four
+ * keys that quietly cut sustained throughput by more than half.
+ *
+ * A cooldown now means only what it should: the key itself misbehaved, with a
+ * 429 or an auth failure. A spent budget just means "not this one, this minute".
+ */
+async function takeAnyKey(pool, count) {
+  for (const cand of pool) {
+    if (await cooldownRemainingMs(SERVICE, cand.keyId)) continue;
+    if (await takeRate(SERVICE, cand.keyId, RPM, 60, count)) return cand;
+  }
+  return null;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function withTimeout(promise, ms) {
