@@ -95,6 +95,56 @@ function formatDuration(s) {
  * this product makes. One cheap metadata lookup is the difference between
  * refusing a long video and paying to discover it was long.
  */
+/**
+ * ── ONE METADATA LOOKUP PER VIDEO, NOT ONE PER KEYSTROKE ─────────────────────
+ * Pricing a video needs its length, and its length costs an apidirect call. The
+ * Import screen now quotes in real time, so the same URL is priced while the
+ * creator adds a link, edits their text, changes their mind, and then priced
+ * once more by the preview that follows. Uncached that is a paid call per
+ * revision of a form.
+ *
+ * Short-lived on purpose. This is not a store: it exists to collapse the burst
+ * of lookups around one editing session, and a video's length never changes, so
+ * the only thing a longer TTL would buy is staler titles.
+ */
+const META_TTL_MS = 10 * 60 * 1000;
+const metaCache = new Map();   // url -> { at, video }
+
+function cachedMeta(url) {
+  const hit = metaCache.get(url);
+  if (!hit) return null;
+  if (Date.now() - hit.at > META_TTL_MS) { metaCache.delete(url); return null; }
+  return hit.video;
+}
+
+function rememberMeta(url, video) {
+  // Bounded, so a busy instance cannot grow this without limit. Oldest first:
+  // Map iterates in insertion order, so the first key is the coldest.
+  if (metaCache.size > 500) metaCache.delete(metaCache.keys().next().value);
+  metaCache.set(url, { at: Date.now(), video });
+}
+
+/**
+ * The video behind a URL, priced-ready, without doing the work twice.
+ *
+ * Rejections are NOT cached: a live stream that has ended, or a lookup that
+ * failed because the key was briefly exhausted, must be retryable a minute
+ * later rather than remembered as a refusal for ten.
+ */
+export async function describeVideo(input) {
+  const parsed = parseYouTubeUrl(input);
+  if (!parsed) {
+    throw new SourceRejected(
+      "That doesn't look like a YouTube link. Paste a normal video, Shorts or youtu.be URL."
+    );
+  }
+  const hit = cachedMeta(parsed.url);
+  if (hit) return hit;
+  const video = await resolveVideo(input);
+  rememberMeta(parsed.url, video);
+  return video;
+}
+
 async function resolveVideo(input) {
   const parsed = parseYouTubeUrl(input);
   if (!parsed) {
@@ -193,7 +243,9 @@ export async function buildSource(userId, {
     throw new SourceRejected("Tell us what you want the video to be about.");
   }
 
-  const video = youtube ? await resolveVideo(youtube) : null;
+  // Through the cache, so the metadata call the quote just made is not paid for
+  // a second time by the preview that follows it seconds later.
+  const video = youtube ? await describeVideo(youtube) : null;
 
   // ── Reuse, so the same paste twice costs once ─────────────────────────────
   // Checked AFTER the video is resolved, because the hash keys on the video id
@@ -507,4 +559,4 @@ function firstLine(s) {
   return t.length > 90 ? `${t.slice(0, 87)}…` : t;
 }
 
-export default { buildSource, confirmDraft, redraft, shapeSource, SourceRejected };
+export default { buildSource, confirmDraft, redraft, shapeSource, describeVideo, SourceRejected };

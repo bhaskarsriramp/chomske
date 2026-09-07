@@ -30,6 +30,7 @@ import { getCategory } from "../services/categories.js";
 import {
   MAX_SOURCE_LINKS, MAX_SOURCE_TEXT_CHARS, MAX_PROMPT_CHARS,
   MAX_SOURCE_VIDEO_SECONDS, VIDEO_READ_FREE_SECONDS, LOOKUP_CREDITS,
+  VIDEO_READ_BLOCK_SECONDS, VIDEO_READ_CREDITS_PER_BLOCK,
 } from "../services/creditPricing.js";
 
 const router = express.Router();
@@ -43,6 +44,19 @@ const DAILY_PREVIEWS = parseInt(process.env.DAILY_SOURCE_PREVIEWS || "40", 10);
  *   { kind, youtube?, links?[], text?, prompt?, lookup?, profile? }
  *
  * Reads everything that is free to read and hands back what we hold.
+ *
+ * ── AND IT IS FREE, DELIBERATELY ─────────────────────────────────────────────
+ * Pasting links, seeing which pages we could actually get, dropping the two
+ * that were paywalled and trying again is how this screen is meant to be used,
+ * and a price on that loop would stop people using it. Nothing is charged
+ * until a script is ordered, and then it is charged once, on the one button
+ * that spends credits: the read plus the length (see quote() in
+ * services/creditPricing.js).
+ *
+ * That is also where the money matches the work. The video is not watched
+ * here, only its length looked up; the read itself happens inside POST /script
+ * (services/sourceMaterial.js), so charging here would take credits for a read
+ * that has not happened and might never happen.
  */
 router.post("/preview", authenticateToken, async (req, res) => {
   try {
@@ -71,10 +85,10 @@ router.post("/preview", authenticateToken, async (req, res) => {
 
     const doc = await buildSource(userId, {
       kind: req.body?.kind === "idea" ? "idea" : "import",
-      youtube: req.body?.youtube || "",
-      links: req.body?.links || [],
-      text: req.body?.text || "",
-      prompt: req.body?.prompt || "",
+      youtube: String(req.body?.youtube || "").trim(),
+      links: Array.isArray(req.body?.links) ? req.body.links.filter(Boolean) : [],
+      text: String(req.body?.text || ""),
+      prompt: String(req.body?.prompt || ""),
       lookup: !!req.body?.lookup,
       locale,
     });
@@ -160,6 +174,15 @@ router.get("/limits", authenticateToken, (req, res) => {
       max_video_seconds: MAX_SOURCE_VIDEO_SECONDS,
       free_video_seconds: VIDEO_READ_FREE_SECONDS,
       lookup_credits: LOOKUP_CREDITS,
+
+      // ── THE VIDEO RATE, SO THE UI CAN EXPLAIN ITSELF ──────────────────
+      // Only the help text under the video field, "10 credits per 30s". The
+      // TOTAL always comes from GET /billing/quote and is never assembled in
+      // the browser, so this can change here without a new frontend build and
+      // the two cannot disagree. Links and pasted text have no rate because
+      // they have no price. See services/creditPricing.js.
+      video_block_seconds: VIDEO_READ_BLOCK_SECONDS,
+      video_block_credits: VIDEO_READ_CREDITS_PER_BLOCK,
     },
   });
 });

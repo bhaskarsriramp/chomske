@@ -229,7 +229,7 @@ router.post("/", authenticateToken, async (req, res) => {
     // request. What a video costs depends on how long it is, and "how long is
     // it" is a fact we bought from apidirect during the preview; taking the
     // client's word for it would let a hand-rolled request read a ten minute
-    // video at the two minute price.
+    // video at the thirty second price.
     const order = quote({
       seconds: req.body?.seconds,
       englishTwin: !!req.body?.english,
@@ -325,7 +325,7 @@ router.post("/", authenticateToken, async (req, res) => {
       await Script.updateOne({ _id: doc._id }, { $set: { credits_charged: charged } });
 
       // What reading this material has cost so far, accumulated on the Source.
-      // Purely for answering "why did this one cost 54 credits" later: the
+      // Purely for answering "why did this one cost 230 credits" later: the
       // don't-charge-twice decision is made on video_read_at and lookup_used,
       // never on this number.
       if (source && order.source > 0) {
@@ -334,6 +334,7 @@ router.post("/", authenticateToken, async (req, res) => {
           { $inc: { read_charged: order.source }, $set: { updated_at: new Date() } }
         ).catch(() => {});
       }
+
     } catch (err) {
       if (err instanceof InsufficientCredits) {
         // The row was created a moment ago and nothing was charged for it, so

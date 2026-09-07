@@ -129,16 +129,31 @@ export const MAX_PROMPT_CHARS = 2000;
  *
  * Gemini bills video by the second, so the honest shape is per-second, but a
  * price that changes when a creator pastes a 4:01 video instead of a 3:59 one is
- * a price nobody can predict. Blocks of two minutes are coarse enough to reason
- * about ("about six credits a couple of minutes") and fine enough that a ten
- * minute video does not cost the same as a ninety second one.
+ * a price nobody can predict. A block is the unit a person can hold in their
+ * head: thirty seconds of video costs ten credits, and a two minute video costs
+ * forty, which is arithmetic anybody can do before they paste.
  *
- * The first block is free. A short clip is how somebody tries this feature for
- * the first time, and the base script price already absorbs a read that size.
+ * ── NO FREE FIRST BLOCK ANY MORE ─────────────────────────────────────────────
+ * There used to be one, on the reasoning that the base script price absorbed a
+ * short read. It does not: reading is now charged at the PREVIEW step, before a
+ * length has even been chosen, so there is no script price to absorb anything
+ * into. A read is its own purchase now, and it is priced as one.
  */
-export const VIDEO_READ_FREE_SECONDS = 120;
-export const VIDEO_READ_BLOCK_SECONDS = 120;
-export const VIDEO_READ_CREDITS_PER_BLOCK = parseInt(process.env.VIDEO_READ_CREDITS || "6", 10);
+export const VIDEO_READ_FREE_SECONDS = 0;
+export const VIDEO_READ_BLOCK_SECONDS = 30;
+export const VIDEO_READ_CREDITS_PER_BLOCK = parseInt(process.env.VIDEO_READ_CREDITS || "10", 10);
+
+/* ── LINKS AND PASTED TEXT ARE FREE, AND THAT IS A COST DECISION ─────────────
+ *
+ * Not a promotion. Fetching a page costs us nothing worth metering (TinyFish is
+ * free, see services/tinyfishClient.js) and pasted text is input tokens, a few
+ * tenths of a cent on a call that is being made anyway. The only genuinely
+ * expensive input on these screens is video, because Gemini meters video by the
+ * second, and that is the only one with a price on it.
+ *
+ * Pricing the cheap inputs anyway would have cost more than it earned: it makes
+ * a creator delete the third link and trim the context paragraph that would
+ * have made the script better, to save credits we were not really spending. */
 
 /**
  * Looking a topic up before writing about it.
@@ -152,16 +167,28 @@ export const VIDEO_READ_CREDITS_PER_BLOCK = parseInt(process.env.VIDEO_READ_CRED
 export const LOOKUP_CREDITS = parseInt(process.env.LOOKUP_CREDITS || "10", 10);
 
 /**
- * What reading a given source costs, before a word is written.
+ * What reading a source costs, added to the script it is written into.
  *
- * @param {object} source
- * @param {number} source.videoSeconds  length of the YouTube video, 0 if none
- * @param {boolean} source.lookup       the creator asked us to research it
- * @param {boolean} source.alreadyRead  the material is cached from a previous
+ * ── ONE PRICE, PAID ONCE, AT GENERATION ──────────────────────────────────────
+ * Preview is free: pasting a link, seeing which pages we could actually read
+ * and changing your mind must not cost anything, because that loop is how this
+ * screen is meant to be used. Nothing here is charged until a script is
+ * ordered, and then it is charged once: the read plus the length, on the one
+ * button that spends credits.
+ *
+ * That also puts the money where the expensive work is. The video is not
+ * watched during preview, only its length looked up; the read itself happens
+ * inside POST /script (services/sourceMaterial.js). Charging at preview would
+ * have taken credits for a read that had not happened and might never happen.
+ *
+ * @param {object} input
+ * @param {number} input.videoSeconds  length of the YouTube video, 0 if none
+ * @param {boolean} input.lookup       the creator asked us to research it
+ * @param {boolean} input.alreadyRead  the material is cached from a previous
  *   order, so the expensive part is already bought and must not be sold twice
- * @returns {{ video: number, lookup: number, total: number }}
+ * @returns {{ video, lookup, total }}
  */
-export function sourceCost({ videoSeconds = 0, lookup = false, alreadyRead = false } = {}) {
+export function readCost({ videoSeconds = 0, lookup = false, alreadyRead = false } = {}) {
   // ── A REGENERATE MUST NOT RE-BUY THE READ ────────────────────────────────
   // A creator who orders 60 seconds from a video and then wants three minutes
   // from the same video is the expected path, not an edge case. The transcript
@@ -170,8 +197,8 @@ export function sourceCost({ videoSeconds = 0, lookup = false, alreadyRead = fal
   if (alreadyRead) return { video: 0, lookup: 0, total: 0 };
 
   const secs = Math.max(0, Math.round(Number(videoSeconds) || 0));
-  const billable = Math.max(0, secs - VIDEO_READ_FREE_SECONDS);
-  const video = Math.ceil(billable / VIDEO_READ_BLOCK_SECONDS) * VIDEO_READ_CREDITS_PER_BLOCK;
+  const billableSecs = Math.max(0, secs - VIDEO_READ_FREE_SECONDS);
+  const video = Math.ceil(billableSecs / VIDEO_READ_BLOCK_SECONDS) * VIDEO_READ_CREDITS_PER_BLOCK;
   const look = lookup ? LOOKUP_CREDITS : 0;
 
   return { video, lookup: look, total: video + look };
@@ -219,7 +246,7 @@ export function clampSeconds(v) {
  * @param {number} seconds        requested length, pre-clamp is fine
  * @param {boolean} englishTwin   also produce the English version
  * @param {boolean} packaging     also produce title/description/hashtags
- * @param {object} source         what it is written FROM, see sourceCost(). A
+ * @param {object} source         what it is written FROM, see readCost(). A
  *   news story costs nothing to read here, its research was paid for by the
  *   collector; an Import or a looked-up Idea is not free, and the price on the
  *   button has to say so before it is pressed.
@@ -230,7 +257,7 @@ export function quote({ seconds, englishTwin = false, packaging = false, source 
   const base = Math.ceil(secs / SECONDS_PER_CREDIT);
   const twin = englishTwin ? Math.ceil(base * ENGLISH_TWIN_RATE) : 0;
   const pack = packaging ? PACKAGING_CREDITS : 0;
-  const src = source ? sourceCost(source).total : 0;
+  const src = source ? readCost(source).total : 0;
   return {
     seconds: secs, base, twin, packaging: pack, source: src,
     total: base + twin + pack + src,
@@ -263,6 +290,6 @@ export default {
   ENGLISH_TWIN_RATE, PACKAGING_CREDITS, SIGNUP_FREE_CREDITS, PACKS,
   MAX_SOURCE_VIDEO_SECONDS, MAX_SOURCE_LINKS, MAX_SOURCE_TEXT_CHARS, MAX_PROMPT_CHARS,
   VIDEO_READ_FREE_SECONDS, VIDEO_READ_BLOCK_SECONDS, VIDEO_READ_CREDITS_PER_BLOCK,
-  LOOKUP_CREDITS, sourceCost,
+  LOOKUP_CREDITS, readCost,
   getPack, clampSeconds, quote, wordTarget,
 };

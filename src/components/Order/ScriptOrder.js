@@ -316,9 +316,9 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
 
       {/* ── WHERE THE EXTRA CREDITS WENT ─────────────────────────────────────
           A 60 second script is 30 credits everywhere in this product, so an
-          Import that says 54 has to explain itself at the moment it is read.
-          Unexplained, it looks like a bug or a markup; named, it is a line item
-          the creator can decide about, and the next order from the same video
+          Import that says 230 has to explain itself at the moment it is read.
+          Unexplained it looks like a bug or a markup; named, it is a line item
+          the creator can decide about, and the next script from the same video
           drops it, which is worth knowing before they order the first one. */}
       {priced?.source > 0 && !tooExpensive && (
         <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>

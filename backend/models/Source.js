@@ -23,7 +23,10 @@ const { Schema } = mongoose;
  *   2. A REGENERATE DOES NOT RE-BUY THE READ. `facts` is filled in the first
  *      time a script is written from this source and reused afterwards, so
  *      ordering 60 seconds and then three minutes from the same video pays the
- *      video price once. sourceCost({ alreadyRead: true }) is the other half.
+ *      video price once. Reading is now bought at the preview step (see
+ *      readCost in services/creditPricing.js), so this flag no longer gates a
+ *      charge; it still records that the transcript is held and need not be
+ *      fetched again.
  *
  *   3. THE SCRIPT STAYS CHECKABLE. Scripts point here, so "which links was
  *      this written from" is answerable a week later, the same promise the

@@ -73,6 +73,7 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
 
   const hasPrompt = prompt.trim().length > 0;
 
+
   // Three states, in order. `needs_review` comes from the server and is the
   // same flag that gates POST /script there, so the button and the API cannot
   // disagree about whether this is orderable yet.
@@ -247,7 +248,8 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
           </button>
 
           <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
-            Free. Nothing is charged until you've seen what the video will say and picked a length.
+            This step is free. The script is charged next, by length, and the
+            lookup only if it finds something.
           </p>
         </>
       )}

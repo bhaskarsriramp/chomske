@@ -213,10 +213,10 @@ export async function materialFromNews(item, { seconds = 60 } = {}) {
  * reading ten minutes of YouTube is the most expensive call this product makes,
  * and it is deliberately deferred until somebody has paid for a script.
  *
- * The result is written back to the Source, which is what makes the second
- * order from the same video free. sourceCost({ alreadyRead }) reads the same
- * flag from the other side, so the price on the button and the work actually
- * done cannot disagree.
+ * The result is written back to the Source, which is what makes every later
+ * order from the same video free. The creator paid to read it once, at the
+ * preview step (readCost in services/creditPricing.js), and this cache is what
+ * stops the same material being read again on the second and third script.
  *
  * @param {object} doc  a Source document (lean or hydrated)
  */

@@ -122,6 +122,11 @@ router.get("/wallet", authenticateToken, async (req, res) => {
  * body would be buying a Studio pack for a rupee.
  */
 router.get("/quote", authenticateToken, async (req, res) => {
+  // ── THE SOURCE HALF IS PRICED FROM THE STORED DOCUMENT ───────────────────
+  // Never from the request. What a video costs depends on how long it is, and
+  // "how long is it" is a fact we bought from apidirect during the preview;
+  // taking the client's word for it would let a hand-rolled call read a ten
+  // minute video at the thirty second price.
   let source = null;
 
   const sourceId = String(req.query.source_id || "");

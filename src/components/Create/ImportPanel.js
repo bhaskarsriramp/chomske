@@ -15,20 +15,31 @@ import Field, { Column, Heading } from "./Field";
  * something and want to cover it. Every one of those is a creator who opened
  * the app ready to work and found nothing to work on.
  *
- * ── TWO STEPS, AND THE FIRST ONE IS FREE ─────────────────────────────────────
+ * ── TWO STEPS, AND TWO PRICES ────────────────────────────────────────────────
  * Paste, then read, then order. The read step exists because pasting five links
  * is not the same as having five readable articles: publishers block crawlers
  * constantly, and the difference decides whether the script is any good. Doing
- * it before the price appears means the creator sees "read 3 of 5, the FT
- * blocked us" and decides with that in hand. See backend routes/source.js.
+ * it first means the creator sees "read 3 of 5, the FT blocked us" and decides
+ * with that in hand. See backend routes/source.js.
  *
- * The order panel underneath is the same ScriptOrder the news feed uses, at the
- * same prices, plus whatever reading the material actually cost.
+ * Reading used to be free here and folded into the script's price, so the same
+ * 60-second script cost 30 credits from Discover and 54 from an Import. It is
+ * its own purchase now, priced live as the form is filled in and paid at the
+ * button that does the reading. The order panel underneath is then the same
+ * ScriptOrder the news feed uses, at exactly the same prices.
  */
 export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, compact, limits }) {
   const maxLinks = limits?.max_links ?? 5;
   const maxText = limits?.max_text_chars ?? 6000;
   const maxVideoMin = Math.round((limits?.max_video_seconds ?? 600) / 60);
+
+  // ── THE ONE PRICE ON THIS SCREEN ──────────────────────────────────────────
+  // Only for the help text under the video field. Nothing else here costs
+  // anything, and the TOTAL is never assembled in the browser: it comes from
+  // the quote behind the write button on the next step, so a rate change in
+  // creditPricing.js reaches both without a new bundle. See routes/source.js.
+  const videoBlockSecs = limits?.video_block_seconds ?? 30;
+  const videoBlockCr = limits?.video_block_credits ?? 10;
 
   const [youtube, setYoutube] = useState("");
   const [linkDraft, setLinkDraft] = useState("");
@@ -58,6 +69,7 @@ export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, comp
   const ready = source && readKey === inputsKey;
 
   const hasAnything = !!(youtube.trim() || links.length || text.trim());
+
 
   const addLink = useCallback(() => {
     const v = linkDraft.trim();
@@ -134,7 +146,7 @@ export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, comp
         <>
           <Field
             label="YouTube video"
-            hint={`Optional. Public videos up to ${maxVideoMin} minutes.`}
+            hint={`Optional. Public videos up to ${maxVideoMin} minutes. Reading one adds ${videoBlockCr} credits per ${videoBlockSecs}s to the script price.`}
           >
             <input
               type="url"
@@ -148,7 +160,7 @@ export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, comp
 
           <Field
             label="Article links"
-            hint={`Optional. Up to ${maxLinks}. Paywalled pages usually can't be read.`}
+            hint={`Optional. Up to ${maxLinks}, free. Paywalled pages usually can't be read.`}
           >
             {links.length > 0 && (
               <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
@@ -218,7 +230,7 @@ export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, comp
 
           <Field
             label="Or paste the text"
-            hint="A press release, your own notes, a transcript, anything the video should be about."
+            hint="A press release, your own notes, a transcript, anything the video should be about. Free, however much you paste."
             count={`${text.length.toLocaleString()} / ${maxText.toLocaleString()}`}
             over={text.length > maxText}
           >
@@ -247,11 +259,15 @@ export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, comp
             {reading ? "Reading…" : "Read my source"}
           </button>
 
-          {/* Said before the button, not after. "Free" is the reason to press
-              it, and a creator watching a credit balance needs to know that
-              before they commit rather than as reassurance afterwards. */}
+          {/* Said before the button, not after. Reading costs nothing and that
+              is the reason to press it; a creator watching a balance needs to
+              know that before they commit, not as reassurance afterwards. The
+              one thing that does carry a price is named, because a ten minute
+              video is a large number to meet for the first time on the next
+              screen. */}
           <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
-            Free. You'll see exactly what we could read, and what it costs, before you write anything.
+            Reading is free. Only the script is charged, by length, plus
+            {" "}{videoBlockCr} credits per {videoBlockSecs}s if you added a video.
           </p>
         </>
       )}

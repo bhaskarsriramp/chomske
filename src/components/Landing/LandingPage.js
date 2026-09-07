@@ -1499,7 +1499,7 @@ function SceneImport({ active, isMobile }) {
             </div>
           ) : (
             <div style={{ fontSize: 9.5, color: "var(--d-mute)", marginTop: 12, lineHeight: 1.5 }}>
-              Free. You see what we could read, and the price, before anything is written.
+              You see the price, and what we could read, before anything is written.
             </div>
           )}
         </>
