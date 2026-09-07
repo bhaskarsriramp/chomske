@@ -161,6 +161,37 @@
         rel="stylesheet"
       />
     </noscript>
+
+    <!-- ── Google Analytics (GA4) ─────────────────────────────────────────────
+         LAST in the head, and deliberately so. Everything above it is on the
+         critical path for the first paint; this is not, and measurement must
+         never be what a visitor waits on. `async` means the fetch cannot block
+         parsing, and the inline config below runs immediately regardless of
+         when googletagmanager.com answers, because gtag() only pushes onto
+         dataLayer, which the tag drains whenever it arrives. A dead or blocked
+         analytics host therefore costs this page nothing at all.
+
+         ── WHY THERE IS NO ROUTE-CHANGE CODE ANYWHERE IN src/ ─────────────────
+         This is a single-page app, so only the first load is a real document
+         request and every screen after it is a History API call. GA4 handles
+         that itself: Enhanced measurement's "page changes based on browser
+         history events" is on by default for a web stream, and it turns each
+         navigation into its own page_view. Sending page_view manually on top of
+         it, the usual React-router recipe, is how a property ends up counting
+         every screen twice. If enhanced measurement is ever turned OFF in the
+         GA console, that is the moment to add manual sends here, and not
+         before.
+
+         Declared in the PRIVACY POLICY, section 2 and section 4. Analytics that
+         a policy does not mention is the one kind that actually matters. -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-QREPSWX7VS"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-QREPSWX7VS');
+    </script>
   </head>
   <body>
     <noscript>You need JavaScript enabled to run this app.</noscript>

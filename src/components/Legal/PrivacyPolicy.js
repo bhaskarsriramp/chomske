@@ -28,18 +28,21 @@ export default function PrivacyPolicy() {
       </Section>
 
       <Section n="2" title="What we collect">
-        <P>Three things, and nothing else.</P>
+        <P>Four things, and nothing else.</P>
         <Facts
           rows={[
             ["Your account", "Name, email address, profile picture and a Google account identifier, received from Google when you sign in. We never see or store a password, because we never ask for one."],
             ["What you give us", "The YouTube links you add, the transcripts we make from them, the voice profile built from those transcripts, the topic categories you pick, and every script we write for you."],
             ["How you use it", "Sign-in times, credit purchases and spends, and which stories you have already been shown. The last of these is deleted automatically after fourteen days."],
+            ["Which pages you open", "Google Analytics records the pages visited, roughly where in the world the visit came from, and what kind of device and browser it was. It is not joined to your account, and none of your videos, transcripts or scripts are ever sent to it."],
           ]}
         />
         <Callout>
-          We do not run advertising, we do not use tracking pixels or third-party
-          analytics cookies, and we do not sell or rent your data to anyone. There
-          is no advertising business here to feed.
+          We do not run advertising, we do not use tracking pixels, and we do not
+          sell or rent your data to anyone. There is no advertising business here
+          to feed. We do use Google Analytics to count visits and see which pages
+          people open, which sets its own cookies; it is told what page was
+          viewed, never who you are, and nothing you write here is sent to it.
         </Callout>
       </Section>
 
@@ -60,7 +63,7 @@ export default function PrivacyPolicy() {
         </P>
         <Facts
           rows={[
-            ["Google", "Sign-in (OAuth), and Gemini, which reads the videos you add and writes your scripts. Video and script content is sent to Google for processing."],
+            ["Google", "Sign-in (OAuth), and Gemini, which reads the videos you add and writes your scripts. Video and script content is sent to Google for processing. Separately, Google Analytics measures site traffic; it receives page addresses and device information, and none of your videos, transcripts or scripts."],
             ["Razorpay", "Payments. Card and UPI details go to Razorpay directly and never reach our servers; we receive only a payment identifier and the amount."],
             ["apidirect.io", "Public news articles and YouTube video metadata. We send it search terms and public video URLs, never anything about you."],
             ["MongoDB Atlas", "Database storage."],

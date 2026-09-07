@@ -34,7 +34,7 @@ export const ADDRESS_LINES = [
 ];
 
 /** One date for the whole set, so the pages cannot disagree about their age. */
-export const LAST_UPDATED = "6 September 2026";
+export const LAST_UPDATED = "7 September 2026";
 
 export default function LegalPage({ title, subtitle, updated = LAST_UPDATED, children }) {
   const isPhone = useIsMobile(680);
