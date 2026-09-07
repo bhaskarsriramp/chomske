@@ -551,7 +551,7 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
           className="hg-reveal"
           style={{ marginTop: isMobile ? 40 : 62, transitionDelay: ".26s" }}
         >
-          <HeroDemo isMobile={isMobile} />
+          <HeroVideo isMobile={isMobile} />
         </div>
       </div>
     </section>
@@ -727,271 +727,131 @@ function LanguageFlip() {
   );
 }
 
-/* ── The product, shown ────────────────────────────────────────────────────── */
+/* ── The product, shown ────────────────────────────────────────── */
+
+const DEMO_VIDEO_ID = "yDEUsSGm8YM";
 
 /**
- * The hero's demo: the actual flow, performed.
+ * The hero's demo: the real thing, on video.
  *
- * ── WHY IT MOVES ─────────────────────────────────────────────────────────────
- * A still screenshot of a feed says "this is a list of news". The product is
- * not the list: it is what happens when you pick one thing off it. So the
- * pointer does what a creator does: reads the shortlist, opens a story, reads
- * why it ranks, presses "Write this in my voice", and the script arrives in
- * Hindi. Four seconds, no copy required, and every frame of it is a real
- * screen from the app rather than an illustration of one.
+ * ── WHY THIS REPLACED THE ANIMATED MOCK ──────────────────────────────────────
+ * What stood here was a hand-built performance of the flow: a fake browser
+ * window, a scripted cursor pressing "Write this in my voice", and a Hindi
+ * script typing itself in. It read well and it had one problem that no amount
+ * of polish fixes, everything in it was drawn by this file. A visitor deciding
+ * whether a product is real does not get that from a recreation of it, however
+ * faithful, and the more convincing the recreation the more it costs us when
+ * they realise. A recording is the product or it is not.
  *
- * Phases:
- *   0  the shortlist, cursor idle
- *   1  cursor travels to the top story
- *   2  press: the story opens on the right
- *   3  cursor travels to "Write this in my voice"
- *   4  press
- *   5  drafting
- *   6  the script, in their language
+ * ── WHY IT DOES NOT LOAD YOUTUBE UNTIL ASKED ─────────────────────────────────
+ * An embedded player is roughly a megabyte of third-party JavaScript, several
+ * times this entire page, and it would land on every visitor whether or not
+ * they ever press play. That is the exact cost the app chunks were split out to
+ * avoid (see App.js). So what renders first is the poster frame and a play
+ * button, and the iframe is created on the press, with autoplay, so the click
+ * that asks for the video is the click that starts it. One interaction either
+ * way; the difference is only paid by people who want it.
+ *
+ * ── RESPONSIVE MEANS THE RATIO, NOT A WIDTH ──────────────────────────────────
+ * The frame is a percentage of whatever column it is in, capped at the same
+ * 1080 the mock used, and its height comes from a 16:9 aspect-ratio rather than
+ * a number. A fixed height is how an embed ends up letterboxed on a phone and
+ * cropped on a wide monitor; a ratio cannot be either.
  */
-function HeroDemo({ isMobile }) {
-  const ref = useRef(null);
-  const inView = useInView(ref);
-  const phase = useSceneClock(7, { active: inView, interval: 1150, hold: 3 });
+function HeroVideo({ isMobile }) {
+  const [playing, setPlaying] = useState(false);
 
-  const opened = phase >= 2;
-  const drafting = phase === 5;
-  const written = phase >= 6;
-
-  // Where the pointer is, per phase. Percentages across the window, so it lands
-  // on the same control at every width.
-  const spot =
-    phase <= 0 ? { left: "44%", top: 300 } :
-    phase <= 2 ? { left: "20%", top: 96 } :
-    { left: isMobile ? "26%" : "62%", top: isMobile ? 250 : 62 };
-  const pressed = phase === 2 || phase === 4;
+  // maxres does not exist for every upload, and a missing thumbnail is a broken
+  // image where the product should be. hq always exists.
+  const [poster, setPoster] = useState(
+    `https://i.ytimg.com/vi/${DEMO_VIDEO_ID}/maxresdefault.jpg`
+  );
 
   return (
     <div
-      ref={ref}
-      className="hg-drift"
       style={{
         position: "relative",
+        width: "100%",
         maxWidth: 1080,
         margin: "0 auto",
+        aspectRatio: "16 / 9",
         borderRadius: isMobile ? 14 : 20,
         border: "1px solid rgba(255,255,255,.12)",
         background: "rgba(255,255,255,.038)",
         boxShadow: `0 50px 120px -50px rgba(${RED},.42), 0 0 0 1px rgba(255,255,255,.04) inset`,
         overflow: "hidden",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
       }}
     >
-      <div
-        style={{
-          display: "flex", alignItems: "center", gap: 7,
-          padding: "10px 14px",
-          borderBottom: "1px solid rgba(255,255,255,.07)",
-          background: "rgba(255,255,255,.03)",
-        }}
-      >
-        <Dot /><Dot /><Dot />
-        <span
+      {playing ? (
+        <iframe
+          // A ratio-sized box with an absolutely filled child: the iframe's own
+          // width/height attributes are a starting size, not a constraint, and
+          // an embed left to them is the one thing on this page that would not
+          // resize with the window.
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
+          src={`https://www.youtube-nocookie.com/embed/${DEMO_VIDEO_ID}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+          title="Lipi: from today's news to a script in your own voice"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setPlaying(true)}
+          aria-label="Play the Lipi demo video"
           style={{
-            marginLeft: 8, fontSize: 11, color: "var(--d-mute)",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            position: "absolute", inset: 0, width: "100%", height: "100%",
+            padding: 0, border: "none", background: "none", cursor: "pointer",
+            display: "grid", placeItems: "center",
           }}
         >
-          trylipi.online/app/discover
-        </span>
-      </div>
-
-      <div style={{ position: "relative" }}>
-        {/* Hidden on phones: there is no pointer on a touch screen, and drawing
-            one there is a lie about how the product is used. */}
-        <Cursor {...spot} pressed={pressed} hidden={isMobile} />
-
-        <div
-          style={{
-            display: isMobile ? "block" : "grid",
-            gridTemplateColumns: "1.02fr 1fr",
-            minHeight: isMobile ? 0 : 330,
-          }}
-        >
-          {/* Left: the shortlist */}
-          <div style={{ padding: isMobile ? 14 : 18, borderRight: isMobile ? "none" : "1px solid rgba(255,255,255,.07)" }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
-              <span style={{ fontSize: isMobile ? 13.5 : 15, fontWeight: 700, color: "var(--d-ink)" }}>
-                What to cover today
-              </span>
-              <span style={{ fontSize: 10.5, color: "var(--d-mute)" }}>checked 4m ago</span>
-            </div>
-
-            {/* The selected row lifts on the press, exactly as the real feed's
-                selected row does. The demo has to match the product it shows. */}
-            <div
-              style={{
-                borderRadius: 10, marginBottom: 8,
-                border: `1px solid rgba(${RED},${opened ? ".55" : ".22"})`,
-                background: `rgba(${BLUE},${opened ? ".14" : ".08"})`,
-                padding: "11px 13px",
-                transition: "border-color .3s ease, background .3s ease",
-              }}
-            >
-              <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".08em", color: "var(--yt)", marginBottom: 5 }}>
-                NEW
-              </div>
-              <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.42, color: "var(--d-ink)" }}>
-                OpenAI ships a model that runs offline on a laptop
-              </div>
-              <div style={{ fontSize: 10.5, color: "var(--d-mute)", marginTop: 6 }}>
-                18 sources · Hacker News, The Verge · 12m ago
-              </div>
-            </div>
-
-            <MockRow
-              tone="255,255,255"
-              title="Nvidia buys an open-source AI lab for $13 billion"
-              meta="14 sources · Google News · 2h ago"
-            />
-            <MockRow
-              tone="255,255,255"
-              dim
-              title="India's UPI adds an offline payments mode"
-              meta="9 sources · Google News · 4h ago"
-            />
-          </div>
-
-          {/* Right: what opening a story gives you */}
-          <div
+          <img
+            src={poster}
+            alt=""
+            aria-hidden="true"
+            onError={() => setPoster(`https://i.ytimg.com/vi/${DEMO_VIDEO_ID}/hqdefault.jpg`)}
             style={{
-              padding: isMobile ? 14 : 18,
-              borderTop: isMobile ? "1px solid rgba(255,255,255,.07)" : "none",
-              minHeight: isMobile ? 210 : 0,
+              position: "absolute", inset: 0, width: "100%", height: "100%",
+              objectFit: "cover", display: "block",
+            }}
+          />
+
+          {/* Darkened, because a YouTube thumbnail is designed to be the
+              brightest thing in a grid of other thumbnails and this one is
+              sitting under a headline it must not outshout. */}
+          <span
+            aria-hidden="true"
+            style={{
+              position: "absolute", inset: 0,
+              background: "linear-gradient(180deg, rgba(10,10,12,.18), rgba(10,10,12,.44))",
+            }}
+          />
+
+          <span
+            aria-hidden="true"
+            className="hg-play"
+            style={{
+              position: "relative",
+              width: isMobile ? 58 : 74, height: isMobile ? 58 : 74,
+              borderRadius: "50%",
+              display: "grid", placeItems: "center",
+              background: "var(--yt-bright)",
+              boxShadow: `0 18px 44px -12px rgba(${BLUE},.75)`,
             }}
           >
-            {!opened ? (
-              <div style={{ display: "grid", placeItems: "center", height: "100%", minHeight: 120 }}>
-                <span style={{ fontSize: 12, color: "var(--d-mute)" }}>Pick a story to see what happened.</span>
-              </div>
-            ) : (
-              <div className="hg-fade">
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-                  <span
-                    style={{
-                      fontSize: 11.5, fontWeight: 700, padding: "6px 12px", borderRadius: 999,
-                      color: "#fff", background: "var(--yt)",
-                      boxShadow: pressed && phase === 4 ? `0 0 0 5px rgba(${RED},.25)` : "none",
-                      transition: "box-shadow .2s ease",
-                    }}
-                  >
-                    Write this in my voice
-                  </span>
-                  <span style={{ fontSize: 10.5, color: "var(--d-mute)" }}>learned from 5 of your videos</span>
-                </div>
-
-                {!drafting && !written && (
-                  <p style={{ fontSize: 11.5, lineHeight: 1.65, color: "var(--d-body)", margin: 0 }}>
-                    <strong style={{ color: "var(--d-ink)" }}>Why it ranks.</strong>{" "}
-                    A frontier model that runs without a connection, the first one people can
-                    actually try on their own laptop.
-                  </p>
-                )}
-
-                {drafting && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 11.5, color: "var(--d-body)" }}>
-                    <span
-                      style={{
-                        width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
-                        border: "2px solid rgba(255,255,255,.18)", borderTopColor: "var(--yt)",
-                        animation: "hg-spin .8s linear infinite",
-                      }}
-                    />
-                    Writing in your voice…
-                  </div>
-                )}
-
-                {written && <DemoScript isMobile={isMobile} />}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const SCRIPT_WORDS =
-  "तो दोस्तों, आज की सबसे बड़ी खबर: OpenAI ने एक ऐसा model निकाल दिया है जो आपके laptop पर बिना internet के चलेगा। मैंने खुद try किया, और सच बताऊँ तो...".split(
-    " "
-  );
-
-/**
- * The script, arriving word by word.
- *
- * ── WORD BY WORD, NEVER CHARACTER BY CHARACTER ───────────────────────────────
- * This text is Devanagari. A matra is a separate code point that attaches to
- * the consonant before it, so slicing a Hindi string one character at a time
- * renders half-formed clusters and stray floating vowel marks for a frame each,
- * broken-looking, in exactly the script the page is promising to handle well.
- * Splitting on spaces means every frame shows whole, correctly shaped words.
- */
-function DemoScript({ isMobile }) {
-  const [n, setN] = useState(0);
-
-  useEffect(() => {
-    const still =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (still) { setN(SCRIPT_WORDS.length); return; }
-    const t = setInterval(() => setN((v) => (v >= SCRIPT_WORDS.length ? v : v + 1)), 85);
-    return () => clearInterval(t);
-  }, []);
-
-  return (
-    <p
-      className="indic hg-fade"
-      style={{
-        fontSize: isMobile ? 12.5 : 13.5, lineHeight: 1.85,
-        color: "var(--d-ink)", margin: 0, minHeight: isMobile ? 110 : 130,
-      }}
-    >
-      {SCRIPT_WORDS.slice(0, n).join(" ")}
-      {n < SCRIPT_WORDS.length && (
-        <span
-          className="hg-caret"
-          aria-hidden="true"
-          style={{
-            display: "inline-block", width: 2, height: "1em",
-            marginLeft: 3, verticalAlign: "text-bottom", background: "var(--yt)",
-          }}
-        />
+            <svg
+              width={isMobile ? 22 : 28}
+              height={isMobile ? 22 : 28}
+              viewBox="0 0 24 24"
+              fill="#0A0A0C"
+              aria-hidden="true"
+              style={{ marginLeft: isMobile ? 3 : 4 }}
+            >
+              <path d="M7 4.5l13 7.5-13 7.5z" />
+            </svg>
+          </span>
+        </button>
       )}
-    </p>
-  );
-}
-
-
-function MockRow({ title, meta, tone, isNew, dim }) {
-  return (
-    <div
-      style={{
-        padding: "11px 13px",
-        borderRadius: 11,
-        marginBottom: 8,
-        background: `rgba(${tone},.075)`,
-        border: `1px solid rgba(${tone},.22)`,
-        opacity: dim ? 0.5 : 1,
-      }}
-    >
-      {isNew && (
-        <div
-          style={{
-            fontSize: 9.5, fontWeight: 800, letterSpacing: "0.08em",
-            color: `rgb(${tone})`, marginBottom: 5,
-          }}
-        >
-          NEW
-        </div>
-      )}
-      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.42, color: "var(--d-ink)" }}>{title}</div>
-      <div style={{ fontSize: 10.5, color: "var(--d-mute)", marginTop: 6 }}>{meta}</div>
     </div>
   );
 }
