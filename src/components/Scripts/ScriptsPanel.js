@@ -542,35 +542,25 @@ function ScriptDetail({ script, onClose, compact }) {
           {script.voice_confidence === "thin" && "  ·  learned from one video"}
         </span>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          {script.status === "done" && (
-            <button
-              onClick={copy}
-              className="hg-btn-ghost"
-              style={{
-                fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-                border: "1px solid var(--line)", background: "var(--card)",
-                color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer",
-              }}
-            >
-              {copied ? "Copied" : "Copy script"}
-            </button>
-          )}
-          {onClose && (
-            <button
-              onClick={onClose}
-              aria-label="Close"
-              className="hg-btn-ghost"
-              style={{
-                fontSize: 17, lineHeight: 1, padding: "6px 11px", borderRadius: 9,
-                border: "1px solid var(--line)", background: "var(--card)",
-                color: "var(--ink-mute)", cursor: "pointer",
-              }}
-            >
-              ×
-            </button>
-          )}
-        </div>
+        {/* Copy used to sit here too. Two copy buttons on one screen is two
+            answers to "where do I get the text", and the one attached to the
+            script itself wins on every count: it is beside what it copies, and
+            it is still on screen after a long script has been read, which this
+            one was not. See the "Your script" bar below. */}
+        {onClose && (
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="hg-btn-ghost"
+            style={{
+              fontSize: 17, lineHeight: 1, padding: "6px 11px", borderRadius: 9,
+              border: "1px solid var(--line)", background: "var(--card)",
+              color: "var(--ink-mute)", cursor: "pointer", flexShrink: 0,
+            }}
+          >
+            ×
+          </button>
+        )}
       </header>
 
       <div

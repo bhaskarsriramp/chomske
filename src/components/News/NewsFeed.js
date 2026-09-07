@@ -92,9 +92,12 @@ export default function NewsFeed({
   // keeps its own fetch only for the case where it is rendered standalone.
   voice: voiceProp = null,
   onVoiceChange = null,
-  // Where an empty or exhausted feed sends somebody. See EmptyFeedFooter below:
-  // "there is nothing here today" is precisely the moment the other two modes
-  // are worth knowing about.
+  // Where an EMPTY feed sends somebody, and only an empty one. A line offering
+  // Import and Idea above a list that already has fifteen stories in it was
+  // redundant: the mode switch sits directly above this pane and says the same
+  // thing permanently, in a control the reader can act on. Repeating it as prose
+  // over a working feed is noise. When there is nothing to show it stops being
+  // a repetition and becomes the only thing left to do, so EmptyState keeps it.
   onGoImport = null,
   onGoIdea = null,
 }) {
@@ -664,16 +667,6 @@ export default function NewsFeed({
             <EmptyState settling={emptyTries < 3} onGoImport={onGoImport} onGoIdea={onGoIdea} />
           )}
 
-          {/* ── THE OTHER TWO WAYS IN, WHERE THEY ARE ACTUALLY NEEDED ───────
-              Under the list rather than at the top of it. Somebody who has just
-              read fifteen ranked stories and picked none is the single most
-              likely person in this product to want Import or Idea, and until
-              they scrolled to the bottom the feed was the only thing they knew
-              existed. The switch above says the modes are there; this says when
-              to reach for them. */}
-          {loadedOnce && items.length > 0 && (onGoImport || onGoIdea) && (
-            <OtherWaysIn onGoImport={onGoImport} onGoIdea={onGoIdea} />
-          )}
 
           {items.length > 0 && (
             <>
@@ -756,51 +749,6 @@ export default function NewsFeed({
  */
 function seenKey(it) {
   return it.story || it.id;
-}
-
-/**
- * Where to go when the feed is not the answer.
- *
- * Quiet on purpose: two text buttons and a line, not a pair of cards competing
- * with the stories above them. The feed is still the fastest route to a video
- * on a day when it has something, and this must not read as an apology for it.
- */
-function OtherWaysIn({ onGoImport, onGoIdea }) {
-  return (
-    <div
-      style={{
-        marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--line)",
-        fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.7,
-      }}
-    >
-      Nothing here you want to cover?{" "}
-      {onGoImport && (
-        <>
-          <LinkButton onClick={onGoImport}>Import a video or link</LinkButton>
-          {onGoIdea ? ", or " : "."}
-        </>
-      )}
-      {onGoIdea && (
-        <>
-          <LinkButton onClick={onGoIdea}>write your own idea</LinkButton>.
-        </>
-      )}
-    </div>
-  );
-}
-
-function LinkButton({ onClick, children }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        background: "none", border: "none", padding: 0, font: "inherit",
-        color: "var(--ink)", fontWeight: 600, textDecoration: "underline", cursor: "pointer",
-      }}
-    >
-      {children}
-    </button>
-  );
 }
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */
