@@ -54,27 +54,39 @@ const LANGUAGES = [
 ];
 
 /**
- * The page's whole palette: black, YouTube red, and white.
+ * The page's palette. Kept as "r,g,b" triples because almost every use here is
+ * an rgba() at some alpha, and a hex would have to be torn apart at each one.
  *
- * ── ONE HUE AT THREE STRENGTHS, NOT THREE HUES ───────────────────────────────
- * The greens are gone, and so are the cyan, ice blue and orchid before them.
- * What is left is the platform's own red at three depths plus white, which is
- * enough to separate three steps or eight niche chips from each other without
- * introducing a second colour that has to mean something.
+ * ── WHY THE RED IS NO LONGER #FF0000 ─────────────────────────────────────────
+ * It was, and on a #000 ground it shimmered. Fully saturated red is the darkest
+ * of the primaries, and against black the eye cannot hold a red edge and a
+ * black edge in focus together, so the text vibrates instead of sitting still.
+ * Backing off saturation and lifting the ground (see .hg-dark in index.css)
+ * fixes the same problem from both ends, and the calmer red also measures
+ * better: 5.96:1 against the new ground, where #FF0000 on #000 was 5.25:1.
  *
- * A note that OUTLIVED the green: nothing on this page may use colour alone to
- * carry meaning. In the ranking demo the kept stories and the dropped ones are
- * told apart by their score, their position and a strike-through, the tint is
- * the last of four signals, not the only one. That was written for red-green
- * colour blindness and it holds just as well for a red-only palette, where the
- * risk is instead that everything looks the same at a glance.
+ * ── AND WHY THERE IS NOW A SECOND HUE ────────────────────────────────────────
+ * The note that used to live here argued for one hue at three strengths,
+ * because nothing on the page needed a second colour to mean anything. That was
+ * right about a page describing one path. It now describes three, and Import
+ * and Idea are a genuinely different proposition from the ranked feed, so
+ * violet has something to say. It also breaks up two thousand pixels of a
+ * single colour, which was its own readability problem.
+ *
+ * The rule that survives every repaint of this palette: nothing here may use
+ * colour ALONE to carry meaning. In the ranking demo the kept and dropped
+ * stories are told apart by score, position and a strike-through, and the tint
+ * is the fourth signal, not the only one. Written for red-green colour
+ * blindness, and just as necessary now that red and violet sit on one page.
  */
-const RED = "255,0,0";        // YouTube red, the one that carries the brand
-const DEEP = "196,12,12";     // deeper, for the elements that must recede
-const ROSE = "255,116,116";   // lighter, for small marks that would vibrate at full red
+const RED = "255,74,74";       // the brand, tuned to sit still on a dark ground
+const DEEP = "229,72,77";      // deeper, for elements that must recede
+const ROSE = "255,143,143";    // lighter, for small marks that would glare at full strength
+const VIOLET = "139,124,246";  // the "bring your own material" hue: Import and Idea
+const VIOLET_SOFT = "179,166,255";
 const WHITE = "255,255,255";
 
-const GLOW = { red: RED, deep: DEEP, rose: ROSE };
+const GLOW = { red: RED, deep: DEEP, rose: ROSE, violet: VIOLET };
 
 /**
  * One observer for every reveal on the page.
@@ -342,6 +354,7 @@ export default function LandingPage({ onSignedIn, checking }) {
       />
       <SourceBar />
       <HowItWorks isMobile={isMobile} pad={pad} />
+      <BringYourOwn isMobile={isMobile} pad={pad} />
       <WhatYouGet isMobile={isMobile} pad={pad} />
       <VoiceProof isMobile={isMobile} pad={pad} />
       <Niches isMobile={isMobile} pad={pad} />
@@ -384,7 +397,7 @@ function Nav({ pad, isMobile }) {
         // which reads as a rendering fault rather than a design. Black matches
         // the hero exactly, so the seam disappears; once scrolled it becomes the
         // translucent glass, over sections that are no longer black anyway.
-        background: stuck ? "rgba(8,6,6,.74)" : "#000",
+        background: stuck ? "rgba(10,10,12,.78)" : "var(--d-bg)",
         backdropFilter: stuck ? "blur(14px)" : "none",
         WebkitBackdropFilter: stuck ? "blur(14px)" : "none",
         borderBottom: `1px solid ${stuck ? "var(--d-line-soft)" : "transparent"}`,
@@ -550,16 +563,16 @@ function Aurora() {
         }}
       />
 
-      {/* Red, black and white only. Three densities of the same red rather than
-          three different hues: on black, one colour at varying strength reads as
-          depth, where three would read as a gradient mesh, the thing every
-          other AI landing page is already doing. */}
+      {/* Two hues, four densities, and no mesh. The top two blobs are the brand
+          red at different strengths, which reads as depth rather than as a
+          gradient; the bottom one is violet, so the hero already carries a hint
+          of where the page turns when it stops being about the feed. */}
       <div
         className="hg-aurora hg-aurora-a"
         style={{
           width: "58vw", height: "58vw", maxWidth: 900, maxHeight: 900,
           left: "-14vw", top: "-22vw",
-          background: "radial-gradient(circle, rgba(255,0,0,.28), transparent 66%)",
+          background: `radial-gradient(circle, rgba(${RED},.26), transparent 66%)`,
         }}
       />
       <div
@@ -567,7 +580,7 @@ function Aurora() {
         style={{
           width: "52vw", height: "52vw", maxWidth: 820, maxHeight: 820,
           right: "-12vw", top: "-18vw",
-          background: "radial-gradient(circle, rgba(204,0,0,.22), transparent 66%)",
+          background: `radial-gradient(circle, rgba(${DEEP},.20), transparent 66%)`,
         }}
       />
       <div
@@ -575,17 +588,19 @@ function Aurora() {
         style={{
           width: "78vw", height: "44vw", maxWidth: 1200, maxHeight: 660,
           left: "11vw", bottom: "-26vw",
-          background: "radial-gradient(circle, rgba(255,0,0,.20), transparent 68%)",
+          background: `radial-gradient(circle, rgba(${VIOLET},.20), transparent 68%)`,
         }}
       />
 
       {/* The horizon: one bright hairline with a bloom under it, which is what
-          gives the section a floor instead of a fade. */}
+          gives the section a floor instead of a fade. It runs red into violet
+          rather than red alone, so the seam between the hero and everything
+          below it is where the page changes colour. */}
       <div
         style={{
           position: "absolute", left: "50%", bottom: 0, transform: "translateX(-50%)",
           width: "140%", height: 1,
-          background: "linear-gradient(90deg, transparent, rgba(255,0,0,.75), transparent)",
+          background: `linear-gradient(90deg, transparent, rgba(${RED},.65) 34%, rgba(${VIOLET},.55) 72%, transparent)`,
         }}
       />
     </div>
@@ -764,7 +779,7 @@ function HeroDemo({ isMobile }) {
         borderRadius: isMobile ? 14 : 20,
         border: "1px solid rgba(255,255,255,.12)",
         background: "linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015))",
-        boxShadow: "0 50px 120px -50px rgba(255,0,0,.45), 0 0 0 1px rgba(255,255,255,.03) inset",
+        boxShadow: `0 50px 120px -50px rgba(${RED},.42), 0 0 0 1px rgba(255,255,255,.04) inset`,
         overflow: "hidden",
         backdropFilter: "blur(6px)",
         WebkitBackdropFilter: "blur(6px)",
@@ -785,7 +800,7 @@ function HeroDemo({ isMobile }) {
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}
         >
-          trylipi.online/app/topics
+          trylipi.online/app/discover
         </span>
       </div>
 
@@ -815,8 +830,8 @@ function HeroDemo({ isMobile }) {
             <div
               style={{
                 borderRadius: 10, marginBottom: 8,
-                border: `1px solid rgba(255,0,0,${opened ? ".55" : ".22"})`,
-                background: `linear-gradient(180deg, rgba(255,0,0,${opened ? ".16" : ".10"}), rgba(255,0,0,.025))`,
+                border: `1px solid rgba(${RED},${opened ? ".55" : ".22"})`,
+                background: `linear-gradient(180deg, rgba(${RED},${opened ? ".16" : ".10"}), rgba(${RED},.025))`,
                 padding: "11px 13px",
                 transition: "border-color .3s ease, background .3s ease",
               }}
@@ -864,7 +879,7 @@ function HeroDemo({ isMobile }) {
                     style={{
                       fontSize: 11.5, fontWeight: 700, padding: "6px 12px", borderRadius: 999,
                       color: "#fff", background: "var(--yt)",
-                      boxShadow: pressed && phase === 4 ? "0 0 0 5px rgba(255,0,0,.25)" : "none",
+                      boxShadow: pressed && phase === 4 ? `0 0 0 5px rgba(${RED},.25)` : "none",
                       transition: "box-shadow .2s ease",
                     }}
                   >
@@ -1169,7 +1184,7 @@ function SceneWatching({ active }) {
   ];
 
   return (
-    <DemoFrame label="trylipi.online/app/topics" tone={RED} height={252}>
+    <DemoFrame label="trylipi.online/app/discover" tone={RED} height={252}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--d-ink)" }}>What to cover today</span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: "var(--d-mute)" }}>
@@ -1333,6 +1348,442 @@ function ScriptPage({ active }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/* ── Bring your own ────────────────────────────────────────────────────────── */
+
+/**
+ * The two ways in that are not the feed.
+ *
+ * ── WHY THIS SECTION EXISTS ON THE LANDING PAGE AT ALL ───────────────────────
+ * Everything above it sells one promise: we watch the news so you do not have
+ * to. That promise has an obvious hole, and a creator finds it in about four
+ * seconds. What happens on a quiet day? What about my own product launch? What
+ * about the thing I already decided to make a video about this morning?
+ *
+ * Left unanswered, the page reads as a news tool, which is a much smaller
+ * product than this one is. The voice profile and the writer are the asset; the
+ * ranked feed was only ever one way to feed them. So this sits directly after
+ * "How it works", where the objection forms, and answers it the way that
+ * section does: with a working miniature of the real screen rather than a
+ * paragraph claiming it works.
+ *
+ * It is also the page's violet half. Red carries the feed above; these two are
+ * a different proposition and are coloured like one. See the palette note at
+ * the top of this file for why a second hue earns its place now when it did not
+ * before.
+ */
+function BringYourOwn({ isMobile, pad }) {
+  const modes = [
+    {
+      k: "Import",
+      tone: VIOLET,
+      title: "Cover anything you can paste",
+      body:
+        "A YouTube video up to ten minutes, up to five article links, or paste the text straight in. " +
+        "We read it first and tell you what we could not, before you spend a credit.",
+      scene: (a) => <SceneImport active={a} isMobile={isMobile} />,
+    },
+    {
+      k: "Idea",
+      tone: VIOLET_SOFT,
+      title: "Or just say what you want to make",
+      body:
+        "Type the idea in one line. We draft what the video should actually say, you correct it, " +
+        "and only what you approve gets written in your voice.",
+      scene: (a) => <SceneIdea active={a} isMobile={isMobile} />,
+    },
+  ];
+
+  return (
+    <Section id="bring" pad={pad} isMobile={isMobile} glow={VIOLET} band>
+      <SectionHead
+        isMobile={isMobile}
+        eyebrow="Bring your own"
+        title="The feed is one of three ways in"
+        sub="Some days nothing in the news is yours. Import your own material, or start from nothing but an idea. The same voice writes all three."
+      />
+
+      <div style={{ marginTop: isMobile ? 34 : 60, display: "grid", gap: isMobile ? 34 : 64 }}>
+        {modes.map((m, i) => (
+          <ModeRow key={m.k} mode={m} index={i} isMobile={isMobile} />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * One mode: the screen on one side, two lines on the other.
+ *
+ * Same zig-zag as StepRow, and deliberately NOT that component. The steps above
+ * are numbered 01-03 because they happen in order; these two are alternatives,
+ * and numbering them 04 and 05 would say the opposite of what they are. A named
+ * pill is the honest label, and it doubles as the tab name a visitor meets
+ * inside the product ten seconds after signing up.
+ */
+function ModeRow({ mode, index, isMobile }) {
+  const ref = useRef(null);
+  const active = useInView(ref);
+  const flip = !isMobile && index % 2 === 1;
+
+  return (
+    <div
+      ref={ref}
+      className="hg-reveal"
+      style={{
+        display: "grid",
+        gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+        gap: isMobile ? 18 : 56,
+        alignItems: "center",
+      }}
+    >
+      <div style={{ order: flip ? 2 : 1 }}>{mode.scene(active)}</div>
+
+      <div style={{ order: flip ? 1 : 2 }}>
+        <span
+          style={{
+            display: "inline-block", marginBottom: 14,
+            fontSize: 11.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
+            padding: "6px 13px", borderRadius: 999,
+            color: `rgb(${mode.tone})`,
+            background: `rgba(${mode.tone},.11)`,
+            border: `1px solid rgba(${mode.tone},.28)`,
+          }}
+        >
+          {mode.k}
+        </span>
+        <h3
+          style={{
+            fontSize: isMobile ? 20 : 26, fontWeight: 750,
+            letterSpacing: "-0.028em", lineHeight: 1.22,
+            color: "var(--d-ink)", margin: "0 0 10px",
+          }}
+        >
+          {mode.title}
+        </h3>
+        <p style={{ fontSize: isMobile ? 14.5 : 16, lineHeight: 1.6, color: "var(--d-body)", margin: 0, maxWidth: 430 }}>
+          {mode.body}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** A mock input, so these scenes read as a form rather than as a diagram. */
+function MockField({ label, value, filled, caret }) {
+  return (
+    <div style={{ marginBottom: 9 }}>
+      <div
+        style={{
+          fontSize: 8.5, fontWeight: 700, letterSpacing: "0.11em",
+          textTransform: "uppercase", color: "var(--d-mute)", marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 10.5, lineHeight: 1.5, padding: "7px 9px", borderRadius: 7, minHeight: 28,
+          color: filled ? "var(--d-ink)" : "var(--d-mute)",
+          background: "rgba(255,255,255,.035)",
+          border: `1px solid ${filled ? `rgba(${VIOLET},.35)` : "rgba(255,255,255,.09)"}`,
+          transition: "border-color .3s ease, color .3s ease",
+          wordBreak: "break-all",
+        }}
+      >
+        {value}
+        {caret && <span className="hg-caret" style={{ color: `rgb(${VIOLET})` }}>|</span>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One line of what we could, or could not, read.
+ *
+ * The refusal row is the point of the whole scene. The easy thing to do with a
+ * page that will not open is drop it silently and write from what is left, and
+ * the creator finds out by reading a thin script. Putting the failure on the
+ * landing page, before anyone has signed up, is a claim about how the product
+ * behaves that is worth more than another line of copy saying it is honest.
+ */
+function ReadRow({ ok, label, detail }) {
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 7 }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 14, height: 14, borderRadius: "50%", flexShrink: 0, marginTop: 1,
+          display: "grid", placeItems: "center", fontSize: 8.5, fontWeight: 800, lineHeight: 1,
+          color: ok ? "#0A0A0C" : "var(--d-ink)",
+          background: ok ? `rgb(${VIOLET_SOFT})` : "rgba(255,255,255,.16)",
+        }}
+      >
+        {ok ? "✓" : "!"}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 650, color: "var(--d-ink)", lineHeight: 1.35 }}>{label}</div>
+        {detail && <div style={{ fontSize: 9.5, color: "var(--d-mute)", marginTop: 2, lineHeight: 1.4 }}>{detail}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** Import: paste it, read it, and be told honestly what came back. */
+function SceneImport({ active, isMobile }) {
+  const phase = useSceneClock(6, { active, interval: 1000, hold: 3 });
+
+  const typed = phase >= 1;
+  const linked = phase >= 2;
+  const reading = phase === 4;
+  const done = phase >= 5;
+
+  return (
+    <DemoFrame label="trylipi.online/app/import" tone={VIOLET} height={252}>
+      <Cursor
+        left={phase >= 3 ? "22%" : "70%"}
+        top={phase >= 3 ? 178 : 62}
+        pressed={phase === 3}
+        hidden={isMobile}
+      />
+
+      {!done ? (
+        <>
+          <MockField
+            label="YouTube video"
+            filled={typed}
+            value={typed ? "youtube.com/watch?v=aX2p9kR4mQ" : "https://youtube.com/watch?v=..."}
+            caret={phase === 1}
+          />
+
+          <div style={{ marginBottom: 11 }}>
+            <div
+              style={{
+                fontSize: 8.5, fontWeight: 700, letterSpacing: "0.11em",
+                textTransform: "uppercase", color: "var(--d-mute)", marginBottom: 5,
+              }}
+            >
+              Article links
+            </div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {["reuters.com", "livemint.com", "ft.com"].map((h, i) => (
+                <span
+                  key={h}
+                  style={{
+                    fontSize: 9.5, padding: "4px 8px", borderRadius: 6,
+                    color: "var(--d-body)",
+                    background: "rgba(255,255,255,.045)",
+                    border: "1px solid rgba(255,255,255,.10)",
+                    opacity: linked ? 1 : 0,
+                    transform: linked ? "none" : "translateY(4px)",
+                    transition: `opacity .35s ease ${i * 0.08}s, transform .35s ease ${i * 0.08}s`,
+                  }}
+                >
+                  {h}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <span
+            style={{
+              display: "inline-block",
+              fontSize: 10.5, fontWeight: 700, padding: "7px 14px", borderRadius: 999,
+              color: "#0A0A0C", background: `rgb(${VIOLET_SOFT})`,
+              boxShadow: phase === 3 ? `0 0 0 5px rgba(${VIOLET},.25)` : "none",
+              transition: "box-shadow .2s ease",
+            }}
+          >
+            Read my source
+          </span>
+
+          {reading ? (
+            <div
+              className="hg-fade"
+              style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 13, fontSize: 10.5, color: "var(--d-body)" }}
+            >
+              <span
+                style={{
+                  width: 12, height: 12, borderRadius: "50%", flexShrink: 0,
+                  border: "2px solid rgba(255,255,255,.16)", borderTopColor: `rgb(${VIOLET})`,
+                  animation: "hg-spin .8s linear infinite",
+                }}
+              />
+              Watching the video, reading the pages...
+            </div>
+          ) : (
+            <div style={{ fontSize: 9.5, color: "var(--d-mute)", marginTop: 12, lineHeight: 1.5 }}>
+              Free. You see what we could read, and the price, before anything is written.
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="hg-fade">
+          <div
+            style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: "0.11em", textTransform: "uppercase",
+              color: "var(--d-mute)", marginBottom: 10,
+            }}
+          >
+            What we will write from
+          </div>
+          <ReadRow ok label="Video read · 8m 12s" detail="RBI policy briefing, full transcript" />
+          <ReadRow ok label="2 pages read" detail="reuters.com, livemint.com" />
+          <ReadRow label="Could not read 1 link" detail="ft.com blocked us. Usually a paywall." />
+          <div
+            style={{
+              marginTop: 11, paddingTop: 10, borderTop: "1px solid var(--d-line-soft)",
+              display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 10.5, fontWeight: 700, padding: "6px 13px", borderRadius: 999,
+                color: "#0A0A0C", background: `rgb(${VIOLET_SOFT})`,
+              }}
+            >
+              Write this in my voice
+            </span>
+            <span style={{ fontSize: 9.5, color: "var(--d-mute)" }}>60s · 54 credits</span>
+          </div>
+        </div>
+      )}
+    </DemoFrame>
+  );
+}
+
+/**
+ * Idea: the draft step, which is the part worth showing.
+ *
+ * The scene spends its longest phase on a page of text sitting in an EDIT box
+ * with a cursor in it, because that is the honest picture of what this mode is.
+ * A demo that jumped from one typed line straight to a finished script would be
+ * claiming the model knows things about a creator's subject that nobody has
+ * told it, which is the exact claim this product spends most of its code
+ * refusing to make.
+ */
+function SceneIdea({ active, isMobile }) {
+  const phase = useSceneClock(6, { active, interval: 1050, hold: 3 });
+
+  const typed = phase >= 1;
+  const drafting = phase === 3;
+  const drafted = phase >= 4;
+  const approved = phase >= 5;
+
+  const DRAFT = [
+    "A candlestick pattern is one or two candles telling you what",
+    "buyers and sellers did in a single session. A chart pattern is",
+    "the shape twenty or thirty candles make together.",
+    "Beginners mix them up because both are called patterns, but they",
+    "answer different questions on different timeframes.",
+  ];
+
+  return (
+    <DemoFrame label="trylipi.online/app/idea" tone={VIOLET_SOFT} height={252}>
+      <Cursor
+        left={phase === 2 ? "18%" : approved ? "20%" : "68%"}
+        top={phase === 2 ? 118 : approved ? 196 : 58}
+        pressed={phase === 2 || phase === 5}
+        hidden={isMobile}
+      />
+
+      {!drafted ? (
+        <>
+          <MockField
+            label="What is the video about?"
+            filled={typed}
+            value={
+              typed
+                ? "Explain the difference between candlestick patterns and chart patterns"
+                : "Tell us what you want the video to be about..."
+            }
+            caret={phase === 1}
+          />
+
+          <span
+            style={{
+              display: "inline-block", marginTop: 5,
+              fontSize: 10.5, fontWeight: 700, padding: "7px 14px", borderRadius: 999,
+              color: "#0A0A0C", background: `rgb(${VIOLET_SOFT})`,
+              boxShadow: phase === 2 ? `0 0 0 5px rgba(${VIOLET},.25)` : "none",
+              transition: "box-shadow .2s ease",
+            }}
+          >
+            Continue
+          </span>
+
+          {drafting && (
+            <div
+              className="hg-fade"
+              style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 15, fontSize: 10.5, color: "var(--d-body)" }}
+            >
+              <span
+                style={{
+                  width: 12, height: 12, borderRadius: "50%", flexShrink: 0,
+                  border: "2px solid rgba(255,255,255,.16)", borderTopColor: `rgb(${VIOLET_SOFT})`,
+                  animation: "hg-spin .8s linear infinite",
+                }}
+              />
+              No news on this one. Drafting it instead...
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="hg-fade">
+          <div
+            style={{
+              display: "flex", alignItems: "baseline", justifyContent: "space-between",
+              gap: 8, marginBottom: 7,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 9, fontWeight: 700, letterSpacing: "0.11em",
+                textTransform: "uppercase", color: "var(--d-mute)",
+              }}
+            >
+              What the video will say
+            </span>
+            <span style={{ fontSize: 9, color: "var(--d-mute)" }}>edit anything</span>
+          </div>
+
+          <div
+            style={{
+              padding: "9px 10px", borderRadius: 8,
+              background: "rgba(255,255,255,.035)",
+              border: `1px solid rgba(${VIOLET},.32)`,
+            }}
+          >
+            {DRAFT.map((l, i) => (
+              <div key={l} style={{ fontSize: 10, lineHeight: 1.62, color: "var(--d-ink)" }}>
+                {l}
+                {i === DRAFT.length - 1 && !approved && (
+                  <span className="hg-caret" style={{ color: `rgb(${VIOLET_SOFT})` }}>|</span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 11, flexWrap: "wrap" }}>
+            <span
+              style={{
+                fontSize: 10.5, fontWeight: 700, padding: "6px 13px", borderRadius: 999,
+                color: "#0A0A0C", background: `rgb(${VIOLET_SOFT})`,
+                boxShadow: phase === 5 ? `0 0 0 5px rgba(${VIOLET},.25)` : "none",
+                transition: "box-shadow .2s ease",
+              }}
+            >
+              Use this
+            </span>
+            <span style={{ fontSize: 9.5, color: "var(--d-mute)" }}>
+              {approved ? "Approved · writing in your voice" : "Your words, checked by you"}
+            </span>
+          </div>
+        </div>
+      )}
+    </DemoFrame>
   );
 }
 
@@ -1565,7 +2016,7 @@ function VoiceProof({ isMobile, pad }) {
   ];
 
   return (
-    <Section id="voice" pad={pad} isMobile={isMobile} glow={GLOW.red}>
+    <Section id="voice" pad={pad} isMobile={isMobile} glow={GLOW.red} band>
       <SectionHead
         isMobile={isMobile}
         eyebrow="Your voice"
@@ -1632,7 +2083,7 @@ function Niches({ isMobile, pad }) {
   ];
 
   return (
-    <Section id="niches" pad={pad} isMobile={isMobile} glow={GLOW.deep}>
+    <Section id="niches" pad={pad} isMobile={isMobile} glow={GLOW.violet}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="Niches"
@@ -1735,7 +2186,26 @@ function ClosingCta({ isMobile, pad, onCredential, busy }) {
  *   a template. One colour per section gives each its own light without
  *   introducing a second accent system.
  */
-function Section({ id, pad, isMobile, glow, children }) {
+/**
+ * One band of the page.
+ *
+ * ── WHY SECTIONS NOW HAVE THEIR OWN GROUND ───────────────────────────────────
+ * Every section used to be transparent over one fixed wash, so the page was a
+ * single uninterrupted sheet two thousand pixels tall with hairlines drawn
+ * across it. Nothing told the eye where one idea ended and the next began, and
+ * a reader scrolling fast could not tell they had moved on.
+ *
+ * `band` lifts alternating sections by about two percent of white. That is
+ * deliberately almost nothing: it is enough to see the edge when you scroll
+ * past it and not enough to read as a coloured box. Semi-transparent rather
+ * than opaque, because .hg-wash is FIXED behind the whole page and an opaque
+ * section would paint straight over the moving light that gives the page depth.
+ *
+ * `glow` stays what it always was, the hue of the bloom over the section's
+ * heading, and it is now the main thing separating the red half of the page
+ * from the violet half.
+ */
+function Section({ id, pad, isMobile, glow, band, children }) {
   return (
     <section
       id={id}
@@ -1743,6 +2213,7 @@ function Section({ id, pad, isMobile, glow, children }) {
         position: "relative",
         padding: `${isMobile ? 52 : 84}px ${pad}`,
         borderTop: "1px solid var(--d-line-soft)",
+        background: band ? "rgba(255,255,255,.018)" : "transparent",
         overflow: "hidden",
       }}
     >
@@ -1835,6 +2306,12 @@ function Dot() {
  * instant recognition: if you have to squint at it, it has said nothing.
  * YouTube keeps its own red; the other two are white, because three brand
  * colours in a row reads as a sponsor strip.
+ *
+ * That red is the ONE place on this page still set to raw #FF0000, and it must
+ * stay that way: it is YouTube's trademark, not our accent, and the palette
+ * note at the top of this file does not apply to somebody else's logo. It is
+ * also a shape rather than text, so the shimmer that made #FF0000 wrong for
+ * type here is not a problem for it.
  */
 const PLATFORMS = [
   {
