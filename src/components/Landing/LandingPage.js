@@ -758,14 +758,38 @@ const DEMO_VIDEO_ID = "yDEUsSGm8YM";
  * a number. A fixed height is how an embed ends up letterboxed on a phone and
  * cropped on a wide monitor; a ratio cannot be either.
  */
+/**
+ * The poster sizes, best first.
+ *
+ * ── WHY THIS IS A LIST AND NOT ONE URL WITH AN onError ───────────────────────
+ * YouTube generates the big sizes only when the SOURCE was big enough, so
+ * maxresdefault is missing for plenty of real uploads, including this one. The
+ * obvious handling, one URL and an onError fallback, does not work, and fails
+ * in the worst possible way: a missing size answers 404 but with
+ * `Content-Type: image/jpeg` and a valid 120x90 grey placeholder in the body.
+ * Browsers decode it and display it, and `error` never fires. The result was
+ * that grey YouTube glyph, a 120px image blown up to 1080 and blurred to mush,
+ * with no failure anywhere for the code to notice.
+ *
+ * So the size is chosen by what actually ARRIVES: onLoad measures the decoded
+ * image, and anything placeholder-sized moves to the next candidate. onError
+ * still moves too, for the hosts that answer honestly.
+ *
+ * `sddefault` and `hqdefault` are 4:3 with the 16:9 frame letterboxed inside
+ * them. That is not a problem to work around, it is why the img is
+ * `object-fit: cover` in a 16:9 box: the crop removes exactly the bars and
+ * leaves exactly the frame.
+ */
+const POSTER_SIZES = ["maxresdefault", "sddefault", "hqdefault"];
+
+/** YouTube's "no thumbnail at this size" image is 120x90. Nothing real is. */
+const PLACEHOLDER_MAX_W = 200;
+
 function HeroVideo({ isMobile }) {
   const [playing, setPlaying] = useState(false);
+  const [size, setSize] = useState(0);
 
-  // maxres does not exist for every upload, and a missing thumbnail is a broken
-  // image where the product should be. hq always exists.
-  const [poster, setPoster] = useState(
-    `https://i.ytimg.com/vi/${DEMO_VIDEO_ID}/maxresdefault.jpg`
-  );
+  const nextSize = () => setSize((n) => Math.min(n + 1, POSTER_SIZES.length - 1));
 
   return (
     <div
@@ -806,10 +830,11 @@ function HeroVideo({ isMobile }) {
           }}
         >
           <img
-            src={poster}
+            src={`https://i.ytimg.com/vi/${DEMO_VIDEO_ID}/${POSTER_SIZES[size]}.jpg`}
             alt=""
             aria-hidden="true"
-            onError={() => setPoster(`https://i.ytimg.com/vi/${DEMO_VIDEO_ID}/hqdefault.jpg`)}
+            onError={nextSize}
+            onLoad={(e) => { if (e.currentTarget.naturalWidth <= PLACEHOLDER_MAX_W) nextSize(); }}
             style={{
               position: "absolute", inset: 0, width: "100%", height: "100%",
               objectFit: "cover", display: "block",
