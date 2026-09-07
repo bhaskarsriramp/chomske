@@ -173,6 +173,49 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
   * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 
+/* ── THE ONE PLACE THE APP MOVES ─────────────────────────────────────────────
+   The rule below this block is that nothing in the app animates, and it stands.
+   This is the single exception, scoped to the class names so it cannot leak:
+   a voice analysis reads five videos and then makes a model call over all of
+   them, which runs to minutes, and a still "Analysing…" for two minutes reads
+   as a hang rather than as work. See components/Transcribe/VoiceAnalysing.js
+   for the argument in full.
+
+   Everything here is decorative and the reduced-motion block further down
+   collapses all of it. The card must still be readable with every animation
+   off, which is why the stages, the counts and the current line are text and
+   none of them is revealed by motion. */
+@keyframes hg-voice-eq {
+  0%, 100% { transform: scaleY(.35); }
+  50%      { transform: scaleY(1); }
+}
+.hg-voice-eq { animation: hg-voice-eq 1.15s ease-in-out infinite; transform-origin: center; }
+
+/* A sheen crossing the progress bar. The bar's WIDTH is the real state and it
+   cannot move during the model call, which is the longest stretch of the wait;
+   this is what says "still running" across it without inventing progress. */
+@keyframes hg-voice-sheen { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.hg-voice-bar { position: relative; overflow: hidden; }
+.hg-voice-bar::after {
+  content: ""; position: absolute; inset: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
+  animation: hg-voice-sheen 1.9s linear infinite;
+}
+
+/* The stage the build is actually in, breathing so the eye can find it. */
+@keyframes hg-voice-live {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(58,55,51,.30); }
+  50%      { box-shadow: 0 0 0 5px rgba(58,55,51,0); }
+}
+.hg-voice-live { animation: hg-voice-live 2s ease-out infinite; }
+
+/* Each rotating "what we're noticing" line arrives rather than swapping. */
+@keyframes hg-voice-line {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: none; }
+}
+.hg-voice-line { animation: hg-voice-line .4s cubic-bezier(.2,.7,.3,1) both; }
+
 /* The app shell owns the viewport: header fixed, panes scroll independently.
    dvh second so mobile browser chrome doesn't cut off the last row. */
 .hg-app { height: 100vh; height: 100dvh; }
@@ -457,7 +500,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    which would leave the page with two accent systems fighting. */
 .hg-hero {
   /* ── THE HERO IS THE LOGO'S COLOUR NOW ─────────────────────────────────────
-     These tokens paint the biggest text on the site: the "60s" and the language
+     These tokens paint the biggest text on the site: the "5min" and the language
      word that flips through nine scripts at ~90px. They were YouTube red, which
      made the mark in the top-left the only blue thing on the page.
 
@@ -470,7 +513,7 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
      product's own chrome) is untouched. */
   --yt: #7C79FF;
   --yt-deep: #5C58F0;
-  /* The two words the headline is actually built around, "60s" and the language
+  /* The two words the headline is actually built around, "5min" and the language
      that flips beneath it, get a brighter, more violet cut of the same hue than
      the chrome around them. At 80px on a near-black ground the base tone reads
      muted; this one carries. Separate token, not a change to --yt, so the dots,

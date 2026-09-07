@@ -82,7 +82,6 @@ const MAX_REFRESHES = 3;
 
 export default function NewsFeed({
   onGoTranscribe,
-  voiceRev = 0,
   profileId = null,
   // ── THE VOICE NOW COMES FROM ABOVE ────────────────────────────────────────
   // Discover is one of three modes under Create, and all three need the same
@@ -219,15 +218,11 @@ export default function NewsFeed({
     } catch { /* the panel degrades to "transcribe first"; never block the feed */ }
   }, [profileId, onVoiceChange]);
 
-  // voiceRev changes when videos are added, deleted or re-analysed on the other
-  // screen. Without it this pane would keep offering to write in a profile that
-  // no longer matches, or keep saying "transcribe first" after they just did.
-  // voiceId changes when they switch which voice writes, which is a different
-  // profile with a different set of videos behind it.
-  // Skipped entirely when the parent supplies the voice: it is already
-  // fetching, and calling loadVoice here would just ask it to fetch again on
-  // every mount.
-  useEffect(() => { if (!voiceProp) loadVoice(); }, [loadVoice, voiceRev, voiceProp]);
+  // Only for the standalone case. Under Create the parent hands this pane a
+  // live voice (state/VoiceContext.js) that already follows builds, video
+  // additions and deletions on its own, so calling loadVoice here would ask it
+  // to refetch on every mount for an answer it is holding.
+  useEffect(() => { if (!voiceProp) loadVoice(); }, [loadVoice, voiceProp]);
 
   useEffect(() => { rankingRef.current = ranking; }, [ranking]);
 

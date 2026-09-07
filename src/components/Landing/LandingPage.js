@@ -487,7 +487,7 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
           }}
         >
           Never spend more than{" "}
-          <span style={{ color: "var(--yt-bright)" }}>60s</span>
+          <span style={{ color: "var(--yt-bright)" }}>5min</span>
           <br />
           on a script in <LanguageFlip />
         </h1>

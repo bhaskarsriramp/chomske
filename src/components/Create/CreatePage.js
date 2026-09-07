@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import api from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import NewsFeed from "../News/NewsFeed";
 import ImportPanel from "./ImportPanel";
 import IdeaPanel from "./IdeaPanel";
 import ModeSwitch from "./ModeSwitch";
+import { useVoice } from "../../state/VoiceContext";
 
 /**
  * Create: the one screen where a script gets made, and the three ways in.
@@ -31,33 +32,25 @@ import ModeSwitch from "./ModeSwitch";
  * has already paid for. It also means a half-typed brief survives a look at the
  * feed, which is the thing people actually do while deciding.
  *
- * ── ONE VOICE FETCH FOR ALL THREE ────────────────────────────────────────────
- * Every mode needs the same answer to "is there a voice to write in, and how
- * much of one". Fetched once here and passed down rather than three times, and
- * refetched when the voice set changes so a mode does not go on offering to
- * write in a profile that no longer exists.
+ * ── ONE VOICE, AND IT IS NOT THIS SCREEN'S ───────────────────────────────────
+ * All three modes need the same answer to "is there a voice to write in, and
+ * how much of one", and so does My voice. This used to fetch its own copy and
+ * refetch it whenever the shell bumped a `voiceRev` counter, which kept the
+ * three modes in step with each other and with nothing else: a voice finishing
+ * its build on the SERVER moved no counter, so a creator who pressed Analyse
+ * and came here to read the feed sat in front of "Add a video first" over a
+ * voice that was already built.
+ *
+ * It now reads state/VoiceContext.js, which follows the build live. The card
+ * below turns into the order panel the moment the analysis lands, wherever the
+ * creator happens to be standing when it does.
  */
-export default function CreatePage({ mode, onMode, profileId, voiceRev = 0, onGoTranscribe }) {
+export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
-  const [voice, setVoice] = useState(null);
+  const { voice, refresh: onVoiceChange } = useVoice();
   const [limits, setLimits] = useState(null);
-
-  const loadVoice = useCallback(async () => {
-    try {
-      const { data } = await api.get("/script/voice", {
-        params: { profile: profileId || undefined },
-      });
-      setVoice(data);
-    } catch {
-      // Not surfaced. The order panel already handles a missing voice, and a
-      // red banner over the whole screen because one status call failed would
-      // hide a feed that is working perfectly well.
-    }
-  }, [profileId]);
-
-  useEffect(() => { loadVoice(); }, [loadVoice, voiceRev]);
 
   /**
    * What the inputs will accept, from the server.
@@ -81,9 +74,6 @@ export default function CreatePage({ mode, onMode, profileId, voiceRev = 0, onGo
     return () => { cancelled = true; };
   }, []);
 
-  // Once a script finishes, the first run has also built the voice profile.
-  const onVoiceChange = useCallback(() => { loadVoice(); }, [loadVoice]);
-
   const gut = isPhone ? 16 : 26;
 
   return (
@@ -104,7 +94,8 @@ export default function CreatePage({ mode, onMode, profileId, voiceRev = 0, onGo
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: mode === "discover" ? "flex" : "none" }}>
           <NewsFeed
-            voiceRev={voiceRev}
+            voice={voice}
+            onVoiceChange={onVoiceChange}
             profileId={profileId}
             onGoTranscribe={onGoTranscribe}
             onGoImport={() => onMode("import")}

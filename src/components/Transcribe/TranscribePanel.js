@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
 import { useProfiles } from "../../state/ProfileContext";
+import { useVoice } from "../../state/VoiceContext";
+import VoiceAnalysing from "./VoiceAnalysing";
 
 /**
  * My voice: the videos that teach us how this creator talks.
@@ -43,10 +45,19 @@ import { useProfiles } from "../../state/ProfileContext";
  * There is no transcript to show until an analysis has run, and nobody came here
  * to read one: they came to teach the product how they talk.
  *
- * ── SO ANALYSE IS NOW SLOW, AND POLLED ───────────────────────────────────────
+ * ── SO ANALYSE IS SLOW, AND THIS SCREEN DOES NOT OWN THE WAIT ────────────────
  * It reads every pending video and then analyses them, which runs to minutes.
- * The request cannot be held open that long, so it kicks the work off and this
- * screen polls until the server says it has finished.
+ * The request cannot be held open that long, so it kicks the work off and the
+ * server reports back over the socket.
+ *
+ * None of that state lives here any more. It lives in state/VoiceContext.js,
+ * above the router, for two reasons. The first is a bug this screen had: the
+ * poll it relied on was armed by an effect watching the voice row, and the
+ * press that started a build did not refetch that row, so the effect never ran,
+ * nothing ever polled, and "Analysing…" stayed on screen until the creator
+ * hard-refreshed a build that had finished minutes earlier. The second is that
+ * a creator does not sit and watch this: they go to Create while it runs, and a
+ * wait owned by a panel is a wait that ends somewhere nobody is looking.
  */
 export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopics }) {
   const isPhone = useIsMobile(680);
@@ -62,13 +73,15 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   const [history, setHistory] = useState([]);
   const [meta, setMeta] = useState(null);      // slots, ready_count, mixed_languages
 
-  const [voice, setVoice] = useState(null);
-  const [analysing, setAnalysing] = useState(false);
-
-  // Shown once, when a build that THIS screen started finishes. Not on every
-  // load that happens to find a built voice, which would greet a returning
-  // creator with a congratulation for something they did last week.
-  const [justBuilt, setJustBuilt] = useState(null);
+  // ── The voice, and the build, come from above ─────────────────────────────
+  // Shared with Create so both screens answer "is there a voice" the same way
+  // at the same moment, and so a build survives leaving this screen entirely.
+  // `justBuilt` is set only for a build this session watched start, so a
+  // returning creator is not congratulated for something they did last week.
+  const {
+    voice, building: analysing, progress, error: voiceError,
+    analyse, refresh: refreshVoice, justBuilt, clearJustBuilt, clearError,
+  } = useVoice();
 
   // Why the analyse button is unavailable, shown on hover and on click. See
   // the button itself for why it is not simply `disabled`.
@@ -78,10 +91,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   const [deleting, setDeleting] = useState(false);
   const [confirmVoiceDelete, setConfirmVoiceDelete] = useState(false);
   const [deletingVoice, setDeletingVoice] = useState(false);
-
-  // True while this screen is the one waiting on a build, so the success dialog
-  // fires for the person who pressed the button and nobody else.
-  const awaitingRef = useRef(false);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -98,15 +107,6 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
     } catch { /* secondary, never block the main flow on it */ }
   }, [activeId]);
 
-  const loadVoice = useCallback(async () => {
-    try {
-      const { data } = await api.get("/script/voice", {
-        params: activeId ? { profile: activeId } : {},
-      });
-      setVoice(data);
-    } catch { /* the panel degrades to "not built yet" */ }
-  }, [activeId]);
-
   // Held until the profile list arrives. Fetching against "whatever the server
   // thinks is default" and then again against the real selection would show one
   // channel's videos for a moment before swapping to another's, the exact
@@ -114,16 +114,21 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   useEffect(() => {
     if (profilesLoading) return;
     loadHistory();
-    loadVoice();
-  }, [loadHistory, loadVoice, profilesLoading]);
+  }, [loadHistory, profilesLoading]);
 
   // Switching channels switches everything on screen. The open transcript
   // belongs to the profile that was selected a moment ago.
+  useEffect(() => { setError(""); }, [activeId]);
+
+  // The build's own failures arrive on the shared store, from an event or a
+  // poll rather than from a request this screen made. Mirrored into the local
+  // banner so there is one place errors appear, and handed back so leaving and
+  // returning does not replay a failure that has already been read.
   useEffect(() => {
-    setError("");
-    setJustBuilt(null);
-    awaitingRef.current = false;
-  }, [activeId]);
+    if (!voiceError) return;
+    setError(voiceError);
+    clearError();
+  }, [voiceError, clearError]);
 
   // ── WHY THE LIST POLLS ITSELF ─────────────────────────────────────────────
   // A video added a second ago is still being transcribed, and a transcribing
@@ -139,6 +144,18 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
     const t = setInterval(loadHistory, 4000);
     return () => clearInterval(t);
   }, [waiting, loadHistory]);
+
+  // ── AND WHY IT ALSO FOLLOWS THE BUILD ─────────────────────────────────────
+  // The build reads every pending video as its first act, so the rows under
+  // this list change state throughout it: pending, then processing, then done
+  // with a real title and a language. Refreshed while it runs and once more
+  // when it settles, so the list ends the analysis describing what was actually
+  // read rather than what was there before it started.
+  useEffect(() => {
+    if (!analysing) { loadHistory(); return undefined; }
+    const t = setInterval(loadHistory, 5000);
+    return () => clearInterval(t);
+  }, [analysing, loadHistory]);
 
   async function handleSubmit(e) {
     e?.preventDefault();
@@ -171,7 +188,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
       await api.delete(`/transcribe/${confirmDelete.id}`);
       setConfirmDelete(null);
       await loadHistory();
-      await loadVoice();
+      await refreshVoice();
       onVoiceChange?.();
     } catch (err) {
       setError(errorMessage(err, "Couldn't delete that video."));
@@ -182,58 +199,23 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   }
 
   /**
-   * Start a build and wait for it.
+   * Start a build.
    *
-   * The POST returns as soon as the work is claimed; everything real happens on
-   * the server, so what follows is a poll rather than a response. Reading the
-   * videos is most of the wait, which is why the button says so.
+   * One line, because the waiting is not this screen's job any more: the store
+   * kicks it off, follows it over the socket, polls underneath that as a floor,
+   * and holds the result whether or not this panel is still on screen.
    */
-  async function analyseVoice() {
-    if (analysing || !activeId) return;
+  function analyseVoice() {
     setError("");
-    setJustBuilt(null);
-    setAnalysing(true);
-    awaitingRef.current = true;
-    try {
-      await api.post(`/profiles/${activeId}/analyse`, {}, { timeout: 60000 });
-    } catch (err) {
-      setAnalysing(false);
-      awaitingRef.current = false;
-      setError(errorMessage(err, "Couldn't start the analysis. Please try again."));
-    }
+    analyse();
   }
 
-  // ── Waiting on the server ─────────────────────────────────────────────────
-  // `building` comes off the voice row, so a reload mid-build still finds the
-  // work in progress and keeps waiting rather than showing an idle button over
-  // a server that is busy.
+  // A finished build changes the counts the profile list carries, and the other
+  // screens read those. The store refreshes the profiles itself; this is the
+  // shell's own hook, which is what keeps Create's panels in step.
   useEffect(() => {
-    if (!voice) return;
-    const building = !!voice.building;
-    setAnalysing(building);
-
-    if (building) {
-      const t = setInterval(() => { loadVoice(); loadHistory(); }, 3000);
-      return () => clearInterval(t);
-    }
-
-    if (!awaitingRef.current) return;
-    awaitingRef.current = false;
-
-    if (voice.build_error) {
-      setError(voice.build_error);
-      return;
-    }
-    if (voice.profile) {
-      setJustBuilt({
-        name: activeProfile?.name || "",
-        videos: voice.profile.transcript_count || 0,
-        language: voice.profile.language_label || "",
-      });
-      refreshProfiles();
-      onVoiceChange?.();
-    }
-  }, [voice, loadVoice, loadHistory, activeProfile, refreshProfiles, onVoiceChange]);
+    if (justBuilt) onVoiceChange?.();
+  }, [justBuilt, onVoiceChange]);
 
   async function doDeleteVoice() {
     if (deletingVoice || !activeId) return;
@@ -241,10 +223,9 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
     setError("");
     try {
       await api.delete(`/profiles/${activeId}/voice`);
-      setVoice((v) => ({ ...(v || {}), profile: null, stale: false }));
       setConfirmVoiceDelete(false);
       await loadHistory();
-      await loadVoice();
+      await refreshVoice();
       await refreshProfiles();
       onVoiceChange?.();
     } catch (err) {
@@ -367,6 +348,17 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
             background: "var(--card)", border: "1px solid var(--line)",
           }}
         >
+          {/* ── WHILE IT RUNS, THE CARD IS THE BUILD ──────────────────────
+              Not a greyed button next to a stale summary. What was true before
+              the press ("Not built yet", "from 3 videos") is not what a creator
+              wants on screen during the two minutes they are waiting, and a
+              disabled button is the least informative thing this screen could
+              be showing at the one moment it has something to say. See
+              VoiceAnalysing.js for why this is the one part of the app that
+              moves. */}
+          {analysing ? (
+            <VoiceAnalysing progress={progress} isPhone={isPhone} videoCount={readyCount} />
+          ) : (
           <div
             style={{
               display: "flex", alignItems: isPhone ? "stretch" : "flex-start",
@@ -398,26 +390,27 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                 So it LOOKS unavailable and refuses to run, but it still takes
                 a pointer and a click, and both say why. */}
             <button
-              onClick={() => { if (analysing) return; analyseBlocked ? setHint(true) : analyseVoice(); }}
-              onMouseEnter={() => !analysing && analyseBlocked && setHint(true)}
+              onClick={() => { analyseBlocked ? setHint(true) : analyseVoice(); }}
+              onMouseEnter={() => analyseBlocked && setHint(true)}
               onMouseLeave={() => setHint(false)}
-              onFocus={() => !analysing && analyseBlocked && setHint(true)}
+              onFocus={() => analyseBlocked && setHint(true)}
               onBlur={() => setHint(false)}
-              aria-disabled={analyseBlocked || analysing}
+              aria-disabled={analyseBlocked}
               aria-describedby={analyseBlocked ? "hg-analyse-hint" : undefined}
-              className={analyseBlocked || analysing ? undefined : "hg-btn-primary"}
+              className={analyseBlocked ? undefined : "hg-btn-primary"}
               style={{
                 fontSize: 14, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
                 border: "none", flexShrink: 0, whiteSpace: "nowrap",
-                background: analyseBlocked || analysing ? "#E5E5E5" : "var(--primary)",
-                color: analyseBlocked || analysing ? "var(--ink-mute)" : "#fff",
-                cursor: analysing ? "default" : analyseBlocked ? "help" : "pointer",
+                background: analyseBlocked ? "#E5E5E5" : "var(--primary)",
+                color: analyseBlocked ? "var(--ink-mute)" : "#fff",
+                cursor: analyseBlocked ? "help" : "pointer",
                 fontFamily: "inherit",
               }}
             >
-              {analysing ? "Analysing…" : built ? "Analyse again" : "Analyse my voice"}
+              {built ? "Analyse again" : "Analyse my voice"}
             </button>
           </div>
+          )}
 
           {analyseBlocked && hint && !analysing && (
             <p
@@ -556,9 +549,9 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
           next, which is not "what did you learn" but "so what do I do now". */}
       {justBuilt && (
         <SuccessDialog
-          info={justBuilt}
+          info={{ ...justBuilt, name: activeProfile?.name || "" }}
           onGoTopics={onGoTopics}
-          onClose={() => setJustBuilt(null)}
+          onClose={clearJustBuilt}
         />
       )}
 

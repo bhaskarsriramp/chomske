@@ -10,6 +10,7 @@ import ScriptsPanel from "../Scripts/ScriptsPanel";
 import Logo from "../Shell/Logo";
 import CreditsProvider from "../../state/CreditsContext";
 import ProfileProvider, { useProfiles } from "../../state/ProfileContext";
+import VoiceProvider from "../../state/VoiceContext";
 import { CreditsPill } from "../Shell/CreditsCard";
 
 /**
@@ -42,18 +43,26 @@ export const CREATE_TABS = ["discover", "import", "idea"];
 export const TAB_IDS = [...CREATE_TABS, "voice", "scripts", "dashboard", "profile"];
 
 /**
- * Both providers wrap the whole shell rather than individual panels.
+ * All three providers wrap the whole shell rather than individual panels.
  *
  * The balance is read by the sidebar, the mobile header and the order panel, and
  * the selected profile by every screen, all of which are mounted at once here
  * (panels are hidden, not unmounted). Per-panel state would mean several copies
  * of each, disagreeing the moment one of them changed.
+ *
+ * The voice is the newest of the three and the one with the strongest claim to
+ * being up here: a build runs for minutes on the server, and a creator spends
+ * those minutes on another screen. Owned by a panel, the wait ended wherever
+ * that panel was; owned here, it follows them. VoiceProvider is inside
+ * ProfileProvider because it reads the active channel.
  */
 export default function Dashboard(props) {
   return (
     <CreditsProvider>
       <ProfileProvider>
-        <Shell {...props} />
+        <VoiceProvider>
+          <Shell {...props} />
+        </VoiceProvider>
       </ProfileProvider>
     </CreditsProvider>
   );
@@ -72,9 +81,6 @@ function Shell({ user, onSignOut }) {
     () => ({ [CREATE_TABS.includes(tabParam) ? "create" : tabParam]: true })
   );
   const [drawer, setDrawer] = useState(false);
-  // Bumped whenever the voice set changes, so the script panel re-reads the
-  // profile instead of offering to write in a voice that no longer exists.
-  const [voiceRev, setVoiceRev] = useState(0);
 
   const { activeId, refresh: refreshProfiles } = useProfiles();
 
@@ -94,12 +100,11 @@ function Shell({ user, onSignOut }) {
     setMounted((m) => (m[mountKey] ? m : { ...m, [mountKey]: true }));
   }, [mountKey]);
 
-  // The profile's videos or voice changed: re-read the list (counts,
-  // staleness) and tell the panels to re-read the voice.
-  const bumpVoice = useCallback(() => {
-    setVoiceRev((n) => n + 1);
-    refreshProfiles();
-  }, [refreshProfiles]);
+  // The profile's videos or voice changed: re-read the list, whose per-channel
+  // counts and staleness flags this shell renders. The voice ITSELF no longer
+  // needs telling, every screen reads one live copy of it from VoiceProvider,
+  // which is what replaced the revision counter this used to bump.
+  const bumpVoice = useCallback(() => { refreshProfiles(); }, [refreshProfiles]);
 
   // Escape closes the drawer. Also close it if the viewport grows into the
   // desktop layout; otherwise the overlay state survives the resize and blocks
@@ -184,7 +189,6 @@ function Shell({ user, onSignOut }) {
               <CreatePage
                 mode={tab}
                 onMode={openTab}
-                voiceRev={voiceRev}
                 profileId={activeId}
                 onGoTranscribe={() => openTab("voice")}
               />

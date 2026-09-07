@@ -3,6 +3,8 @@ import api, { errorMessage } from "../../api";
 import ScriptOrder from "./ScriptOrder";
 import { useCredits } from "../../state/CreditsContext";
 import { useProfiles } from "../../state/ProfileContext";
+import { useVoice } from "../../state/VoiceContext";
+import VoiceAnalysing from "../Transcribe/VoiceAnalysing";
 
 /**
  * Turn whatever is selected into a script in the creator's own voice.
@@ -53,6 +55,16 @@ export default function ScriptPanel({
   // three components each holding their own copy is three numbers that drift.
   const { setBalance, refresh: refreshCredits } = useCredits();
   const { activeId: profileId } = useProfiles();
+
+  // ── WHY THIS PANEL WATCHES A BUILD IT DID NOT START ───────────────────────
+  // The creator presses Analyse on My voice and comes straight here to pick a
+  // story, which is the natural thing to do with two minutes to spend. Without
+  // this they would find "Add a video first" over videos they have already
+  // added and a voice that is being built as they read it, and then find it
+  // still saying that after the build landed. The `voice` prop already carries
+  // `building`; the progress detail comes from the same store that prop is fed
+  // from (state/VoiceContext.js).
+  const { progress: voiceProgress } = useVoice();
 
   const pollRef = useRef(null);
 
@@ -168,6 +180,7 @@ export default function ScriptPanel({
   }
 
   const hasVoice = !!voice?.profile;
+  const buildingVoice = !!voice?.building;
 
   return (
     <section style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid var(--line)" }}>
@@ -198,12 +211,21 @@ export default function ScriptPanel({
         </div>
       )}
 
+      {/* Being built right now, on this screen or another one. Takes priority
+          over both branches below: "add a video first" is false while their
+          videos are being read, and offering the order panel mid-build would
+          send a paid generation into a profile that is halfway through being
+          replaced. */}
+      {buildingVoice && !script && (
+        <VoiceAnalysing progress={voiceProgress} isPhone={compact} compact />
+      )}
+
       {/* No transcripts yet, the voice has nothing to be learned from. */}
-      {(script?.status === "needs_voice" || (!hasVoice && voice && voice.transcripts_available === 0)) && (
+      {!buildingVoice && (script?.status === "needs_voice" || (!hasVoice && voice && voice.transcripts_available === 0)) && (
         <NeedsVoice onGoTranscribe={onGoTranscribe} />
       )}
 
-      {!script && (hasVoice || voice?.transcripts_available > 0) && (
+      {!buildingVoice && !script && (hasVoice || voice?.transcripts_available > 0) && (
         <div>
           <ScriptOrder
             busy={busy}

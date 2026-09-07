@@ -27,6 +27,16 @@ import { onNewsEvent, NEWS_CHANNEL } from "../services/newsEvents.js";
 
 const room = (cat) => `cat:${cat}`;
 
+/**
+ * ── AND ONE ROOM THAT IS A PERSON ───────────────────────────────────────────
+ * Everything above is shared work, so its room is the category. A voice
+ * analysis is not: it reads one creator's videos and produces one creator's
+ * profile, and the progress of it must not reach anybody else. So every socket
+ * also sits in a room of its own account, joined from the handshake's verified
+ * id and never from anything the client sends.
+ */
+const userRoom = (id) => `u:${id}`;
+
 export function initSocketServer(httpServer, { allowedOrigins = [] } = {}) {
   const io = new Server(httpServer, {
     cors: {
@@ -48,6 +58,7 @@ export function initSocketServer(httpServer, { allowedOrigins = [] } = {}) {
     // us that the account does not already say, and a `subscribe` message would
     // only add a way to get it wrong.
     for (const cat of categories) socket.join(room(cat));
+    socket.join(userRoom(id));
 
     socket.on("disconnect", () => {
       // Socket.IO leaves every room on disconnect by itself. Nothing to undo.
@@ -65,8 +76,12 @@ export function initSocketServer(httpServer, { allowedOrigins = [] } = {}) {
    * needs no change here, the browser either has a handler for it or ignores it.
    */
   const emit = (payload) => {
-    if (!payload?.category || !payload?.type) return;
-    io.to(room(payload.category)).emit(payload.type, payload);
+    if (!payload?.type) return;
+    // `user` first: an event addressed to an account is private by definition,
+    // and must never fall through to a category fan-out even if it somehow
+    // carries both fields.
+    if (payload.user) io.to(userRoom(payload.user)).emit(payload.type, payload);
+    else if (payload.category) io.to(room(payload.category)).emit(payload.type, payload);
   };
 
   // The no-Redis path (local development): services hand events straight here.

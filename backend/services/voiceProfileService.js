@@ -24,6 +24,7 @@ import VoiceProfile from "../models/VoiceProfile.js";
 import { resolveProfile, voiceFor } from "./profileService.js";
 import { measureVoice } from "./voiceMetrics.js";
 import { transcribeYouTube } from "./geminiClient.js";
+import { publishUserEvent } from "./newsEvents.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
@@ -271,6 +272,50 @@ function usable(p) {
  * make a voice, and refusing to build one because the fifth link was private
  * would be the wrong trade.
  */
+/**
+ * Say where the build has got to, to the one browser waiting on it.
+ *
+ * ── WHY A BUILD NARRATES ITSELF ──────────────────────────────────────────────
+ * This runs to minutes: it reads up to five videos end to end and then makes a
+ * model call over all of them. For that whole time the creator had a greyed
+ * button saying "Analysing…" and no evidence anything was happening, which is
+ * indistinguishable from a hang, and it is the FIRST thing they ever ask this
+ * product to do. The stages are real, not a timer pretending: `reading` counts
+ * videos actually finished, and `analysing` starts when the model call does.
+ *
+ * Fire and forget, and never awaited. A dropped progress line costs a second of
+ * a nicer wait; a throw here would cost the build it was reporting on.
+ */
+function announce(userId, profileId, stage, extra = {}) {
+  publishUserEvent({
+    type: "voice:progress",
+    user: String(userId),
+    profile: String(profileId),
+    stage,
+    ...extra,
+  }).catch(() => {});
+}
+
+/**
+ * "It is built", for the paths that finish a build without a `building` flag.
+ *
+ * The Analyse button's route owns that flag and publishes its own terminal
+ * event after clearing it (see routes/profiles.js). This is for the OTHER way a
+ * voice gets built: the first script a creator orders builds it as a side
+ * effect, and a My voice tab open in the background would otherwise sit in the
+ * progress state this file just put it in, with nothing ever arriving to end it.
+ */
+function announceBuilt(userId, profileId, doc) {
+  publishUserEvent({
+    type: "voice:built",
+    user: String(userId),
+    profile: String(profileId),
+    transcript_count: doc?.transcript_count || 0,
+    language_label: doc?.language_label || "",
+    confidence: doc?.confidence || "",
+  }).catch(() => {});
+}
+
 async function readPendingVideos(userId, profileId) {
   const pending = await Transcript.find({
     user: userId,
@@ -281,6 +326,7 @@ async function readPendingVideos(userId, profileId) {
   if (!pending.length) return { read: 0, failed: 0 };
 
   console.log(`[voice] reading ${pending.length} pending video(s) for profile ${profileId}`);
+  announce(userId, profileId, "reading", { done: 0, total: pending.length });
 
   // Claimed before the work starts, so a second Analyse press arriving while
   // this one runs does not read the same videos again.
@@ -288,6 +334,11 @@ async function readPendingVideos(userId, profileId) {
     { _id: { $in: pending.map((p) => p._id) } },
     { $set: { status: "processing", updated_at: new Date() } }
   );
+
+  // Counted here rather than from the results array, because the point of the
+  // number is to move WHILE the reads are in flight; the array only exists once
+  // every one of them has settled.
+  let finished = 0;
 
   const results = await Promise.all(pending.map(async (row) => {
     const started = Date.now();
@@ -314,6 +365,12 @@ async function readPendingVideos(userId, profileId) {
         `${out.text.length} chars · ${out.language_label || out.language || "?"} · ` +
         `$${(u.usd || 0).toFixed(4)}`
       );
+      announce(userId, profileId, "reading", {
+        done: ++finished,
+        total: pending.length,
+        title: out.title || row.title || "",
+        language_label: out.language_label || "",
+      });
       return true;
     } catch (err) {
       await Transcript.updateOne({ _id: row._id }, {
@@ -325,6 +382,11 @@ async function readPendingVideos(userId, profileId) {
         },
       }).catch(() => {});
       console.error(`[voice] read failed for ${row.video_id}: ${err.message}`);
+      announce(userId, profileId, "reading", {
+        done: ++finished,
+        total: pending.length,
+        failed: true,
+      });
       return false;
     }
   }));
@@ -369,6 +431,8 @@ export async function buildVoiceProfile(userId, profileId) {
 
   const body = blocks.join("\n\n");
 
+  announce(userId, profile._id, "analysing", { videos: transcripts.length });
+
   let { parsed, res } = await analyse(body, false);
 
   // One retry, and only when the first response could not be salvaged at all.
@@ -384,6 +448,8 @@ export async function buildVoiceProfile(userId, profileId) {
   if (!usable(parsed)) {
     throw new Error("Couldn't read the voice analysis. Please try again.");
   }
+
+  announce(userId, profile._id, "finishing", { videos: transcripts.length });
 
   // Fall back to the transcripts' own language rather than whatever the analyser
   // decided, the transcriber saw the actual audio, this pass only saw text.
@@ -477,6 +543,7 @@ export async function getUsableProfile(userId, { profileId, autoBuild = true } =
   if (!existing) {
     if (!autoBuild) return null;
     const { profile } = await buildVoiceProfile(userId, channel._id);
+    if (profile) announceBuilt(userId, channel._id, profile);
     return profile;
   }
 
@@ -498,6 +565,7 @@ export async function getUsableProfile(userId, { profileId, autoBuild = true } =
 
       try {
         const { profile } = await buildVoiceProfile(userId, channel._id);
+        if (profile) announceBuilt(userId, channel._id, profile);
         return profile || existing;
       } catch (err) {
         console.error("[voice] auto-rebuild failed, writing with the existing profile:", err.message);

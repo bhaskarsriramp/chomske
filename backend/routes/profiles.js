@@ -28,6 +28,7 @@ import {
 import { buildVoiceProfile } from "../services/voiceProfileService.js";
 import { kickoffCategories } from "../services/newsScheduler.js";
 import { getCategory } from "../services/categories.js";
+import { publishUserEvent } from "../services/newsEvents.js";
 
 const router = express.Router();
 
@@ -150,7 +151,7 @@ router.delete("/:id", authenticateToken, async (req, res) => {
 /**
  * POST /profiles/:id/analyse, learn this channel's voice from its videos.
  *
- * ── WHY THIS IS NOW KICKED OFF AND POLLED ────────────────────────────────────
+ * ── WHY THIS IS KICKED OFF AND REPORTED, NOT HELD OPEN ───────────────────────
  * It used to be held open: one text-in text-out call over transcripts that had
  * already been read, landing in a few seconds. That stopped being true when
  * adding a video stopped reading it. This call now reads every pending video
@@ -158,10 +159,19 @@ router.delete("/:id", authenticateToken, async (req, res) => {
  * client's timeout and past nginx's default proxy_read_timeout of sixty
  * seconds. Held open, it would fail on exactly the accounts doing the most work.
  *
- * So it claims the build, returns immediately, and the client polls
- * GET /script/voice until `building` clears. `building` is on the VoiceProfile
- * row rather than in memory so a restart mid-build cannot strand the flag
- * somewhere the next request cannot see it.
+ * So it claims the build, returns immediately, and the client is TOLD when it
+ * finishes: the settle below publishes voice:built or voice:failed to this
+ * account's socket room (services/newsEvents.js), and the browser re-reads
+ * GET /script/voice on hearing it. The client keeps a slow poll as a fallback,
+ * because a socket is an improvement on polling and never a dependency, but
+ * without the events a creator sat in front of "Analysing…" until they
+ * reloaded: the panel's poll only armed on a voice row that already said
+ * `building`, and the press that started the build did not refetch one.
+ *
+ * `building` stays on the VoiceProfile row rather than in memory so a restart
+ * mid-build cannot strand the flag somewhere the next request cannot see it,
+ * and so a browser that missed the event while asleep still learns the truth
+ * from its next read.
  */
 router.post("/:id/analyse", authenticateToken, async (req, res) => {
   try {
@@ -192,26 +202,16 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
       { $set: { building: true, build_error: "" } }
     );
 
-    // Fire and forget; the client polls.
-    buildVoiceProfile(req.user.id, profile._id)
-      .then(({ built, reason }) => VoiceProfile.updateOne({ _id: voice._id }, {
-        $set: {
-          building: false,
-          build_error: built ? "" : (reason === "no_transcripts"
-            ? "None of the videos could be read. Check they are public and try again."
-            : "Couldn't build this voice."),
-        },
-      }))
-      .catch((err) => {
-        console.error("[profiles] analyse failed:", err.message);
-        return VoiceProfile.updateOne({ _id: voice._id }, {
-          $set: {
-            building: false,
-            build_error: err.userMessage || "Couldn't analyse this voice. Please try again.",
-          },
-        });
-      })
-      .catch(() => {});
+    const userId = req.user.id;
+    const profileId = String(profile._id);
+
+    // Told immediately, so a second tab (or the Create screen) shows the work
+    // starting rather than discovering it on its next read.
+    publishUserEvent({ type: "voice:started", user: userId, profile: profileId }).catch(() => {});
+
+    // Fire and forget. Everything after this point runs with no request behind
+    // it, which is exactly why it has to announce itself.
+    runBuild(userId, profile._id, voice._id, profileId).catch(() => {});
 
     return res.status(202).json({ success: true, building: true });
   } catch (err) {
@@ -219,6 +219,55 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
     return res.status(500).json({ success: false, message: "Couldn't start this analysis." });
   }
 });
+
+/**
+ * Run one build to its end, clear the flag, and say what happened.
+ *
+ * ── WHY THE ORDER IN HERE MATTERS ────────────────────────────────────────────
+ * The `building` flag is cleared BEFORE the event goes out, every time. The
+ * client's reaction to voice:built is to re-read GET /script/voice, so an event
+ * that overtook the write would hand it a row still saying `building: true` and
+ * put the screen straight back into the spinner it was just told to leave, on a
+ * build that had already finished. Same reason the failure path clears first.
+ *
+ * Nothing in here is allowed to throw. It runs with no request behind it, so a
+ * rejection has nobody to report to and would only leave `building` set, which
+ * is the one state that blocks the next Analyse press.
+ */
+async function runBuild(userId, profileObjectId, voiceId, profileId) {
+  try {
+    const { built, profile: doc, reason } = await buildVoiceProfile(userId, profileObjectId);
+
+    const buildError = built
+      ? ""
+      : reason === "no_transcripts"
+        ? "None of the videos could be read. Check they are public and try again."
+        : "Couldn't build this voice.";
+
+    await VoiceProfile.updateOne({ _id: voiceId }, { $set: { building: false, build_error: buildError } });
+
+    await publishUserEvent(built
+      ? {
+          type: "voice:built",
+          user: userId,
+          profile: profileId,
+          // The facts the success dialog needs, so it can open on the event
+          // instead of waiting a round trip for the refetch. What was LEARNED
+          // is not here and never will be, see shapeProfile in routes/script.js.
+          transcript_count: doc?.transcript_count || 0,
+          language_label: doc?.language_label || "",
+          confidence: doc?.confidence || "",
+        }
+      : { type: "voice:failed", user: userId, profile: profileId, message: buildError });
+  } catch (err) {
+    console.error("[profiles] analyse failed:", err.message);
+    const message = err.userMessage || "Couldn't analyse this voice. Please try again.";
+    await VoiceProfile.updateOne({ _id: voiceId }, { $set: { building: false, build_error: message } })
+      .catch(() => {});
+    await publishUserEvent({ type: "voice:failed", user: userId, profile: profileId, message })
+      .catch(() => {});
+  }
+}
 
 /**
  * DELETE /profiles/:id/voice, throw away the voice AND the videos behind it.

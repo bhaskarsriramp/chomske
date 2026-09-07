@@ -47,7 +47,40 @@ export function onNewsEvent(fn) {
  * @param {string} event.category  the room this belongs to
  */
 export async function publishNewsEvent(event) {
-  if (!event?.type || !event?.category) return;
+  if (!event?.type || !event?.category) return publish(null);
+  return publish(event);
+}
+
+/**
+ * Announce something only ONE account may see.
+ *
+ * ── WHY THIS EXISTS ALONGSIDE THE CATEGORY EVENTS ────────────────────────────
+ * A ranking pass is shared: one emit serves every creator watching that
+ * category, which is why the room is the category. A voice analysis is the
+ * opposite, it belongs to exactly one person, reads their videos and produces
+ * their profile, so the room has to be the account. Same channel, same
+ * subscriber, same fan-out across instances; only the room differs, and
+ * socket/index.js decides which from the field that is present.
+ *
+ * The events carry FACTS, never the voice profile itself. What was learned is
+ * deliberately not sent to the browser (see shapeProfile in routes/script.js:
+ * the assembled style brief is a working prompt for this creator, and handing
+ * it over is handing over the product). So the client is told the build
+ * finished and re-reads GET /script/voice, which is the one place that decides
+ * what a browser is allowed to see.
+ *
+ * @param {object} event         must carry `type` and `user`
+ * @param {string} event.type    "voice:started" | "voice:progress" | "voice:built" | "voice:failed"
+ * @param {string} event.user    the account this belongs to
+ */
+export async function publishUserEvent(event) {
+  if (!event?.type || !event?.user) return publish(null);
+  return publish({ ...event, user: String(event.user) });
+}
+
+/** The shared path: Redis if there is one, this instance's own sockets if not. */
+async function publish(event) {
+  if (!event) return;
 
   const payload = { ...event, at: new Date().toISOString() };
 
@@ -67,4 +100,4 @@ export async function publishNewsEvent(event) {
   }
 }
 
-export default { publishNewsEvent, onNewsEvent, NEWS_CHANNEL };
+export default { publishNewsEvent, publishUserEvent, onNewsEvent, NEWS_CHANNEL };

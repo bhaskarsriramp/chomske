@@ -52,14 +52,24 @@ export function getSocket() {
 /**
  * Listen for one event for as long as the caller wants it.
  *
- * Returns the unsubscribe, so a React effect can `return onNewsEvent(...)`
+ * Returns the unsubscribe, so a React effect can `return onLiveEvent(...)`
  * and be certain the handler dies with the component rather than accumulating
  * one more copy on every re-render.
+ *
+ * ── NOT ONLY NEWS ANY MORE ───────────────────────────────────────────────────
+ * This started as the feed's own subscription and the name said so. It is now
+ * also how a voice analysis reports itself while it runs, which is a private,
+ * per-account event rather than a shared category one (backend socket/index.js
+ * rooms both). Nothing about the mechanism differs, so rather than a second
+ * near-identical helper the function got the name it always described.
+ * `onNewsEvent` stays as an alias because the feed still calls it that.
  */
-export function onNewsEvent(event, handler) {
+export function onLiveEvent(event, handler) {
   const s = getSocket();
   s.on(event, handler);
   return () => s.off(event, handler);
 }
+
+export const onNewsEvent = onLiveEvent;
 
 export default getSocket;
