@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, u
 import api, { errorMessage } from "../api";
 import { onLiveEvent } from "../realtime/socket";
 import { useProfiles } from "./ProfileContext";
+import { useCredits } from "./CreditsContext";
 
 /**
  * The account's voice, and whether it is being built right now.
@@ -52,6 +53,7 @@ export function useVoice() {
 
 export default function VoiceProvider({ children }) {
   const { activeId, loading: profilesLoading, refresh: refreshProfiles } = useProfiles();
+  const { setBalance } = useCredits();
 
   const [voice, setVoice] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -77,6 +79,10 @@ export default function VoiceProvider({ children }) {
         params: { profile: activeId || undefined },
       });
       setVoice(data);
+      // A paid re-analysis, and any refund of one, both land here. Reading the
+      // balance off this means the sidebar corrects itself without a second
+      // request, the same trick the script quote uses.
+      if (typeof data.balance === "number") setBalance(data.balance);
       return data;
     } catch {
       // Never surfaced. Every screen reading this degrades to "no voice yet",
@@ -86,7 +92,7 @@ export default function VoiceProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, [activeId]);
+  }, [activeId, setBalance]);
 
   // Held until the profile list lands, so the first read is against the real
   // channel rather than against whatever the server considers default.
@@ -128,9 +134,16 @@ export default function VoiceProvider({ children }) {
       setStarting(false);
       setProgress(null);
       watchingRef.current = false;
+      // Not an error: a rebuild they cannot yet afford is a purchase they have
+      // not made. The button already says so and offers the top-up, so this
+      // only corrects the balance and gets out of the way.
+      if (err?.response?.data?.insufficient_credits) {
+        if (typeof err.response.data.balance === "number") setBalance(err.response.data.balance);
+        return;
+      }
       setError(errorMessage(err, "Couldn't start the analysis. Please try again."));
     }
-  }, [building, activeId, refresh]);
+  }, [building, activeId, refresh, setBalance]);
 
   // ── The live half ─────────────────────────────────────────────────────────
   // Registered once for the session rather than per screen: the events are for

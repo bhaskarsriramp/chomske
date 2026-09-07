@@ -511,7 +511,11 @@ export async function buildVoiceProfile(userId, profileId) {
   // overwrite somebody else's voice.
   const doc = await VoiceProfile.findOneAndUpdate(
     { _id: voice._id, user: userId },
-    { $set: set },
+    // `builds` counts SUCCESSFUL analyses, and it is incremented here rather
+    // than at the route because every path that produces a voice ends up on
+    // this line: the Analyse button, and the auto-build the first script does.
+    // A failed build never reaches here, so it cannot consume a free one.
+    { $set: set, $inc: { builds: 1 } },
     { new: true }
   );
 

@@ -205,6 +205,46 @@ export function readCost({ videoSeconds = 0, lookup = false, alreadyRead = false
 }
 
 /**
+ * Re-analysing a voice.
+ *
+ * ── THE FIRST TWO ARE FREE, AND THE SECOND ONE IS THE POINT ─────────────────
+ * The first build has to be free: a creator cannot be asked to pay for a voice
+ * they have never heard, and it is the one step between a new account and the
+ * thing this product is actually judged on. The second is free because of what
+ * people do with the first, they look at the result, realise one of the videos
+ * was a collaboration or a different format, swap it, and run it again. Charging
+ * for that correction would be charging for our own opacity.
+ *
+ * From the third it is a rebuild of a voice that already works, and it is not
+ * cheap: every video in the set is read again, end to end, which is the most
+ * expensive call this product makes. Priced per video for exactly that reason,
+ * so a creator with two videos pays less than one with five, and adding a sixth
+ * video is visibly a decision rather than a free action.
+ */
+export const VOICE_FREE_BUILDS = parseInt(process.env.VOICE_FREE_BUILDS || "2", 10);
+export const VOICE_CREDITS_PER_VIDEO = parseInt(process.env.VOICE_CREDITS_PER_VIDEO || "10", 10);
+
+/**
+ * What the NEXT analysis of this voice costs.
+ *
+ * @param {number} builds  how many successful analyses have already run
+ * @param {number} videos  how many videos the next one would read
+ * @returns {{ free, cost, remaining_free, per_video }}
+ */
+export function voiceAnalysisCost({ builds = 0, videos = 0 } = {}) {
+  const done = Math.max(0, Math.round(Number(builds) || 0));
+  const count = Math.max(0, Math.round(Number(videos) || 0));
+  const remainingFree = Math.max(0, VOICE_FREE_BUILDS - done);
+
+  return {
+    free: remainingFree > 0,
+    cost: remainingFree > 0 ? 0 : count * VOICE_CREDITS_PER_VIDEO,
+    remaining_free: remainingFree,
+    per_video: VOICE_CREDITS_PER_VIDEO,
+  };
+}
+
+/**
  * What a new account starts with: three 60-second scripts.
  *
  * Enough to reach the moment the product is actually judged on, a finished
@@ -291,5 +331,6 @@ export default {
   MAX_SOURCE_VIDEO_SECONDS, MAX_SOURCE_LINKS, MAX_SOURCE_TEXT_CHARS, MAX_PROMPT_CHARS,
   VIDEO_READ_FREE_SECONDS, VIDEO_READ_BLOCK_SECONDS, VIDEO_READ_CREDITS_PER_BLOCK,
   LOOKUP_CREDITS, readCost,
+  VOICE_FREE_BUILDS, VOICE_CREDITS_PER_VIDEO, voiceAnalysisCost,
   getPack, clampSeconds, quote, wordTarget,
 };

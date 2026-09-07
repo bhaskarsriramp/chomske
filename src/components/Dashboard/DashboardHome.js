@@ -139,6 +139,17 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
         }}
       >
         <Stat
+          label="Scripts generated"
+          loading={!data}
+          value={data ? `${data.scripts.in_range}` : ""}
+          suffix={data ? data.range.label.toLowerCase() : ""}
+          note={data ? `${data.scripts.all_time} all time` : ""}
+          onClick={onGoScripts}
+          actionLabel="Read them"
+          tone="made"
+        />
+
+        <Stat
           label="Videos teaching your voice"
           loading={!data}
           value={data ? `${data.videos.used}` : ""}
@@ -157,17 +168,6 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
           onClick={onGoTranscribe}
           actionLabel="Add or manage videos"
           meter={data ? { used: data.videos.used, max: data.videos.max } : null}
-        />
-
-        <Stat
-          label="Scripts generated"
-          loading={!data}
-          value={data ? `${data.scripts.in_range}` : ""}
-          suffix={data ? data.range.label.toLowerCase() : ""}
-          note={data ? `${data.scripts.all_time} all time` : ""}
-          onClick={onGoScripts}
-          actionLabel="Read them"
-          tone="made"
         />
 
         <Stat
@@ -210,45 +210,21 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
         <Activity days={data.by_day} label={data.range.label} isPhone={isPhone} />
       )}
 
-      {/* ── WHICH WAY IN THEY ACTUALLY USE ────────────────────────────────────
-          Only once there is something to compare. A breakdown of a single
-          script is not a breakdown, and three rows reading 1 / 0 / 0 is a chart
-          of nothing that would sit on the dashboard of every new account. */}
-      {data?.scripts?.by_source && data.scripts.in_range > 1 && (
-        <SourceMix counts={data.scripts.by_source} total={data.scripts.in_range} label={data.range.label} />
-      )}
+      {/* ── WHAT IS DELIBERATELY NOT ON THIS PAGE ────────────────────────────
+          Two sections used to sit here, and both went for the same reason: they
+          answered questions nobody was asking, while pushing the numbers people
+          actually open this screen for further up the scroll.
 
-      {data?.recent_scripts?.length > 0 && (
-        <section style={{ marginTop: 34 }}>
-          <h2
-            style={{
-              fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
-              textTransform: "uppercase", color: "var(--ink-mute)", margin: "0 0 11px",
-            }}
-          >
-            Recent scripts
-          </h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-            {data.recent_scripts.map((s, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  gap: 12, padding: "12px 14px", borderRadius: 10,
-                  background: "var(--card)", border: "1px solid var(--line)",
-                }}
-              >
-                <span style={{ fontSize: 14, color: "var(--ink)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {s.headline || "Untitled"}
-                </span>
-                <span style={{ fontSize: 12, color: "var(--ink-mute)", whiteSpace: "nowrap", flexShrink: 0 }}>
-                  {new Date(s.created_at).toLocaleDateString()}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+          "What you wrote from" split the scripts across Discover / Import /
+          Idea. A creator knows which way in they use, it is a choice they make
+          every morning rather than something to discover, and a three-colour
+          bar is a slow way to be told what you did on purpose.
+
+          "Recent scripts" listed the last six headlines and their dates. My
+          scripts is that list, in full, one click away in the sidebar; a
+          truncated copy of another screen is a second place for the same thing
+          to go out of date. */}
+
     </div>
   );
 }
@@ -355,80 +331,6 @@ function Stat({ label, value, suffix, note, onClick, actionLabel, tone = "normal
  * Bars, drawn with divs. A chart library for one sparkline would be a bigger
  * download than the entire rest of this app.
  */
-/**
- * Where this creator's scripts came from.
- *
- * ── WHY THIS IS ON THE DASHBOARD AT ALL ─────────────────────────────────────
- * For the creator it answers a real question quietly: they can see that they
- * have stopped using the feed, or that Import is doing most of the work, and
- * decide whether their categories are still right.
- *
- * It is also the one place the product reports on itself. The news pipeline is
- * by far the largest thing behind this app and the only paid one; if these bars
- * settle at mostly Import and Idea, that is worth knowing early rather than
- * after another six months of collecting.
- *
- * One bar rather than three, because the question is proportion, not counts:
- * "most of my scripts come from my own material" is read off a split bar in a
- * glance and has to be worked out from three numbers. The counts are still on
- * the row underneath for anyone who wants them.
- */
-function SourceMix({ counts, total, label }) {
-  const rows = [
-    { key: "news",   label: "Discover", value: counts.news   || 0, color: "var(--made)" },
-    { key: "import", label: "Import",   value: counts.import || 0, color: "#8A8A8A" },
-    { key: "idea",   label: "Idea",     value: counts.idea   || 0, color: "#C6C6C6" },
-  ].filter((r) => r.value > 0);
-
-  if (rows.length < 2) return null;
-
-  return (
-    <section style={{ marginTop: 34 }}>
-      <h2
-        style={{
-          fontSize: 11, fontWeight: 600, letterSpacing: "0.12em",
-          textTransform: "uppercase", color: "var(--ink-mute)", margin: "0 0 10px",
-        }}
-      >
-        What you wrote from · {label.toLowerCase()}
-      </h2>
-
-      <div
-        role="img"
-        aria-label={rows.map((r) => `${r.label}: ${r.value} of ${total}`).join(", ")}
-        style={{
-          display: "flex", height: 10, borderRadius: 999, overflow: "hidden",
-          background: "var(--line)", marginBottom: 12,
-        }}
-      >
-        {rows.map((r) => (
-          <div
-            key={r.key}
-            style={{ width: `${(r.value / total) * 100}%`, background: r.color }}
-          />
-        ))}
-      </div>
-
-      <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-        {rows.map((r) => (
-          <span key={r.key} style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
-            <span
-              aria-hidden="true"
-              style={{ width: 9, height: 9, borderRadius: 3, background: r.color, flexShrink: 0 }}
-            />
-            <span style={{ fontSize: 13, color: "var(--ink-body)" }}>
-              {r.label}
-              <span style={{ color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}>
-                {" · "}{r.value}
-              </span>
-            </span>
-          </span>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function Activity({ days, label, isPhone }) {
   const max = Math.max(...days.map((d) => d.count), 1);
   return (
@@ -441,10 +343,18 @@ function Activity({ days, label, isPhone }) {
       >
         Scripts per day · {label}
       </h2>
+      {/* ── TALL ENOUGH TO BE A CHART ─────────────────────────────────────
+          110px of box, minus 24 of padding, left 86px of drawing area, and a
+          quiet day inside a busy week rendered as a sliver a few pixels high.
+          The differences between days ARE the chart; squashed into that space
+          there was nothing to read and it looked like a rendering fault. This
+          is roughly double, and shorter on a phone only because the whole
+          screen is. */}
       <div
         style={{
-          display: "flex", alignItems: "flex-end", gap: 4, height: 110,
-          padding: "12px 14px", borderRadius: "var(--radius)",
+          display: "flex", alignItems: "flex-end", gap: isPhone ? 5 : 8,
+          height: isPhone ? 170 : 220,
+          padding: "14px 16px", borderRadius: "var(--radius)",
           background: "var(--card)", border: "1px solid var(--line)", overflowX: "auto",
         }}
       >
@@ -456,7 +366,11 @@ function Activity({ days, label, isPhone }) {
           >
             <div
               style={{
-                height: `${Math.max(4, (d.count / max) * 100)}%`,
+                // A day with nothing gets a 3px stub rather than a share of
+                // the height: at this size a 4% bar was tall enough to look
+                // like one script, and reading "you wrote something on Tuesday"
+                // off a day you did not is worse than showing nothing.
+                height: d.count ? `${Math.max(6, (d.count / max) * 100)}%` : 3,
                 // Same hue as the scripts count above it: one colour for the
                 // one thing this app produces.
                 background: d.count ? "var(--made)" : "#EDEDED",

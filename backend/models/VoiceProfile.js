@@ -119,6 +119,18 @@ const VoiceProfileSchema = new Schema({
   // is what "this voice is ready" means: a profile that has collected videos
   // but has never been analysed has no style to write from.
   built_at:   { type: Date, default: null },
+
+  // ── HOW MANY TIMES THIS HAS BEEN ANALYSED ─────────────────────────────────
+  // The first two builds are free (see VOICE_FREE_BUILDS in
+  // services/creditPricing.js): the first because a voice a creator has never
+  // heard is not something they can be asked to pay for, and the second because
+  // the first attempt is usually the one where they discover a video was the
+  // wrong one. Everything after that is a rebuild of a voice that already
+  // works, and it re-reads every video, so it is priced.
+  //
+  // Counted on SUCCESS only. A build that failed cost the creator nothing (it
+  // is refunded) and must not use up a free one.
+  builds: { type: Number, default: 0 },
   created_at: { type: Date, default: Date.now },
 });
 

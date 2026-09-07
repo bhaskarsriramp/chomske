@@ -29,6 +29,8 @@ import { buildVoiceProfile } from "../services/voiceProfileService.js";
 import { kickoffCategories } from "../services/newsScheduler.js";
 import { getCategory } from "../services/categories.js";
 import { publishUserEvent } from "../services/newsEvents.js";
+import { voiceAnalysisCost } from "../services/creditPricing.js";
+import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 
 const router = express.Router();
 
@@ -197,6 +199,41 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
       });
     }
 
+    // ── WHAT THIS ONE COSTS ───────────────────────────────────────────────
+    // The first two analyses are free and everything after re-reads the whole
+    // set, so the price depends on how many builds this voice has already had
+    // and how many videos the next one would read. Both facts are server-side;
+    // the client is shown the same number by GET /script/voice so the button
+    // and the charge cannot disagree. See voiceAnalysisCost.
+    const price = voiceAnalysisCost({ builds: voice.builds || 0, videos: analysable });
+
+    let charged = 0;
+    if (price.cost > 0) {
+      try {
+        const spent = await spend(req.user.id, price.cost, {
+          reason: "voice_analysis",
+          refType: "VoiceProfile",
+          refId: voice._id,
+          note: `Re-analysed voice from ${analysable} video${analysable === 1 ? "" : "s"}`,
+        });
+        charged = spent.spent;
+      } catch (err) {
+        if (err instanceof InsufficientCredits) {
+          // Its own shape, like the script route's: wanting a rebuild you
+          // cannot yet afford is not a fault, and the client turns this into a
+          // top-up prompt rather than a red error box.
+          return res.status(402).json({
+            success: false,
+            insufficient_credits: true,
+            needed: price.cost,
+            balance: err.balance ?? (await getBalance(req.user.id).catch(() => 0)),
+            message: `Re-analysing costs ${price.cost} credits.`,
+          });
+        }
+        throw err;
+      }
+    }
+
     await VoiceProfile.updateOne(
       { _id: voice._id },
       { $set: { building: true, build_error: "" } }
@@ -211,7 +248,7 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
 
     // Fire and forget. Everything after this point runs with no request behind
     // it, which is exactly why it has to announce itself.
-    runBuild(userId, profile._id, voice._id, profileId).catch(() => {});
+    runBuild(userId, profile._id, voice._id, profileId, charged).catch(() => {});
 
     return res.status(202).json({ success: true, building: true });
   } catch (err) {
@@ -234,7 +271,7 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
  * rejection has nobody to report to and would only leave `building` set, which
  * is the one state that blocks the next Analyse press.
  */
-async function runBuild(userId, profileObjectId, voiceId, profileId) {
+async function runBuild(userId, profileObjectId, voiceId, profileId, charged = 0) {
   try {
     const { built, profile: doc, reason } = await buildVoiceProfile(userId, profileObjectId);
 
@@ -243,6 +280,15 @@ async function runBuild(userId, profileObjectId, voiceId, profileId) {
       : reason === "no_transcripts"
         ? "None of the videos could be read. Check they are public and try again."
         : "Couldn't build this voice.";
+
+    // Nothing was produced, so nothing is owed. The free-build counter is only
+    // advanced on success (see buildVoiceProfile), so a refunded attempt does
+    // not quietly use one up either.
+    if (!built && charged > 0) {
+      await refund(userId, charged, {
+        refType: "VoiceProfile", refId: voiceId, note: "Voice analysis failed",
+      }).catch(() => {});
+    }
 
     await VoiceProfile.updateOne({ _id: voiceId }, { $set: { building: false, build_error: buildError } });
 
@@ -262,6 +308,11 @@ async function runBuild(userId, profileObjectId, voiceId, profileId) {
   } catch (err) {
     console.error("[profiles] analyse failed:", err.message);
     const message = err.userMessage || "Couldn't analyse this voice. Please try again.";
+    if (charged > 0) {
+      await refund(userId, charged, {
+        refType: "VoiceProfile", refId: voiceId, note: "Voice analysis failed",
+      }).catch(() => {});
+    }
     await VoiceProfile.updateOne({ _id: voiceId }, { $set: { building: false, build_error: message } })
       .catch(() => {});
     await publishUserEvent({ type: "voice:failed", user: userId, profile: profileId, message })

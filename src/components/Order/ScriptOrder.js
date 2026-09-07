@@ -288,12 +288,13 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
           >
             Buy credits
           </button>
-        ) : compact && typeof have === "number" ? (
-          // Phones only. On desktop the sidebar carries the balance permanently,
-          // a few centimetres away and always on screen, so repeating it here
-          // was one number maintained in two places for no added information.
-          <span style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>{have} credits left</span>
         ) : null}
+        {/* No balance beside the button, at any width. It used to appear on
+            phones only, on the reasoning that the desktop sidebar carries it
+            and a phone has no sidebar. A phone does now: the mobile header
+            shows the balance next to the menu button, permanently and above
+            the fold, so this was the same number in two places on one screen.
+            See CreditsPill in Dashboard.js. */}
       </div>
 
       {/* Both attempts are spent and we still cannot say what this costs. The

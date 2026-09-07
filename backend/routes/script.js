@@ -17,7 +17,7 @@ import { buildMaterial } from "../services/sourceMaterial.js";
 import { getCategory } from "../services/categories.js";
 import { buildVoiceProfile, getUsableProfile, profileStatus } from "../services/voiceProfileService.js";
 import { resolveProfile } from "../services/profileService.js";
-import { quote, PACKAGING_CREDITS } from "../services/creditPricing.js";
+import { quote, PACKAGING_CREDITS, voiceAnalysisCost } from "../services/creditPricing.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 
 const router = express.Router();
@@ -65,6 +65,21 @@ router.get("/voice", authenticateToken, async (req, res) => {
       building: !!voice?.building,
       build_error: voice?.build_error || "",
       profile: profile ? shapeProfile(profile) : null,
+
+      // ── WHAT THE NEXT ANALYSIS WOULD COST ─────────────────────────────
+      // Served with the voice rather than from an endpoint of its own,
+      // because every screen that could show the price is already reading
+      // this, and it is re-read whenever a video is added or deleted, which
+      // is exactly when the number changes. The balance rides along so the
+      // My voice screen can compare without a second request; the client
+      // still prefers its own live balance for the comparison, the same rule
+      // ScriptOrder follows, so a top-up in another tab is not ignored.
+      analysis: {
+        ...voiceAnalysisCost({ builds: voice?.builds || 0, videos: transcripts_available }),
+        builds: voice?.builds || 0,
+        videos: transcripts_available,
+      },
+      balance: await getBalance(req.user.id).catch(() => null),
     });
   } catch (err) {
     console.error("[script] GET /voice failed:", err);

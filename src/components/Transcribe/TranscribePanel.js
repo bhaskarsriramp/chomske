@@ -4,6 +4,7 @@ import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
 import { useProfiles } from "../../state/ProfileContext";
 import { useVoice } from "../../state/VoiceContext";
+import { useCredits } from "../../state/CreditsContext";
 import VoiceAnalysing from "./VoiceAnalysing";
 
 /**
@@ -85,6 +86,8 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
   // Why the analyse button is unavailable, shown on hover and on click. See
   // the button itself for why it is not simply `disabled`.
+  const { balance, openBuy, canBuy } = useCredits();
+
   const [hint, setHint] = useState(false);
 
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -252,6 +255,21 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   // button that looks like it does something and does not.
   const analyseBlocked = !canAnalyse || (!!built && !stale);
 
+  // ── WHAT THE NEXT ANALYSIS COSTS ──────────────────────────────────────────
+  // Priced by the server and served with the voice (GET /script/voice), so this
+  // number and the number the charge uses come from the same call. It changes
+  // when a video is added or deleted, which is exactly when the store re-reads
+  // the voice, so it is live without a poll of its own.
+  const price = voice?.analysis || null;
+  const cost = price?.cost ?? 0;
+
+  // Compared against the SHARED live balance rather than the copy that rode in
+  // with the quote: topping up in the sidebar changes nothing this screen
+  // watches, and the button must not stay dead over credits already paid for.
+  // Same rule ScriptOrder follows.
+  const have = typeof balance === "number" ? balance : voice?.balance;
+  const tooExpensive = cost > 0 && typeof have === "number" && have < cost;
+
   // `waiting` comes first: a video added a moment ago is the likeliest reason
   // someone is prodding a button that will not move, and "add a video" is a
   // maddening thing to be told by a screen that is holding the one you added.
@@ -379,6 +397,25 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                   genuinely sounding like you.
                 </div>
               )}
+
+              {/* ── WHY A REBUILD COSTS SOMETHING ──────────────────────────
+                  Said next to the button rather than only on it. A creator who
+                  has rebuilt twice for free meets a price the third time, and
+                  meeting it as a bare number on a button they have pressed
+                  before reads as a change of terms; naming what it pays for,
+                  and how many free ones are left before it applies, is the
+                  difference. See voiceAnalysisCost on the server. */}
+              {!analyseBlocked && price && (
+                <div style={{ fontSize: 12.5, color: "var(--ink-mute)", marginTop: 6, lineHeight: 1.55 }}>
+                  {price.free
+                    ? price.remaining_free === 1
+                      ? "This one is free. After it, re-analysing costs " +
+                        `${price.per_video} credits per video, because every video is read again.`
+                      : "Free."
+                    : `Every video is read again, so this costs ${price.per_video} credits ` +
+                      `per video · ${readyCount} × ${price.per_video}.`}
+                </div>
+              )}
             </div>
 
             {/* ── WHY THIS IS NOT A `disabled` BUTTON ──────────────────────
@@ -389,26 +426,43 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
                 So it LOOKS unavailable and refuses to run, but it still takes
                 a pointer and a click, and both say why. */}
-            <button
-              onClick={() => { analyseBlocked ? setHint(true) : analyseVoice(); }}
-              onMouseEnter={() => analyseBlocked && setHint(true)}
-              onMouseLeave={() => setHint(false)}
-              onFocus={() => analyseBlocked && setHint(true)}
-              onBlur={() => setHint(false)}
-              aria-disabled={analyseBlocked}
-              aria-describedby={analyseBlocked ? "hg-analyse-hint" : undefined}
-              className={analyseBlocked ? undefined : "hg-btn-primary"}
-              style={{
-                fontSize: 14, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
-                border: "none", flexShrink: 0, whiteSpace: "nowrap",
-                background: analyseBlocked ? "#E5E5E5" : "var(--primary)",
-                color: analyseBlocked ? "var(--ink-mute)" : "#fff",
-                cursor: analyseBlocked ? "help" : "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              {built ? "Analyse again" : "Analyse my voice"}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+              <button
+                onClick={() => { if (tooExpensive) return; analyseBlocked ? setHint(true) : analyseVoice(); }}
+                onMouseEnter={() => analyseBlocked && setHint(true)}
+                onMouseLeave={() => setHint(false)}
+                onFocus={() => analyseBlocked && setHint(true)}
+                onBlur={() => setHint(false)}
+                aria-disabled={analyseBlocked || tooExpensive}
+                aria-describedby={analyseBlocked ? "hg-analyse-hint" : undefined}
+                className={analyseBlocked || tooExpensive ? undefined : "hg-btn-primary"}
+                style={{
+                  fontSize: 14, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
+                  border: "none", flexShrink: 0, whiteSpace: "nowrap",
+                  background: analyseBlocked || tooExpensive ? "#E5E5E5" : "var(--primary)",
+                  color: analyseBlocked || tooExpensive ? "var(--ink-mute)" : "#fff",
+                  cursor: tooExpensive ? "default" : analyseBlocked ? "help" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {tooExpensive
+                  ? "Not enough credits"
+                  : `${built ? "Analyse again" : "Analyse my voice"}${cost > 0 ? ` · ${cost} credits` : ""}`}
+              </button>
+
+              {tooExpensive && canBuy && (
+                <button
+                  onClick={openBuy}
+                  className="hg-btn-primary"
+                  style={{
+                    fontSize: 14, fontWeight: 650, padding: "12px 20px", borderRadius: 11,
+                    border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer",
+                  }}
+                >
+                  Buy credits
+                </button>
+              )}
+            </div>
           </div>
           )}
 
