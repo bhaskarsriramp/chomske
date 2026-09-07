@@ -426,7 +426,7 @@ function Nav({ pad, isMobile }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-        <Logo color="var(--d-ink)" />
+        <Logo color="var(--d-ink)" fontSize={isMobile ? 19 : 20.5} />
 
         {!isMobile && (
           <nav style={{ display: "flex", alignItems: "center", gap: 30 }}>
@@ -487,7 +487,7 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
           }}
         >
           Never spend more than{" "}
-          <span style={{ color: "var(--yt)" }}>60s</span>
+          <span style={{ color: "var(--yt-bright)" }}>60s</span>
           <br />
           on a script in <LanguageFlip />
         </h1>
@@ -534,7 +534,7 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
             transitionDelay: ".22s",
           }}
         >
-          <span style={{ fontSize: 12.5, color: "var(--d-mute)" }}>100 free credits to start · No card required</span>
+          <span style={{ fontSize: 17.5, color: "var(--d-mute)" }}>100 Free credits to start</span>
           {/* The rule only separates two things that are on the SAME line. On a
               phone this wraps, and it was left dangling at the end of the first
               line separating nothing from nothing. */}
@@ -717,7 +717,7 @@ function LanguageFlip() {
             textAlign: "center",
             whiteSpace: "nowrap",
             opacity: n === i ? 1 : 0,
-            color: "var(--yt)",
+            color: "var(--yt-bright)",
           }}
         >
           {l.native}
@@ -2151,7 +2151,7 @@ function ClosingCta({ isMobile, pad, onCredential, busy }) {
           <SignIn onCredential={onCredential} onError={() => {}} busy={busy} />
         </div>
         <div style={{ marginTop: 14, fontSize: 12.5, color: "var(--d-mute)" }}>
-          100 free credits to start. No card required.
+          100 Free credits to start.
         </div>
       </div>
     </section>

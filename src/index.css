@@ -470,6 +470,12 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
      product's own chrome) is untouched. */
   --yt: #7C79FF;
   --yt-deep: #5C58F0;
+  /* The two words the headline is actually built around, "60s" and the language
+     that flips beneath it, get a brighter, more violet cut of the same hue than
+     the chrome around them. At 80px on a near-black ground the base tone reads
+     muted; this one carries. Separate token, not a change to --yt, so the dots,
+     buttons and badges that share the accent stay where they are. */
+  --yt-bright: #A78BFF;
   --ping-rgb: 124, 121, 255;
   background: var(--d-bg);
 }
