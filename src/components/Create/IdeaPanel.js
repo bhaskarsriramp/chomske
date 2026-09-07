@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import api, { errorMessage } from "../../api";
 import ScriptPanel from "../Order/ScriptPanel";
 import SourceCard from "./SourceCard";
+import DraftReview from "./DraftReview";
 import Field, { Column, Heading } from "./Field";
 
 /**
@@ -15,31 +16,32 @@ import Field, { Column, Heading } from "./Field";
  *   Import  the text is MATERIAL. A press release, an article, a transcript.
  *           Facts come out of it. "Turn this into a script."
  *   Idea    the text is an INSTRUCTION. "Make a video about why founders should
- *           ship on Fridays." Facts do not come out of it, because there are
- *           none in it.
+ *           ship on Fridays." There are no facts in it yet.
  *
- * Everything visible here, the heading, the placeholder, the line under the
- * lookup toggle, exists to keep those apart.
+ * ── THREE STEPS, AND THE MIDDLE ONE IS THE PRODUCT ───────────────────────────
+ *   1. Say what the video is about.
+ *   2. Read what we drafted, and fix it.
+ *   3. Choose a length and order it.
  *
- * ── AND THE PROMISE IT HAS TO KEEP ───────────────────────────────────────────
- * The rest of this product guarantees that every claim in a script traces to a
- * source. A free-form brief has no sources, and the obvious reading of "write
- * me something about X" is "use what you know", which is the one thing that
- * must not happen: a creator reading an invented statistic aloud, in their own
- * voice, to their own audience, is the worst outcome available here, and it
- * does not become safe because they chose the topic.
+ * Step 2 is new and it is the reason this screen works at all. "Explain the
+ * difference between candlestick patterns and chart patterns" is a complete
+ * idea and almost no material: written straight into sixty seconds it gave the
+ * creator their own sentence back, restated four times. Searching the news
+ * never helped, because an evergreen explainer has no coverage today or ever,
+ * so the honest answer was "no coverage found" over a script nobody wanted.
  *
- * So there are two honest modes and the screen says which one is running:
- *   off   their words, their argument, their voice. No facts added. Ever.
- *   on    we go and find real coverage first, and the strict fact rule applies
- *         to that, exactly as it does on Discover.
+ * What was missing was content, not sources. So the model drafts the content
+ * and the creator corrects it, which is also the only condition under which
+ * this product will write from a model's own knowledge: a person who knows the
+ * subject has read it and put their name to it. See DraftReview.js.
  *
- * The lookup runs during the free preview, so "we found nothing, we'll write
- * from your brief and you won't be charged for the lookup" is something the
- * creator learns before they commit rather than after.
+ * Step 2 is SKIPPED when the lookup found real coverage. Sources are checkable
+ * on their own, they come with links, so they need no sign-off, and adding a
+ * review step to the one path that least needs it would be pure friction.
  */
 export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compact, limits }) {
   const maxPrompt = limits?.max_prompt_chars ?? 2000;
+  const maxText = limits?.max_text_chars ?? 6000;
   const lookupCredits = limits?.lookup_credits ?? 10;
 
   const [prompt, setPrompt] = useState("");
@@ -47,22 +49,48 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
 
   const [source, setSource] = useState(null);
   const [preparing, setPreparing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [redrafting, setRedrafting] = useState(false);
   const [error, setError] = useState("");
+  const [draftError, setDraftError] = useState("");
+
+  // ── REOPENING AN APPROVED DRAFT ──────────────────────────────────────────
+  // Approving is not final. A creator who gets to the length slider and then
+  // remembers a correction has to be able to go back to the text, and without
+  // this they could not: "Change" returns to the idea box, and re-entering the
+  // same idea reuses the same source, which is already approved and would land
+  // them straight back on the order panel. The one edit they actually wanted
+  // would be the one edit the screen refused.
+  const [reopened, setReopened] = useState(false);
 
   // Same staleness rule as Import: a prepared brief that no longer matches what
-  // is in the box would price and write the previous version. The lookup flag is
-  // part of the key because turning it on is a different order, not a display
-  // preference: it changes what gets read and what the script may claim.
+  // is in the box would price and write the previous version. The lookup flag
+  // is part of the key because turning it on is a different order, not a
+  // display preference: it changes what gets read and what the script may claim.
   const inputsKey = useMemo(() => JSON.stringify([prompt.trim(), lookup]), [prompt, lookup]);
   const [readKey, setReadKey] = useState("");
-  const ready = source && readKey === inputsKey;
+  const prepared = source && readKey === inputsKey;
 
   const hasPrompt = prompt.trim().length > 0;
+
+  // Three states, in order. `needs_review` comes from the server and is the
+  // same flag that gates POST /script there, so the button and the API cannot
+  // disagree about whether this is orderable yet.
+  const reviewing = prepared && (source.needs_review || reopened);
+  const orderable = prepared && !source.needs_review && !reopened;
+
+  function reset() {
+    setSource(null);
+    setReadKey("");
+    setDraftError("");
+    setReopened(false);
+  }
 
   async function prepare() {
     if (!hasPrompt || preparing) return;
     setPreparing(true);
     setError("");
+    setDraftError("");
     try {
       const { data } = await api.post("/source/preview", {
         kind: "idea",
@@ -79,11 +107,42 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
     }
   }
 
+  /** They read the draft, fixed it, and are putting their name to it. */
+  async function confirm(text) {
+    if (confirming) return;
+    setConfirming(true);
+    setDraftError("");
+    try {
+      const { data } = await api.post(`/source/${source.id}/confirm`, { text });
+      setSource(data.source);
+      setReopened(false);
+    } catch (err) {
+      setDraftError(errorMessage(err, "Couldn't save that. Please try again."));
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  /** A different take on the same idea. Free. */
+  async function rewrite() {
+    if (redrafting) return;
+    setRedrafting(true);
+    setDraftError("");
+    try {
+      const { data } = await api.post(`/source/${source.id}/redraft`);
+      setSource(data.source);
+    } catch (err) {
+      setDraftError(errorMessage(err, "Couldn't write another draft. Please try again."));
+    } finally {
+      setRedrafting(false);
+    }
+  }
+
   return (
     <Column compact={compact}>
       <Heading
         title="Idea"
-        blurb="Tell us what you want the video to be about, the way you'd explain it to someone. We'll write it at the length you pick, in your voice."
+        blurb="Tell us what you want the video to be about, the way you'd explain it to someone. We'll draft it, you check it, then we write it at the length you pick, in your voice."
         compact={compact}
       />
 
@@ -100,30 +159,12 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
         </div>
       )}
 
-      {ready ? (
-        <div style={{ marginBottom: 4 }}>
-          <SourceCard
-            source={source}
-            compact={compact}
-            onChange={() => { setSource(null); setReadKey(""); }}
-          />
-          <div
-            className="indic"
-            style={{
-              marginTop: 10, padding: "11px 13px", borderRadius: 10,
-              border: "1px solid var(--line)", background: "var(--card)",
-              fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)",
-              whiteSpace: "pre-wrap", wordBreak: "break-word",
-            }}
-          >
-            {source.prompt}
-          </div>
-        </div>
-      ) : (
+      {/* ── Step 1: the idea ─────────────────────────────────────────────── */}
+      {!prepared && (
         <>
           <Field
             label="What's the video about?"
-            hint="Your take, your argument, your announcement, a story you want to tell. The more you say, the more it sounds like you."
+            hint="Your take, your argument, your announcement, a topic you want to explain. The more you say, the closer the draft starts to what you meant."
             count={`${prompt.length.toLocaleString()} / ${maxPrompt.toLocaleString()}`}
             over={prompt.length > maxPrompt}
           >
@@ -131,7 +172,7 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
               className="indic"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value.slice(0, maxPrompt))}
-              placeholder="e.g. Why every small creator should stop chasing trends and pick one topic. My take: consistency beats reach in the first year, and I want to explain why with what happened on my own channel."
+              placeholder="e.g. Today I want to explain the difference between candlestick patterns and chart patterns, and why beginners confuse the two."
               rows={compact ? 6 : 7}
               style={{
                 width: "100%", boxSizing: "border-box", fontSize: 14.5, fontFamily: "inherit",
@@ -142,11 +183,17 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
             />
           </Field>
 
-          {/* ── The grounding switch ──────────────────────────────────────────
-              Off by default, because most Ideas are opinion, advice or a story,
-              and searching the news for those finds somebody else's article and
-              pulls the script towards it. On, it is the same research the feed
-              does, aimed at one brief. */}
+          {/* ── The grounding switch ────────────────────────────────────────
+              Off by default, because most ideas are explainers, opinion or a
+              story, and searching the news for those finds somebody else's
+              article and pulls the draft towards it. On, it is the same
+              research the feed does, aimed at one brief.
+
+              Its copy no longer promises a script written from the brief
+              alone, because that is no longer what happens either way: with
+              coverage we write from sources, without it we draft and the
+              creator checks. Saying so here is what stops the review step
+              arriving as a surprise. */}
           <button
             onClick={() => setLookup((v) => !v)}
             aria-pressed={lookup}
@@ -172,13 +219,13 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
             </span>
             <span style={{ minWidth: 0, flex: 1 }}>
               <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>
-                Look it up first
+                Look for real coverage first
                 <span style={{ fontWeight: 500, color: "var(--ink-mute)" }}> · +{lookupCredits} cr</span>
               </span>
               <span style={{ display: "block", fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.55, marginTop: 2 }}>
-                For anything in the news. We find real coverage and write from
-                that, so the numbers are checkable. Only charged if we find
-                something.
+                Worth it for anything in the news, so the numbers come from real
+                articles you can check. Only charged if we find something; if we
+                don't, you'll get a draft to edit instead.
               </span>
             </span>
           </button>
@@ -196,37 +243,83 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
               opacity: preparing ? 0.55 : 1,
             }}
           >
-            {preparing ? (lookup ? "Looking it up…" : "Setting up…") : "Continue"}
+            {preparing ? (lookup ? "Looking it up…" : "Drafting…") : "Continue"}
           </button>
 
-          {/* ── THE SENTENCE THAT PREVENTS THE SUPPORT TICKET ────────────────
-              Without it, a creator asking for "a video about today's market
-              close" with the lookup off gets a script that is entirely their
-              own framing and no numbers, and reasonably concludes the product
-              is broken. Said here, at the moment of the decision, it is
-              instead the product being clear about what it will and will not
-              make up. */}
           <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
-            {lookup
-              ? "Free to check. You'll see what we found, and what it costs, before you write anything."
-              : "We'll write only from what you type here, and won't add facts, numbers or news of our own. Covering something that happened? Tick the box above, or use Import."}
+            Free. Nothing is charged until you've seen what the video will say and picked a length.
           </p>
         </>
       )}
 
-      {ready && (
-        <ScriptPanel
-          sourceId={source.id}
-          voice={voice}
-          onVoiceChange={onVoiceChange}
-          onGoTranscribe={onGoTranscribe}
+      {/* ── Step 2: check the draft ──────────────────────────────────────── */}
+      {reviewing && (
+        <DraftReview
+          // Reopening shows what they APPROVED, not the original proposal.
+          // Handing back the model's first attempt would silently discard the
+          // corrections they came back to extend.
+          draft={reopened && source.text ? source.text : source.draft}
+          onConfirm={confirm}
+          onRedraft={rewrite}
+          onBack={reopened ? () => setReopened(false) : reset}
+          backLabel={reopened ? "Cancel" : "Change the idea"}
+          busy={confirming}
+          redrafting={redrafting}
+          error={draftError}
           compact={compact}
-          writingNote={
-            source.lookup_used
-              ? "Reading what we found, then drafting. Around half a minute."
-              : "Drafting in your voice. Around half a minute."
-          }
+          maxChars={maxText}
         />
+      )}
+
+      {/* ── Step 3: order it ─────────────────────────────────────────────── */}
+      {orderable && (
+        <>
+          <div style={{ marginBottom: 4 }}>
+            <SourceCard source={source} compact={compact} onChange={reset} />
+            <div
+              className="indic"
+              style={{
+                marginTop: 10, padding: "12px 14px", borderRadius: 10,
+                border: "1px solid var(--line)", background: "var(--card)",
+                fontSize: 13.5, lineHeight: 1.68, color: "var(--ink-body)",
+                whiteSpace: "pre-wrap", wordBreak: "break-word",
+                // Long approved drafts run to several hundred words, and a wall
+                // of text between the card and the price would push the thing
+                // they came here to do off the screen. They have just finished
+                // reading it; this is a reminder, not the document.
+                maxHeight: 200, overflowY: "auto",
+              }}
+            >
+              {source.text || source.prompt}
+            </div>
+
+            {source.draft_approved_at && (
+              <button
+                onClick={() => setReopened(true)}
+                style={{
+                  background: "none", border: "none", padding: "8px 0 0", font: "inherit",
+                  fontSize: 12.5, color: "var(--ink)", fontWeight: 600,
+                  textDecoration: "underline", cursor: "pointer",
+                }}
+              >
+                Edit this
+              </button>
+            )}
+          </div>
+
+          <ScriptPanel
+            sourceId={source.id}
+            voice={voice}
+            onVoiceChange={onVoiceChange}
+            onGoTranscribe={onGoTranscribe}
+            compact={compact}
+            writingNote={
+              source.lookup_used
+                ? "Reading what we found, then drafting. Around half a minute."
+                : "Writing it in your voice. Around half a minute."
+            }
+          />
+        </>
       )}
     </Column>
   );

@@ -98,6 +98,38 @@ export const BRIEF_ONLY_FACT_RULE = `FACTS. The creator's brief above is the ONL
      more examples of what THEY described, more of their reasoning, a better
      opening and close. A shorter honest script beats a padded one.`;
 
+/**
+ * The creator wrote and approved this themselves. Idea mode, after the review
+ * step in services/sourceService.js.
+ *
+ * ── WHY IT IS NOT SIMPLY THE GROUNDED RULE ──────────────────────────────────
+ * Both forbid invention, and that is the important half. What differs is tone.
+ * The grounded rule is written for wire copy from eight outlets, so it tells
+ * the model to hedge, to note where sources disagree, and to attribute. Pointed
+ * at a creator's own approved explanation of candlestick patterns, that
+ * produces a script that sounds unsure of things the creator is certain about
+ * and keeps deferring to "sources" that do not exist.
+ *
+ * So: same prohibition, opposite confidence. This is the creator's own
+ * knowledge about their own subject, checked by them, and the script should say
+ * it the way they would say it.
+ */
+export const APPROVED_MATERIAL_FACT_RULE = `FACTS. The material above is the creator's own, written and checked by them
+   for this video. Treat it as settled:
+   - Say it with their confidence. Do not hedge it, do not attribute it to
+     "sources" or "experts", do not add "reportedly" or "it is said that".
+     There are no sources here and none are needed; this is what they know.
+   - Use it ALL if the length allows. The examples, the comparisons and the
+     reasoning in there are the video, not background for it.
+   - Add nothing factual that is not above. No statistics, dates, prices,
+     percentages, study results, company names or quotes beyond what they
+     wrote. They checked what is there and they have not checked anything else,
+     and they are about to say it out loud.
+   - You may reorder it, tighten it, and choose what a shorter script leaves
+     out. You may not extend it with new claims to fill a longer one; if the
+     material cannot support the length, make their points properly rather than
+     padding with invented detail.`;
+
 /* ── Building one ──────────────────────────────────────────────────────────── */
 
 /**
@@ -285,7 +317,11 @@ export async function materialFromSource(doc) {
     facts: grounded
       ? (brief ? `${facts}\n\nWHAT THE CREATOR WANTS THIS TO BE ABOUT:\n${brief}` : facts)
       : `THE CREATOR'S BRIEF:\n${brief}`,
-    factRule: grounded ? GROUNDED_FACT_RULE : BRIEF_ONLY_FACT_RULE,
+    factRule: !grounded
+      ? BRIEF_ONLY_FACT_RULE
+      : doc.draft_approved_at
+        ? APPROVED_MATERIAL_FACT_RULE
+        : GROUNDED_FACT_RULE,
     sources_used: [...new Set(used)],
     grounded,
   };
@@ -299,5 +335,5 @@ export async function buildMaterial({ item = null, source = null, seconds = 60 }
 
 export default {
   buildMaterial, materialFromNews, materialFromSource,
-  GROUNDED_FACT_RULE, BRIEF_ONLY_FACT_RULE,
+  GROUNDED_FACT_RULE, BRIEF_ONLY_FACT_RULE, APPROVED_MATERIAL_FACT_RULE,
 };

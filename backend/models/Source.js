@@ -84,9 +84,27 @@ const SourceSchema = new Schema({
 
   // Idea only: they asked us to find real sources rather than write from the
   // brief alone. `lookup_used` is the answer to whether it worked, and it is
-  // what the refund in routes/script.js keys off.
+  // what routes/script.js prices off.
   lookup:      { type: Boolean, default: false },
   lookup_used: { type: Boolean, default: false },
+
+  /**
+   * ── THE DRAFT, AND THE SIGNATURE ON IT ────────────────────────────────────
+   * Idea only, and only when the lookup found nothing to write from, which for
+   * an evergreen subject is every time: there is no coverage of "the difference
+   * between candlestick and chart patterns" and there never will be.
+   *
+   * `draft` is what the model proposed (services/ideaDraftService.js). It is
+   * NOT material and is never written from. `text` holds what the creator
+   * actually approved after editing it, and `draft_approved_at` is the moment
+   * they did, which is the only thing that makes this source orderable.
+   *
+   * The two are kept apart deliberately. Together they are the record of what
+   * we suggested versus what a human signed off on, and that distinction is
+   * the whole justification for letting a model write content here at all.
+   */
+  draft:            { type: String, default: "" },
+  draft_approved_at: { type: Date, default: null },
 
   // ── What we made of it ───────────────────────────────────────────────────
   // The headline the script is about, and the angle to take. Derived cheaply

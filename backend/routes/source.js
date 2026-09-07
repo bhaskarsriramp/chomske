@@ -24,7 +24,7 @@ import express from "express";
 import mongoose from "mongoose";
 import Source from "../models/Source.js";
 import authenticateToken from "../middleware/authenticateToken.js";
-import { buildSource, shapeSource, SourceRejected } from "../services/sourceService.js";
+import { buildSource, confirmDraft, redraft, shapeSource, SourceRejected } from "../services/sourceService.js";
 import { resolveProfile } from "../services/profileService.js";
 import { getCategory } from "../services/categories.js";
 import {
@@ -95,6 +95,56 @@ router.post("/preview", authenticateToken, async (req, res) => {
     }
     console.error("[source] preview failed:", err);
     return res.status(500).json({ success: false, message: "Couldn't prepare that. Please try again." });
+  }
+});
+
+/**
+ * POST /source/:id/confirm  { text }
+ *
+ * The creator has read the draft, fixed what was wrong, and is putting their
+ * name to it. That signature is what turns model-written content into material
+ * this product is willing to write a script from, so it is a real request with
+ * a real record rather than a checkbox in the browser.
+ *
+ * Free. Nothing has been read or generated that was not already paid for by
+ * the preview; this only records an approval.
+ */
+router.post("/:id/confirm", authenticateToken, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: "Invalid id" });
+  }
+  try {
+    const doc = await confirmDraft(req.user.id, req.params.id, req.body?.text);
+    return res.json({ success: true, source: shapeSource(doc) });
+  } catch (err) {
+    if (err instanceof SourceRejected) {
+      return res.status(400).json({ success: false, message: err.userMessage });
+    }
+    console.error("[source] confirm failed:", err);
+    return res.status(500).json({ success: false, message: "Couldn't save that. Please try again." });
+  }
+});
+
+/**
+ * POST /source/:id/redraft
+ *
+ * A different draft of the same idea. Free, and capped only by the preview
+ * ceiling below: a creator who rejects two drafts is using the product exactly
+ * as intended, and charging for that would push them to accept a bad one.
+ */
+router.post("/:id/redraft", authenticateToken, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: "Invalid id" });
+  }
+  try {
+    const doc = await redraft(req.user.id, req.params.id);
+    return res.json({ success: true, source: shapeSource(doc) });
+  } catch (err) {
+    if (err instanceof SourceRejected) {
+      return res.status(400).json({ success: false, message: err.userMessage });
+    }
+    console.error("[source] redraft failed:", err);
+    return res.status(500).json({ success: false, message: "Couldn't write another draft. Please try again." });
   }
 });
 

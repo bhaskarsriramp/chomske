@@ -134,6 +134,21 @@ router.post("/", authenticateToken, async (req, res) => {
           message: "That material has expired. Paste it again and we'll re-read it.",
         });
       }
+
+      // ── A DRAFT NOBODY HAS SIGNED OFF ON IS NOT MATERIAL ──────────────────
+      // Idea mode drafts its content with a model when there is no coverage to
+      // write from, and that content is only allowed to become material once a
+      // human has read and approved it (services/sourceService.js). Enforced
+      // here as well as in the UI, because the UI is a file anyone can edit in
+      // their own browser, and the thing on the other side of this check is a
+      // script full of unreviewed model claims in the creator's own voice.
+      if (source.draft && !source.draft_approved_at) {
+        return res.status(400).json({
+          success: false,
+          needs_review: true,
+          message: "Read the draft and confirm it first, then we'll write the script.",
+        });
+      }
     } else {
       if (!mongoose.Types.ObjectId.isValid(newsId)) {
         return res.status(400).json({ success: false, message: "Invalid story id" });
@@ -273,6 +288,9 @@ router.post("/", authenticateToken, async (req, res) => {
               links: (source.links || []).filter((l) => l.ok).map((l) => l.url),
               text_chars: (source.text || "").length,
               prompt: source.prompt || "",
+              // Only for a draft the creator read and approved. Pasted
+              // third-party material stays a character count; see the model.
+              approved_text: source.draft_approved_at ? (source.text || "") : "",
               lookup: !!source.lookup,
               lookup_used: !!source.lookup_used,
             },
@@ -632,6 +650,7 @@ function shape(d) {
       links:         d.source_input?.links || [],
       text_chars:    d.source_input?.text_chars || 0,
       prompt:        d.source_input?.prompt || "",
+      approved_text: d.source_input?.approved_text || "",
       lookup:        !!d.source_input?.lookup,
       lookup_used:   !!d.source_input?.lookup_used,
     },

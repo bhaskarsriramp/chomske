@@ -20,7 +20,10 @@
 export default function SourceCard({ source, onChange, compact }) {
   if (!source) return null;
 
-  const { kind, youtube, links = [], text_chars: textChars = 0, lookup, lookup_used: lookupUsed } = source;
+  const {
+    kind, youtube, links = [], text_chars: textChars = 0,
+    lookup, lookup_used: lookupUsed, draft_approved_at: approved,
+  } = source;
   const readable = links.filter((l) => l.ok);
   const refused = links.filter((l) => !l.ok);
 
@@ -118,34 +121,49 @@ export default function SourceCard({ source, onChange, compact }) {
           />
         )}
 
-        {textChars > 0 && (
+        {textChars > 0 && !approved && (
           <Row ok label={`${textChars.toLocaleString()} characters pasted`} detail="Used as source material." />
         )}
 
         {/* ── Idea mode's verdict ───────────────────────────────────────────
-            The single most important sentence on that screen, because it says
-            which kind of script is about to be written. A creator who thinks
-            we researched their topic and in fact wrote from their own two
-            sentences would find out by reading it aloud. */}
+            The most important row on that screen, because it says which kind
+            of script is about to be written. A creator who believes we
+            researched their topic, when in fact they approved a draft written
+            from a model's training, would find out by reading it aloud. */}
         {lookup && lookupUsed && (
-          <Row ok label="Found real coverage" detail="Facts will come from the sources we found." />
+          <Row ok label="Found real coverage" detail="Facts come from the sources we found, and they're listed with the script." />
         )}
-        {lookup && !lookupUsed && (
+
+        {/* ── WHAT THEY SIGNED OFF ON ───────────────────────────────────────
+            This used to read "No coverage found. We'll write from your brief
+            alone", which was a dead end wearing a warning icon: it announced a
+            failure and then wrote sixty seconds out of one sentence anyway.
+
+            There is no failure here. An evergreen explainer has no coverage
+            today or ever, so we draft the content, the creator checks it, and
+            what the script gets written from is the version they approved.
+            That is a better outcome than the search hitting, and the row
+            should read like one. */}
+        {approved && (
           <Row
-            label="No coverage found"
-            detail="We'll write from your brief alone, and you won't be charged for the lookup."
+            ok
+            label="Your checked draft"
+            detail={
+              `${textChars.toLocaleString()} characters you read and approved. The script says this, in your voice.` +
+              (lookup && !lookupUsed ? " No news coverage on this one, so the lookup wasn't charged." : "")
+            }
           />
         )}
 
         {/* ── ONLY IDEA CAN BE UNGROUNDED ──────────────────────────────────
-            Gated on the kind, not on `grounded`. A video-only Import is
-            reported as ungrounded here because its transcript is not read
-            until somebody pays for a script, and keying off that would have
-            this row tell a creator we were about to write from their brief on
-            a screen where they never wrote one. An Import with nothing
-            readable never reaches this component at all: the server refuses it
-            during the preview. */}
-        {kind === "idea" && !lookup && (
+            The fallback when drafting itself failed, so there is genuinely
+            nothing but the brief. Gated on the kind, not on `grounded`: a
+            video-only Import is reported as ungrounded because its transcript
+            is not read until somebody pays, and keying off that would have
+            this row promise a brief on a screen where none was written. An
+            Import with nothing readable never reaches this component at all,
+            the server refuses it during the preview. */}
+        {kind === "idea" && !approved && !lookupUsed && (
           <Row
             ok
             label="Writing from your brief"

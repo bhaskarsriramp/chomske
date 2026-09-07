@@ -32,6 +32,7 @@ import { canonicalUrl } from "../utils/normalize.js";
 import { getYouTubeVideoDetails, isApidirectConfigured } from "./apidirectClient.js";
 import { fetchArticles } from "./tinyfishClient.js";
 import { researchPrompt } from "./promptResearchService.js";
+import { draftFromIdea } from "./ideaDraftService.js";
 import {
   MAX_SOURCE_VIDEO_SECONDS, MAX_SOURCE_LINKS,
   MAX_SOURCE_TEXT_CHARS, MAX_PROMPT_CHARS,
@@ -276,6 +277,27 @@ export async function buildSource(userId, {
     }
   }
 
+  /* ── AN IDEA WITH NOTHING BEHIND IT GETS DRAFTED, NOT REFUSED ────────────
+     This is the ordinary case for Idea, not the exception. Most briefs are
+     evergreen (an explainer, an opinion, a lesson) and have no coverage today
+     or ever, so the lookup correctly finds nothing and there is still no
+     material. Previously that went straight to the order panel and produced
+     sixty seconds built out of one sentence.
+
+     So the model drafts the content instead, and the creator edits it. Nothing
+     here is written from yet: `draft` is a proposal, `facts` stays empty, and
+     the source is not orderable until confirmDraft() records that a human
+     approved a version of it. See services/ideaDraftService.js for why that
+     signature is what makes model-written content acceptable material at all.
+
+     Skipped when the lookup DID find coverage: real sources are checkable in a
+     way a draft is not, so they need no sign-off, and asking for one would put
+     a review step in front of the path that least needs it. */
+  let draft = "";
+  if (kind === "idea" && !blocks.length) {
+    draft = await draftFromIdea(brief).catch(() => "");
+  }
+
   /* ── NOTHING READABLE IS A REFUSAL, NOT A CHEAP SCRIPT ───────────────────
      The whole point of reading during the free preview is that this case gets
      caught before money moves, and without this check it would not be: an
@@ -318,6 +340,7 @@ export async function buildSource(userId, {
     prompt: brief,
     lookup: !!lookup,
     lookup_used: lookupUsed,
+    draft,
     title,
     // The brief doubles as the angle: it is the creator saying what they want
     // said, which is the job ai_angle does on the news path.
@@ -331,10 +354,93 @@ export async function buildSource(userId, {
     `${video ? `video ${video.duration_seconds}s · ` : ""}` +
     `${linkRows.filter((l) => l.ok).length}/${linkRows.length} link(s) · ` +
     `${pasted ? `${pasted.length} chars pasted · ` : ""}` +
+    `${draft ? "drafted · " : ""}` +
     `lookup=${lookup ? (lookupUsed ? "hit" : `miss:${lookupReason}`) : "off"}`
   );
 
   return { ...doc.toObject(), lookup_reason: lookupReason };
+}
+
+/**
+ * Record that a human approved a version of the draft, and make it material.
+ *
+ * ── THIS FUNCTION IS THE WHOLE ARGUMENT ─────────────────────────────────────
+ * Everywhere else in this product the model is forbidden from using its
+ * training, because a creator reading an invented figure aloud in their own
+ * voice is the worst thing we could cause. Idea mode needs content that no
+ * source can supply, so the rule is not relaxed, it is satisfied differently:
+ * a person who knows the subject reads what was proposed, corrects it, and
+ * puts their name to it. What lands in `text` is theirs.
+ *
+ * `draft` is deliberately left untouched alongside it, so the record shows what
+ * we suggested next to what they actually signed off on.
+ *
+ * Accepts an edit that is barely changed, or not changed at all. Reading it and
+ * pressing the button IS the approval; demanding a diff would be the product
+ * second-guessing somebody who found the draft correct.
+ *
+ * @param {string} text  the creator's edited version
+ */
+export async function confirmDraft(userId, sourceId, text) {
+  const approved = String(text || "").trim().slice(0, MAX_SOURCE_TEXT_CHARS);
+  if (!approved) {
+    throw new SourceRejected("There's nothing to write from. Add some content, or go back and change the idea.");
+  }
+  // Short enough to be a title rather than material. Approving an empty-ish
+  // draft would put us straight back to writing a minute out of one line.
+  if (approved.length < 80) {
+    throw new SourceRejected("That's too short to build a video from. Add a few more lines, or ask for a new draft.");
+  }
+
+  // Scoped to the caller, like every other read of this collection.
+  const doc = await Source.findOne({ _id: sourceId, user: userId });
+  if (!doc) throw new SourceRejected("That material has expired. Paste your idea again.");
+  if (doc.kind !== "idea") throw new SourceRejected("That source isn't an idea.");
+
+  doc.text = approved;
+  doc.draft_approved_at = new Date();
+  // Labelled as the creator's own, because after this edit it is. The writer's
+  // strict fact rule then applies to it: everything in the script traces back
+  // to something a human put there.
+  doc.facts =
+    `[THE CREATOR'S OWN MATERIAL] They wrote and approved this as the content ` +
+    `for the video:
+${approved}`;
+  doc.updated_at = new Date();
+  await doc.save();
+
+  console.log(`[source] draft approved on ${doc._id} (${approved.length} chars)`);
+  return doc.toObject();
+}
+
+/**
+ * Another draft, for a creator who did not like the first one.
+ *
+ * The previous text is handed back to the model so it takes a different angle
+ * rather than rewording what was already rejected. Cheap, and the alternative
+ * is somebody hand-editing a draft that started out wrong, which is slower than
+ * writing it themselves and would make the whole step feel like a tax.
+ */
+export async function redraft(userId, sourceId) {
+  const doc = await Source.findOne({ _id: sourceId, user: userId });
+  if (!doc) throw new SourceRejected("That material has expired. Paste your idea again.");
+  if (doc.kind !== "idea") throw new SourceRejected("That source isn't an idea.");
+
+  const next = await draftFromIdea(doc.prompt, { previous: doc.draft }).catch(() => "");
+  if (!next) {
+    throw new SourceRejected("Couldn't write another draft just now. Edit this one, or try again in a moment.");
+  }
+
+  doc.draft = next;
+  // The approval does not survive a new draft: what they signed off on is gone,
+  // so the source goes back to needing a signature before it can be ordered.
+  doc.draft_approved_at = null;
+  doc.text = "";
+  doc.facts = "";
+  doc.updated_at = new Date();
+  await doc.save();
+
+  return doc.toObject();
 }
 
 /**
@@ -373,6 +479,14 @@ export function shapeSource(doc, extra = {}) {
     lookup: !!doc.lookup,
     lookup_used: !!doc.lookup_used,
     lookup_reason: doc.lookup_reason || extra.lookup_reason || "",
+
+    // ── The review step ─────────────────────────────────────────────────────
+    // `draft` is a proposal and never material. `needs_review` is what gates
+    // the order panel: while it is true there is nothing to price, because
+    // nothing has been approved to write from yet.
+    draft: doc.draft || "",
+    draft_approved_at: doc.draft_approved_at || null,
+    needs_review: !!doc.draft && !doc.draft_approved_at,
     sources_used: doc.sources_used || [],
     // Is there anything real to write from, or only the creator's own brief?
     // The one fact that decides which fact rule the writer gets, so the UI can
@@ -393,4 +507,4 @@ function firstLine(s) {
   return t.length > 90 ? `${t.slice(0, 87)}…` : t;
 }
 
-export default { buildSource, shapeSource, SourceRejected };
+export default { buildSource, confirmDraft, redraft, shapeSource, SourceRejected };

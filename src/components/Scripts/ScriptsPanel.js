@@ -339,7 +339,12 @@ function sourceSummary(script) {
   }
 
   if (kind === "idea") {
-    return input.lookup_used ? "Idea · looked up" : "Your own idea";
+    if (input.lookup_used) return "Idea · from real coverage";
+    // The usual case now: they read a draft, fixed it, and approved it. Worth
+    // distinguishing from the fallback below, where drafting failed and the
+    // script really was written from two lines.
+    if (input.approved_text) return "Idea · your checked draft";
+    return "Your own idea";
   }
 
   const parts = [];
@@ -408,7 +413,10 @@ function SourceProvenance({ script, compact }) {
     );
   }
 
-  if (input.text_chars > 0) {
+  // Pasted third-party material is a count, not a copy: see the model for why.
+  // An approved draft is rendered in full below instead, because it IS the
+  // material and the script is only checkable against it.
+  if (input.text_chars > 0 && !input.approved_text) {
     rows.push(
       <div
         key="text"
@@ -422,7 +430,7 @@ function SourceProvenance({ script, compact }) {
     );
   }
 
-  if (!rows.length && !input.prompt) return null;
+  if (!rows.length && !input.prompt && !input.approved_text) return null;
 
   return (
     <div style={{ margin: "0 0 22px" }}>
@@ -443,10 +451,36 @@ function SourceProvenance({ script, compact }) {
             border: "1px solid var(--line)", background: "var(--card)",
             fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)",
             whiteSpace: "pre-wrap", wordBreak: "break-word",
-            marginBottom: rows.length ? 8 : 0,
+            marginBottom: input.approved_text || rows.length ? 8 : 0,
           }}
         >
           {input.prompt}
+        </div>
+      )}
+
+      {/* ── THE MATERIAL, KEPT ────────────────────────────────────────────────
+          The whole promise of this product is that a creator can check what
+          they said against what it came from, weeks later. On the news path
+          that is the coverage list. For an Idea it is this: the draft they
+          read, corrected and approved, which is the only thing the script was
+          allowed to draw on. Copied onto the script at order time precisely
+          because the Source that held it expires in a month. */}
+      {input.approved_text && (
+        <div style={{ marginBottom: rows.length ? 8 : 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", margin: "12px 0 6px" }}>
+            The draft you approved
+          </div>
+          <div
+            className="indic"
+            style={{
+              padding: compact ? "11px 13px" : "12px 14px", borderRadius: 10,
+              border: "1px solid var(--line)", background: "var(--paper)",
+              fontSize: 13, lineHeight: 1.7, color: "var(--ink-body)",
+              whiteSpace: "pre-wrap", wordBreak: "break-word",
+            }}
+          >
+            {input.approved_text}
+          </div>
         </div>
       )}
 
@@ -458,7 +492,9 @@ function SourceProvenance({ script, compact }) {
           the creator's own, and they should not have to remember that. */}
       {kind === "idea" && !input.lookup_used && (
         <p style={{ fontSize: 12, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
-          Written from your brief alone. Nothing here was researched or added by us.
+          {input.approved_text
+            ? "Drafted from your idea and checked by you before it was written. Nothing here came from a source."
+            : "Written from your brief alone. Nothing here was researched or added by us."}
         </p>
       )}
     </div>
@@ -595,15 +631,50 @@ function ScriptDetail({ script, onClose, compact }) {
               borderRadius: "var(--radius)", overflow: "hidden", marginBottom: 22,
             }}
           >
+            {/* ── The copy button belongs HERE, not only in the page header ──
+                The header's one sits at the top of a scrolling pane, so on any
+                script longer than a screen it is gone by the time a creator has
+                finished reading and decided they want the text. This is the bar
+                attached to the script itself, which is where the hand already
+                is. Same control as the Create flow's Result card, deliberately,
+                a script should not gain and lose its copy button depending on
+                which screen it is being read from.
+
+                It drives the SAME copy() and `copied` as the header button, so
+                the two never disagree about whether the text is on the
+                clipboard. */}
             <div
               style={{
-                padding: "9px 15px", borderBottom: "1px solid var(--made-line)",
-                background: "var(--made-tint)", fontSize: 11,
-                fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
-                color: "var(--ink-mute)",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                gap: 10, flexWrap: "wrap",
+                // Tighter vertically than the label alone needed, so a control
+                // sized for fingers does not make this bar taller than the one
+                // on the Create screen.
+                padding: "6px 8px 6px 15px",
+                borderBottom: "1px solid var(--made-line)",
+                background: "var(--made-tint)",
               }}
             >
-              Your script
+              <span
+                style={{
+                  fontSize: 11, fontWeight: 700, letterSpacing: "0.12em",
+                  textTransform: "uppercase", color: "var(--ink-mute)",
+                }}
+              >
+                Your script
+              </span>
+              <button
+                onClick={copy}
+                className="hg-btn-ghost"
+                style={{
+                  fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
+                  border: "1px solid var(--line)", background: "var(--card)",
+                  color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                {copied ? "Copied" : "Copy script"}
+              </button>
             </div>
             <div
               className="indic"
