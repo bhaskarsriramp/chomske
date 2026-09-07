@@ -136,6 +136,15 @@ const ScriptSchema = new Schema({
   english_text: { type: String, default: "" },
   english_hook: { type: String, default: "" },
 
+  // ── WHEN THE TWIN DID NOT ARRIVE ──────────────────────────────────────────
+  // A failed twin is refunded, and until now that was the whole of it: a line
+  // in the server log, a quiet adjustment to the balance, and a creator who
+  // ticked "Also write it in English", was charged for it, and found no English
+  // and no explanation. A refund nobody is told about is indistinguishable from
+  // being charged for nothing. Set when the twin fails, cleared when one
+  // succeeds, and rendered where the language toggle would have been.
+  english_error: { type: String, default: "" },
+
   // ── The packaging pack ────────────────────────────────────────────────────
   // Title options live in title_suggestions above; these are the rest of what
   // gets pasted into the upload form.

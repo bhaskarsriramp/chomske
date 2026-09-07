@@ -6,7 +6,7 @@ import { timeAgo, sourceLabel } from "../News/newsUtils";
 import Chevron from "../Shell/Chevron";
 import { categoryColor, cardBackground } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
-import ScriptToggle from "../Order/ScriptToggle";
+import ScriptToggle, { EnglishNote } from "../Order/ScriptToggle";
 import UploadPackage, { hasPackage } from "../Order/UploadPackage";
 
 /**
@@ -687,6 +687,8 @@ function ScriptDetail({ script, onClose, compact }) {
                 </button>
               </span>
             </div>
+            {script.english_error && <EnglishNote message={script.english_error} />}
+
             <div
               key={view}
               className={view === "english" ? "hg-fade" : "indic hg-fade"}

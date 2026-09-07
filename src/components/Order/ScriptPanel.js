@@ -5,7 +5,7 @@ import { useCredits } from "../../state/CreditsContext";
 import { useProfiles } from "../../state/ProfileContext";
 import { useVoice } from "../../state/VoiceContext";
 import VoiceAnalysing from "../Transcribe/VoiceAnalysing";
-import ScriptToggle from "./ScriptToggle";
+import ScriptToggle, { EnglishNote } from "./ScriptToggle";
 import UploadPackage from "./UploadPackage";
 
 /**
@@ -421,6 +421,8 @@ function Result({ script, compact, copied, onCopy }) {
             </button>
           </div>
         </div>
+
+        {script.english_error && <EnglishNote message={script.english_error} />}
 
         {/* `indic` only on the script in their own language: it selects the
             Noto Indic stack, and applying it to the English twin would render

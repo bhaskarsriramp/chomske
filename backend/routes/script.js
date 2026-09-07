@@ -351,9 +351,29 @@ router.post("/", authenticateToken, async (req, res) => {
       throw err;
     }
 
-    // Fire and forget; the client polls.
+    // ── WHAT WAS ORDERED, NOT WHAT IT COST ────────────────────────────────
+    // `order` is the QUOTE, and a quote is a bill: its keys are credit amounts.
+    // It has `twin: 45` and `packaging: 12`, and no `englishTwin` at all.
+    // runScript destructures `{ englishTwin = false, packaging = false }` from
+    // this, so:
+    //
+    //   englishTwin  was ALWAYS false. The English twin was charged for on the
+    //                way in and then never written, never refunded, and never
+    //                shown, for every script anybody ever ticked it on.
+    //   packaging    worked only by accident, because PACKAGING_CREDITS is a
+    //                non-zero number and 0 is falsy, so the cost happened to be
+    //                truthy exactly when the add-on was bought.
+    //
+    // Two names for two different things collided on one object and one of them
+    // silently won. The flags are now passed explicitly, after the spread so
+    // they beat the quote's `packaging` cost, and read from the request rather
+    // than recovered from a price.
     runScript(doc._id, userId, { item, sourceId: source?._id || null }, {
-      ...order, charged, profileId: channel._id,
+      ...order,
+      englishTwin: !!req.body?.english,
+      packaging: !!req.body?.packaging,
+      charged,
+      profileId: channel._id,
     }).catch((err) => console.error(`[script] unhandled failure for ${doc._id}:`, err));
 
     return res.status(202).json({
@@ -561,12 +581,32 @@ async function runScript(id, userId, subject, order) {
       if (twin) {
         await Script.updateOne(
           { _id: id },
-          { $set: { english_text: twin.text, english_hook: twin.hook, updated_at: new Date() } }
+          {
+            $set: {
+              english_text: twin.text,
+              english_hook: twin.hook,
+              // Cleared, not just left: a regenerate of a script whose twin
+              // failed last time must not carry the old apology under a script
+              // that now has its English version.
+              english_error: "",
+              updated_at: new Date(),
+            },
+          }
         ).catch(() => {});
       } else {
         const back = quote({ seconds, englishTwin: true }).twin;
         await refund(userId, back, { refType: "Script", refId: id, note: "English version failed" });
-        await Script.updateOne({ _id: id }, { $inc: { credits_refunded: back } }).catch(() => {});
+        await Script.updateOne({ _id: id }, {
+          $inc: { credits_refunded: back },
+          // Said on the screen, not only in this log. See english_error on
+          // models/Script.js: the creator paid for this and is owed the reason,
+          // and the refund is worth naming because otherwise the balance moves
+          // for no visible cause.
+          $set: {
+            english_error: `The English version couldn't be written. ${back} credit${back === 1 ? "" : "s"} refunded.`,
+            updated_at: new Date(),
+          },
+        }).catch(() => {});
         console.warn(`[script] ${id} twin failed, refunded ${back} credits`);
       }
     }
@@ -693,6 +733,7 @@ function shape(d) {
     extras_pending: !!d.extras_pending,
     english_text: d.english_text || "",
     english_hook: d.english_hook || "",
+    english_error: d.english_error || "",
     description: d.description || "",
     hashtags: d.hashtags || [],
     thumbnail_lines: d.thumbnail_lines || [],

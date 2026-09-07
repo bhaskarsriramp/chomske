@@ -40,6 +40,35 @@ export default function ScriptToggle({ value, onChange, nativeLabel }) {
   );
 }
 
+/**
+ * Why there is no English here, when they paid for English.
+ *
+ * ── WHY THIS IS ON THE SCREEN AND NOT ONLY IN A LOG ──────────────────────────
+ * A twin that cannot be written is refunded, and for a while that was the
+ * entire response: the credits came back and nobody was told. From the
+ * creator's side that is indistinguishable from being charged for nothing,
+ * because the balance moves and no screen ever explains it. They ticked a box,
+ * they were billed for it, and they are owed the sentence.
+ *
+ * Amber rather than red: nothing is broken and the script they came for is
+ * sitting directly underneath. This is an outcome, not a failure state.
+ */
+export function EnglishNote({ message }) {
+  return (
+    <div
+      role="status"
+      style={{
+        padding: "9px 15px",
+        borderBottom: "1px solid #EEDCB6",
+        background: "#FBF5E8",
+        fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-body)",
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
 function Option({ on, onClick, label }) {
   return (
     <button
