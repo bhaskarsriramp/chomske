@@ -113,6 +113,21 @@ const ScriptSchema = new Schema({
   credits_charged:  { type: Number, default: 0 },
   credits_refunded: { type: Number, default: 0 },
 
+  // ── ARE THE EXTRAS STILL COMING? ──────────────────────────────────────────
+  // The script is marked `done` the moment the script itself is written, which
+  // is right: it is the deliverable, and holding the status back would make a
+  // creator wait on a translation they may not have bought. But the English
+  // twin and the packaging are written AFTER that, and the client stops polling
+  // the instant it sees `done`. So it captured the row in the one-second window
+  // where the script exists and the extras do not, and never looked again: a
+  // creator who paid for "Also write it in English" got no English anywhere,
+  // and only a reload much later would have shown it.
+  //
+  // This is the flag that says "keep watching". Set when the order included an
+  // extra, cleared when the extras block finishes, either way, including when
+  // one of them failed and was refunded.
+  extras_pending: { type: Boolean, default: false },
+
   // ── The English twin ──────────────────────────────────────────────────────
   // Same story, same voice, written for a US-facing audience. Kept on the same
   // document rather than as a second Script row: it is one order, one price and

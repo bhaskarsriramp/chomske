@@ -234,7 +234,7 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
             on={packaging}
             onChange={() => setPackaging((v) => !v)}
             title="Title, description, hashtags"
-            note="Everything the upload form asks for, written from the finished script."
+            note="Five title options, a search-ready description and the hashtags, written from the finished script."
             cost={priced?.packaging}
           />
         </div>

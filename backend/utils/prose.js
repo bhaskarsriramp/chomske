@@ -70,4 +70,35 @@ export function dropDashes(value) {
   return String(value ?? "").replace(/[\u2014\u2015]/g, "");
 }
 
-export default { noEmDash, noEmDashAll, dropDashes };
+/**
+ * Cut a string to a length without cutting a sentence in half.
+ *
+ * A hard slice at N characters is how a YouTube description ends mid-word, and
+ * that reads as the product breaking rather than as a limit being enforced. So
+ * this looks backwards from the cap for the last sentence end, and takes it if
+ * it is within the final quarter of the allowance; a break much earlier than
+ * that would throw away more than it saves, and a hard cut is the better trade.
+ *
+ * @param {string} value
+ * @param {number} max   characters
+ */
+export function trimTo(value, max) {
+  const text = String(value ?? "").trim();
+  if (text.length <= max) return text;
+
+  const cut = text.slice(0, max);
+  // Devanagari and Telugu use the same full stop as Latin here; the danda (U+0964)
+  // is the one extra terminator worth knowing about for Hindi.
+  const end = Math.max(
+    cut.lastIndexOf("."), cut.lastIndexOf("!"), cut.lastIndexOf("?"),
+    cut.lastIndexOf("।"), cut.lastIndexOf("\n")
+  );
+  if (end > max * 0.75) return cut.slice(0, end + 1).trim();
+
+  // No sentence end close enough: fall back to the last space, so at least no
+  // word is broken.
+  const space = cut.lastIndexOf(" ");
+  return (space > max * 0.75 ? cut.slice(0, space) : cut).trim();
+}
+
+export default { noEmDash, noEmDashAll, dropDashes, trimTo };

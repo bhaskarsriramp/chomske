@@ -263,6 +263,10 @@ router.post("/", authenticateToken, async (req, res) => {
     const doc = await Script.create({
       user: userId,
       status: "processing",
+      // Set from the ORDER, before any of it runs, so the client knows on its
+      // very first read that `done` will not be the last word. See the field on
+      // models/Script.js.
+      extras_pending: !!req.body?.english || !!req.body?.packaging,
       duration_seconds: order.seconds,
       profile: channel._id,
       // Copied, not looked up: renaming or deleting a profile must not relabel
@@ -512,7 +516,10 @@ async function runScript(id, userId, subject, order) {
     const source = sourceId ? await Source.findById(sourceId).lean() : null;
     const material = await buildMaterial({ item, source, seconds });
 
-    const out = await writeScript({ profile, material, seconds });
+    // Titles ride along with the script's own call, but only when the package
+    // was bought: they are part of "Title, description & hashtags", not a
+    // freebie attached to every script. See writeScript's `titles` option.
+    const out = await writeScript({ profile, material, seconds, titles: packaging });
 
     await Script.updateOne(
       { _id: id },
@@ -593,6 +600,10 @@ async function runScript(id, userId, subject, order) {
       // Logged, never rethrown. The script itself is done and delivered.
       console.error(`[script] ${id} extras failed after delivery:`, extrasErr.message);
     }
+
+    // Outside the try, so it runs whether the extras were written, refunded or
+    // threw. A flag that only clears on success is a client polling for ever.
+    await Script.updateOne({ _id: id }, { $set: { extras_pending: false } }).catch(() => {});
   } catch (err) {
     await Script.updateOne(
       { _id: id },
@@ -600,6 +611,10 @@ async function runScript(id, userId, subject, order) {
         $set: {
           status: "failed",
           error: err.userMessage || "We couldn't write this script.",
+          // Nothing further is coming: the extras only run after a script that
+          // was written, and this one was not. Left set, it would be a client
+          // waiting for ever on work that will never start.
+          extras_pending: false,
           ms_taken: Date.now() - started,
           updated_at: new Date(),
         },
@@ -672,7 +687,10 @@ function shape(d) {
     credits_refunded: d.credits_refunded || 0,
 
     // The extras. Empty when they were not bought, so the client can simply
-    // check for content rather than needing to know what was ordered.
+    // check for content rather than needing to know what was ordered, and
+    // `extras_pending` distinguishes "not bought" from "bought, still being
+    // written" so the client knows whether to keep watching.
+    extras_pending: !!d.extras_pending,
     english_text: d.english_text || "",
     english_hook: d.english_hook || "",
     description: d.description || "",

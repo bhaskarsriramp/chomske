@@ -6,6 +6,8 @@ import { timeAgo, sourceLabel } from "../News/newsUtils";
 import Chevron from "../Shell/Chevron";
 import { categoryColor, cardBackground } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
+import ScriptToggle from "../Order/ScriptToggle";
+import UploadPackage, { hasPackage } from "../Order/UploadPackage";
 
 /**
  * My scripts: everything this creator has written, and what it was written from.
@@ -520,9 +522,23 @@ function ScriptDetail({ script, onClose, compact }) {
   const [copied, setCopied] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
+  // ── THE ENGLISH TWIN WAS NOT RENDERED HERE AT ALL ─────────────────────────
+  // The API has always returned `english_text` and this screen never read it,
+  // so the one place a creator goes to find a script they wrote yesterday was
+  // the one place the English version they paid for did not exist. Same control
+  // as the Create screen (Order/ScriptToggle.js), so a script does not change
+  // shape depending on which screen it is being read from.
+  const [view, setView] = useState("native");
+  const hasEnglish = !!script.english_text;
+  const showing = view === "english" && hasEnglish ? script.english_text : script.text;
+
+  // Back to the language they wrote in whenever the open script changes: the
+  // choice belongs to the script being read, not to the panel.
+  useEffect(() => { setView("native"); }, [script.id]);
+
   function copy() {
-    if (!script.text) return;
-    navigator.clipboard.writeText(script.text).then(
+    if (!showing) return;
+    navigator.clipboard.writeText(showing).then(
       () => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
       () => {}
     );
@@ -653,52 +669,51 @@ function ScriptDetail({ script, onClose, compact }) {
               >
                 Your script
               </span>
-              <button
-                onClick={copy}
-                className="hg-btn-ghost"
-                style={{
-                  fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-                  border: "1px solid var(--line)", background: "var(--card)",
-                  color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer",
-                  flexShrink: 0,
-                }}
-              >
-                {copied ? "Copied" : "Copy script"}
-              </button>
+              <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {hasEnglish && (
+                  <ScriptToggle value={view} onChange={setView} nativeLabel={script.language_label} />
+                )}
+                <button
+                  onClick={copy}
+                  className="hg-btn-ghost"
+                  style={{
+                    fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
+                    border: "1px solid var(--line)", background: "var(--card)",
+                    color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  {copied ? "Copied" : "Copy script"}
+                </button>
+              </span>
             </div>
             <div
-              className="indic"
+              key={view}
+              className={view === "english" ? "hg-fade" : "indic hg-fade"}
               style={{
                 padding: compact ? 17 : 22,
                 fontSize: compact ? 15.5 : 16.5,
                 color: "var(--ink)",
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
+                lineHeight: view === "english" ? 1.75 : undefined,
               }}
             >
-              {script.text}
+              {showing}
             </div>
           </div>
         )}
 
-        {script.title_suggestions?.length > 0 && (
+        {/* ── THE WHOLE PACKAGE, NOT JUST THE TITLES ─────────────────────
+            This screen rendered title ideas and nothing else: no description,
+            no hashtags, no thumbnail lines. A creator who bought the upload
+            package could read it on the day it was written and never again,
+            which is the opposite of what a history screen is for. Same
+            component the Create screen uses, so the two cannot drift, and it
+            renders nothing at all when the package was not bought. */}
+        {hasPackage(script) && (
           <div style={{ marginBottom: 24 }}>
-            <SectionLabel>Title ideas</SectionLabel>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {script.title_suggestions.map((t, i) => (
-                <div
-                  key={i}
-                  className="indic"
-                  style={{
-                    fontSize: 14, lineHeight: 1.5, color: "var(--ink-body)",
-                    padding: "9px 12px", borderRadius: 9,
-                    background: "var(--card)", border: "1px solid var(--line)",
-                  }}
-                >
-                  {t}
-                </div>
-              ))}
-            </div>
+            <UploadPackage script={script} compact={compact} />
           </div>
         )}
 
@@ -772,19 +787,6 @@ function ScriptDetail({ script, onClose, compact }) {
   );
 }
 
-function SectionLabel({ children }) {
-  return (
-    <div
-      style={{
-        fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
-        textTransform: "uppercase", color: "var(--ink-mute)",
-        margin: "0 0 11px", paddingBottom: 9, borderBottom: "1px solid var(--line)",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }

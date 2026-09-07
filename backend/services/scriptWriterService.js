@@ -20,7 +20,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { metricsBlock, gradeDraft } from "./voiceMetrics.js";
 import { wordTarget } from "./creditPricing.js";
-import { noEmDash, noEmDashAll, dropDashes } from "../utils/prose.js";
+import { noEmDash, noEmDashAll, dropDashes, trimTo } from "../utils/prose.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
@@ -81,9 +81,20 @@ const ANTI_TELL = `NEVER write like an AI. Specifically banned:
  * @param {number} args.seconds    how long it should run when spoken. Priced per
  *   two seconds, so this is the number the creator paid against, writing 40
  *   seconds of script for an eight-minute order is a refund, not a style choice.
+ * @param {boolean} [opts.titles]  ask for title options too.
+ *
+ * ── WHY TITLES ARE AN OPTION AND NOT ALWAYS ON ───────────────────────────────
+ * They used to come with every script, free, because they cost almost nothing
+ * to add to a call that was being made anyway. That quietly undercut the paid
+ * add-on: "Title, description & hashtags" is one option with one price, and
+ * handing the titles over to somebody who chose not to buy it left that option
+ * selling two of the three things its own label names. So the titles are part
+ * of the package now, and a script ordered without it is not asked for them,
+ * which also keeps them out of the response rather than merely off the screen.
+ *
  * @returns {{ text, hook, title_suggestions, language, language_label, sources_used, usage }}
  */
-export async function writeScript({ profile, material, seconds = 60 }) {
+export async function writeScript({ profile, material, seconds = 60, titles = false }) {
   if (!profile) throw new Error("No voice profile. Transcribe a video first.");
   if (!material) throw new Error("Nothing to write from.");
 
@@ -175,8 +186,8 @@ SOURCE MATERIAL ENDS.
 Return STRICT JSON only:
 {
   "hook": "the opening line(s), in their language and script. This must sound like them",
-  "script": "the full script including the hook, in their language and script, paragraph breaks at natural pauses",
-  "title_suggestions": ["3 video titles in their language, in their style"]
+  "script": "the full script including the hook, in their language and script, paragraph breaks at natural pauses"${titles ? `,
+  "title_suggestions": ["3 video titles in their language, in their style"]` : ""}
 }`;
 
   // ── Write, grade, and correct ───────────────────────────────────────────
@@ -284,7 +295,7 @@ Return STRICT JSON only:
   return {
     text,
     hook: noEmDash(parsed.hook),
-    title_suggestions: noEmDashAll(parsed.title_suggestions).slice(0, 5),
+    title_suggestions: titles ? noEmDashAll(parsed.title_suggestions).slice(0, 5) : [],
     language: profile.language || "",
     language_label: profile.language_label || "",
     sources_used: material.sources_used || [],
@@ -453,11 +464,29 @@ THE SCRIPT (this is what the video says):
 They speak: ${language || profile?.language_label || "their own language"}
 Story headline: ${material?.title || ""}
 
+════════ HOW THIS GETS FOUND ════════
+This is what decides whether the video is discovered at all, so write it for
+YouTube search and suggestion, not as a summary for somebody who has already
+clicked.
+
+TITLES. Whatever a viewer would actually TYPE goes at the FRONT. YouTube
+truncates around 60 characters in search results and on mobile, so the words
+that matter cannot be at the end. Name the actual subject: the product, the
+company, the number. No "you won't believe", no ALL CAPS, no "(SHOCKING)".
+
+DESCRIPTION. The first 150 characters are what shows in search results and above
+the "more" fold, so they must name the subject in plain words and say what the
+video answers. The detail comes after. Write it as this creator would, in their
+language, mixing English the way the script does.
+
+HASHTAGS. Three broad enough to have an audience, the rest specific to this
+story. Lowercase, no spaces, no punctuation, no # symbol.
+
 Return STRICT JSON only:
 {
-  "titles": ["5 title options. Mix: some in their language, at least 2 in English for search. Under 70 characters each. No clickbait they'd be embarrassed by, no ALL CAPS, no '(SHOCKING)'."],
-  "description": "A YouTube description: 2-3 short paragraphs summarising what the video covers, written plainly. Then a blank line. Do NOT invent links, timestamps, or social handles.",
-  "hashtags": ["8-12 hashtags, no # symbol, lowercase, mixing their language and English. Relevant to this story specifically, not generic 'viral trending' tags."],
+  "titles": ["5 title options. At least 2 in ${language || "their language"} and at least 2 in English, so the video is searchable in both. Keyword first. Aim for 50-60 characters, never over 70."],
+  "description": "800 to 1000 characters. Open with 1-2 sentences naming the subject plainly, for search. Then 2-3 short paragraphs on what the video covers. Then one line inviting a comment or a subscribe, the way this creator would say it. Plain text, blank line between paragraphs. Do NOT invent links, timestamps, social handles, or a channel name.",
+  "hashtags": ["8-12 hashtags, no # symbol, lowercase, mixing ${language || "their language"} and English. Specific to this story, not generic 'viral trending shorts' tags."],
   "thumbnail_lines": ["4 thumbnail text options. Three to five words MAX each. They have to be readable at phone size. In their language where it fits."]
 }
 
@@ -470,7 +499,7 @@ Rules: every factual claim traces to the script above. Invent nothing. ${ANTI_TE
       config: {
         temperature: 0.85,
         responseMimeType: "application/json",
-        maxOutputTokens: 3072,
+        maxOutputTokens: 4096,   // the description alone is now up to 1000 characters, and Indic scripts tokenise densely
         thinkingConfig: { thinkingBudget: 0 },
       },
     });
@@ -479,14 +508,20 @@ Rules: every factual claim traces to the script above. Invent nothing. ${ANTI_TE
     // The source links are appended by US, not written by the model: asked for
     // URLs it will happily invent plausible ones, and a description full of dead
     // links is worse than a description with none.
+    //
+    // The written half is capped at 1000 characters BEFORE the links go on, so
+    // the cap means the same thing for a story with five sources as for one
+    // with none. Cut at a sentence end where there is one within reach: a
+    // description that stops mid-word reads as a bug in the product rather
+    // than as a length limit.
     const description = [
-      noEmDash(p.description),
+      trimTo(noEmDash(p.description), 1000),
       links.length ? `\nSources:\n${links.join("\n")}` : "",
     ].filter(Boolean).join("\n");
 
     return {
       titles: noEmDashAll(p.titles).map((t) => t.slice(0, 100)).slice(0, 5),
-      description: description.slice(0, 4000),
+      description,
       // A dash inside a hashtag is not a pause, so it is dropped rather than
       // turned into a comma that would split one tag into two.
       hashtags: (Array.isArray(p.hashtags) ? p.hashtags : [])
