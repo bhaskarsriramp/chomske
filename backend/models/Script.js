@@ -22,6 +22,60 @@ const ScriptSchema = new Schema({
   headline:  { type: String, default: "" },   // the news title, for the history list
   angle:     { type: String, default: "" },
 
+  /**
+   * ── WHERE THE STORY CAME FROM ─────────────────────────────────────────────
+   * There used to be one answer, so it did not need recording: every script was
+   * a ranked news story and `news_item` said which. There are now three:
+   *
+   *   news    Discover. A story the collector found and ranked.
+   *   import  Import. A video, some links, or text the creator brought.
+   *   idea    Idea. Something they asked for in their own words.
+   *
+   * Indexed because this is the question the product most needs answered after
+   * shipping, and it cannot be answered retroactively. The news pipeline is the
+   * largest thing in this backend, an entire collector, ranker, scheduler,
+   * diversity pass and a paid key pool, and it is worth what it costs only if
+   * creators write from it. If most scripts turn out to arrive by Import or
+   * Idea, that is a fact about where the product actually is, and this field is
+   * the only place it will ever show up. See GET /stats/dashboard.
+   *
+   * Defaults to "news" so every row written before this existed reads correctly
+   * rather than as an unknown.
+   */
+  source_kind: { type: String, enum: ["news", "import", "idea"], default: "news", index: true },
+
+  // The Source document the material came from, for import and idea. It expires
+  // (see models/Source.js), so nothing below may depend on it still being there.
+  source: { type: Schema.Types.ObjectId, ref: "Source", default: null, index: true },
+
+  /**
+   * What the creator actually typed or pasted, copied here rather than read
+   * through the ref above.
+   *
+   * The Source is a cache and will be gone in a month. This is the record, and
+   * it is what makes a script in the history list mean something: "the video
+   * they pasted", "these four links", "the idea they described". Without it an
+   * Import script three weeks later is a page of text with no provenance at
+   * all, which is exactly the failure the news path's coverage list exists to
+   * prevent.
+   *
+   * The pasted `text` body is deliberately NOT copied here, only its length.
+   * It can be six thousand characters of someone else's article, and storing it
+   * twice, permanently, to label a row is not worth it.
+   */
+  source_input: {
+    youtube_url:   { type: String, default: "" },
+    youtube_title: { type: String, default: "" },
+    links:         [{ type: String }],
+    text_chars:    { type: Number, default: 0 },
+    prompt:        { type: String, default: "" },
+    // Whether the Idea brief was researched, and whether that research found
+    // anything. Both are needed: a lookup that came back empty is refunded and
+    // the script is written from the brief alone, and the creator is told so.
+    lookup:        { type: Boolean, default: false },
+    lookup_used:   { type: Boolean, default: false },
+  },
+
   status: { type: String, enum: ["processing", "done", "failed"], default: "processing", index: true },
 
   // The script itself, in the creator's own language and script, Devanagari stays

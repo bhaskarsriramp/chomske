@@ -16,6 +16,7 @@ import { ensureBrief } from "../services/newsBriefService.js";
 import { lastCheckedAt, touchSeen, claimAutoFetch } from "../services/newsCadence.js";
 import { allSources } from "../services/sources/index.js";
 import { heatOf, latestOf } from "../services/newsHeat.js";
+import { spaceByEntity } from "../services/newsDiversity.js";
 import { fetchAndRank } from "../services/newsScheduler.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
@@ -55,6 +56,8 @@ router.get("/", authenticateToken, async (req, res) => {
     const hours = Math.min(72, Math.max(1, parseInt(req.query.hours, 10) || 24));
     const minScore = Math.max(0, Math.min(10, parseInt(req.query.min_score, 10) || 4));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+    // What the aggregate reads, before diversity trims it back to `limit`.
+    const pool = Math.min(100, limit * 2);
 
     // The feed is whatever THIS PROFILE covers, not what the account covers.
     // A creator running a sports channel and a tech channel must never see AI
@@ -117,7 +120,16 @@ router.get("/", authenticateToken, async (req, res) => {
       // to arrive most recently, which on a quiet hour is three press releases
       // and a job posting.
       { $sort: { "doc.ai_score": -1, count: -1, "doc.raw_score": -1 } },
-      { $limit: limit },
+      // ── HEADROOM FOR THE DIVERSITY PASS ──────────────────────────────────
+      // Deliberately more than `limit`. This sort breaks ties on `count`, the
+      // number of outlets carrying the story, so where a dozen stories all
+      // scored 8 the cut is decided by coverage volume, which the biggest
+      // company in the domain wins every time. Cutting to `limit` here would
+      // therefore hand the diversity pass below a shortlist that was ALREADY
+      // one company, and reordering a uniform list achieves nothing.
+      // Taking twice as many and trimming after the spacing lets a story from
+      // rank 30 take the slot a fifth near-identical one would have had.
+      { $limit: pool },
       // A deterministic base order; the real ordering is applied in Node below.
       { $sort: { latest_seen: -1 } },
     ]);
@@ -133,6 +145,19 @@ router.get("/", authenticateToken, async (req, res) => {
       r.heat = heatOf(r.times, now);
     }
     rows.sort((a, b) => b.heat - a.heat || new Date(b.latest) - new Date(a.latest));
+
+    // ── AND THEN SPREAD THE BIGGEST NAME OUT ─────────────────────────────────
+    // Heat is a count of how many outlets are filing on a story right now, so
+    // the largest company in any domain wins it by default: two hundred outlets
+    // cover an OpenAI launch and eleven cover a Qualcomm one. Sorted on heat
+    // alone, an ai_tech feed opens with four OpenAI cards out of five and reads
+    // as though the product knows one company, which is exactly what it was
+    // reported doing. This reorders, never drops, see newsDiversity.js.
+    const ordered = spaceByEntity(rows, (r) => `${r.doc?.cluster_id || ""} ${r.doc?.title || ""}`);
+    rows.length = 0;
+    // Back down to what was asked for. Everything below `limit` is what the
+    // spacing pushed out of sight, which is the point of having read `pool`.
+    rows.push(...ordered.slice(0, limit));
 
     // ── IS THIS FEED STALE? ────────────────────────────────────────────────
     // The MAXIMUM latest_at, not rows[0]'s, the list is ordered by heat, so the
@@ -157,7 +182,7 @@ router.get("/", authenticateToken, async (req, res) => {
     touchSeen(req.user.id);
 
     // Which of these this creator has already opened, in one query over the
-    // fifteen keys actually being returned. A story stays badged NEW until they
+    // keys actually being returned. A story stays badged NEW until they
     // click it, not until it gets old, so this flag is the badge.
     let seen = new Set();
     try {
@@ -173,6 +198,28 @@ router.get("/", authenticateToken, async (req, res) => {
       console.warn("[news] couldn't read seen state:", err.message);
     }
 
+    // See sources_checked below. Distinct publishers beats distinct fetchers as
+    // a description of how wide the net is, and it is the unit the cards use.
+    const fetcherCount = new Set(
+      // userInitiated, because this number describes what a FETCH covers, and a
+      // fetch is always something a person asked for. A scheduled pass runs one
+      // source fewer; see sources/index.js.
+      cats.flatMap((c) => allSources(c, { userInitiated: true }).map((s) => s.name))
+    ).size;
+
+    let publisherCount = 0;
+    try {
+      publisherCount = (
+        await NewsItem.distinct("source", {
+          category: { $in: cats },
+          first_seen_at: { $gte: new Date(Date.now() - hours * 3600000) },
+        })
+      ).length;
+    } catch (err) {
+      // A number for a banner is never worth failing a feed over.
+      console.warn("[news] couldn't count publishers:", err.message);
+    }
+
     return res.json({
       success: true,
       window_hours: hours,
@@ -184,14 +231,27 @@ router.get("/", authenticateToken, async (req, res) => {
       // there, so no browser can turn a page load into an unbounded fetch.
       freshest_at: freshestAt,
       stale,
-      // How many feeds a fetch would actually cover, so the banner can name a
-      // real number instead of a reassuring one.
-      sources_checked: new Set(
-        // userInitiated, because this number describes what a FETCH covers, and
-        // a fetch is always something a person asked for. A scheduled pass runs
-        // one source fewer; see sources/index.js.
-        cats.flatMap((c) => allSources(c, { userInitiated: true }).map((s) => s.name))
-      ).size,
+      // How wide the net actually is, so the banner can name a real number
+      // instead of a reassuring one.
+      //
+      // ── FETCHERS ARE NOT SOURCES ─────────────────────────────────────────
+      // This used to count the FETCHERS a pass runs, which is about twelve, and
+      // twelve is both unimpressive and wrong. A fetcher is a pipe, not a
+      // source: "google-news" is one entry in that list and it returns stories
+      // from a couple of hundred different mastheads, which are what a creator
+      // means by a source and what the cards themselves already print ("137
+      // sources · Tech Insider, Sun Sentinel +17").
+      //
+      // So this counts distinct PUBLISHERS actually reached in the window, the
+      // same unit the cards use. It reads in the low hundreds rather than at
+      // twelve, and every one of them is a masthead that really did file
+      // something we really did read. One indexed distinct, covered by
+      // { category, first_seen_at, ai_score }.
+      //
+      // Floored at the fetcher count so a cold category, one collected before
+      // googleNews.js started recording publisher names, or a database that
+      // cannot answer still reports something true rather than zero.
+      sources_checked: Math.max(publisherCount, fetcherCount),
       // ALWAYS their full selection, not the filtered subset. The client draws a
       // category switcher from this, and echoing back only the category it just
       // asked for would collapse that switcher to one chip and strand them
@@ -376,7 +436,7 @@ function storyKey(d) {
  * ── WHY THE BADGE WAITS FOR A CLICK AND NOT A TIMER ──────────────────────────
  * The reference project dismisses its NEW chip after a card has been in the
  * viewport for 2.5 seconds, which suits a feed that is scrolled through. This
- * one is a shortlist of fifteen where the whole job is choosing between them,
+ * one is a shortlist where the whole job is choosing between them,
  * a creator reads every headline before picking, so a dwell timer would clear
  * every badge on the list during the very scan the badges exist to help with.
  * Opening a story is the moment they actually dealt with it.

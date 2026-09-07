@@ -29,8 +29,10 @@
  */
 import express from "express";
 import crypto from "crypto";
+import mongoose from "mongoose";
 import Razorpay from "razorpay";
 import CreditPayment from "../models/CreditPayment.js";
+import Source from "../models/Source.js";
 import { PACKS, getPack, DURATION_PRESETS, SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, PACKAGING_CREDITS, ENGLISH_TWIN_RATE, quote } from "../services/creditPricing.js";
 import { getBalance, grant, history } from "../services/creditsService.js";
 import authenticateToken from "../middleware/authenticateToken.js";
@@ -100,17 +102,49 @@ router.get("/wallet", authenticateToken, async (req, res) => {
 });
 
 /**
- * GET /billing/quote?seconds=60&english=1&packaging=1
+ * GET /billing/quote?seconds=60&english=1&packaging=1&source_id=…
  *
  * What a job would cost, before committing to it. The script screen calls this
  * as the duration slider moves, so the price is on screen before the button is
  * pressed rather than as a surprise afterwards.
+ *
+ * ── WHY THE SOURCE IS AN ID AND NOT A SET OF NUMBERS ────────────────────────
+ * Reading a ten minute video costs more than reading a ninety second one, so
+ * Import and Idea orders carry a price the duration slider alone cannot
+ * predict. The client sends the id of the material it has already prepared and
+ * the server prices it from the stored document: how long the video actually
+ * is, whether it has been read before, whether a lookup found anything.
+ *
+ * Every one of those is a fact we established during the preview, and none of
+ * them may come from the request. `videoSeconds=90` in a query string is a
+ * suggestion, and a client that suggested it would be reading ten minutes of
+ * video at the two minute price, in exactly the same way `amount` in an order
+ * body would be buying a Studio pack for a rupee.
  */
 router.get("/quote", authenticateToken, async (req, res) => {
+  let source = null;
+
+  const sourceId = String(req.query.source_id || "");
+  if (sourceId && mongoose.Types.ObjectId.isValid(sourceId)) {
+    // Scoped to the caller, like every other read of this collection.
+    const doc = await Source.findOne({ _id: sourceId, user: req.user.id })
+      .select("youtube.duration_seconds video_read_at lookup_used")
+      .lean()
+      .catch(() => null);
+    if (doc) {
+      source = {
+        videoSeconds: doc.youtube?.duration_seconds || 0,
+        lookup: !!doc.lookup_used,
+        alreadyRead: !!doc.video_read_at,
+      };
+    }
+  }
+
   const q = quote({
     seconds: req.query.seconds,
     englishTwin: req.query.english === "1" || req.query.english === "true",
     packaging: req.query.packaging === "1" || req.query.packaging === "true",
+    source,
   });
   const balance = await getBalance(req.user.id).catch(() => 0);
   return res.json({ success: true, ...q, balance, affordable: balance >= q.total });

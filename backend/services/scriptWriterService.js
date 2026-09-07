@@ -18,21 +18,9 @@
  * to their audience is the worst thing this product could do to them.
  */
 import { GoogleGenAI } from "@google/genai";
-import NewsItem from "../models/NewsItem.js";
 import { metricsBlock, gradeDraft } from "./voiceMetrics.js";
 import { wordTarget } from "./creditPricing.js";
 import { noEmDash, noEmDashAll, dropDashes } from "../utils/prose.js";
-import { fetchArticles } from "./tinyfishClient.js";
-
-// ── HOW MANY SOURCES GET READ IN FULL ────────────────────────────────────────
-// Reading pages costs nothing (see tinyfishClient.js). What it costs is input
-// tokens and a few seconds of latency, so the amount is matched to what the
-// chosen length can actually use rather than taken as high as it will go.
-const DEEP_READ_FROM_SECONDS = parseInt(process.env.SCRIPT_DEEP_READ_FROM_SECONDS || "120", 10);
-const SHORT_READ_SOURCES = parseInt(process.env.SCRIPT_SHORT_READ_SOURCES || "3", 10);
-const DEEP_READ_SOURCES = parseInt(process.env.SCRIPT_DEEP_READ_SOURCES || "5", 10);
-const SHORT_READ_CHARS = parseInt(process.env.SCRIPT_SHORT_READ_CHARS || "2500", 10);
-const DEEP_READ_CHARS = parseInt(process.env.SCRIPT_DEEP_READ_CHARS || "3000", 10);
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
@@ -73,73 +61,41 @@ const ANTI_TELL = `NEVER write like an AI. Specifically banned:
 
 /**
  * Write one script.
+ *
+ * ── IT NO LONGER KNOWS WHERE THE STORY CAME FROM ────────────────────────────
+ * This used to take a NewsItem and fetch its own coverage, which quietly made
+ * "a ranked news story" the only thing that could ever be written. It now takes
+ * a Material (see services/sourceMaterial.js), so a video the creator pasted,
+ * five links, an article they copied in and an idea they typed all arrive here
+ * as the same shape and get the same voice, the same measured length, the same
+ * anti-tell rules and the same grader.
+ *
+ * That is the whole point of the split. Every one of those behaviours took real
+ * work to get right, and three screens each with their own writer would mean
+ * three places to keep them right in.
+ *
  * @param {object} args
- * @param {object} args.profile   VoiceProfile document
- * @param {object} args.item      NewsItem document (the cluster representative)
- * @param {number} args.seconds   how long it should run when spoken. Priced per
+ * @param {object} args.profile    VoiceProfile document
+ * @param {object} args.material   what to write from, see sourceMaterial.js:
+ *   { title, angle, facts, factRule, sources_used, grounded }
+ * @param {number} args.seconds    how long it should run when spoken. Priced per
  *   two seconds, so this is the number the creator paid against, writing 40
  *   seconds of script for an eight-minute order is a refund, not a style choice.
  * @returns {{ text, hook, title_suggestions, language, language_label, sources_used, usage }}
  */
-export async function writeScript({ profile, item, seconds = 60 }) {
+export async function writeScript({ profile, material, seconds = 60 }) {
   if (!profile) throw new Error("No voice profile. Transcribe a video first.");
-  if (!item) throw new Error("Story not found.");
+  if (!material) throw new Error("Nothing to write from.");
 
-  // Every outlet that carried this story. More angles than the one headline, and
-  // the only facts the model is allowed to use.
-  // Scoped by category as well as cluster. cluster_id is the model's own story
-  // key ("openai-astra-safety-risk"), which is only unique WITHIN a category,
-  // unscoped, a finance story could pull a tech story's facts into its script.
-  // NEWEST FIRST, which is a change. Oldest-first is right for the source list a
-  // creator reads, where the first row is whoever broke the story. It is wrong
-  // for the material a script is written from: the earliest write-up is the
-  // thinnest, filed before anyone knew the details, and the latest is the one
-  // carrying the numbers, the response and the context.
-  const coverage = item.cluster_id
-    ? await NewsItem.find({ category: item.category, cluster_id: item.cluster_id })
-        .select("source title summary url published_at")
-        .sort({ published_at: -1 })
-        .limit(8)
-        .lean()
-    : [item];
-
-  // ── HOW MUCH MATERIAL THIS LENGTH DESERVES ────────────────────────────────
-  // A 45 second Reel makes one point, and three articles is already more than
-  // it can use. An eight minute explainer needs sections that each say something
-  // new, and five gives it enough distinct angles to build them from without
-  // repeating itself, which is exactly how long-form read when it was written
-  // from 300-character snippets.
-  const deep = seconds >= DEEP_READ_FROM_SECONDS;
-  const readCount = deep ? DEEP_READ_SOURCES : SHORT_READ_SOURCES;
-  const perSource = deep ? DEEP_READ_CHARS : SHORT_READ_CHARS;
-
-  // Free, and it fails soft: anything that could not be read falls back to the
-  // snippet the collector already had, so a paywall costs detail, never a script.
-  let articles = new Map();
-  try {
-    articles = await fetchArticles(
-      coverage.slice(0, readCount).map((c) => c.url).filter(Boolean),
-      { maxChars: perSource }
-    );
-  } catch (err) {
-    console.warn(`[script] article read failed, using snippets: ${err.message}`);
+  const facts = material.facts || "";
+  if (!facts.trim()) {
+    // Reaching here means every read failed and nothing was caught upstream.
+    // Writing anyway would produce invention, which is the one output this
+    // product must never hand a creator to read aloud.
+    const e = new Error("No material");
+    e.userMessage = "There was nothing readable to write from. You haven't been charged.";
+    throw e;
   }
-
-  const facts = coverage
-    .map((c, i) => {
-      const full = c.url ? articles.get(c.url) : "";
-      const body = full || (c.summary ? c.summary.slice(0, 300) : "");
-      // Labelled, so the writer can tell a full account from a one-line wire
-      // snippet and lean on the one that actually says something.
-      const kind = full ? "FULL ARTICLE" : "headline only";
-      return `[${i + 1}] (${c.source} \u00b7 ${kind}) ${c.title}${body ? `\n${body}` : ""}`;
-    })
-    .join("\n\n");
-
-  console.log(
-    `[script] material: ${articles.size} of ${Math.min(readCount, coverage.length)} read in full, ` +
-    `${coverage.length} source(s) listed, ~${facts.length} chars`
-  );
 
   const language = profile.language_label || profile.language || "the creator's language";
 
@@ -200,33 +156,19 @@ How they mix languages: ${profile.vocabulary_notes || "match the transcripts exa
 How they structure a topic: ${profile.narration_arc || "unknown"}
 They never: ${list(profile.avoid)}
 
-════════ TODAY'S STORY ════════
-Headline: ${item.title}
-The angle to take: ${item.ai_angle || "(pick the strongest angle from the facts)"}
+════════ ${material.grounded ? "TODAY'S STORY" : "WHAT THEY WANT TO MAKE"} ════════
+${material.title ? `Headline: ${material.title}
+` : ""}The angle to take: ${material.angle || "(pick the strongest angle from the material)"}
 
-SOURCE MATERIAL BEGINS. This is the complete and only record of this story that
+SOURCE MATERIAL BEGINS. This is the complete and only record of this subject that
 exists for you. Anything not written between these markers did not happen.
 ${facts}
 SOURCE MATERIAL ENDS.
 
 ════════ RULES ════════
 1. LANGUAGE. Write in ${language}, in the SAME script and the SAME code-mixing as the samples above. If their openings are in Devanagari with English words mixed in, the whole script must be Devanagari with English words mixed in. Do NOT translate. Do NOT transliterate into English letters. Do NOT write a cleaner or more formal version of how they talk.
-2. FACTS. Every factual claim in the script must trace to a sentence in the source
-   material above. Specifically:
-   - You may not use anything you know about this topic from your training. Not
-     background, not context, not "as everyone knows", not the history of the
-     company, not what a product normally does, not what happened before this.
-     If it is not in the source material, it does not exist for this script.
-   - Invent no numbers, dates, prices, versions, percentages, benchmarks, names,
-     job titles, quotes or place names.
-   - Do not predict what happens next, do not estimate impact, do not say what
-     it "means for" anyone. Those are claims too, and they are not in the sources.
-   - If the sources are thin, write a shorter script about what IS known. A
-     creator reading an invented fact aloud to their audience is the single worst
-     thing this can do to them, and a short honest script beats a padded one.
-   - Where the sources disagree or call something unconfirmed, say so the way
-     this creator would say it.
-3. VOICE. Open the way THEY open, same energy and structure as their real openings, about today's story. Close the way THEY close. This is the whole job.
+2. ${material.factRule}
+3. VOICE. Open the way THEY open, same energy and structure as their real openings, about this subject. Close the way THEY close. This is the whole job.
 4. LENGTH. ${lengthRule}
 5. ${ANTI_TELL}
 
@@ -345,7 +287,7 @@ Return STRICT JSON only:
     title_suggestions: noEmDashAll(parsed.title_suggestions).slice(0, 5),
     language: profile.language || "",
     language_label: profile.language_label || "",
-    sources_used: coverage.map((c) => c.url).filter(Boolean),
+    sources_used: material.sources_used || [],
     // Accumulated across attempts, so a rewrite is visible in the bill rather
     // than reported as though it were a single call.
     usage,
@@ -408,20 +350,20 @@ function readUsage(res) {
  * @returns {{ text, hook, usage }|null} null on failure, the primary script is
  *   already written and delivered, and a failed twin must not lose it.
  */
-export async function writeEnglishTwin({ profile, item, seconds = 60, sourceScript = "" }) {
-  if (!item) return null;
+export async function writeEnglishTwin({ profile, material, seconds = 60, sourceScript = "" }) {
+  if (!material?.facts) return null;
 
-  const coverage = item.cluster_id
-    ? await NewsItem.find({ category: item.category, cluster_id: item.cluster_id })
-        .select("source title summary url published_at")
-        .sort({ published_at: 1 })
-        .limit(8)
-        .lean()
-    : [item];
-
-  const facts = coverage
-    .map((c, i) => `[${i + 1}] (${c.source}) ${c.title}${c.summary ? `\n    ${c.summary.slice(0, 300)}` : ""}`)
-    .join("\n");
+  // -- IT READS THE SAME MATERIAL THE SCRIPT DID -----------------------------
+  // This used to re-query the coverage itself and build its facts out of
+  // 300-character summaries, while the main script was written from the full
+  // articles TinyFish had already fetched. So the twin, sold as the same story
+  // for a different audience and priced at half, was in fact written from
+  // materially less: thinner, vaguer, and missing every number the script had.
+  //
+  // Sharing the material fixes that, removes a database round trip, and is what
+  // lets the twin work at all for an Import, where the "coverage" is a video
+  // transcript or a pasted article that no NewsItem query could ever find.
+  const facts = material.facts;
 
   // English is measured at its own pace, not the creator's Hindi/Telugu rate.
   // Indic speech at 3 words a second is not 3 English words a second, and using
@@ -439,13 +381,15 @@ How they close: ${list(profile?.closing_patterns) || "a short sign-off"}
 Their stance: ${profile?.sentiment || "plain-spoken"}
 Their audience: ${profile?.audience || "people who follow this topic"}
 ${sourceScript ? `\nTheir version of this script, for structure and emphasis ONLY. Do not translate it:\n"""${String(sourceScript).slice(0, 2000)}"""\n` : ""}
-SOURCE MATERIAL BEGINS. This is the complete and only record of this story.
+SOURCE MATERIAL BEGINS. This is the complete and only record of this subject.
 ${facts}
 SOURCE MATERIAL ENDS.
 
 ════════ RULES ════════
 1. ENGLISH ONLY. Natural, spoken, contemporary. No Hindi or Telugu words, no transliteration.
-2. FACTS. Every claim must trace to the source material above. Invent no numbers, dates, prices, versions, names or quotes. Nothing from your training about this topic.
+2. ${material.grounded
+  ? "FACTS. Every claim must trace to the source material above. Invent no numbers, dates, prices, versions, names or quotes. Nothing from your training about this topic."
+  : "FACTS. The creator's brief above is the only material you have. Make THEIR point, in English. Invent no numbers, statistics, dates, names, quotes or study results, and add no news or current events. Not one figure that is not already in the brief."}
 3. AUDIENCE. Written for someone with no Indian context. Do not assume they know Indian brands, prices, or references. Do not mention India unless the sources do.
 4. LENGTH. ${target.low}-${target.high} words, about ${mins} spoken. A script, not an article: no headings, no bullets, no stage directions.
 5. ${ANTI_TELL}
@@ -491,15 +435,15 @@ Return STRICT JSON only:
  *
  * @returns {{ titles, description, hashtags, thumbnail_lines }|null}
  */
-export async function writePackaging({ profile, item, script = "", language = "" }) {
-  if (!script && !item) return null;
+export async function writePackaging({ profile, material, script = "", language = "" }) {
+  if (!script) return null;
 
-  const sources = item?.cluster_id
-    ? await NewsItem.find({ category: item.category, cluster_id: item.cluster_id })
-        .select("url source")
-        .limit(6)
-        .lean()
-    : [];
+  // The links appended to the description come from whatever the script was
+  // actually written from, so an Import's description cites the pages the
+  // creator pasted and an Idea written from a brief alone cites nothing, which
+  // is correct: there is nothing to cite. This used to run its own NewsItem
+  // query, which meant it could only ever produce sources for a news story.
+  const links = (material?.sources_used || []).filter(Boolean).slice(0, 5);
 
   const prompt = `Write the upload package for this creator's video.
 
@@ -507,7 +451,7 @@ THE SCRIPT (this is what the video says):
 """${String(script).slice(0, 4000)}"""
 
 They speak: ${language || profile?.language_label || "their own language"}
-Story headline: ${item?.title || ""}
+Story headline: ${material?.title || ""}
 
 Return STRICT JSON only:
 {
@@ -532,10 +476,9 @@ Rules: every factual claim traces to the script above. Invent nothing. ${ANTI_TE
     });
     const p = JSON.parse(res.text || "{}");
 
-    // The source links are appended by US, not written by the model, asked for
+    // The source links are appended by US, not written by the model: asked for
     // URLs it will happily invent plausible ones, and a description full of dead
     // links is worse than a description with none.
-    const links = sources.map((s) => s.url).filter(Boolean).slice(0, 5);
     const description = [
       noEmDash(p.description),
       links.length ? `\nSources:\n${links.join("\n")}` : "",

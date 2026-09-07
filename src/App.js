@@ -84,7 +84,7 @@ export default function App() {
             {/* Each screen owns a URL, so back/forward work, a tab can be linked to
                 and a refresh lands where you were. `/app` alone redirects rather
                 than rendering, so there is exactly one address per screen. */}
-            <Route path="/app" element={<Navigate to="/app/topics" replace />} />
+            <Route path="/app" element={<Navigate to="/app/discover" replace />} />
 
             {/* The category picker replaces the app rather than overlaying it.
                 Until it is answered there is nothing to collect and nothing to

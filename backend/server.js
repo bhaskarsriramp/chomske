@@ -17,6 +17,7 @@ import authRoutes from "./routes/auth.js";
 import transcribeRoutes from "./routes/transcribe.js";
 import newsRoutes from "./routes/news.js";
 import scriptRoutes from "./routes/script.js";
+import sourceRoutes from "./routes/source.js";
 import statsRoutes from "./routes/stats.js";
 import billingRoutes from "./routes/billing.js";
 import profileRoutes from "./routes/profiles.js";
@@ -91,6 +92,15 @@ app.use(
   // the per-user daily cap inside the route.
   rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
   scriptRoutes
+);
+// Preparing material a creator brought themselves. Free to them, but not free
+// to us: a preview can spend an apidirect metadata lookup, a fan-out of page
+// fetches and, for a lookup, a small model call. Its own ceiling for the same
+// reason /transcribe has one, and the per-user daily cap lives in the route.
+app.use(
+  "/source",
+  rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
+  sourceRoutes
 );
 app.use(
   "/billing",

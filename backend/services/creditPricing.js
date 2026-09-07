@@ -74,6 +74,109 @@ export const ENGLISH_TWIN_RATE = 0.5;
  *  with length, it is one short call whatever the script's duration. */
 export const PACKAGING_CREDITS = 15;
 
+/* ── WHAT THE SCRIPT IS WRITTEN FROM ────────────────────────────────────────
+ *
+ * Until now there was one answer: a ranked news story, whose research was paid
+ * for by the collector on its own clock and cost the creator nothing at the
+ * moment they ordered. Import and Idea break that assumption in one specific
+ * way, so the pricing has to grow one dimension:
+ *
+ *   pasted text   free. It is input tokens, a few tenths of a cent.
+ *   web links     free. TinyFish costs nothing (services/tinyfishClient.js)
+ *                 and the extra input tokens are the same rounding error.
+ *   a YouTube URL NOT free. Gemini reads the video itself, and video is the
+ *                 most expensive input this product buys, metered per second.
+ *   a lookup      not free. Turning "make something about the RBI decision"
+ *                 into real sources is a model call plus a fan-out over the
+ *                 news sources, on demand, for one person.
+ *
+ * Only the last two carry a price, and both are charged at GENERATION, never
+ * at preview. Preview does the free work (validate the URL, read the pages)
+ * precisely so a creator can see what we found before deciding to spend.
+ */
+
+/**
+ * The longest video Import will read.
+ *
+ * Deliberately far above the 90-second ceiling in routes/transcribe.js, and for
+ * the opposite reason. That limit exists because voice profiling learns hooks
+ * and sign-offs, which are dense in a Short and diluted across twenty minutes.
+ * This is not voice profiling: the video is the STORY, and the videos creators
+ * actually want to cover, a press conference, a long-form news segment, a
+ * podcast clip, are minutes long by nature. A 90-second cap here would refuse
+ * the main use case.
+ *
+ * What makes ten minutes affordable is that it is priced (below) rather than
+ * absorbed. What keeps it bounded is DAILY_SOURCE_READS in routes/source.js and
+ * Gemini's own per-key ceiling of roughly eight hours of YouTube a day, which is
+ * a per-KEY limit shared by every user, so it is the number to watch first if
+ * this feature gets popular.
+ */
+export const MAX_SOURCE_VIDEO_SECONDS = parseInt(process.env.MAX_SOURCE_VIDEO_SECONDS || "600", 10);
+
+/** How many pages one Import may carry. TinyFish takes ten per request; five is
+ *  more material than even an eight-minute script can use without repeating. */
+export const MAX_SOURCE_LINKS = 5;
+
+/** Pasted material. Roughly 1,000 words, which is a full article or a long brief. */
+export const MAX_SOURCE_TEXT_CHARS = 6000;
+
+/** And the Idea brief, which is an instruction rather than material. */
+export const MAX_PROMPT_CHARS = 2000;
+
+/**
+ * Video reading, priced in blocks.
+ *
+ * Gemini bills video by the second, so the honest shape is per-second, but a
+ * price that changes when a creator pastes a 4:01 video instead of a 3:59 one is
+ * a price nobody can predict. Blocks of two minutes are coarse enough to reason
+ * about ("about six credits a couple of minutes") and fine enough that a ten
+ * minute video does not cost the same as a ninety second one.
+ *
+ * The first block is free. A short clip is how somebody tries this feature for
+ * the first time, and the base script price already absorbs a read that size.
+ */
+export const VIDEO_READ_FREE_SECONDS = 120;
+export const VIDEO_READ_BLOCK_SECONDS = 120;
+export const VIDEO_READ_CREDITS_PER_BLOCK = parseInt(process.env.VIDEO_READ_CREDITS || "6", 10);
+
+/**
+ * Looking a topic up before writing about it.
+ *
+ * Covers one model call to turn a sentence into search queries, a fan-out
+ * across the free news sources, and the larger prompt that results. Charged
+ * only when it actually produced material: a lookup that comes back empty is
+ * refunded in full and the script is written from the brief alone, which is
+ * what would have happened had they never ticked the box.
+ */
+export const LOOKUP_CREDITS = parseInt(process.env.LOOKUP_CREDITS || "10", 10);
+
+/**
+ * What reading a given source costs, before a word is written.
+ *
+ * @param {object} source
+ * @param {number} source.videoSeconds  length of the YouTube video, 0 if none
+ * @param {boolean} source.lookup       the creator asked us to research it
+ * @param {boolean} source.alreadyRead  the material is cached from a previous
+ *   order, so the expensive part is already bought and must not be sold twice
+ * @returns {{ video: number, lookup: number, total: number }}
+ */
+export function sourceCost({ videoSeconds = 0, lookup = false, alreadyRead = false } = {}) {
+  // ── A REGENERATE MUST NOT RE-BUY THE READ ────────────────────────────────
+  // A creator who orders 60 seconds from a video and then wants three minutes
+  // from the same video is the expected path, not an edge case. The transcript
+  // is cached on the Source document, so the second order pays for writing and
+  // nothing else. Charging again would be billing for work we do not redo.
+  if (alreadyRead) return { video: 0, lookup: 0, total: 0 };
+
+  const secs = Math.max(0, Math.round(Number(videoSeconds) || 0));
+  const billable = Math.max(0, secs - VIDEO_READ_FREE_SECONDS);
+  const video = Math.ceil(billable / VIDEO_READ_BLOCK_SECONDS) * VIDEO_READ_CREDITS_PER_BLOCK;
+  const look = lookup ? LOOKUP_CREDITS : 0;
+
+  return { video, lookup: look, total: video + look };
+}
+
 /**
  * What a new account starts with: three 60-second scripts.
  *
@@ -116,14 +219,22 @@ export function clampSeconds(v) {
  * @param {number} seconds        requested length, pre-clamp is fine
  * @param {boolean} englishTwin   also produce the English version
  * @param {boolean} packaging     also produce title/description/hashtags
- * @returns {{ total, base, twin, packaging, seconds }}
+ * @param {object} source         what it is written FROM, see sourceCost(). A
+ *   news story costs nothing to read here, its research was paid for by the
+ *   collector; an Import or a looked-up Idea is not free, and the price on the
+ *   button has to say so before it is pressed.
+ * @returns {{ total, base, twin, packaging, source, seconds }}
  */
-export function quote({ seconds, englishTwin = false, packaging = false } = {}) {
+export function quote({ seconds, englishTwin = false, packaging = false, source = null } = {}) {
   const secs = clampSeconds(seconds);
   const base = Math.ceil(secs / SECONDS_PER_CREDIT);
   const twin = englishTwin ? Math.ceil(base * ENGLISH_TWIN_RATE) : 0;
   const pack = packaging ? PACKAGING_CREDITS : 0;
-  return { seconds: secs, base, twin, packaging: pack, total: base + twin + pack };
+  const src = source ? sourceCost(source).total : 0;
+  return {
+    seconds: secs, base, twin, packaging: pack, source: src,
+    total: base + twin + pack + src,
+  };
 }
 
 /**
@@ -150,5 +261,8 @@ export function wordTarget(seconds, wordsPerSecond) {
 export default {
   SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, DURATION_PRESETS,
   ENGLISH_TWIN_RATE, PACKAGING_CREDITS, SIGNUP_FREE_CREDITS, PACKS,
+  MAX_SOURCE_VIDEO_SECONDS, MAX_SOURCE_LINKS, MAX_SOURCE_TEXT_CHARS, MAX_PROMPT_CHARS,
+  VIDEO_READ_FREE_SECONDS, VIDEO_READ_BLOCK_SECONDS, VIDEO_READ_CREDITS_PER_BLOCK,
+  LOOKUP_CREDITS, sourceCost,
   getPack, clampSeconds, quote, wordTarget,
 };

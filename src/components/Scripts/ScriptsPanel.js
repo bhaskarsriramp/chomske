@@ -237,13 +237,22 @@ function ScriptRow({ script, index, isPhone, active, onOpen }) {
       }}
     >
       <span style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5, flexWrap: "wrap" }}>
-        {script.topic?.category_label && (
+        {script.topic?.category_label ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
             <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: col.solid }} />
             <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.055em", textTransform: "uppercase", color: col.ink }}>
               {script.topic.category_label}
             </span>
           </span>
+        ) : (
+          // ── WHAT A NON-NEWS SCRIPT WEARS INSTEAD OF A CATEGORY ────────────
+          // Discover scripts carry the category of the story they came from.
+          // Import and Idea have no category, and a row with nothing on this
+          // line reads as a row that failed to load something. Naming where it
+          // came from is the useful thing to put there: three weeks later
+          // "IMPORT" plus a video title is the difference between a script you
+          // can place and a page of text you cannot.
+          <SourceMark kind={script.source_kind} />
         )}
         <StatusMark status={script.status} />
       </span>
@@ -283,10 +292,176 @@ function ScriptRow({ script, index, isPhone, active, onOpen }) {
           // history of what was already made in it.
           script.profile_name,
           script.language_label,
-          script.sources?.length ? `${script.sources.length} source${script.sources.length === 1 ? "" : "s"}` : null,
+          sourceSummary(script),
         ].filter(Boolean).join("  ·  ")}
       </span>
     </button>
+  );
+}
+
+/**
+ * Where a script came from, for the rows that have no category to show.
+ *
+ * Deliberately the same weight and shape as the category chip it replaces, in
+ * grey rather than a category hue: it is answering the same question in the
+ * same slot, but "which of my categories" and "which screen made this" are
+ * different kinds of fact and colouring one like the other would imply Import
+ * is a category.
+ */
+function SourceMark({ kind }) {
+  if (!kind || kind === "news") return null;
+  return (
+    <span
+      style={{
+        fontSize: 10.5, fontWeight: 700, letterSpacing: "0.055em",
+        textTransform: "uppercase", color: "#8A8A8A",
+      }}
+    >
+      {kind === "idea" ? "Idea" : "Import"}
+    </span>
+  );
+}
+
+/**
+ * The one-line provenance under a row.
+ *
+ * Reads off source_input, which is copied onto the Script and never expires,
+ * rather than off the Source document, which does. A row that said "4 links"
+ * for a month and then went blank would be worse than one that never said it.
+ */
+function sourceSummary(script) {
+  const kind = script.source_kind || "news";
+  const input = script.source_input || {};
+
+  if (kind === "news") {
+    const n = script.sources?.length || 0;
+    return n ? `${n} source${n === 1 ? "" : "s"}` : null;
+  }
+
+  if (kind === "idea") {
+    return input.lookup_used ? "Idea · looked up" : "Your own idea";
+  }
+
+  const parts = [];
+  if (input.youtube_url) parts.push("video");
+  if (input.links?.length) parts.push(`${input.links.length} link${input.links.length === 1 ? "" : "s"}`);
+  if (input.text_chars) parts.push("pasted text");
+  return parts.length ? `From ${parts.join(" + ")}` : null;
+}
+
+/**
+ * What an Import or Idea script was made from, kept for as long as the script.
+ *
+ * The video is a link because that is the check: a creator questioning a line
+ * in a script written from a video wants to go and watch the bit it came from.
+ * The brief is shown in full for the same reason, it is the entire source
+ * material for an ungrounded Idea, so it is the only thing there is to check
+ * the script against.
+ */
+function SourceProvenance({ script, compact }) {
+  const kind = script.source_kind || "news";
+  if (kind === "news") return null;
+
+  const input = script.source_input || {};
+  const rows = [];
+
+  if (input.youtube_url) {
+    rows.push(
+      <a
+        key="yt"
+        href={input.youtube_url}
+        target="_blank"
+        rel="noreferrer"
+        className="hg-row"
+        style={{
+          display: "block", padding: "10px 12px", borderRadius: 9,
+          border: "1px solid var(--line)", background: "var(--card)",
+          textDecoration: "none", fontSize: 13, color: "var(--ink-body)",
+        }}
+      >
+        <span style={{ display: "block", fontWeight: 600, color: "var(--ink)", marginBottom: 2 }}>
+          {input.youtube_title || "YouTube video"}
+        </span>
+        <span style={{ fontSize: 12, color: "var(--ink-mute)", wordBreak: "break-all" }}>
+          {input.youtube_url}
+        </span>
+      </a>
+    );
+  }
+
+  for (const url of input.links || []) {
+    rows.push(
+      <a
+        key={url}
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="hg-row"
+        style={{
+          display: "block", padding: "10px 12px", borderRadius: 9,
+          border: "1px solid var(--line)", background: "var(--card)",
+          textDecoration: "none", fontSize: 12.5, color: "var(--ink-body)", wordBreak: "break-all",
+        }}
+      >
+        {url}
+      </a>
+    );
+  }
+
+  if (input.text_chars > 0) {
+    rows.push(
+      <div
+        key="text"
+        style={{
+          padding: "10px 12px", borderRadius: 9, border: "1px solid var(--line)",
+          background: "var(--card)", fontSize: 12.5, color: "var(--ink-mute)",
+        }}
+      >
+        {input.text_chars.toLocaleString()} characters you pasted in
+      </div>
+    );
+  }
+
+  if (!rows.length && !input.prompt) return null;
+
+  return (
+    <div style={{ margin: "0 0 22px" }}>
+      <div
+        style={{
+          fontSize: 11, fontWeight: 600, letterSpacing: "0.12em",
+          textTransform: "uppercase", color: "var(--ink-mute)", marginBottom: 8,
+        }}
+      >
+        {kind === "idea" ? "Your brief" : "Written from"}
+      </div>
+
+      {input.prompt && (
+        <div
+          className="indic"
+          style={{
+            padding: compact ? "11px 13px" : "12px 14px", borderRadius: 10,
+            border: "1px solid var(--line)", background: "var(--card)",
+            fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)",
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+            marginBottom: rows.length ? 8 : 0,
+          }}
+        >
+          {input.prompt}
+        </div>
+      )}
+
+      {rows.length > 0 && <div style={{ display: "grid", gap: 6 }}>{rows}</div>}
+
+      {/* An Idea written without a lookup contains no facts we supplied. Saying
+          so on the record matters more here than anywhere else: read back in a
+          month, this is the one script in the list whose claims are entirely
+          the creator's own, and they should not have to remember that. */}
+      {kind === "idea" && !input.lookup_used && (
+        <p style={{ fontSize: 12, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
+          Written from your brief alone. Nothing here was researched or added by us.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -381,6 +556,15 @@ function ScriptDetail({ script, onClose, compact }) {
             {script.topic.brief}
           </p>
         )}
+
+        {/* ── THE SAME PROMISE, FOR A SCRIPT THAT HAD NO STORY ────────────────
+            A Discover script keeps its brief and its coverage so a creator can
+            check a number a week later. Import and Idea have no brief, and
+            without this they would be the one place in the product where a
+            finished script has no record of where it came from. The material
+            itself expires; this does not, because it is copied onto the script
+            at the moment it is ordered. */}
+        <SourceProvenance script={script} compact={compact} />
 
         {script.status === "failed" && (
           <div

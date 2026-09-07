@@ -75,6 +75,9 @@ Judge the EVENT, not the headline's excitement. Rules:
 - If several items are the same story, give them the SAME score. Do not reward repetition.
 - An item outside this channel's subject scores 0, whatever its source.
 - Prefer things with a concrete, demonstrable "what changed" over commentary.
+- Score the size of the EVENT, not the fame of who it happened to. A famous
+  company restating a plan is routine; a company you have not heard of shipping
+  something that works is not. Do not add points for a well-known name.
 ${cat.caution ? `\n${cat.caution}\n` : ""}
 Return STRICT JSON, an array with one object per item, in the same order, and
 NOTHING else. No angle, no explanation, no prose. Only the number:

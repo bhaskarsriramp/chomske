@@ -104,9 +104,39 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
         Script.find({ user: userId, ...scope, status: "done" })
           .sort({ created_at: -1 })
           .limit(8)
-          .select("headline language_label profile_name created_at")
+          .select("headline language_label profile_name source_kind created_at")
           .lean(),
       ]);
+
+    /**
+     * ── WHERE SCRIPTS ACTUALLY COME FROM ──────────────────────────────────
+     * The single most useful number this product can collect about itself, and
+     * one that cannot be reconstructed later if nobody records it now.
+     *
+     * The news pipeline is the largest thing in this backend: a collector, a
+     * ranker, a scheduler, a diversity pass, a heat model and a pool of paid
+     * API keys, all running around the clock so that a creator opening the app
+     * finds something worth covering. It earns that cost only if creators
+     * write from it. If most scripts turn out to arrive through Import or
+     * Idea, that is not a small preference, it is the product telling us where
+     * it really is, and this breakdown is the only place it will show up.
+     *
+     * Counted over the selected range rather than all time so a shift shows up
+     * as it happens instead of being buried under months of history.
+     */
+    const byKind = await Script.aggregate([
+      { $match: { user: new mongoose.Types.ObjectId(userId), ...scope, status: "done", created_at: inRange } },
+      // Rows written before Import and Idea existed have no source_kind at all.
+      // They are all Discover scripts, because that was the only screen, so
+      // they are counted as such rather than as an "unknown" slice that would
+      // dominate the chart and mean nothing.
+      { $group: { _id: { $ifNull: ["$source_kind", "news"] }, n: { $sum: 1 } } },
+    ]).catch(() => []);
+
+    const kindCounts = { news: 0, import: 0, idea: 0 };
+    for (const row of byKind) {
+      if (row._id in kindCounts) kindCounts[row._id] = row.n;
+    }
 
     // Daily buckets for the range, so the UI can draw activity rather than one
     // number. Built in Mongo because doing it in JS would pull every row back.
@@ -136,7 +166,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
         max: MAX_VOICE_VIDEOS,
         left: Math.max(0, MAX_VOICE_VIDEOS - videosHeld),
       },
-      scripts: { in_range: scriptsInRange, all_time: scriptsAll },
+      scripts: { in_range: scriptsInRange, all_time: scriptsAll, by_source: kindCounts },
       // built_at is what "analysed" means, the row exists from the moment the
       // channel is created, so its presence alone says nothing.
       voice: profile?.built_at
@@ -155,6 +185,7 @@ router.get("/dashboard", authenticateToken, async (req, res) => {
         headline: s.headline || "",
         language_label: s.language_label || "",
         profile_name: s.profile_name || "",
+        source_kind: s.source_kind || "news",
         created_at: s.created_at,
       })),
     });

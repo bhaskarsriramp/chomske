@@ -10,8 +10,10 @@ import express from "express";
 import mongoose from "mongoose";
 import NewsItem from "../models/NewsItem.js";
 import Script from "../models/Script.js";
+import Source from "../models/Source.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 import { writeScript, writeEnglishTwin, writePackaging } from "../services/scriptWriterService.js";
+import { buildMaterial } from "../services/sourceMaterial.js";
 import { getCategory } from "../services/categories.js";
 import { buildVoiceProfile, getUsableProfile, profileStatus } from "../services/voiceProfileService.js";
 import { resolveProfile } from "../services/profileService.js";
@@ -24,6 +26,21 @@ const router = express.Router();
 // endpoint someone would hammer. Kept separate from the transcribe cap because
 // the two cost wildly different amounts.
 const DAILY_SCRIPT_LIMIT = parseInt(process.env.DAILY_SCRIPT_LIMIT || "30", 10);
+
+/**
+ * Videos this account may have READ in a day.
+ *
+ * A separate ceiling from DAILY_SCRIPT_LIMIT because it guards something else.
+ * A script is a model call; reading ten minutes of YouTube is the most
+ * expensive thing this product buys, and it draws on a per-KEY allowance
+ * Gemini shares across every user we have, roughly eight hours of video a day.
+ * Twenty people reading a twenty-minute video each would exhaust it for
+ * everybody, so this is the number to watch first if Import gets popular.
+ *
+ * Counts reads, not orders: a second script from a video already read is free
+ * and does not touch this.
+ */
+const DAILY_VIDEO_READS = parseInt(process.env.DAILY_SOURCE_VIDEO_READS || "10", 10);
 
 /**
  * GET /script/voice?profile=…, what we know about how this creator talks.
@@ -75,18 +92,55 @@ router.post("/voice/rebuild", authenticateToken, async (req, res) => {
   }
 });
 
-/** POST /script  { news_id, force? } */
+/**
+ * POST /script  { news_id | source_id, seconds?, english?, packaging?, force? }
+ *
+ * ── TWO WAYS IN, ONE PATH THROUGH ────────────────────────────────────────────
+ * `news_id` is a ranked story from Discover. `source_id` is material the creator
+ * brought themselves through Import or Idea, already validated and read by
+ * POST /source/preview. Everything after the first twenty lines is identical:
+ * same voice check, same daily cap, same charge-then-work-then-refund-on-failure
+ * flow, same polling contract. The difference between the three screens is what
+ * gets read, and that lives in services/sourceMaterial.js.
+ */
 router.post("/", authenticateToken, async (req, res) => {
   try {
+    const userId = req.user.id;
+
     const newsId = String(req.body?.news_id || "");
-    if (!mongoose.Types.ObjectId.isValid(newsId)) {
-      return res.status(400).json({ success: false, message: "Invalid story id" });
+    const sourceId = String(req.body?.source_id || "");
+
+    if (!newsId && !sourceId) {
+      return res.status(400).json({ success: false, message: "Nothing to write about." });
     }
 
-    const item = await NewsItem.findById(newsId).lean();
-    if (!item) return res.status(404).json({ success: false, message: "Story not found" });
+    let item = null;
+    let source = null;
 
-    const userId = req.user.id;
+    if (sourceId) {
+      if (!mongoose.Types.ObjectId.isValid(sourceId)) {
+        return res.status(400).json({ success: false, message: "Invalid source id" });
+      }
+      // Scoped to the caller. An id alone must never write from, or bill
+      // against, somebody else's material.
+      source = await Source.findOne({ _id: sourceId, user: userId }).lean();
+      if (!source) {
+        // Sources expire (see models/Source.js), so this is a normal thing to
+        // hit on an old tab rather than an error. Said in a way that tells them
+        // what to do about it.
+        return res.status(404).json({
+          success: false,
+          source_expired: true,
+          message: "That material has expired. Paste it again and we'll re-read it.",
+        });
+      }
+    } else {
+      if (!mongoose.Types.ObjectId.isValid(newsId)) {
+        return res.status(400).json({ success: false, message: "Invalid story id" });
+      }
+      item = await NewsItem.findById(newsId).lean();
+      if (!item) return res.status(404).json({ success: false, message: "Story not found" });
+    }
 
     // Which channel this is for. Resolved before the cache check, because the
     // same story written for a creator's Hindi tech channel and their English
@@ -97,8 +151,19 @@ router.post("/", authenticateToken, async (req, res) => {
     // Already written it for this channel? Hand it back rather than billing for
     // the same story twice, regenerating has to be an explicit choice.
     if (!req.body?.force) {
+      // ── THE LENGTH IS PART OF THE KEY FOR A BROUGHT SOURCE ────────────────
+      // On the news path a story is a story and any length of it counts as
+      // "already written". For Import that would be wrong in a way creators
+      // would hit immediately: ordering a 60 second cut from a video and then
+      // wanting the three minute version is the expected second act, not a
+      // regenerate, and it is a different deliverable at a different price.
+      // The video read behind it is already paid for either way, so the second
+      // order costs only the writing.
+      const key = source
+        ? { source: source._id, duration_seconds: quote({ seconds: req.body?.seconds }).seconds }
+        : { news_item: item._id };
       const existing = await Script.findOne({
-        user: userId, news_item: item._id, profile: channel._id, status: { $ne: "failed" },
+        user: userId, ...key, profile: channel._id, status: { $ne: "failed" },
       })
         .sort({ created_at: -1 })
         .lean();
@@ -119,14 +184,51 @@ router.post("/", authenticateToken, async (req, res) => {
       });
     }
 
+    // ── Reading the video is capped separately from writing ─────────────────
+    // Checked before the charge, so somebody at their ceiling is told rather
+    // than billed and refunded. Only unread videos count: a second script from
+    // material we already hold costs nothing to read and is not rationed.
+    const needsVideoRead = !!(source?.youtube?.url && !source.video_read_at);
+    if (needsVideoRead) {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const readsToday = await Source.countDocuments({
+        user: userId, video_read_at: { $gte: since },
+      });
+      if (readsToday >= DAILY_VIDEO_READS) {
+        return res.status(429).json({
+          success: false,
+          limit_reached: true,
+          message:
+            `You've read ${DAILY_VIDEO_READS} videos today. The limit resets 24 hours after each ` +
+            `one. Links and pasted text aren't capped.`,
+        });
+      }
+    }
+
     // ── What they ordered ────────────────────────────────────────────────────
     // Duration is clamped inside quote(): `seconds` arrives in a request body,
     // and an unclamped 86,400 would bill a fortune of credits and hand Gemini a
     // prompt that never returns.
+    //
+    // The source half is priced from the STORED document, never from the
+    // request. What a video costs depends on how long it is, and "how long is
+    // it" is a fact we bought from apidirect during the preview; taking the
+    // client's word for it would let a hand-rolled request read a ten minute
+    // video at the two minute price.
     const order = quote({
       seconds: req.body?.seconds,
       englishTwin: !!req.body?.english,
       packaging: !!req.body?.packaging,
+      source: source
+        ? {
+            videoSeconds: source.youtube?.duration_seconds || 0,
+            lookup: !!source.lookup_used,
+            // Reading is bought once. The second script from the same video
+            // pays for writing and nothing else, which is the entire reason
+            // models/Source.js caches the transcript.
+            alreadyRead: !!source.video_read_at,
+          }
+        : null,
     });
 
     // Fail before creating a row if there is nothing to write in the voice of,
@@ -145,16 +247,43 @@ router.post("/", authenticateToken, async (req, res) => {
 
     const doc = await Script.create({
       user: userId,
-      news_item: item._id,
-      story: item.cluster_id || "",
-      headline: item.title,
-      angle: item.ai_angle || "",
       status: "processing",
       duration_seconds: order.seconds,
       profile: channel._id,
       // Copied, not looked up: renaming or deleting a profile must not relabel
       // scripts already written for it.
       profile_name: channel.name || "",
+
+      ...(source
+        ? {
+            source_kind: source.kind,          // "import" or "idea"
+            source: source._id,
+            headline: source.title || "",
+            angle: source.angle || "",
+            // ── COPIED, BECAUSE THE SOURCE WILL NOT BE HERE LATER ──────────
+            // Source documents expire. This is the permanent record of what the
+            // script was made from, and it is what makes a row in My scripts
+            // mean something three weeks on. The pasted body is deliberately
+            // reduced to a character count: it can be six thousand characters
+            // of somebody else's article, and storing it a second time, for
+            // ever, to label a list row is not a trade worth making.
+            source_input: {
+              youtube_url: source.youtube?.url || "",
+              youtube_title: source.youtube?.title || "",
+              links: (source.links || []).filter((l) => l.ok).map((l) => l.url),
+              text_chars: (source.text || "").length,
+              prompt: source.prompt || "",
+              lookup: !!source.lookup,
+              lookup_used: !!source.lookup_used,
+            },
+          }
+        : {
+            source_kind: "news",
+            news_item: item._id,
+            story: item.cluster_id || "",
+            headline: item.title,
+            angle: item.ai_angle || "",
+          }),
     });
 
     // ── Charge AFTER the row exists, BEFORE the work starts ──────────────────
@@ -172,6 +301,17 @@ router.post("/", authenticateToken, async (req, res) => {
       });
       charged = spent.spent;
       await Script.updateOne({ _id: doc._id }, { $set: { credits_charged: charged } });
+
+      // What reading this material has cost so far, accumulated on the Source.
+      // Purely for answering "why did this one cost 54 credits" later: the
+      // don't-charge-twice decision is made on video_read_at and lookup_used,
+      // never on this number.
+      if (source && order.source > 0) {
+        await Source.updateOne(
+          { _id: source._id },
+          { $inc: { read_charged: order.source }, $set: { updated_at: new Date() } }
+        ).catch(() => {});
+      }
     } catch (err) {
       if (err instanceof InsufficientCredits) {
         // The row was created a moment ago and nothing was charged for it, so
@@ -190,9 +330,9 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 
     // Fire and forget; the client polls.
-    runScript(doc._id, userId, item, { ...order, charged, profileId: channel._id }).catch((err) =>
-      console.error(`[script] unhandled failure for ${doc._id}:`, err)
-    );
+    runScript(doc._id, userId, { item, sourceId: source?._id || null }, {
+      ...order, charged, profileId: channel._id,
+    }).catch((err) => console.error(`[script] unhandled failure for ${doc._id}:`, err));
 
     return res.status(202).json({
       success: true,
@@ -283,11 +423,16 @@ router.get("/", authenticateToken, async (req, res) => {
                 first_seen_at: topic.first_seen_at,
               }
             : null,
+          // Import and Idea scripts cite pages the collector never saw, so the
+          // NewsItem lookup above finds nothing for them and the outlet name
+          // would come back blank. The hostname is not as good as a real
+          // source name, but "reuters.com" is a label a creator can act on and
+          // an empty string is not.
           sources: (d.sources_used || []).map((url) => {
             const s = bySrc.get(url);
             return {
               url,
-              source: s?.source || "",
+              source: s?.source || hostOf(url),
               title: s?.title || "",
               published_at: s?.published_at || null,
             };
@@ -324,9 +469,10 @@ router.get("/:id", authenticateToken, async (req, res) => {
  * main deliverable because an optional extra failed would be the worst possible
  * trade. What they did not receive is refunded, line by line.
  */
-async function runScript(id, userId, item, order) {
+async function runScript(id, userId, subject, order) {
   const started = Date.now();
   const { seconds = 60, englishTwin = false, packaging = false, profileId } = order || {};
+  const { item = null, sourceId = null } = subject || {};
 
   try {
     // Built here rather than in the route so the first-ever script absorbs the
@@ -336,7 +482,19 @@ async function runScript(id, userId, item, order) {
       userMessage: "Add a video to this profile first. That's how we learn how you talk.",
     });
 
-    const out = await writeScript({ profile, item, seconds });
+    // ── THE MATERIAL IS BUILT ONCE AND SHARED ────────────────────────────────
+    // The twin and the packaging call used to each run their own NewsItem
+    // query, which meant three round trips for one story and, worse, a twin
+    // written from 300-character summaries while the script beside it was
+    // written from full articles. One material, three consumers.
+    //
+    // The Source is re-read here rather than passed down from the route. It is
+    // seconds newer, which is what a concurrent order from the same video needs
+    // to see the cached transcript instead of buying a second read of it.
+    const source = sourceId ? await Source.findById(sourceId).lean() : null;
+    const material = await buildMaterial({ item, source, seconds });
+
+    const out = await writeScript({ profile, material, seconds });
 
     await Script.updateOne(
       { _id: id },
@@ -374,7 +532,7 @@ async function runScript(id, userId, item, order) {
     // point; the extras can only ever adjust around it.
     try {
     if (englishTwin) {
-      const twin = await writeEnglishTwin({ profile, item, seconds, sourceScript: out.text });
+      const twin = await writeEnglishTwin({ profile, material, seconds, sourceScript: out.text });
       if (twin) {
         await Script.updateOne(
           { _id: id },
@@ -390,7 +548,7 @@ async function runScript(id, userId, item, order) {
 
     if (packaging) {
       const pack = await writePackaging({
-        profile, item, script: out.text, language: out.language_label,
+        profile, material, script: out.text, language: out.language_label,
       });
       if (pack) {
         await Script.updateOne(
@@ -444,6 +602,15 @@ async function runScript(id, userId, item, order) {
   }
 }
 
+/** "https://www.reuters.com/x/y" -> "reuters.com". Empty for anything unparseable. */
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 function shape(d) {
   return {
     id: String(d._id),
@@ -451,6 +618,23 @@ function shape(d) {
     headline: d.headline || "",
     angle: d.angle || "",
     status: d.status,
+
+    // ── Where this came from ─────────────────────────────────────────────────
+    // Read by My scripts to label a row, because a page of text with no
+    // provenance is exactly what this product exists not to hand anybody. The
+    // Source itself expires; source_input does not, so a row still says "the
+    // video they pasted" or "these four links" long after the cache is gone.
+    source_kind: d.source_kind || "news",
+    source: d.source ? String(d.source) : null,
+    source_input: {
+      youtube_url:   d.source_input?.youtube_url || "",
+      youtube_title: d.source_input?.youtube_title || "",
+      links:         d.source_input?.links || [],
+      text_chars:    d.source_input?.text_chars || 0,
+      prompt:        d.source_input?.prompt || "",
+      lookup:        !!d.source_input?.lookup,
+      lookup_used:   !!d.source_input?.lookup_used,
+    },
     text: d.text || "",
     hook: d.hook || "",
     title_suggestions: d.title_suggestions || [],

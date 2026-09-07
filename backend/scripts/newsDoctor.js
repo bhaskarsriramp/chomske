@@ -33,6 +33,7 @@ import NewsLock, { LOCK_ID } from "../models/NewsLock.js";
 import ApidirectAPIs from "../models/ApidirectAPIs.js";
 import { CATEGORIES } from "../services/categories.js";
 import { heatOf, latestOf, HEAT_HALF_LIFE_H } from "../services/newsHeat.js";
+import { spaceByEntity, entityOf, WINDOW, MAX_PER_WINDOW } from "../services/newsDiversity.js";
 
 const ago = (d) => {
   if (!d) return "never";
@@ -120,11 +121,19 @@ async function main() {
       byCluster.get(key).times.push(r.published_at || r.first_seen_at);
     }
 
-    const feed = [...byCluster.values()]
+    const byHeat = [...byCluster.values()]
       .map((c) => ({ ...c, heat: heatOf(c.times, now), latest: latestOf(c.times, now) }))
       .sort((a, b) => b.heat - a.heat || new Date(b.latest) - new Date(a.latest));
 
-    console.log(`\nFEED ORDER · ${asked} · half-life ${HEAT_HALF_LIFE_H}h`);
+    // The SECOND ordering rule, applied after heat, exactly as GET /news does.
+    // Without it this breakdown would print a perfectly reasoned order that is
+    // not the one on the screen, which is the specific way a diagnostic becomes
+    // worse than none. The heat rank each cluster held before the spacing is
+    // printed alongside, so a card that moved says so.
+    const feed = spaceByEntity(byHeat, (c) => `${c.key} ${c.title}`);
+    const heatRank = new Map(byHeat.map((c, i) => [c.key, i + 1]));
+
+    console.log(`\nFEED ORDER · ${asked} · half-life ${HEAT_HALF_LIFE_H}h, max ${MAX_PER_WINDOW} per ${WINDOW} slots`);
     console.log("  (the ranker cuts to the top 15 by ai_score FIRST; this is how those get ordered)\n");
     for (const [i, c] of feed.slice(0, 15).entries()) {
       const hrs = c.times
@@ -134,10 +143,14 @@ async function main() {
       // one recent article and be dead underneath, while another shows "11h ago"
       // with thirty write-ups just behind it.
       const last6 = hrs.filter((h) => h <= 6).length;
+      // Named only where the spacing could have acted on it; a "-" means the
+      // cluster was never a candidate for being moved.
+      const ent = entityOf(`${c.key} ${c.title}`);
+      const moved = heatRank.get(c.key) !== i + 1 ? ` <- was #${heatRank.get(c.key)}` : "";
       console.log(
         `  ${String(i + 1).padStart(2)}. heat ${c.heat.toFixed(3).padStart(8)}  ` +
         `newest ${hrs[0].toFixed(1).padStart(5)}h  ${String(c.times.length).padStart(3)} src ` +
-        `(${last6} in last 6h)  score ${c.score}\n` +
+        `(${last6} in last 6h)  score ${c.score}  ${(ent || "-").padEnd(10)}${moved}\n` +
         `      ${c.title.slice(0, 78)}\n` +
         `      ages: ${hrs.slice(0, 12).map((h) => h.toFixed(1)).join(", ")}${hrs.length > 12 ? ", …" : ""}`
       );

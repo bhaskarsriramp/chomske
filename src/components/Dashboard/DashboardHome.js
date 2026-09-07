@@ -210,6 +210,14 @@ export default function DashboardHome({ onGoTranscribe, onGoScripts }) {
         <Activity days={data.by_day} label={data.range.label} isPhone={isPhone} />
       )}
 
+      {/* ── WHICH WAY IN THEY ACTUALLY USE ────────────────────────────────────
+          Only once there is something to compare. A breakdown of a single
+          script is not a breakdown, and three rows reading 1 / 0 / 0 is a chart
+          of nothing that would sit on the dashboard of every new account. */}
+      {data?.scripts?.by_source && data.scripts.in_range > 1 && (
+        <SourceMix counts={data.scripts.by_source} total={data.scripts.in_range} label={data.range.label} />
+      )}
+
       {data?.recent_scripts?.length > 0 && (
         <section style={{ marginTop: 34 }}>
           <h2
@@ -347,6 +355,80 @@ function Stat({ label, value, suffix, note, onClick, actionLabel, tone = "normal
  * Bars, drawn with divs. A chart library for one sparkline would be a bigger
  * download than the entire rest of this app.
  */
+/**
+ * Where this creator's scripts came from.
+ *
+ * ── WHY THIS IS ON THE DASHBOARD AT ALL ─────────────────────────────────────
+ * For the creator it answers a real question quietly: they can see that they
+ * have stopped using the feed, or that Import is doing most of the work, and
+ * decide whether their categories are still right.
+ *
+ * It is also the one place the product reports on itself. The news pipeline is
+ * by far the largest thing behind this app and the only paid one; if these bars
+ * settle at mostly Import and Idea, that is worth knowing early rather than
+ * after another six months of collecting.
+ *
+ * One bar rather than three, because the question is proportion, not counts:
+ * "most of my scripts come from my own material" is read off a split bar in a
+ * glance and has to be worked out from three numbers. The counts are still on
+ * the row underneath for anyone who wants them.
+ */
+function SourceMix({ counts, total, label }) {
+  const rows = [
+    { key: "news",   label: "Discover", value: counts.news   || 0, color: "var(--made)" },
+    { key: "import", label: "Import",   value: counts.import || 0, color: "#8A8A8A" },
+    { key: "idea",   label: "Idea",     value: counts.idea   || 0, color: "#C6C6C6" },
+  ].filter((r) => r.value > 0);
+
+  if (rows.length < 2) return null;
+
+  return (
+    <section style={{ marginTop: 34 }}>
+      <h2
+        style={{
+          fontSize: 11, fontWeight: 600, letterSpacing: "0.12em",
+          textTransform: "uppercase", color: "var(--ink-mute)", margin: "0 0 10px",
+        }}
+      >
+        What you wrote from · {label.toLowerCase()}
+      </h2>
+
+      <div
+        role="img"
+        aria-label={rows.map((r) => `${r.label}: ${r.value} of ${total}`).join(", ")}
+        style={{
+          display: "flex", height: 10, borderRadius: 999, overflow: "hidden",
+          background: "var(--line)", marginBottom: 12,
+        }}
+      >
+        {rows.map((r) => (
+          <div
+            key={r.key}
+            style={{ width: `${(r.value / total) * 100}%`, background: r.color }}
+          />
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+        {rows.map((r) => (
+          <span key={r.key} style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+            <span
+              aria-hidden="true"
+              style={{ width: 9, height: 9, borderRadius: 3, background: r.color, flexShrink: 0 }}
+            />
+            <span style={{ fontSize: 13, color: "var(--ink-body)" }}>
+              {r.label}
+              <span style={{ color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}>
+                {" · "}{r.value}
+              </span>
+            </span>
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Activity({ days, label, isPhone }) {
   const max = Math.max(...days.map((d) => d.count), 1);
   return (

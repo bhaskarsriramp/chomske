@@ -22,6 +22,19 @@ import { useCredits } from "../../state/CreditsContext";
  * together with the order it was priced for, and the only path a number takes
  * to the screen is through a key check against the current selection.
  *
+ * ── AND IT PRICES THE MATERIAL, NOT JUST THE LENGTH ─────────────────────────
+ * Discover orders cost what the slider says: the research behind a ranked story
+ * was paid for by the collector on its own clock. Import and Idea are not like
+ * that. Reading ten minutes of video costs real money and a lookup costs a
+ * search, so those orders carry a price the slider alone cannot predict.
+ *
+ * `sourceId` is therefore part of the quote request and part of the order key.
+ * The server prices the material from its own stored copy, never from anything
+ * this component sends, and the second order from the same video comes back
+ * cheaper because the read is already bought. All this component has to do is
+ * ask again whenever the material changes, which is what putting it in the key
+ * achieves.
+ *
  * ── AND SO IS THE REFUSAL ───────────────────────────────────────────────────
  * When a chosen length costs more than they hold, the button says so instead of
  * saying the price. A disabled button labelled with a number a creator cannot
@@ -37,7 +50,7 @@ const QUOTE_RETRY_MS = 900;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export default function ScriptOrder({ busy, onGenerate, compact }) {
+export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null, cta = "Write this in my voice" }) {
   const { balance, setBalance, openBuy, canBuy, rules } = useCredits();
 
   const [seconds, setSeconds] = useState(60);
@@ -76,7 +89,7 @@ export default function ScriptOrder({ busy, onGenerate, compact }) {
      Three things follow, and together they are the fix: ask once when the thumb
      settles, abort whatever is still in flight, and let no number reach the
      screen unless it was priced for this exact order. */
-  const orderKey = `${seconds}|${english ? 1 : 0}|${packaging ? 1 : 0}`;
+  const orderKey = `${seconds}|${english ? 1 : 0}|${packaging ? 1 : 0}|${sourceId || ""}`;
 
   const [quote, setQuote] = useState(null);      // { key, data }
   const [priceFailed, setPriceFailed] = useState(false);
@@ -94,7 +107,14 @@ export default function ScriptOrder({ busy, onGenerate, compact }) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const { data } = await api.get("/billing/quote", {
-            params: { seconds, english: english ? 1 : 0, packaging: packaging ? 1 : 0 },
+            params: {
+              seconds,
+              english: english ? 1 : 0,
+              packaging: packaging ? 1 : 0,
+              // Omitted entirely on the Discover path, where api.js drops
+              // null params rather than sending "source_id=null".
+              source_id: sourceId || undefined,
+            },
             signal: controller.signal,
           });
           if (!live) return;
@@ -117,7 +137,7 @@ export default function ScriptOrder({ busy, onGenerate, compact }) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [orderKey, seconds, english, packaging, setBalance, retry]);
+  }, [orderKey, seconds, english, packaging, sourceId, setBalance, retry]);
 
   // The one place a price is allowed through, and the reason a stale one cannot
   // be displayed, compared against a balance, or ordered from.
@@ -254,7 +274,7 @@ export default function ScriptOrder({ busy, onGenerate, compact }) {
             ? "Pricing…"
             : tooExpensive
             ? "Not enough credits"
-            : `Write this in my voice · ${cost} credits`}
+            : `${cta} · ${cost} credits`}
         </button>
 
         {tooExpensive && canBuy ? (
@@ -291,6 +311,19 @@ export default function ScriptOrder({ busy, onGenerate, compact }) {
           >
             Try again
           </button>
+        </p>
+      )}
+
+      {/* ── WHERE THE EXTRA CREDITS WENT ─────────────────────────────────────
+          A 60 second script is 30 credits everywhere in this product, so an
+          Import that says 54 has to explain itself at the moment it is read.
+          Unexplained, it looks like a bug or a markup; named, it is a line item
+          the creator can decide about, and the next order from the same video
+          drops it, which is worth knowing before they order the first one. */}
+      {priced?.source > 0 && !tooExpensive && (
+        <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
+          Includes {priced.source} credits to read your source. Writing again from
+          the same material won't cost that twice.
         </p>
       )}
 

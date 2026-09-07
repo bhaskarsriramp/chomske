@@ -5,7 +5,20 @@ import { useCredits } from "../../state/CreditsContext";
 import { useProfiles } from "../../state/ProfileContext";
 
 /**
- * Turn the selected story into a script in the creator's own voice.
+ * Turn whatever is selected into a script in the creator's own voice.
+ *
+ * ── ONE PANEL, THREE SCREENS ─────────────────────────────────────────────────
+ * It takes EITHER a `storyId` (a ranked story from Discover) or a `sourceId`
+ * (material prepared by Import or Idea) and does exactly the same thing with
+ * both: order, poll, show the result, offer the copy buttons, handle the
+ * refund-shaped failures.
+ *
+ * Deliberately not two components. Everything below the order button is the
+ * payoff screen of the entire product, the script card, the English twin, the
+ * upload package, the title ideas, the "check any number before you say it"
+ * line, and a second copy of it would start out identical and drift within a
+ * month. The backend takes the same view for the same reason: POST /script
+ * accepts either id and shares one path after twenty lines.
  *
  * Async and polled, matching /transcribe: writing takes long enough that holding
  * the request open loses to proxy timeouts, and the first script for a new user
@@ -15,7 +28,21 @@ import { useProfiles } from "../../state/ProfileContext";
  * learned from one video is a hint, not a voice, and saying so is what stops a
  * thin first result from reading as "this product doesn't work".
  */
-export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscribe, compact }) {
+export default function ScriptPanel({
+  storyId = null,
+  sourceId = null,
+  voice,
+  onVoiceChange,
+  onGoTranscribe,
+  compact,
+  cta,
+  heading = "Your script",
+  // What we are doing while they wait. Different per screen because it is
+  // genuinely different work: Discover re-reads the coverage, Import may be
+  // watching a ten minute video, Idea is usually straight to drafting. A
+  // progress line that names the wrong job is worse than none.
+  writingNote = "Reading the coverage, then drafting. Around half a minute.",
+}) {
   const [script, setScript] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -29,15 +56,20 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
 
   const pollRef = useRef(null);
 
-  // A script belongs to one story. Switching stories must clear the last result
-  // and stop its poll, or the previous script sits under the new headline.
+  // A script belongs to one subject. Switching stories, or preparing new
+  // material, must clear the last result and stop its poll, or the previous
+  // script sits under the new headline. Keyed on both ids because on Discover
+  // the subject is the story and on Import and Idea it is the source, and a
+  // panel that only watched one of them would leave the other's script on
+  // screen under something it was not written from.
+  const subjectKey = `${storyId || ""}|${sourceId || ""}`;
   useEffect(() => {
     clearInterval(pollRef.current);
     setScript(null);
     setError("");
     setCopied(false);
     setBusy(false);
-  }, [storyId]);
+  }, [subjectKey]);
 
   useEffect(() => () => clearInterval(pollRef.current), []);
 
@@ -80,7 +112,11 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
       // The creator picked it in the order panel a second ago, and having the
       // server guess at that point is how a story gets written in the wrong
       // voice and charged for.
-      const body = { news_id: storyId, force, profile_id: profileId || undefined };
+      const body = {
+        ...(sourceId ? { source_id: sourceId } : { news_id: storyId }),
+        force,
+        profile_id: profileId || undefined,
+      };
       if (order) {
         body.seconds = order.seconds;
         body.english = order.english;
@@ -112,6 +148,13 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
         setBalance(err.response.data.balance);
         return;
       }
+      // Sources are a cache and they expire (backend models/Source.js). On a
+      // tab left open for a month this is the expected outcome, not a fault,
+      // and the fix is one the creator can do in five seconds.
+      if (err?.response?.data?.source_expired) {
+        setError("That material has expired. Paste it again and we'll re-read it.");
+        return;
+      }
       setError(errorMessage(err));
     }
   }
@@ -139,7 +182,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
           textTransform: "uppercase", color: "var(--ink-mute)", margin: "0 0 13px",
         }}
       >
-        Your script
+        {heading}
       </h3>
 
       {error && (
@@ -162,7 +205,13 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
 
       {!script && (hasVoice || voice?.transcripts_available > 0) && (
         <div>
-          <ScriptOrder busy={busy} onGenerate={(order) => generate(false, order)} compact={compact} />
+          <ScriptOrder
+            busy={busy}
+            onGenerate={(order) => generate(false, order)}
+            compact={compact}
+            sourceId={sourceId}
+            cta={cta}
+          />
           {!hasVoice && (
             <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>
               First run also learns your voice from your {voice.transcripts_available === 1 ? "video" : "videos"}, so it takes a little longer.
@@ -171,7 +220,7 @@ export default function ScriptPanel({ storyId, voice, onVoiceChange, onGoTranscr
         </div>
       )}
 
-      {script?.status === "processing" && <Writing />}
+      {script?.status === "processing" && <Writing note={writingNote} />}
 
       {script?.status === "failed" && (
         <div
@@ -296,7 +345,7 @@ function NeedsVoice({ onGoTranscribe }) {
   );
 }
 
-function Writing() {
+function Writing({ note }) {
   return (
     <div
       style={{
@@ -315,7 +364,7 @@ function Writing() {
       <div>
         <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--ink)" }}>Writing in your voice…</div>
         <div style={{ fontSize: 12.5, color: "var(--ink-mute)", marginTop: 3 }}>
-          Reading the coverage, then drafting. Around half a minute.
+          {note}
         </div>
       </div>
     </div>

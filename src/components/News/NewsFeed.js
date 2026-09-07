@@ -50,14 +50,23 @@ const REFRESH_TIMEOUT_MS = 180000;
 const MIN_SCORE = 5;
 
 // A hard ceiling, not a page size. The whole promise is "we already decided for
-// you", and forty ranked cards is a list to triage, which is the thing a
-// creator already has in four other apps. Most days genuinely have two or three
-// stories worth a video; fifteen leaves real choice without becoming a feed.
+// you", and a hundred ranked cards is a list to triage, which is the thing a
+// creator already has in four other apps.
 //
-// MUST STAY IN STEP WITH NEWS_BRIEF_LIMIT on the server, which decides how many
-// stories get a brief written ahead of time. Cards beyond that number open to a
-// spinner and generate their brief on the spot, every time anyone opens them.
-const MAX_CARDS = 15;
+// Thirty rather than the original fifteen. Fifteen was chosen when every card
+// in the feed was about the same handful of subjects, where a longer list only
+// meant more of the same story; now that the catalog fetches the whole domain
+// and services/newsDiversity.js spaces the dominant names out, the back half of
+// the list is genuinely different news rather than more of the front half.
+//
+// The old note here said this MUST STAY IN STEP WITH NEWS_BRIEF_LIMIT, because
+// cards past that number opened to a spinner and regenerated a brief on every
+// open. That coupling is gone: NEWS_BRIEF_LIMIT defaults to 0, pre-generation
+// was measured at 441 wasted briefs out of 442 and turned off, and briefs are
+// now written when a card is opened. So the number of cards costs nothing per
+// card, and this ceiling is purely an editorial judgement. If pre-warming is
+// ever switched back on, that server-side limit is what to raise with it.
+const MAX_CARDS = 30;
 
 // The fallback when that comes back empty. A brand-new category has collected
 // for minutes, not days, and showing a first-time user an empty product is how
@@ -71,7 +80,24 @@ const WIDE_MIN_SCORE = 3;
 // sits there hammering it expecting different news.
 const MAX_REFRESHES = 3;
 
-export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = null }) {
+export default function NewsFeed({
+  onGoTranscribe,
+  voiceRev = 0,
+  profileId = null,
+  // ── THE VOICE NOW COMES FROM ABOVE ────────────────────────────────────────
+  // Discover is one of three modes under Create, and all three need the same
+  // answer to "is there a voice to write in". Fetching it here as well would
+  // mean two identical requests on every page load and two copies of the answer
+  // that drift the moment one of them refreshes. The parent owns it; this pane
+  // keeps its own fetch only for the case where it is rendered standalone.
+  voice: voiceProp = null,
+  onVoiceChange = null,
+  // Where an empty or exhausted feed sends somebody. See EmptyFeedFooter below:
+  // "there is nothing here today" is precisely the moment the other two modes
+  // are worth knowing about.
+  onGoImport = null,
+  onGoIdea = null,
+}) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
@@ -96,7 +122,8 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   const [busy, setBusy] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [openId, setOpenId] = useState(null);
-  const [voice, setVoice] = useState(null);
+  const [ownVoice, setVoice] = useState(null);
+  const voice = voiceProp || ownVoice;
   const [refreshes, setRefreshes] = useState(0);
   const [ranking, setRanking] = useState(false);
   // Read by the socket handler below. A piece of state there would put `ranking`
@@ -179,20 +206,25 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
   // not per-story, and re-requesting it on every click would be a call per
   // selection.
   const loadVoice = useCallback(async () => {
+    // Owned by the parent: tell it to refresh rather than holding a second copy.
+    if (onVoiceChange) { onVoiceChange(); return; }
     try {
       const { data } = await api.get("/script/voice", {
         params: profileId ? { profile: profileId } : {},
       });
       setVoice(data);
     } catch { /* the panel degrades to "transcribe first"; never block the feed */ }
-  }, [profileId]);
+  }, [profileId, onVoiceChange]);
 
   // voiceRev changes when videos are added, deleted or re-analysed on the other
   // screen. Without it this pane would keep offering to write in a profile that
   // no longer matches, or keep saying "transcribe first" after they just did.
   // voiceId changes when they switch which voice writes, which is a different
   // profile with a different set of videos behind it.
-  useEffect(() => { loadVoice(); }, [loadVoice, voiceRev]);
+  // Skipped entirely when the parent supplies the voice: it is already
+  // fetching, and calling loadVoice here would just ask it to fetch again on
+  // every mount.
+  useEffect(() => { if (!voiceProp) loadVoice(); }, [loadVoice, voiceRev, voiceProp]);
 
   useEffect(() => { rankingRef.current = ranking; }, [ranking]);
 
@@ -628,7 +660,20 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
 
           {!loadedOnce && busy && <FeedSkeleton />}
 
-          {loadedOnce && !items.length && !error && <EmptyState settling={emptyTries < 3} />}
+          {loadedOnce && !items.length && !error && (
+            <EmptyState settling={emptyTries < 3} onGoImport={onGoImport} onGoIdea={onGoIdea} />
+          )}
+
+          {/* ── THE OTHER TWO WAYS IN, WHERE THEY ARE ACTUALLY NEEDED ───────
+              Under the list rather than at the top of it. Somebody who has just
+              read fifteen ranked stories and picked none is the single most
+              likely person in this product to want Import or Idea, and until
+              they scrolled to the bottom the feed was the only thing they knew
+              existed. The switch above says the modes are there; this says when
+              to reach for them. */}
+          {loadedOnce && items.length > 0 && (onGoImport || onGoIdea) && (
+            <OtherWaysIn onGoImport={onGoImport} onGoIdea={onGoIdea} />
+          )}
 
           {items.length > 0 && (
             <>
@@ -711,6 +756,51 @@ export default function NewsFeed({ onGoTranscribe, voiceRev = 0, profileId = nul
  */
 function seenKey(it) {
   return it.story || it.id;
+}
+
+/**
+ * Where to go when the feed is not the answer.
+ *
+ * Quiet on purpose: two text buttons and a line, not a pair of cards competing
+ * with the stories above them. The feed is still the fastest route to a video
+ * on a day when it has something, and this must not read as an apology for it.
+ */
+function OtherWaysIn({ onGoImport, onGoIdea }) {
+  return (
+    <div
+      style={{
+        marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--line)",
+        fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.7,
+      }}
+    >
+      Nothing here you want to cover?{" "}
+      {onGoImport && (
+        <>
+          <LinkButton onClick={onGoImport}>Import a video or link</LinkButton>
+          {onGoIdea ? ", or " : "."}
+        </>
+      )}
+      {onGoIdea && (
+        <>
+          <LinkButton onClick={onGoIdea}>write your own idea</LinkButton>.
+        </>
+      )}
+    </div>
+  );
+}
+
+function LinkButton({ onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: "none", border: "none", padding: 0, font: "inherit",
+        color: "var(--ink)", fontWeight: 600, textDecoration: "underline", cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
 }
 
 /* ── Pieces ────────────────────────────────────────────────────────────── */
@@ -1013,7 +1103,7 @@ function StoryRow({ item, index, isPhone, active, unread, rowRef, onOpen }) {
           itself on stories nobody had read while a creator was away for an
           afternoon. Now it survives until the story is opened, so the list
           shows what is left to get through. Cleared on click, in StoryRow's
-          onOpen, not on a dwell timer: this is a shortlist of fifteen that
+          onOpen, not on a dwell timer: this is a shortlist that
           somebody reads end to end before choosing, and a timer would clear
           every badge during the very scan they exist to help with. */}
       {unread && (
@@ -1090,7 +1180,7 @@ function FeedSkeleton() {
  * widening already happened automatically before this rendered, offering it
  * again would be a button that does what was just done.
  */
-function EmptyState({ settling }) {
+function EmptyState({ settling, onGoImport, onGoIdea }) {
   if (settling) {
     return (
       <div
@@ -1125,6 +1215,42 @@ function EmptyState({ settling }) {
         not twenty. If you have just added this category, the collector runs every
         15 minutes and takes a little while to fill up.
       </p>
+
+      {/* An empty feed used to be a dead end, and a dead end on the screen the
+          app opens on is how somebody decides the product has nothing for them.
+          It is now the one place where the other two modes are unambiguously
+          the right answer, so they are offered here as buttons rather than as
+          a line of small print. */}
+      {(onGoImport || onGoIdea) && (
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 16 }}>
+          {onGoImport && (
+            <button
+              onClick={onGoImport}
+              className="hg-btn-ghost"
+              style={{
+                fontSize: 13, fontWeight: 600, padding: "9px 15px", borderRadius: 10,
+                border: "1px solid var(--line)", background: "var(--card)",
+                color: "var(--ink)", cursor: "pointer",
+              }}
+            >
+              Import a video or link
+            </button>
+          )}
+          {onGoIdea && (
+            <button
+              onClick={onGoIdea}
+              className="hg-btn-ghost"
+              style={{
+                fontSize: 13, fontWeight: 600, padding: "9px 15px", borderRadius: 10,
+                border: "1px solid var(--line)", background: "var(--card)",
+                color: "var(--ink)", cursor: "pointer",
+              }}
+            >
+              Write my own idea
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

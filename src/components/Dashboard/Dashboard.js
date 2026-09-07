@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 import useIsMobile from "../../hooks/useIsMobile";
 import Sidebar, { MOBILE_HEADER_H } from "../Shell/Sidebar";
-import NewsFeed from "../News/NewsFeed";
+import CreatePage from "../Create/CreatePage";
 import TranscribePanel from "../Transcribe/TranscribePanel";
 import DashboardHome from "./DashboardHome";
 import ProfilePanel from "../Profile/ProfilePanel";
@@ -26,7 +26,20 @@ import { CreditsPill } from "../Shell/CreditsCard";
  * opened and then stays mounted, hidden. Dashboard is the exception: it holds no
  * in-flight work and its numbers should be fresh on every visit, so it remounts.
  */
-export const TAB_IDS = ["topics", "voice", "scripts", "dashboard", "profile"];
+/**
+ * ── THREE OF THESE ARE ONE SCREEN ────────────────────────────────────────────
+ * discover, import and idea are the three modes of Create (see
+ * components/Create/CreatePage.js). They are separate tab ids, and therefore
+ * separate URLs, because each is a real destination: back and forward work,
+ * a refresh lands where you were, and a mode can be linked to. They are NOT
+ * separate panels: one CreatePage is mounted for all three, so a generation in
+ * flight survives a mode switch.
+ *
+ * The old "topics" id is deliberately NOT in this list. It falls through to the
+ * catch-all redirect below and lands on Discover, which is what it used to show.
+ */
+export const CREATE_TABS = ["discover", "import", "idea"];
+export const TAB_IDS = [...CREATE_TABS, "voice", "scripts", "dashboard", "profile"];
 
 /**
  * Both providers wrap the whole shell rather than individual panels.
@@ -54,7 +67,10 @@ function Shell({ user, onSignOut }) {
   // The URL is the source of truth for which screen is open, so browser back
   // and a page refresh both land where the user actually was.
   const tab = tabParam;
-  const [mounted, setMounted] = useState({ [tabParam]: true });
+  const isCreate = CREATE_TABS.includes(tab);
+  const [mounted, setMounted] = useState(
+    () => ({ [CREATE_TABS.includes(tabParam) ? "create" : tabParam]: true })
+  );
   const [drawer, setDrawer] = useState(false);
   // Bumped whenever the voice set changes, so the script panel re-reads the
   // profile instead of offering to write in a voice that no longer exists.
@@ -70,9 +86,13 @@ function Shell({ user, onSignOut }) {
   // Panels are kept mounted once visited (see the note above), and the URL can
   // now arrive from a link or the back button rather than only from openTab,
   // so registration happens here, on whatever tab is current.
+  // The three Create modes share one mount key, because they share one mounted
+  // component. Registering them separately would do nothing except make the map
+  // lie about what is on the page.
+  const mountKey = CREATE_TABS.includes(tab) ? "create" : tab;
   useEffect(() => {
-    setMounted((m) => (m[tab] ? m : { ...m, [tab]: true }));
-  }, [tab]);
+    setMounted((m) => (m[mountKey] ? m : { ...m, [mountKey]: true }));
+  }, [mountKey]);
 
   // The profile's videos or voice changed: re-read the list (counts,
   // staleness) and tell the panels to re-read the voice.
@@ -93,8 +113,10 @@ function Shell({ user, onSignOut }) {
 
   useEffect(() => { if (!isNarrow) setDrawer(false); }, [isNarrow]);
 
-  // A typo or a stale bookmark shouldn't render an empty shell.
-  if (!TAB_IDS.includes(tabParam)) return <Navigate to="/app/topics" replace />;
+  // A typo or a stale bookmark shouldn't render an empty shell. /app/topics is
+  // the specific stale bookmark we know exists, and it lands on Discover, which
+  // is what it used to show.
+  if (!TAB_IDS.includes(tabParam)) return <Navigate to="/app/discover" replace />;
 
   return (
     <div className="hg-app" style={{ display: "flex", background: "var(--paper)" }}>
@@ -153,9 +175,15 @@ function Shell({ user, onSignOut }) {
         )}
 
         <main style={{ flex: 1, minHeight: 0, display: "flex" }}>
-          {mounted.topics && (
-            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: tab === "topics" ? "flex" : "none" }}>
-              <NewsFeed
+          {/* One page for all three Create modes. Mounted under a single key so
+              switching between them never unmounts the others: each can have a
+              paid generation polling for a result, and the shell's whole
+              hidden-not-unmounted rule exists to stop exactly that being lost. */}
+          {mounted.create && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: isCreate ? "flex" : "none" }}>
+              <CreatePage
+                mode={tab}
+                onMode={openTab}
                 voiceRev={voiceRev}
                 profileId={activeId}
                 onGoTranscribe={() => openTab("voice")}
@@ -168,7 +196,7 @@ function Shell({ user, onSignOut }) {
               <TranscribePanel
                 onVoiceChange={bumpVoice}
                 onGoProfiles={() => openTab("profile")}
-                onGoTopics={() => openTab("topics")}
+                onGoTopics={() => openTab("discover")}
               />
             </div>
           )}
@@ -178,7 +206,7 @@ function Shell({ user, onSignOut }) {
               true the moment another script finishes writing. */}
           {tab === "scripts" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <ScriptsPanel onGoTopics={() => openTab("topics")} />
+              <ScriptsPanel onGoTopics={() => openTab("discover")} />
             </div>
           )}
 

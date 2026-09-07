@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import api, { errorMessage } from "../../api";
-import ScriptPanel from "./ScriptPanel";
+import ScriptPanel from "../Order/ScriptPanel";
 import { sourceLabel, timeAgo } from "./newsUtils";
 import Chevron from "../Shell/Chevron";
 import { categoryColor } from "../../theme";

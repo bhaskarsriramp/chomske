@@ -28,7 +28,17 @@ const SECTIONS = [
   {
     label: "Studio",
     items: [
-      { id: "topics", label: "Topics", icon: TargetIcon },
+      // ── ONE ITEM, THREE MODES ──────────────────────────────────────────
+      // Create opens on Discover and stays lit while the creator is on Import
+      // or Idea, because those are the same destination reached by the switch
+      // at the top of it. Three sidebar rows would say they are three separate
+      // places and put the choice in two competing controls; `match` is what
+      // keeps the rail honest about where you are.
+      //
+      // Named Create rather than Topics because Topics is now a third of what
+      // the screen does, and a label that describes one mode of three is a
+      // label that misleads on two of them.
+      { id: "discover", label: "Create", icon: TargetIcon, match: ["discover", "import", "idea"] },
       { id: "voice", label: "My voice", icon: WaveIcon },
       { id: "scripts", label: "My scripts", icon: ScriptIcon },
     ],
@@ -78,7 +88,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {section.items.map((item) => {
-                const on = item.id === tab;
+                const on = item.match ? item.match.includes(tab) : item.id === tab;
                 const Icon = item.icon;
                 return (
                   <button
