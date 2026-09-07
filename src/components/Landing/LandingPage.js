@@ -79,14 +79,36 @@ const LANGUAGES = [
  * is the fourth signal, not the only one. Written for red-green colour
  * blindness, and just as necessary now that red and violet sit on one page.
  */
-const RED = "255,74,74";       // the brand, tuned to sit still on a dark ground
-const DEEP = "229,72,77";      // deeper, for elements that must recede
-const ROSE = "255,143,143";    // lighter, for small marks that would glare at full strength
-const VIOLET = "139,124,246";  // the "bring your own material" hue: Import and Idea
-const VIOLET_SOFT = "179,166,255";
+/* ── THE FOUR ─────────────────────────────────────────────────────────────────
+   Blue is not chosen, it is measured: #1B17FF is the actual dominant pixel of
+   logo192.png, hue 241, and this is that hue lightened until it reads on a dark
+   ground. The mark has been the one blue thing on an all-red page this whole
+   time, which is why the page never quite looked like it belonged to the logo.
+
+   Purple sits at 284 rather than the 265 it wants to sit at, because the logo
+   hue is indigo and a "natural" purple lands 33 degrees from it, which on two
+   adjacent sections reads as one colour that failed to load consistently.
+   Pushed toward magenta, the gap is 43 degrees and they separate cleanly.
+
+   Measured, on the #0A0B0F ground:
+     BLUE    #7C79FF   hue 241    5.65:1
+     PURPLE  #DC7BFF   hue 284    7.79:1
+     GREEN   #3DD68C   hue 151   10.49:1
+     RED     #FF5A5A   hue   0    6.43:1
+   Every pair is at least 43 degrees apart, so none of them can be mistaken for
+   another at a glance, and all four clear AA for normal text.
+
+   The rule that survives every repaint of this file: colour is never the ONLY
+   thing carrying meaning here. Four hues make that easier to get wrong, not
+   harder, so every section is still labelled and every demo still explains
+   itself in words. */
+const BLUE = "124,121,255";
+const PURPLE = "220,123,255";
+const GREEN = "61,214,140";
+const RED = "255,90,90";
 const WHITE = "255,255,255";
 
-const GLOW = { red: RED, deep: DEEP, rose: ROSE, violet: VIOLET };
+const GLOW = { blue: BLUE, purple: PURPLE, green: GREEN, red: RED };
 
 /**
  * One observer for every reveal on the page.
@@ -236,7 +258,7 @@ function DemoFrame({ children, label, tone, height }) {
         position: "relative",
         borderRadius: 14,
         border: "1px solid var(--d-line)",
-        background: "linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015))",
+        background: "rgba(255,255,255,.038)",
         boxShadow: `0 40px 90px -50px rgba(${tone},.55)`,
         overflow: "hidden",
       }}
@@ -268,7 +290,7 @@ function DemoRow({ title, meta, tone = "255,255,255", score, state = "in", isNew
         padding: compact ? "8px 10px" : "10px 11px",
         borderRadius: 9,
         marginBottom: 7,
-        background: `linear-gradient(180deg, rgba(${tone},.10), rgba(${tone},.025))`,
+        background: `rgba(${tone},.075)`,
         border: `1px solid rgba(${tone},.20)`,
         opacity: state === "hidden" ? 0 : dropped ? 0.25 : 1,
         transform: state === "hidden" ? "translateY(7px)" : "none",
@@ -337,11 +359,10 @@ export default function LandingPage({ onSignedIn, checking }) {
 
   return (
     <div ref={page} className="hg-dark" style={{ position: "relative", minHeight: "100vh", overflowX: "hidden" }}>
-      {/* The red/green ground, held still behind everything. */}
-      <div className="hg-wash" aria-hidden="true" />
-
-      {/* Everything else rides above it. See .hg-wash for why this z-index is
-          load-bearing rather than decoration. */}
+      {/* The fixed gradient wash that used to sit here is gone; the ground is
+          one flat colour set on .hg-dark. The wrapper below keeps its z-index
+          so the stacking context the nav and the mobile sheet sit in does not
+          move, but nothing is behind it any more. */}
       <div style={{ position: "relative", zIndex: 1 }}>
       <Nav pad={pad} isMobile={isMobile} />
       <Hero
@@ -392,7 +413,7 @@ function Nav({ pad, isMobile }) {
         position: "sticky", top: 0, zIndex: 40,
         padding: isMobile ? `12px ${pad}` : `16px ${pad}`,
         // Black at rest, not transparent. The bar is a SIBLING above the hero,
-        // so at scroll 0 a transparent one shows the page's own red gradient
+        // so at scroll 0 a transparent one shows the page's own flat ground
         // through it, a red band across the top of an otherwise black hero,
         // which reads as a rendering fault rather than a design. Black matches
         // the hero exactly, so the seam disappears; once scrolled it becomes the
@@ -540,9 +561,15 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
 /**
  * The moving ground.
  *
- * Three blurred blobs of brand light plus a fine grid. The grid is what stops
- * this reading as a generic gradient: it gives the light something to sit
- * behind, which is the difference between "futuristic" and "purple blur".
+ * A fine grid, and nothing else. It used to be a grid plus three blurred blobs
+ * of brand light; the blobs are gone (see below), which leaves the grid doing
+ * the whole job of giving the hero depth. It turns out to be enough: a ruled
+ * ground reads as precision, where a blurred one reads as decoration.
+ *
+ * The two gradients still in here are not colour: the grid lines are a repeating
+ * linear pattern, and the radial is a MASK that fades those lines out before
+ * they reach the headline. Both draw one greyscale value, so neither is the
+ * thing the flat-colour pass was aimed at.
  *
  * `pointerEvents: none` throughout, a full-bleed decorative layer that eats
  * clicks would swallow the buttons underneath it.
@@ -563,46 +590,17 @@ function Aurora() {
         }}
       />
 
-      {/* Two hues, four densities, and no mesh. The top two blobs are the brand
-          red at different strengths, which reads as depth rather than as a
-          gradient; the bottom one is violet, so the hero already carries a hint
-          of where the page turns when it stops being about the feed. */}
-      <div
-        className="hg-aurora hg-aurora-a"
-        style={{
-          width: "58vw", height: "58vw", maxWidth: 900, maxHeight: 900,
-          left: "-14vw", top: "-22vw",
-          background: `radial-gradient(circle, rgba(${RED},.26), transparent 66%)`,
-        }}
-      />
-      <div
-        className="hg-aurora hg-aurora-b"
-        style={{
-          width: "52vw", height: "52vw", maxWidth: 820, maxHeight: 820,
-          right: "-12vw", top: "-18vw",
-          background: `radial-gradient(circle, rgba(${DEEP},.20), transparent 66%)`,
-        }}
-      />
-      <div
-        className="hg-aurora hg-aurora-c"
-        style={{
-          width: "78vw", height: "44vw", maxWidth: 1200, maxHeight: 660,
-          left: "11vw", bottom: "-26vw",
-          background: `radial-gradient(circle, rgba(${VIOLET},.20), transparent 68%)`,
-        }}
-      />
+      {/* ── NO BLOBS ─────────────────────────────────────────────────────
+          Three blurred radial gradients used to sit here, and with the fixed
+          wash behind them the hero was four overlapping clouds of colour. On a
+          dark ground that is the look every AI landing page shipped in 2024,
+          and it had a practical cost too: colour that moves under text is
+          colour you cannot check the contrast of, because the contrast changes
+          depending on where the blob happens to be.
 
-      {/* The horizon: one bright hairline with a bloom under it, which is what
-          gives the section a floor instead of a fade. It runs red into violet
-          rather than red alone, so the seam between the hero and everything
-          below it is where the page changes colour. */}
-      <div
-        style={{
-          position: "absolute", left: "50%", bottom: 0, transform: "translateX(-50%)",
-          width: "140%", height: 1,
-          background: `linear-gradient(90deg, transparent, rgba(${RED},.65) 34%, rgba(${VIOLET},.55) 72%, transparent)`,
-        }}
-      />
+          What is left is the grid and a flat ground. Everything coloured on
+          this page is now an object with an edge, which is both calmer and
+          measurable. */}
     </div>
   );
 }
@@ -778,7 +776,7 @@ function HeroDemo({ isMobile }) {
         margin: "0 auto",
         borderRadius: isMobile ? 14 : 20,
         border: "1px solid rgba(255,255,255,.12)",
-        background: "linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015))",
+        background: "rgba(255,255,255,.038)",
         boxShadow: `0 50px 120px -50px rgba(${RED},.42), 0 0 0 1px rgba(255,255,255,.04) inset`,
         overflow: "hidden",
         backdropFilter: "blur(6px)",
@@ -831,7 +829,7 @@ function HeroDemo({ isMobile }) {
               style={{
                 borderRadius: 10, marginBottom: 8,
                 border: `1px solid rgba(${RED},${opened ? ".55" : ".22"})`,
-                background: `linear-gradient(180deg, rgba(${RED},${opened ? ".16" : ".10"}), rgba(${RED},.025))`,
+                background: `rgba(${BLUE},${opened ? ".14" : ".08"})`,
                 padding: "11px 13px",
                 transition: "border-color .3s ease, background .3s ease",
               }}
@@ -977,7 +975,7 @@ function MockRow({ title, meta, tone, isNew, dim }) {
         padding: "11px 13px",
         borderRadius: 11,
         marginBottom: 8,
-        background: `linear-gradient(180deg, rgba(${tone},.10), rgba(${tone},.025))`,
+        background: `rgba(${tone},.075)`,
         border: `1px solid rgba(${tone},.22)`,
         opacity: dim ? 0.5 : 1,
       }}
@@ -1085,14 +1083,14 @@ function HowItWorks({ isMobile, pad }) {
     },
     {
       n: "02",
-      tone: DEEP,
+      tone: BLUE,
       title: "It throws most of it away",
       body: "Every story is scored against your niche. You get the two or three worth a video.",
       scene: (a) => <SceneRanking active={a} />,
     },
     {
       n: "03",
-      tone: ROSE,
+      tone: GREEN,
       title: "It writes the script in your voice",
       body: "One tap. Your hooks, your language, ready to read off the screen.",
       scene: (a) => <SceneWriting active={a} isMobile={isMobile} />,
@@ -1276,7 +1274,7 @@ function SceneWriting({ active, isMobile }) {
   const spot = phase <= 0 ? { left: "62%", top: 190 } : { left: "26%", top: 44 };
 
   return (
-    <DemoFrame label="your script · Hindi-English" tone={ROSE} height={252}>
+    <DemoFrame label="your script · Hindi-English" tone={GREEN} height={252}>
       <Cursor {...spot} pressed={phase === 1} hidden={isMobile} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -1298,7 +1296,7 @@ function SceneWriting({ active, isMobile }) {
           <span
             style={{
               width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
-              border: `2px solid rgba(255,255,255,.16)`, borderTopColor: `rgb(${ROSE})`,
+              border: `2px solid rgba(255,255,255,.16)`, borderTopColor: `rgb(${GREEN})`,
               animation: "hg-spin .8s linear infinite",
             }}
           />
@@ -1369,16 +1367,17 @@ function ScriptPage({ active }) {
  * section does: with a working miniature of the real screen rather than a
  * paragraph claiming it works.
  *
- * It is also the page's violet half. Red carries the feed above; these two are
- * a different proposition and are coloured like one. See the palette note at
- * the top of this file for why a second hue earns its place now when it did not
- * before.
+ * It is the page's purple section. Red carries the feed above it and green the
+ * one below, which is the point of the four-colour scheme: these two modes are
+ * a different proposition from the ranked feed and they are coloured like one.
+ * See the palette note at the top of this file for the hues and their measured
+ * separation.
  */
 function BringYourOwn({ isMobile, pad }) {
   const modes = [
     {
       k: "Import",
-      tone: VIOLET,
+      tone: PURPLE,
       title: "Cover anything you can paste",
       body:
         "A YouTube video up to ten minutes, up to five article links, or paste the text straight in. " +
@@ -1387,7 +1386,7 @@ function BringYourOwn({ isMobile, pad }) {
     },
     {
       k: "Idea",
-      tone: VIOLET_SOFT,
+      tone: BLUE,
       title: "Or just say what you want to make",
       body:
         "Type the idea in one line. We draft what the video should actually say, you correct it, " +
@@ -1397,7 +1396,7 @@ function BringYourOwn({ isMobile, pad }) {
   ];
 
   return (
-    <Section id="bring" pad={pad} isMobile={isMobile} glow={VIOLET} band>
+    <Section id="bring" pad={pad} isMobile={isMobile} glow={PURPLE} band>
       <SectionHead
         isMobile={isMobile}
         eyebrow="Bring your own"
@@ -1472,7 +1471,7 @@ function ModeRow({ mode, index, isMobile }) {
 }
 
 /** A mock input, so these scenes read as a form rather than as a diagram. */
-function MockField({ label, value, filled, caret }) {
+function MockField({ label, value, filled, caret, tone = PURPLE }) {
   return (
     <div style={{ marginBottom: 9 }}>
       <div
@@ -1488,13 +1487,13 @@ function MockField({ label, value, filled, caret }) {
           fontSize: 10.5, lineHeight: 1.5, padding: "7px 9px", borderRadius: 7, minHeight: 28,
           color: filled ? "var(--d-ink)" : "var(--d-mute)",
           background: "rgba(255,255,255,.035)",
-          border: `1px solid ${filled ? `rgba(${VIOLET},.35)` : "rgba(255,255,255,.09)"}`,
+          border: `1px solid ${filled ? `rgba(${tone},.35)` : "rgba(255,255,255,.09)"}`,
           transition: "border-color .3s ease, color .3s ease",
           wordBreak: "break-all",
         }}
       >
         {value}
-        {caret && <span className="hg-caret" style={{ color: `rgb(${VIOLET})` }}>|</span>}
+        {caret && <span className="hg-caret" style={{ color: `rgb(${tone})` }}>|</span>}
       </div>
     </div>
   );
@@ -1509,7 +1508,7 @@ function MockField({ label, value, filled, caret }) {
  * landing page, before anyone has signed up, is a claim about how the product
  * behaves that is worth more than another line of copy saying it is honest.
  */
-function ReadRow({ ok, label, detail }) {
+function ReadRow({ ok, label, detail, tone = PURPLE }) {
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 7 }}>
       <span
@@ -1518,7 +1517,7 @@ function ReadRow({ ok, label, detail }) {
           width: 14, height: 14, borderRadius: "50%", flexShrink: 0, marginTop: 1,
           display: "grid", placeItems: "center", fontSize: 8.5, fontWeight: 800, lineHeight: 1,
           color: ok ? "#0A0A0C" : "var(--d-ink)",
-          background: ok ? `rgb(${VIOLET_SOFT})` : "rgba(255,255,255,.16)",
+          background: ok ? `rgb(${tone})` : "rgba(255,255,255,.16)",
         }}
       >
         {ok ? "✓" : "!"}
@@ -1541,7 +1540,7 @@ function SceneImport({ active, isMobile }) {
   const done = phase >= 5;
 
   return (
-    <DemoFrame label="trylipi.online/app/import" tone={VIOLET} height={252}>
+    <DemoFrame label="trylipi.online/app/import" tone={PURPLE} height={252}>
       <Cursor
         left={phase >= 3 ? "22%" : "70%"}
         top={phase >= 3 ? 178 : 62}
@@ -1551,7 +1550,7 @@ function SceneImport({ active, isMobile }) {
 
       {!done ? (
         <>
-          <MockField
+          <MockField tone={PURPLE}
             label="YouTube video"
             filled={typed}
             value={typed ? "youtube.com/watch?v=aX2p9kR4mQ" : "https://youtube.com/watch?v=..."}
@@ -1591,8 +1590,8 @@ function SceneImport({ active, isMobile }) {
             style={{
               display: "inline-block",
               fontSize: 10.5, fontWeight: 700, padding: "7px 14px", borderRadius: 999,
-              color: "#0A0A0C", background: `rgb(${VIOLET_SOFT})`,
-              boxShadow: phase === 3 ? `0 0 0 5px rgba(${VIOLET},.25)` : "none",
+              color: "#0A0A0C", background: `rgb(${PURPLE})`,
+              boxShadow: phase === 3 ? `0 0 0 5px rgba(${PURPLE},.25)` : "none",
               transition: "box-shadow .2s ease",
             }}
           >
@@ -1607,7 +1606,7 @@ function SceneImport({ active, isMobile }) {
               <span
                 style={{
                   width: 12, height: 12, borderRadius: "50%", flexShrink: 0,
-                  border: "2px solid rgba(255,255,255,.16)", borderTopColor: `rgb(${VIOLET})`,
+                  border: "2px solid rgba(255,255,255,.16)", borderTopColor: `rgb(${PURPLE})`,
                   animation: "hg-spin .8s linear infinite",
                 }}
               />
@@ -1629,9 +1628,9 @@ function SceneImport({ active, isMobile }) {
           >
             What we will write from
           </div>
-          <ReadRow ok label="Video read · 8m 12s" detail="RBI policy briefing, full transcript" />
-          <ReadRow ok label="2 pages read" detail="reuters.com, livemint.com" />
-          <ReadRow label="Could not read 1 link" detail="ft.com blocked us. Usually a paywall." />
+          <ReadRow tone={PURPLE} ok label="Video read · 8m 12s" detail="RBI policy briefing, full transcript" />
+          <ReadRow tone={PURPLE} ok label="2 pages read" detail="reuters.com, livemint.com" />
+          <ReadRow tone={PURPLE} label="Could not read 1 link" detail="ft.com blocked us. Usually a paywall." />
           <div
             style={{
               marginTop: 11, paddingTop: 10, borderTop: "1px solid var(--d-line-soft)",
@@ -1641,7 +1640,7 @@ function SceneImport({ active, isMobile }) {
             <span
               style={{
                 fontSize: 10.5, fontWeight: 700, padding: "6px 13px", borderRadius: 999,
-                color: "#0A0A0C", background: `rgb(${VIOLET_SOFT})`,
+                color: "#0A0A0C", background: `rgb(${PURPLE})`,
               }}
             >
               Write this in my voice
@@ -1681,7 +1680,7 @@ function SceneIdea({ active, isMobile }) {
   ];
 
   return (
-    <DemoFrame label="trylipi.online/app/idea" tone={VIOLET_SOFT} height={252}>
+    <DemoFrame label="trylipi.online/app/idea" tone={BLUE} height={252}>
       <Cursor
         left={phase === 2 ? "18%" : approved ? "20%" : "68%"}
         top={phase === 2 ? 118 : approved ? 196 : 58}
@@ -1691,7 +1690,7 @@ function SceneIdea({ active, isMobile }) {
 
       {!drafted ? (
         <>
-          <MockField
+          <MockField tone={BLUE}
             label="What is the video about?"
             filled={typed}
             value={
@@ -1706,8 +1705,8 @@ function SceneIdea({ active, isMobile }) {
             style={{
               display: "inline-block", marginTop: 5,
               fontSize: 10.5, fontWeight: 700, padding: "7px 14px", borderRadius: 999,
-              color: "#0A0A0C", background: `rgb(${VIOLET_SOFT})`,
-              boxShadow: phase === 2 ? `0 0 0 5px rgba(${VIOLET},.25)` : "none",
+              color: "#0A0A0C", background: `rgb(${BLUE})`,
+              boxShadow: phase === 2 ? `0 0 0 5px rgba(${BLUE},.25)` : "none",
               transition: "box-shadow .2s ease",
             }}
           >
@@ -1722,7 +1721,7 @@ function SceneIdea({ active, isMobile }) {
               <span
                 style={{
                   width: 12, height: 12, borderRadius: "50%", flexShrink: 0,
-                  border: "2px solid rgba(255,255,255,.16)", borderTopColor: `rgb(${VIOLET_SOFT})`,
+                  border: "2px solid rgba(255,255,255,.16)", borderTopColor: `rgb(${BLUE})`,
                   animation: "hg-spin .8s linear infinite",
                 }}
               />
@@ -1753,14 +1752,14 @@ function SceneIdea({ active, isMobile }) {
             style={{
               padding: "9px 10px", borderRadius: 8,
               background: "rgba(255,255,255,.035)",
-              border: `1px solid rgba(${VIOLET},.32)`,
+              border: `1px solid rgba(${BLUE},.32)`,
             }}
           >
             {DRAFT.map((l, i) => (
               <div key={l} style={{ fontSize: 10, lineHeight: 1.62, color: "var(--d-ink)" }}>
                 {l}
                 {i === DRAFT.length - 1 && !approved && (
-                  <span className="hg-caret" style={{ color: `rgb(${VIOLET_SOFT})` }}>|</span>
+                  <span className="hg-caret" style={{ color: `rgb(${BLUE})` }}>|</span>
                 )}
               </div>
             ))}
@@ -1770,8 +1769,8 @@ function SceneIdea({ active, isMobile }) {
             <span
               style={{
                 fontSize: 10.5, fontWeight: 700, padding: "6px 13px", borderRadius: 999,
-                color: "#0A0A0C", background: `rgb(${VIOLET_SOFT})`,
-                boxShadow: phase === 5 ? `0 0 0 5px rgba(${VIOLET},.25)` : "none",
+                color: "#0A0A0C", background: `rgb(${BLUE})`,
+                boxShadow: phase === 5 ? `0 0 0 5px rgba(${BLUE},.25)` : "none",
                 transition: "box-shadow .2s ease",
               }}
             >
@@ -1806,13 +1805,13 @@ function WhatYouGet({ isMobile, pad }) {
       scene: (a) => <SceneSources active={a} />,
     },
     {
-      tone: DEEP,
+      tone: PURPLE,
       title: "A voice built from your videos",
       body: "Your hooks, your sign-offs, your mix of English.",
       scene: (a) => <SceneVoice active={a} />,
     },
     {
-      tone: ROSE,
+      tone: GREEN,
       title: "A script, not a prompt",
       body: "Finished and ready to record. Copy and go.",
       scene: (a) => <SceneCopy active={a} isMobile={isMobile} />,
@@ -1820,7 +1819,7 @@ function WhatYouGet({ isMobile, pad }) {
   ];
 
   return (
-    <Section id="what" pad={pad} isMobile={isMobile} glow={ROSE}>
+    <Section id="what" pad={pad} isMobile={isMobile} glow={GREEN}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="What you get"
@@ -1969,7 +1968,7 @@ function SceneCopy({ active, isMobile }) {
   const spot = phase <= 0 ? { left: "30%", top: 150 } : { left: "72%", top: 34 };
 
   return (
-    <DemoFrame label="your script" tone={ROSE} height={196}>
+    <DemoFrame label="your script" tone={GREEN} height={196}>
       <Cursor {...spot} pressed={phase === 2} hidden={isMobile} />
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 11 }}>
@@ -1978,8 +1977,8 @@ function SceneCopy({ active, isMobile }) {
           style={{
             fontSize: 10, fontWeight: 700, padding: "5px 11px", borderRadius: 8,
             color: copied ? "#04120F" : "var(--d-ink)",
-            background: copied ? `rgb(${ROSE})` : "rgba(255,255,255,.07)",
-            border: `1px solid ${copied ? `rgb(${ROSE})` : "rgba(255,255,255,.14)"}`,
+            background: copied ? `rgb(${GREEN})` : "rgba(255,255,255,.07)",
+            border: `1px solid ${copied ? `rgb(${GREEN})` : "rgba(255,255,255,.14)"}`,
             transition: "background .25s ease, color .25s ease, border-color .25s ease",
             whiteSpace: "nowrap",
           }}
@@ -2004,19 +2003,19 @@ function VoiceProof({ isMobile, pad }) {
     {
       lang: "Hindi",
       native: "हिन्दी",
-      tone: RED,
+      tone: BLUE,
       text: "देखो भाई, ये launch normal नहीं है। मैंने पूरा paper पढ़ा है और तीन चीज़ें ऐसी हैं जो किसी ने बताई ही नहीं।",
     },
     {
       lang: "Telugu",
       native: "తెలుగు",
-      tone: ROSE,
+      tone: PURPLE,
       text: "ఇది చాలా పెద్ద update గురు. నేను ఇందాక దీన్ని test చేశాను, అసలు ఏం జరిగిందో మీకు చెప్తాను.",
     },
   ];
 
   return (
-    <Section id="voice" pad={pad} isMobile={isMobile} glow={GLOW.red} band>
+    <Section id="voice" pad={pad} isMobile={isMobile} glow={GLOW.blue} band>
       <SectionHead
         isMobile={isMobile}
         eyebrow="Your voice"
@@ -2040,7 +2039,7 @@ function VoiceProof({ isMobile, pad }) {
               padding: isMobile ? "20px 18px" : "26px 24px",
               borderRadius: 16,
               border: `1px solid rgba(${s.tone},.24)`,
-              background: `linear-gradient(180deg, rgba(${s.tone},.09), rgba(255,255,255,.02))`,
+              background: `rgba(${s.tone},.075)`,
               transitionDelay: `${i * 0.1}s`,
             }}
           >
@@ -2074,16 +2073,16 @@ function Niches({ isMobile, pad }) {
   // here matches the colour that names that category inside the app.
   const niches = [
     ["AI & technology", RED],
-    ["Stock market & finance", DEEP],
-    ["Business & startups", DEEP],
+    ["Stock market & finance", GREEN],
+    ["Business & startups", BLUE],
     ["Crypto & Web3", RED],
     ["Film & entertainment", RED],
-    ["Sports & cricket", ROSE],
+    ["Sports & cricket", PURPLE],
     ["Science & health", RED],
   ];
 
   return (
-    <Section id="niches" pad={pad} isMobile={isMobile} glow={GLOW.violet}>
+    <Section id="niches" pad={pad} isMobile={isMobile} glow={GLOW.purple}>
       <SectionHead
         isMobile={isMobile}
         eyebrow="Niches"
@@ -2130,28 +2129,10 @@ function Niches({ isMobile, pad }) {
 function ClosingCta({ isMobile, pad, onCredential, busy }) {
   return (
     <section style={{ position: "relative", padding: `${isMobile ? 62 : 100}px ${pad} ${isMobile ? 70 : 116}px`, overflow: "hidden" }}>
-      {/* Two washes rather than one: a wide cyan floor, and a tighter mint core
-          directly under the heading. A single blob at this size flattens into
-          grey the moment it is blurred. */}
-      <div
-        aria-hidden="true"
-        className="hg-aurora hg-aurora-c"
-        style={{
-          width: "84vw", height: "46vw", maxWidth: 1200, maxHeight: 620,
-          left: "8vw", bottom: "-24vw",
-          background: `radial-gradient(circle, rgba(${RED},.20), transparent 68%)`,
-        }}
-      />
-      <div
-        aria-hidden="true"
-        className="hg-aurora hg-aurora-a"
-        style={{
-          width: "46vw", height: "30vw", maxWidth: 620, maxHeight: 380,
-          left: "50%", top: "-8vw", marginLeft: "-23vw",
-          background: `radial-gradient(circle, rgba(${ROSE},.14), transparent 70%)`,
-        }}
-      />
-
+      {/* The two blurred washes that used to sit under this heading are gone
+          with the rest of them. A closing call to action does not need weather
+          behind it; it needs the button to be the brightest thing on screen,
+          which is easier to guarantee when nothing else is glowing. */}
       <div className="hg-reveal" style={{ position: "relative", zIndex: 1, textAlign: "center", maxWidth: 720, margin: "0 auto" }}>
         <h2
           style={{
@@ -2195,15 +2176,15 @@ function ClosingCta({ isMobile, pad, onCredential, busy }) {
  * across it. Nothing told the eye where one idea ended and the next began, and
  * a reader scrolling fast could not tell they had moved on.
  *
- * `band` lifts alternating sections by about two percent of white. That is
- * deliberately almost nothing: it is enough to see the edge when you scroll
- * past it and not enough to read as a coloured box. Semi-transparent rather
- * than opaque, because .hg-wash is FIXED behind the whole page and an opaque
- * section would paint straight over the moving light that gives the page depth.
+ * `band` alternates the ground between --d-bg and --d-bg-alt. Two flat colours
+ * about two percent apart: enough to see the seam when you scroll past it, not
+ * enough to read as a coloured box. It is an opaque colour rather than a white
+ * overlay because there is nothing behind it any more, the fixed gradient wash
+ * that used to require transparency here is gone.
  *
- * `glow` stays what it always was, the hue of the bloom over the section's
- * heading, and it is now the main thing separating the red half of the page
- * from the violet half.
+ * `glow` is no longer a glow. It is the hue of the 2px rule on the section's
+ * top edge, and with the blooms removed it is the main thing telling you which
+ * of the four colours a section belongs to.
  */
 function Section({ id, pad, isMobile, glow, band, children }) {
   return (
@@ -2213,18 +2194,27 @@ function Section({ id, pad, isMobile, glow, band, children }) {
         position: "relative",
         padding: `${isMobile ? 52 : 84}px ${pad}`,
         borderTop: "1px solid var(--d-line-soft)",
-        background: band ? "rgba(255,255,255,.018)" : "transparent",
+        background: band ? "var(--d-bg-alt)" : "var(--d-bg)",
         overflow: "hidden",
       }}
     >
+      {/* ── A LINE, NOT A BLOOM ─────────────────────────────────────────────
+          A blurred radial glow used to hang over each heading. It said "this
+          section is red" in the vaguest possible way: 11% of a colour, spread
+          over 380px and then blurred another 28px, which on a dark ground is
+          almost exactly nothing until three of them overlap and the page goes
+          muddy.
+
+          A hairline in the section's own colour, sitting on the seam, says the
+          same thing at full strength in one pixel. It is also the only thing on
+          the page that has to change when a section changes hue, which is what
+          makes the four-colour scheme editable rather than a hunt. */}
       {glow && (
         <div
           aria-hidden="true"
           style={{
-            position: "absolute", top: -170, left: "50%", transform: "translateX(-50%)",
-            width: "min(1000px, 92vw)", height: 380, pointerEvents: "none",
-            background: `radial-gradient(circle, rgba(${glow},.11), transparent 68%)`,
-            filter: "blur(28px)",
+            position: "absolute", top: 0, left: 0, right: 0, height: 2,
+            background: `rgb(${glow})`, opacity: 0.5, pointerEvents: "none",
           }}
         />
       )}
