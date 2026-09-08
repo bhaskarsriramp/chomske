@@ -3,7 +3,7 @@ import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import StoryDetail from "./StoryDetail";
 import { sourceLabel, timeAgo } from "./newsUtils";
-import { categoryColor, cardBackground, cardTint } from "../../theme";
+import { categoryColor } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
 import { onNewsEvent } from "../../realtime/socket";
 
@@ -666,11 +666,10 @@ export default function NewsFeed({
           {items.length > 0 && (
             <>
               <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                {items.map((it, i) => (
+                {items.map((it) => (
                   <StoryRow
                     key={it.id}
                     item={it}
-                    index={i}
                     isPhone={isPhone}
                     active={!isNarrow && it.id === openId}
                     unread={isUnread(it)}
@@ -1000,9 +999,7 @@ function CategoryStrip({ cats, value, onChange, gut }) {
  * category at a time, so every card came out the same colour, and a colour that
  * never varies has stopped carrying information anyway.
  */
-function StoryRow({ item, index, isPhone, active, unread, rowRef, onOpen }) {
-  const tone = cardTint(index);
-
+function StoryRow({ item, isPhone, active, unread, rowRef, onOpen }) {
   // Up to two named sources then a count: "OpenAI, Hacker News" tells a creator
   // something a bare "4 sources" doesn't.
   const names = (item.sources || []).slice(0, 2).map(sourceLabel).join(", ");
@@ -1018,7 +1015,10 @@ function StoryRow({ item, index, isPhone, active, unread, rowRef, onOpen }) {
   // briefly showed both ("17h ago · more 2h ago"), which was worse: two
   // timestamps on a card is a puzzle, not information.
   const meta = [
-    item.source_count > 1 ? `${item.source_count} sources` : null,
+    // No "4 sources" here any more. The count is on the open story, above the
+    // list of the sources themselves, where it is a heading for something the
+    // reader can actually expand; on the card it was a number with nothing
+    // behind it, sitting in front of the outlet names that do the real work.
     names ? `${names}${more > 0 ? ` +${more}` : ""}` : null,
     timeAgo(item.latest_at || item.first_seen_at),
     item.points ? `${item.points} pts` : null,
@@ -1032,12 +1032,17 @@ function StoryRow({ item, index, isPhone, active, unread, rowRef, onOpen }) {
       style={{
         textAlign: "left", width: "100%", cursor: "pointer", display: "block",
         padding: isPhone ? "12px 13px" : "13px 15px",
-        background: cardBackground(index, active),
-        // Selected takes the tint's own border a shade darker rather than a
-        // different colour, so the chosen row reads as the same card, lifted.
-        border: `1px solid ${tone.line}`,
-        boxShadow: active ? `inset 0 0 0 1px ${tone.line}` : "none",
-        borderRadius: 10,
+        // ── ONE GROUND, AND THE BORDER CARRIES THE STATE ──────────────────
+        // Every row used to sit on its own tint from a seven-colour cycle, with
+        // the selected one taking that tint a shade darker. It made a long list
+        // pleasant and it made the selection hard to find: on a feed of seven
+        // coloured cards, "slightly stronger green" is not a state anyone spots.
+        // Plain white throughout, and selection is a black border against grey,
+        // which is the strongest signal available and needs no colour at all.
+        background: "var(--card)",
+        border: `1px solid ${active ? "var(--ink)" : "var(--line)"}`,
+        boxShadow: active ? "inset 0 0 0 1px var(--ink)" : "none",
+        borderRadius: 6,
       }}
     >
       {/* ── NEW MEANS "YOU HAVE NOT OPENED THIS", NOT "THIS IS RECENT" ──────

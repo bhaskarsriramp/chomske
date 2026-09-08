@@ -67,6 +67,16 @@
  * Ordered to keep neighbours apart: four of the seven are greens, and cycling
  * them in palette order would put three near-identical rows in a row.
  */
+/* ── CURRENTLY UNUSED, AND KEPT ON PURPOSE ───────────────────────────────────
+   Nothing renders these any more. The story list and the scripts list both sat
+   on this cycle and both are now plain white with a grey border that turns
+   black on selection, because a seven-colour rotation made the SELECTED row the
+   hardest thing on the page to find and, on the scripts list, competed with the
+   category dot that carries real meaning.
+
+   The palette stays because it is solved work, every value contrast-checked and
+   perceptually levelled, and rebuilding it to bring tints back would be a day.
+   CATEGORY_COLORS below is unaffected and still very much in use. */
 export const CARD_TINTS = [
   { from: "#F3F8F2", line: "#D0E2CB" },  // forest  ← #2A7C13
   { from: "#FFF3FE", line: "#FFCDFD" },  // orchid  ← #FFA6FB

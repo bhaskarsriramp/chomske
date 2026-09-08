@@ -4,7 +4,7 @@ import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton, { SkeletonText } from "../Shell/Skeleton";
 import { timeAgo, sourceLabel } from "../News/newsUtils";
 import Chevron from "../Shell/Chevron";
-import { categoryColor, cardBackground } from "../../theme";
+import { categoryColor } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
 import ScriptToggle, { EnglishNote } from "../Order/ScriptToggle";
 import UploadPackage, { hasPackage } from "../Order/UploadPackage";
@@ -168,11 +168,10 @@ export default function ScriptsPanel({ onGoTopics }) {
           {loadedOnce && !scripts.length && !error && <EmptyState onGoTopics={onGoTopics} />}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-            {scripts.map((s, i) => (
+            {scripts.map((s) => (
               <ScriptRow
                 key={s.id}
                 script={s}
-                index={i}
                 isPhone={isPhone}
                 active={!isNarrow && s.id === openId}
                 onOpen={() => setOpenId(s.id)}
@@ -223,7 +222,7 @@ export default function ScriptsPanel({ onGoTopics }) {
 
 /* ── List ──────────────────────────────────────────────────────────────── */
 
-function ScriptRow({ script, index, isPhone, active, onOpen }) {
+function ScriptRow({ script, isPhone, active, onOpen }) {
   const col = categoryColor(script.topic?.category);
 
   return (
@@ -233,9 +232,14 @@ function ScriptRow({ script, index, isPhone, active, onOpen }) {
       style={{
         textAlign: "left", width: "100%", cursor: "pointer", display: "block",
         padding: isPhone ? "12px 13px" : "13px 15px",
-        background: cardBackground(index, active),
-        border: "1px solid rgba(0,0,0,.07)",
-        borderRadius: 10,
+        // Same rule as the story list: one white ground, and the border is the
+        // state. The tint cycle that used to run down this list was decorative
+        // by design, and it was competing with the category dot beside the
+        // headline, which is the colour here that actually means something.
+        background: "var(--card)",
+        border: `1px solid ${active ? "var(--ink)" : "var(--line)"}`,
+        boxShadow: active ? "inset 0 0 0 1px var(--ink)" : "none",
+        borderRadius: 6,
       }}
     >
       <span style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5, flexWrap: "wrap" }}>
