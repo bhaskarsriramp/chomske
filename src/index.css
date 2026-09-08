@@ -500,9 +500,9 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    which would leave the page with two accent systems fighting. */
 .hg-hero {
   /* ── THE HERO IS THE LOGO'S COLOUR NOW ─────────────────────────────────────
-     These tokens paint the biggest text on the site: the "5min" and the language
-     word that flips through nine scripts at ~90px. They were YouTube red, which
-     made the mark in the top-left the only blue thing on the page.
+     These tokens paint the biggest text on the site: the language word that
+     flips through nine scripts at ~90px. It was YouTube red, which made the
+     mark in the top-left the only blue thing on the page.
 
      Blue instead, on the logo's own hue. Red is not gone, it carries the whole
      "How it works" section and the YouTube badge in the platform row, which is
@@ -513,11 +513,12 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
      product's own chrome) is untouched. */
   --yt: #7C79FF;
   --yt-deep: #5C58F0;
-  /* The two words the headline is actually built around, "5min" and the language
-     that flips beneath it, get a brighter, more violet cut of the same hue than
-     the chrome around them. At 80px on a near-black ground the base tone reads
-     muted; this one carries. Separate token, not a change to --yt, so the dots,
-     buttons and badges that share the accent stay where they are. */
+  /* The word the headline is built around, the language that flips through nine
+     scripts, gets a brighter, more violet cut of the same hue than the chrome
+     around it. At 80px on a near-black ground the base tone reads muted; this
+     one carries. It is now the ONLY accent in the headline, which is the point:
+     the language is the claim. Separate token, not a change to --yt, so the
+     dots, buttons and badges that share the accent stay where they are. */
   --yt-bright: #A78BFF;
   --ping-rgb: 124, 121, 255;
   background: var(--d-bg);

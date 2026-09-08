@@ -486,10 +486,9 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
             transitionDelay: ".06s",
           }}
         >
-          Never spend more than{" "}
-          <span style={{ color: "var(--yt-bright)" }}>5min</span>
+          Script writer for Indian Content Creators.
           <br />
-          on a script in <LanguageFlip />
+          One that sounds like you, in <LanguageFlip />.
         </h1>
 
         <p
@@ -503,9 +502,9 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
             transitionDelay: ".12s",
           }}
         >
-          Lipi watches the latest news in your niche all day, ranks the
-          handful of stories actually worth a video, and writes the entire
-          script in your own speaking style &amp; language.
+          Lipi watches 120+ sources all day and finds the stories worth making a
+          video about. Then it writes the entire script like how you write in
+          your language.
         </p>
 
         <div
@@ -624,7 +623,7 @@ function Chip() {
         aria-hidden="true"
         style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--yt)", flexShrink: 0 }}
       />
-      Topics &amp; Scripts for Indian Creators
+      9 Indian languages, in your own script
     </span>
   );
 }
