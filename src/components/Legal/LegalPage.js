@@ -42,7 +42,7 @@ export const SUPPORT_EMAIL = "sreeram@trylipi.online";
  * so the support screen, the contact page and anything added later cannot
  * disagree about how to reach us.
  */
-export const SUPPORT_WHATSAPP = "910000000000";
+export const SUPPORT_WHATSAPP = "917893406517";
 export const ADDRESS_LINES = [
   "Plot no - 20, 2nd Floor, 302,",
   "Behind Lucid Hospital, Kukatpally,",
