@@ -6,6 +6,7 @@ import CreatePage from "../Create/CreatePage";
 import TranscribePanel from "../Transcribe/TranscribePanel";
 import DashboardHome from "./DashboardHome";
 import ProfilePanel from "../Profile/ProfilePanel";
+import SupportPanel from "../Support/SupportPanel";
 import ScriptsPanel from "../Scripts/ScriptsPanel";
 import Logo from "../Shell/Logo";
 import CreditsProvider from "../../state/CreditsContext";
@@ -40,7 +41,7 @@ import { CreditsPill } from "../Shell/CreditsCard";
  * catch-all redirect below and lands on Discover, which is what it used to show.
  */
 export const CREATE_TABS = ["discover", "import", "idea"];
-export const TAB_IDS = [...CREATE_TABS, "voice", "scripts", "dashboard", "profile"];
+export const TAB_IDS = [...CREATE_TABS, "voice", "scripts", "dashboard", "profile", "support"];
 
 /**
  * All three providers wrap the whole shell rather than individual panels.
@@ -233,6 +234,16 @@ function Shell({ user, onSignOut }) {
                 onSignOut={onSignOut}
                 onGoVoice={() => openTab("voice")}
               />
+            </div>
+          )}
+
+          {/* Remounted on each visit, like Profile and Dashboard: it holds no
+              in-flight work, and the message it prefills carries the balance,
+              which must be the one from this moment rather than from whenever
+              the screen was first opened. */}
+          {tab === "support" && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+              <SupportPanel user={user} />
             </div>
           )}
         </main>

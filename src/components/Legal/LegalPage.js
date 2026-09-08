@@ -27,6 +27,22 @@ export const ORG = "Betafounder Enterprises";
 export const BRAND = "Lipi";
 export const SITE = "trylipi.online";
 export const SUPPORT_EMAIL = "sreeram@trylipi.online";
+
+/**
+ * The WhatsApp line, in international format with no +, spaces or dashes.
+ *
+ * ── THE SHAPE MATTERS, NOT JUST THE DIGITS ───────────────────────────────────
+ * wa.me takes the country code and the number as one unbroken run: "919876543210"
+ * for an Indian mobile. A leading +, a space or a dash produces a link that opens
+ * WhatsApp to a "phone number is invalid" dialog rather than to a chat, which is
+ * a worse failure than no button at all because it happens after the tap.
+ *
+ * It lives here beside the email and the postal address because it is the same
+ * kind of fact: one place the company's real contact details are written down,
+ * so the support screen, the contact page and anything added later cannot
+ * disagree about how to reach us.
+ */
+export const SUPPORT_WHATSAPP = "910000000000";
 export const ADDRESS_LINES = [
   "Plot no - 20, 2nd Floor, 302,",
   "Behind Lucid Hospital, Kukatpally,",

@@ -230,6 +230,13 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    it. Rows here change fill and border only. It also stops a list of forty
    items twitching as the cursor crosses it. */
 .hg-row { transition: background .12s ease, border-color .12s ease; }
+
+/* A <summary> keeps its disclosure triangle in WebKit even with list-style:none,
+   so the marker has to be removed twice to be removed at all. Used by the
+   support page's questions, where the row is the target and a browser triangle
+   in front of the text is the one thing on it nobody styled. */
+summary::-webkit-details-marker { display: none; }
+summary::marker { content: ""; }
 .hg-row:hover { background: #F9F9F9 !important; border-color: #D0D0D0 !important; }
 
 /* Selectable cards (onboarding, category editing): same idea, no motion. */

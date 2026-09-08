@@ -48,6 +48,11 @@ const SECTIONS = [
     items: [
       { id: "dashboard", label: "Dashboard", icon: ChartIcon },
       { id: "profile", label: "Profile", icon: UserIcon },
+      // Last in the rail on purpose. Support is the row you look for when
+      // something is wrong, and the place people look for it is the bottom of
+      // the list; putting it above Profile would push the account row down for
+      // everyone whose account is fine, which is nearly everyone.
+      { id: "support", label: "Support", icon: LifebuoyIcon },
     ],
   },
 ];
@@ -155,7 +160,8 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
 }
 
 /* ── Icons ─────────────────────────────────────────────────────────────────
-   Inline rather than an icon package: four glyphs is not worth a dependency,
+   Inline rather than an icon package: a handful of glyphs is not worth a
+   dependency,
    and currentColor makes them follow the active state for free. */
 
 const svg = { width: 17, height: 17, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", style: { flexShrink: 0 } };
@@ -184,6 +190,16 @@ function ScriptIcon() {
       <path d="M6 3.5h8.5L19 8v12.5H6z" />
       <path d="M14 3.5V8h5" />
       <path d="M9 12.5h7M9 16h4.5" />
+    </svg>
+  );
+}
+
+function LifebuoyIcon() {
+  return (
+    <svg {...svg} aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="3.6" />
+      <path d="M5.6 5.6l3.85 3.85M14.55 14.55l3.85 3.85M18.4 5.6l-3.85 3.85M9.45 14.55L5.6 18.4" />
     </svg>
   );
 }
