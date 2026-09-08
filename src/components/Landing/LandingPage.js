@@ -466,10 +466,6 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
       <Aurora />
 
       <div style={{ position: "relative", zIndex: 1, textAlign: "center", maxWidth: 1180, margin: "0 auto" }}>
-        <div className="hg-reveal">
-          <Chip />
-        </div>
-
         <h1
           className="hg-reveal"
           style={{
@@ -481,14 +477,21 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
             letterSpacing: "-0.038em",
             fontWeight: 800,
             color: "var(--d-ink)",
-            margin: `${isMobile ? 20 : 26}px auto 0`,
+            // ── THE CHIP'S SPACE, KEPT ─────────────────────────────────
+            // A pill used to sit above this line, and removing it would have
+            // pulled the headline up by its whole box: about 31px of chip
+            // (12.5px text, 7px padding each side, 1px border) plus the few
+            // pixels of baseline leading under it, on top of the 20/26 this
+            // margin already was. Folded into one number so the hero opens at
+            // exactly the height it opens at today.
+            margin: `${isMobile ? 56 : 62}px auto 0`,
             maxWidth: 1080,
             transitionDelay: ".06s",
           }}
         >
           Script writer for Indian Content Creators.
           <br />
-          One that sounds like you, in <LanguageFlip />.
+          One that sounds like you, in <LanguageFlip />
         </h1>
 
         <p
@@ -604,42 +607,6 @@ function Aurora() {
   );
 }
 
-function Chip() {
-  return (
-    <span
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 9,
-        fontSize: 12.5, fontWeight: 600, letterSpacing: "0.01em",
-        padding: "7px 15px 7px 12px", borderRadius: 999,
-        border: "1px solid rgba(255,255,255,.14)",
-        background: "rgba(255,255,255,.05)",
-        color: "var(--d-ink)",
-        backdropFilter: "blur(8px)",
-        WebkitBackdropFilter: "blur(8px)",
-      }}
-    >
-      <span
-        className="hg-ping"
-        aria-hidden="true"
-        style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--yt)", flexShrink: 0 }}
-      />
-      9 Indian languages, in your own script
-    </span>
-  );
-}
-
-/**
- * The headline's one moving part.
- *
- * Every language occupies the SAME grid cell, so the container is as wide as the
- * widest of them and the line never reflows. A container that resized with each
- * word would drag the rest of the headline sideways nine times a minute, the
- * difference between a headline that breathes and one that twitches.
- *
- * The visible word is `aria-hidden` and the accessible name is fixed, because a
- * screen reader announcing a headline that rewrites itself every two seconds is
- * a headline nobody can read.
- */
 function LanguageFlip() {
   const [i, setI] = useState(0);
   const [widths, setWidths] = useState([]);
