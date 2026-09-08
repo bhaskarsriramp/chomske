@@ -40,6 +40,105 @@ const WINDOW_HOURS = parseInt(process.env.NEWS_RANK_WINDOW_HOURS || "36", 10);
 // judgement never costs a creator the context.
 const DETAIL_MIN = parseInt(process.env.NEWS_DETAIL_MIN_SCORE || "4", 10);
 
+/* ── HOW CANDIDATES ARE CHOSEN, AND WHY IT IS NOT JUST "THE NEWEST" ─────────
+ *
+ * This used to read the top BATCH*3 unranked rows by raw_score and judge the
+ * first BATCH clusters. raw_score is 55% recency on an 8-hour half-life, and
+ * within one source every row carries the same kind weight and no engagement
+ * signal, so in practice that selected THE NEWEST SIXTY CLUSTERS and nothing
+ * else. The assumption underneath is that fresh correlates with important.
+ *
+ * In AI and tech it does: a launch is covered within minutes, so the newest
+ * sixty clusters on one measured pass were the Qualcomm-Amazon chip deal
+ * twelve times over and a frontier model release. The window spanned 3 hours
+ * and every slot was worth judging.
+ *
+ * In Indian finance the assumption inverts, and it inverts hard enough to
+ * empty the feed. That wire publishes around a hundred items an hour, so sixty
+ * clusters is a THREE HOUR window, and the market closes at 15:30 IST. A
+ * creator opening the app in the evening was being served a ranking pass whose
+ * entire candidate list was the last three hours of after-hours filings, while
+ * the closing bell, the day's index move and the stocks-to-watch list, all 8
+ * to 12 hours old, were not merely ranked low, they were never looked at.
+ * They sat at ai_score -1 forever, which the feed filters out, so the category
+ * showed yesterday's cards and looked frozen.
+ *
+ * Widening the window by raising BATCH does not fix it, it just buys another
+ * hour of filings at model prices. Re-weighting does not either: giving the
+ * category's own curated feeds a heavier kind weight was measured and made it
+ * worse, because Moneycontrol's latest-news feed is its own firehose of minor
+ * corporate items.
+ *
+ * So the head of the list keeps most of the slots, because today's news IS
+ * what a creator wants, and the remainder is spread evenly across the rest of
+ * the window. On the same live data that is 48 stories a purely recent
+ * selection could never reach, including every one a finance creator would
+ * actually open the app for.
+ */
+
+// How many rows to read before choosing. Wider than the batch on purpose: the
+// spread below can only reach as far back as the pool does.
+const POOL_MULTIPLE = parseInt(process.env.NEWS_RANK_POOL_MULTIPLE || "12", 10);
+
+// The share of slots given to the plain newest-first order. The rest are spread
+// across the window. At 1.0 this file behaves exactly as it did before.
+const RECENT_SHARE = Math.min(1, Math.max(0, parseFloat(process.env.NEWS_RANK_RECENT_SHARE || "0.6")));
+
+// The width of one age band in the spread. Two hours is fine enough that a
+// morning story and an afternoon one compete separately, coarse enough that a
+// 24-hour window is a dozen bands rather than a long tail of near-empty ones.
+const BAND_HOURS = Math.max(0.5, parseFloat(process.env.NEWS_RANK_BAND_HOURS || "2"));
+
+/**
+ * Choose which clusters this pass will judge.
+ *
+ * @param {Array} candidates unranked rows, ALREADY sorted best raw_score first
+ * @param {number} batch     how many clusters to return
+ * @returns {Array} one representative row per chosen cluster
+ */
+export function pickCandidates(candidates, batch, now = Date.now()) {
+  // One representative per cluster. `candidates` arrives best-first, so the
+  // first time a cluster is seen is its best-scoring member.
+  const byCluster = new Map();
+  for (const c of candidates) {
+    const key = c.cluster_id || c.title_sig || String(c._id);
+    if (!byCluster.has(key)) byCluster.set(key, c);
+  }
+  const clusters = [...byCluster.values()];
+  if (clusters.length <= batch) return clusters;
+
+  const head = Math.min(batch, Math.round(batch * RECENT_SHARE));
+  const picked = clusters.slice(0, head);
+  const rest = clusters.slice(head);
+
+  // Band what is left by age, then take one from each band in turn, freshest
+  // band first. Each band is still in raw_score order, so this takes the best
+  // of each stretch of the window rather than an arbitrary member of it.
+  const bands = new Map();
+  for (const c of rest) {
+    const when = c.published_at || c.first_seen_at || new Date();
+    const hours = Math.max(0, (now - new Date(when).getTime()) / 3600000);
+    const b = Math.floor(hours / BAND_HOURS);
+    if (!bands.has(b)) bands.set(b, []);
+    bands.get(b).push(c);
+  }
+  const keys = [...bands.keys()].sort((a, b) => a - b);
+
+  for (let depth = 0; picked.length < batch; depth++) {
+    let added = false;
+    for (const k of keys) {
+      const row = bands.get(k)[depth];
+      if (!row) continue;
+      picked.push(row);
+      added = true;
+      if (picked.length >= batch) break;
+    }
+    if (!added) break;   // every band exhausted
+  }
+
+  return picked;
+}
+
 const USD_IN = parseFloat(process.env.GEMINI_USD_PER_M_INPUT || "1.50");
 const USD_OUT = parseFloat(process.env.GEMINI_USD_PER_M_OUTPUT || "9.00");
 
@@ -216,18 +315,18 @@ export async function rankNews(categoryId, { force = false } = {}) {
 
   // One representative per cluster: ranking six copies of one launch wastes
   // tokens and produces six near-identical scores. The score is applied back to
-  // the whole cluster afterwards.
+  // the whole cluster afterwards. Selected in pickCandidates, which is where
+  // the reasoning about WHICH clusters lives.
+  //
+  // Explicitly projected because the pool is now twelve times the batch, and
+  // the summaries on several hundred unread rows are the bulk of that payload.
   const candidates = await NewsItem.find(query)
     .sort({ raw_score: -1 })
-    .limit(BATCH * 3)
+    .limit(BATCH * POOL_MULTIPLE)
+    .select("title summary source source_kind meta cluster_id title_sig raw_score published_at first_seen_at")
     .lean();
 
-  const byCluster = new Map();
-  for (const c of candidates) {
-    const key = c.cluster_id || c.title_sig || String(c._id);
-    if (!byCluster.has(key)) byCluster.set(key, c);
-  }
-  const items = [...byCluster.values()].slice(0, BATCH);
+  const items = pickCandidates(candidates, BATCH);
 
   if (!items.length) return { considered: 0, ranked: 0, detailed: 0, usd: 0, skipped: 0 };
 

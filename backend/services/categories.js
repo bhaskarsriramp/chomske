@@ -182,6 +182,24 @@ export const CATEGORIES = [
       "India IPO listing", "quarterly earnings India", "rupee dollar rate",
       "Indian economy news", "mutual funds India",
     ],
+    // ── THE WIRE NOISE THAT WAS EATING THIS CATEGORY'S RANKING WINDOW ────────
+    // Indian markets publish a continuous stream of MACHINE-GENERATED filings:
+    // AGM and EGM scheduling notices, record dates, board-meeting calendars, and
+    // ratings-bot posts ("X Ltd Upgraded to Hold by MarketsMOJO"). They are
+    // always minutes old, so they always look like breaking news to a score
+    // built on recency, and they are worth zero to a creator.
+    //
+    // Measured on one live pass: 22 of 200 Google News items, and they held
+    // slots 1, 3, 4, 7, 12 and 17 of the sixty the ranker actually judges. The
+    // ranker then correctly scored them 0-2, which means the whole pass was
+    // spent proving that filings are not news, while the day's real stories
+    // never entered the window at all. See newsRanker.js.
+    //
+    // Dropped at collection rather than left to the ranker on purpose: the
+    // ranker's cost is per candidate and its window is the scarce resource.
+    // Judging this and throwing it away is the expensive way to be right.
+    excludeTerms:
+      /\b(\d+(st|nd|rd|th)\s+(AGM|EGM)|AGM|EGM|annual general meeting|extraordinary general meeting|record date|postal ballot|investor meet|closes books|book closure|(up|down)graded to (buy|hold|sell|strong buy)|marketsmojo|grey market premium|\bGMP\b|schedules \d+)\b/i,
     rss: [
       { source: "et-markets", kind: "outlet", url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms" },
       { source: "moneycontrol", kind: "outlet", url: "https://www.moneycontrol.com/rss/latestnews.xml" },
@@ -227,6 +245,10 @@ export const CATEGORIES = [
       "company layoffs India", "unicorn startup India", "venture capital India",
       "Indian entrepreneurs", "small business India",
     ],
+    // The same corporate-filing wire noise as finance; this category reads the
+    // Indian business press, which carries it too. See the note there.
+    excludeTerms:
+      /\b(\d+(st|nd|rd|th)\s+(AGM|EGM)|AGM|EGM|annual general meeting|extraordinary general meeting|record date|postal ballot|investor meet|book closure|(up|down)graded to (buy|hold|sell|strong buy)|marketsmojo)\b/i,
     hn: ["startup funding", "acquisition", "layoffs"],
     rss: [
       { source: "inc42", kind: "outlet", url: "https://inc42.com/feed/" },

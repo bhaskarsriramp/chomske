@@ -16,6 +16,7 @@
 import NewsItem from "../models/NewsItem.js";
 import { allSources } from "./sources/index.js";
 import { urlHash, titleSignature } from "../utils/normalize.js";
+import { getCategory } from "./categories.js";
 
 // How much a source's ORIGINALITY is worth. A primary announcement is the story;
 // an outlet write-up is a report OF the story, and arrives later.
@@ -91,9 +92,24 @@ export async function collectNews(categoryId, { fast = false, userInitiated = fa
   let inserted = 0;
   let duplicates = 0;
   let skipped = 0;
+  let excluded = 0;
+
+  // ── WIRE NOISE IS DROPPED HERE, NOT LEFT TO THE RANKER ────────────────────
+  // A category may declare `excludeTerms` for the machine-generated filler its
+  // domain produces continuously: in Indian finance that is AGM and EGM
+  // notices, record dates and ratings-bot posts. See categories.js.
+  //
+  // Why it matters that this happens at COLLECTION: the ranker judges a fixed
+  // number of the highest-scoring candidates, and raw_score is mostly recency,
+  // so a stream of filings published every few minutes does not merely add
+  // noise, it OCCUPIES the window and pushes the day's real stories out of it.
+  // The ranker was scoring this material 0-2 perfectly correctly and the feed
+  // was still empty, because being right about filings is not the job.
+  const exclude = getCategory(categoryId)?.excludeTerms || null;
 
   for (const item of items) {
     if (!item?.url || !item?.title) { skipped++; continue; }
+    if (exclude && exclude.test(item.title)) { excluded++; continue; }
 
     // Undated items are treated as "now", most feeds date correctly, and
     // dropping the few that don't would lose real stories.
@@ -157,6 +173,7 @@ export async function collectNews(categoryId, { fast = false, userInitiated = fa
     inserted,
     duplicates,
     skipped,
+    excluded,
     bySource,
     errors,
     ms: Date.now() - started,
@@ -164,7 +181,8 @@ export async function collectNews(categoryId, { fast = false, userInitiated = fa
 
   console.log(
     `[news:${categoryId}]${fast ? " fast" : ""} collected ${out.fetched} → ${inserted} new, ${duplicates} dup, ` +
-    `${skipped} stale in ${(out.ms / 1000).toFixed(1)}s` + (errors.length ? ` · ${errors.length} error(s)` : "")
+    `${skipped} stale` + (excluded ? `, ${excluded} wire noise` : "") +
+    ` in ${(out.ms / 1000).toFixed(1)}s` + (errors.length ? ` · ${errors.length} error(s)` : "")
   );
   // Grouped, not one line each. A single systematic bug produces one error per
   // item, the first run of this printed the same message 694 times and buried
