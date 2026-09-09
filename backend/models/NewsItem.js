@@ -25,7 +25,7 @@ const NewsItemSchema = new Schema({
   // category, and that is the whole reason this stays affordable: one collection
   // and one ranking pass per category serves all of its users, rather than one
   // pass per user. Defaulted so rows written before categories existed still read.
-  category:    { type: String, default: "ai_tech", index: true },
+  category:    { type: String, default: "tech_gadgets", index: true },
 
   source:      { type: String, required: true, index: true },  // "hn" | "arxiv" | "openai" | …
   source_kind: { type: String, default: "outlet" },            // primary | community | paper | outlet
@@ -53,6 +53,14 @@ const NewsItemSchema = new Schema({
   ai_score:  { type: Number, default: -1 },
   ai_reason: { type: String, default: "" },
   ai_angle:  { type: String, default: "" },   // why a creator would cover it
+
+  // Which shape of video this story best supports, from the category's own
+  // format list (services/categories.js). A SUGGESTION only: the creator's
+  // selection decides the actual format, because somebody who ticked nine
+  // stories is making a bulletin whatever any one of them was judged to be.
+  // Used only to break the tie at a single story, where "news hit or thesis"
+  // is a real editorial judgement rather than arithmetic.
+  ai_format: { type: String, default: "" },
   ranked_at: { type: Date, default: null },
 
   cluster_id: { type: String, default: "", index: true },

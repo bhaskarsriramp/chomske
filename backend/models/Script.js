@@ -18,6 +18,25 @@ const ScriptSchema = new Schema({
   // What it is about. news_item is the specific row; story is the cluster key, so
   // a script survives the underlying article being re-clustered or aged out.
   news_item: { type: Schema.Types.ObjectId, ref: "NewsItem", index: true },
+
+  // ── A BULLETIN IS MANY STORIES, IN THE CREATOR'S OWN ORDER ────────────────
+  // Empty for a single-story script, where `news_item` says everything. For a
+  // bulletin this is the full running order, stored as an ordered array because
+  // the order IS the editorial decision: they chose what leads. It is also the
+  // cache key for "have we already written this exact bulletin", which an
+  // unordered set could not answer without treating two different videos as one.
+  //
+  // news_item stays populated with the FIRST story, so every existing query,
+  // history row and topic lookup keeps working without knowing bulletins exist.
+  news_items:  [{ type: Schema.Types.ObjectId, ref: "NewsItem" }],
+  story_count: { type: Number, default: 1 },
+
+  // Which shape this was written as, from the category's format list. Recorded
+  // rather than derived, for the same reason duration_seconds is: what a script
+  // was written as is a fact about the past.
+  format:      { type: String, default: "" },
+  voice_lane:  { type: String, default: "" },   // "short" | "long"
+
   story:     { type: String, default: "" },
   headline:  { type: String, default: "" },   // the news title, for the history list
   angle:     { type: String, default: "" },

@@ -94,7 +94,9 @@ const ANTI_TELL = `NEVER write like an AI. Specifically banned:
  *
  * @returns {{ text, hook, title_suggestions, language, language_label, sources_used, usage }}
  */
-export async function writeScript({ profile, material, seconds = 60, titles = false }) {
+export async function writeScript({
+  profile, material, seconds = 60, titles = false, category = "", format = null,
+}) {
   if (!profile) throw new Error("No voice profile. Transcribe a video first.");
   if (!material) throw new Error("Nothing to write from.");
 
@@ -127,7 +129,23 @@ export async function writeScript({ profile, material, seconds = 60, titles = fa
   const lengthRule =
     `${target.low}-${target.high} words. This script must run about ${mins} when spoken ` +
     `at their measured pace of ${target.wps} words per second. ` +
-    (seconds >= 180
+    (material.story_count > 1
+      // ── A BULLETIN'S LENGTH IS A BUDGET, NOT A TARGET ────────────────────
+      // Left as a single total, a model writing ten stories spends four hundred
+      // words on the one with the richest source block and forty on the rest,
+      // because that is what the material invites. The creator then reads a
+      // script where story two runs a minute and story nine is a sentence.
+      // Stating the per-story share, and stating that it is allowed to VARY
+      // with what the sources actually support, is what keeps the running order
+      // the creator chose from collapsing into whichever story had the best
+      // press release.
+      ? `This covers ${material.story_count} stories. Budget roughly ` +
+        `${Math.round(target.mid / material.story_count)} words each, after allowing for the ` +
+        `opening and the close. A story with richer sources may run somewhat longer and a ` +
+        `thin one shorter, but no single story may take more than about twice the share of ` +
+        `another, and none may be reduced to a single clause. Every story the creator ` +
+        `selected has to actually appear.`
+      : seconds >= 180
       ? `This is a LONG-FORM script: it needs real structure: an opening, two or three ` +
         `developed sections that each add something new from the source material, and their ` +
         `usual close. Do not pad, and do not repeat a point in different words to reach the ` +
@@ -135,10 +153,20 @@ export async function writeScript({ profile, material, seconds = 60, titles = fa
       : `Every sentence has to earn its place at this length.`) +
     ` A spoken script, not an article: no headings, no bullet points, no stage directions, no "[pause]".`;
 
+  // ── THE TWO NEW BLOCKS ────────────────────────────────────────────────────
+  // Everything above this point is category-blind and always has been, which is
+  // why a phone launch and a job notification used to reach a byte-identical
+  // prompt. These are what make the prompt know what kind of video this is
+  // (`format`) and what this creator sounds like when talking about THIS
+  // subject (`category_voice`). Both degrade to empty strings, so a category
+  // with no config configured yet writes exactly as it did before.
+  const formatBlock = renderFormat(format, material);
+  const categoryVoiceBlock = renderCategoryVoice(profile, format);
+
   const prompt = `You are ghostwriting a short video script for a specific creator. It must be indistinguishable from something they wrote themselves.
 
 ════════ THE CREATOR'S VOICE ════════
-${profile.style_brief || "(no brief available)"}
+${profile.style_brief || "(no brief available)"}${categoryVoiceBlock}
 ${profile.metrics ? `
 MEASURED FROM THEIR OWN VIDEOS. Match these, they are not suggestions:
 ${metricsBlock(profile.metrics)}
@@ -167,15 +195,20 @@ How they mix languages: ${profile.vocabulary_notes || "match the transcripts exa
 How they structure a topic: ${profile.narration_arc || "unknown"}
 They never: ${list(profile.avoid)}
 
-════════ ${material.grounded ? "TODAY'S STORY" : "WHAT THEY WANT TO MAKE"} ════════
-${material.title ? `Headline: ${material.title}
-` : ""}The angle to take: ${material.angle || "(pick the strongest angle from the material)"}
+════════ ${material.story_count > 1 ? "TODAY'S STORIES" : material.grounded ? "TODAY'S STORY" : "WHAT THEY WANT TO MAKE"} ════════
+${material.story_count > 1
+  // The running order is the creator's editorial decision, not a suggestion,
+  // and it is listed up front so the model treats it as given rather than
+  // re-sorting by whichever story it finds most interesting.
+  ? `The creator chose these ${material.story_count} stories, in THIS ORDER. Keep the order exactly:
+${(material.story_titles || []).map((t, i) => `  ${i + 1}. ${t}`).join("\n")}`
+  : `${material.title ? `Headline: ${material.title}\n` : ""}The angle to take: ${material.angle || "(pick the strongest angle from the material)"}`}
 
 SOURCE MATERIAL BEGINS. This is the complete and only record of this subject that
 exists for you. Anything not written between these markers did not happen.
 ${facts}
 SOURCE MATERIAL ENDS.
-
+${formatBlock}
 ════════ RULES ════════
 1. LANGUAGE. Write in ${language}, in the SAME script and the SAME code-mixing as the samples above. If their openings are in Devanagari with English words mixed in, the whole script must be Devanagari with English words mixed in. Do NOT translate. Do NOT transliterate into English letters. Do NOT write a cleaner or more formal version of how they talk.
 2. ${material.factRule}
@@ -304,6 +337,126 @@ Return STRICT JSON only:
     usage,
     style_drift: drift,
   };
+}
+
+/**
+ * The shape of video this is, stated as ordered beats.
+ *
+ * ── THE RULE THAT KEEPS THIS FROM RUINING THE PRODUCT ───────────────────────
+ * A beat list is a template, and a template is identical for every creator who
+ * uses it. Pushed hard enough it overwhelms the voice profile and every tech
+ * channel's script converges on the same five paragraphs, which is precisely
+ * what this product exists not to do. Pushed too softly it is decoration.
+ *
+ * The resolution is a hierarchy stated explicitly to the model, because left
+ * implicit it picks the wrong one: the format owns WHAT IS COVERED AND IN WHAT
+ * ORDER, the voice owns HOW IT IS SAID, and where they conflict the voice wins.
+ * Technical Guruji's own chapter list contains "Chaliye Shuru Karte Hain", which
+ * looks like structure and is actually a catchphrase; a format that claimed that
+ * beat would be overwriting the very thing the creator is recognised for.
+ *
+ * The second rule is the fact discipline restated at the structural level. An
+ * empty beat is the most dangerous thing in a template, because a model handed
+ * "price and availability" with no price in the sources will produce a
+ * plausible one, and it will be read aloud.
+ */
+export function renderFormat(format, material) {
+  if (!format || !Array.isArray(format.beats) || !format.beats.length) return "";
+
+  const n = material?.story_count || 0;
+  const beats = format.beats.map((b, i) => `${i + 1}. ${b}`).join("\n");
+
+  return `
+════════ THE SHAPE OF THIS VIDEO ════════
+This is a ${format.label}${n > 1 ? `, covering ${n} separate stories` : ""}.
+
+Cover these, in this order:
+${beats}
+
+${format.discipline ? `${format.discipline}\n` : ""}
+HOW THIS INTERACTS WITH THEIR VOICE, which matters more than the list above:
+- This list decides WHAT the script covers and in WHAT ORDER. It does NOT decide
+  how any of it is worded. Every sentence is still written the way THIS person
+  talks, using their phrases, their rhythm, their code-mixing.
+- Where a beat and their habits disagree, THEIR HABITS WIN. If one of their
+  catchphrases happens to look like a structural step, it is theirs, keep it.
+- These are beats, not headings. Never write the beat names into the script, and
+  never announce a section. It is spoken continuously.
+- A beat the source material cannot support is DROPPED, silently. Do not write a
+  sentence about a price that is not in the sources, or a verdict on something
+  the sources do not describe. A shorter honest script is the correct outcome.
+`;
+}
+
+/**
+ * What this creator sounds like on THIS subject, as opposed to in general.
+ *
+ * The style_brief above is category-blind: it captures openings, closings,
+ * fillers and code-mixing, all of which two tech creators can share while
+ * sounding nothing alike the moment either of them reaches a spec sheet. These
+ * fields are the difference, and they are worth their tokens precisely because
+ * they are the ones a generic analysis never asks for.
+ *
+ * `bulletin_transitions` gets its own paragraph rather than being listed with
+ * the rest, because it is the one field that is not a texture note but a
+ * structural instruction: it is what stops a fourteen-story script reading as
+ * fourteen unrelated paragraphs.
+ */
+export function renderCategoryVoice(profile, format) {
+  const cv = profile?.category_voice;
+  if (!cv || typeof cv !== "object") return "";
+
+  const LABELS = {
+    spec_delivery: "How they say specs",
+    price_talk: "How they say prices",
+    verdict_vocabulary: "The words they use to judge something",
+    comparison_habit: "What they compare against",
+    brand_handling: "How they handle brand and model names",
+    hype_calibration: "Their excitement level",
+    deal_callout: "How they mention deals or links",
+    viewer_address: "What they call the viewer",
+    compression: "How they fit a subject into very little time",
+    segment_names: "Named segments they use",
+    running_order: "How they sequence a multi-story video",
+  };
+
+  const lines = [];
+  for (const [key, label] of Object.entries(LABELS)) {
+    const v = cv[key];
+    const text = Array.isArray(v) ? v.filter(Boolean).join(" · ") : String(v || "").trim();
+    if (text) lines.push(`${label}: ${text}`);
+  }
+
+  const transitions = Array.isArray(cv.bulletin_transitions)
+    ? cv.bulletin_transitions.filter(Boolean)
+    : [];
+
+  if (!lines.length && !transitions.length) return "";
+
+  let block = `
+
+HOW THEY TALK ABOUT THIS SUBJECT SPECIFICALLY. These are measured from their own
+videos and they are what separates them from every other creator covering the
+same story. Match them:
+${lines.map((l) => `  • ${l}`).join("\n")}`;
+
+  if (transitions.length) {
+    block +=
+      `\n\nTHEIR OWN TRANSITIONS between stories, verbatim. Use THESE to move from one
+story to the next, never a generic connective, and never the same one twice in
+a row:\n${transitions.map((t) => `  • "${t}"`).join("\n")}`;
+  } else if (format?.id === "bulletin") {
+    // Reached when the long voice was built but the analyst found no repeated
+    // joins. Inventing a house style here would be worse than admitting it:
+    // asking for plain, varied joins in their own idiom at least stays honest
+    // to what we actually observed.
+    block +=
+      `\n\nWe did not capture a repeated transition phrase for this creator. Move between
+stories plainly, in their own words, varying the join each time. Do not invent a
+catchphrase for them.`;
+  }
+
+  return block;
 }
 
 function list(a) {

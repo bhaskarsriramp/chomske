@@ -26,6 +26,7 @@ import {
   setDefaultProfile, deleteProfile, shapeProfile, voiceFor, MAX_PROFILES,
 } from "../services/profileService.js";
 import { buildVoiceProfile } from "../services/voiceProfileService.js";
+import { SHORT, LONG, laneQuery, LONG_MIN_VIDEOS, LONG_MIN_SECONDS } from "../services/voiceLanes.js";
 import { kickoffCategories } from "../services/newsScheduler.js";
 import { getCategory } from "../services/categories.js";
 import { publishUserEvent } from "../services/newsEvents.js";
@@ -180,22 +181,52 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
     const { profile } = await resolveProfile(req.user.id, req.params.id);
     const voice = await voiceFor(req.user.id, profile._id);
 
+    // Which of the two voices is being built. Defaults to short, which is the
+    // one every profile needs first and the only one that existed before.
+    const lane = String(req.body?.lane || "") === LONG ? LONG : SHORT;
+
     // Already running. Answered as success, because the end state the caller
     // wants is already on its way and a second press should not read the same
-    // videos twice.
-    if (voice.building) {
-      return res.status(202).json({ success: true, building: true, already: true });
+    // videos twice. Checked per lane, so building the long voice is not blocked
+    // by a short build still finishing.
+    const busy = lane === LONG ? voice.long?.building : voice.building;
+    if (busy) {
+      return res.status(202).json({ success: true, building: true, already: true, lane });
     }
 
+    // Counted WITHIN the lane. The whole point of the split is that long videos
+    // do not teach the short voice and Shorts do not teach the long one, so a
+    // profile holding five Shorts has nothing to build a long voice from and
+    // must be told that rather than charged to discover it.
     const analysable = await Transcript.countDocuments({
       user: req.user.id,
       profile: profile._id,
       status: { $in: ["pending", "processing", "done"] },
+      ...laneQuery(lane),
     });
     if (!analysable) {
       return res.status(400).json({
         success: false,
-        message: "Add at least one video to this profile first. That's what its voice is learned from.",
+        lane,
+        message: lane === LONG
+          ? `Add your longer videos first, over ${Math.round(LONG_MIN_SECONDS / 60)} minutes each. ` +
+            `That's what we learn your multi-story style from.`
+          : "Add at least one video to this profile first. That's what its voice is learned from.",
+      });
+    }
+
+    // The long lane will not build on fewer than LONG_MIN_VIDEOS, so refuse
+    // here rather than charging for an analysis that buildVoiceProfile is
+    // about to decline anyway.
+    if (lane === LONG && analysable < LONG_MIN_VIDEOS) {
+      return res.status(400).json({
+        success: false,
+        lane,
+        needs: LONG_MIN_VIDEOS - analysable,
+        message:
+          `Add ${LONG_MIN_VIDEOS - analysable} more long video` +
+          `${LONG_MIN_VIDEOS - analysable === 1 ? "" : "s"}. One long video shows us one ` +
+          `episode's running order; three is where we can tell a habit from a one-off.`,
       });
     }
 
@@ -205,7 +236,14 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
     // and how many videos the next one would read. Both facts are server-side;
     // the client is shown the same number by GET /script/voice so the button
     // and the charge cannot disagree. See voiceAnalysisCost.
-    const price = voiceAnalysisCost({ builds: voice.builds || 0, videos: analysable });
+    const price = voiceAnalysisCost({
+      builds: voice.builds || 0,
+      videos: analysable,
+      // The upgrade rebuild is on us: a voice built before category-aware
+      // analysis has never been asked the questions that make it specific, and
+      // that is our change, not something they asked for.
+      categoryUpgrade: !!(voice.built_at && (voice.built_for_category || "") !== ((profile.categories || [])[0] || "")),
+    });
 
     let charged = 0;
     if (price.cost > 0) {
@@ -234,9 +272,13 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
       }
     }
 
+    // Flagged on the lane being built, so the two can run independently and a
+    // long build in progress never greys out the short one.
     await VoiceProfile.updateOne(
       { _id: voice._id },
-      { $set: { building: true, build_error: "" } }
+      lane === LONG
+        ? { $set: { "long.building": true, "long.build_error": "" } }
+        : { $set: { building: true, build_error: "" } }
     );
 
     const userId = req.user.id;
@@ -244,13 +286,13 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
 
     // Told immediately, so a second tab (or the Create screen) shows the work
     // starting rather than discovering it on its next read.
-    publishUserEvent({ type: "voice:started", user: userId, profile: profileId }).catch(() => {});
+    publishUserEvent({ type: "voice:started", user: userId, profile: profileId, lane }).catch(() => {});
 
     // Fire and forget. Everything after this point runs with no request behind
     // it, which is exactly why it has to announce itself.
-    runBuild(userId, profile._id, voice._id, profileId, charged).catch(() => {});
+    runBuild(userId, profile._id, voice._id, profileId, charged, lane).catch(() => {});
 
-    return res.status(202).json({ success: true, building: true });
+    return res.status(202).json({ success: true, building: true, lane });
   } catch (err) {
     console.error("[profiles] analyse kickoff failed:", err);
     return res.status(500).json({ success: false, message: "Couldn't start this analysis." });
@@ -271,15 +313,17 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
  * rejection has nobody to report to and would only leave `building` set, which
  * is the one state that blocks the next Analyse press.
  */
-async function runBuild(userId, profileObjectId, voiceId, profileId, charged = 0) {
+async function runBuild(userId, profileObjectId, voiceId, profileId, charged = 0, lane = SHORT) {
   try {
-    const { built, profile: doc, reason } = await buildVoiceProfile(userId, profileObjectId);
+    const { built, profile: doc, reason } = await buildVoiceProfile(userId, profileObjectId, { lane });
 
     const buildError = built
       ? ""
       : reason === "no_transcripts"
         ? "None of the videos could be read. Check they are public and try again."
-        : "Couldn't build this voice.";
+        : reason === "not_enough_long"
+          ? `Only ${doc ? "" : ""}some of those long videos could be read. We need ${LONG_MIN_VIDEOS} readable long videos to learn your multi-story style.`
+          : "Couldn't build this voice.";
 
     // Nothing was produced, so nothing is owed. The free-build counter is only
     // advanced on success (see buildVoiceProfile), so a refunded attempt does
@@ -290,7 +334,12 @@ async function runBuild(userId, profileObjectId, voiceId, profileId, charged = 0
       }).catch(() => {});
     }
 
-    await VoiceProfile.updateOne({ _id: voiceId }, { $set: { building: false, build_error: buildError } });
+    await VoiceProfile.updateOne(
+      { _id: voiceId },
+      lane === LONG
+        ? { $set: { "long.building": false, "long.build_error": buildError } }
+        : { $set: { building: false, build_error: buildError } }
+    );
 
     await publishUserEvent(built
       ? {
@@ -300,11 +349,12 @@ async function runBuild(userId, profileObjectId, voiceId, profileId, charged = 0
           // The facts the success dialog needs, so it can open on the event
           // instead of waiting a round trip for the refetch. What was LEARNED
           // is not here and never will be, see shapeProfile in routes/script.js.
-          transcript_count: doc?.transcript_count || 0,
+          lane,
+          transcript_count: (lane === LONG ? doc?.long?.transcript_count : doc?.transcript_count) || 0,
           language_label: doc?.language_label || "",
-          confidence: doc?.confidence || "",
+          confidence: (lane === LONG ? doc?.long?.confidence : doc?.confidence) || "",
         }
-      : { type: "voice:failed", user: userId, profile: profileId, message: buildError });
+      : { type: "voice:failed", user: userId, profile: profileId, lane, message: buildError });
   } catch (err) {
     console.error("[profiles] analyse failed:", err.message);
     const message = err.userMessage || "Couldn't analyse this voice. Please try again.";
@@ -313,9 +363,13 @@ async function runBuild(userId, profileObjectId, voiceId, profileId, charged = 0
         refType: "VoiceProfile", refId: voiceId, note: "Voice analysis failed",
       }).catch(() => {});
     }
-    await VoiceProfile.updateOne({ _id: voiceId }, { $set: { building: false, build_error: message } })
-      .catch(() => {});
-    await publishUserEvent({ type: "voice:failed", user: userId, profile: profileId, message })
+    await VoiceProfile.updateOne(
+      { _id: voiceId },
+      lane === LONG
+        ? { $set: { "long.building": false, "long.build_error": message } }
+        : { $set: { building: false, build_error: message } }
+    ).catch(() => {});
+    await publishUserEvent({ type: "voice:failed", user: userId, profile: profileId, lane, message })
       .catch(() => {});
   }
 }

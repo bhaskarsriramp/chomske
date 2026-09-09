@@ -1072,7 +1072,7 @@ function SceneRanking({ active }) {
   ];
 
   return (
-    <DemoFrame label="ranking · ai_tech" tone={RED} height={252}>
+    <DemoFrame label="ranking · tech_gadgets" tone={RED} height={252}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--d-ink)" }}>
           {phase === 0 ? "Scoring 2,140 stories" : phase >= 3 ? "Worth a video today" : "Scoring 2,140 stories"}

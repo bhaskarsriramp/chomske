@@ -231,16 +231,38 @@ export const VOICE_CREDITS_PER_VIDEO = parseInt(process.env.VOICE_CREDITS_PER_VI
  * @param {number} videos  how many videos the next one would read
  * @returns {{ free, cost, remaining_free, per_video }}
  */
-export function voiceAnalysisCost({ builds = 0, videos = 0 } = {}) {
+export function voiceAnalysisCost({ builds = 0, videos = 0, categoryUpgrade = false } = {}) {
   const done = Math.max(0, Math.round(Number(builds) || 0));
   const count = Math.max(0, Math.round(Number(videos) || 0));
   const remainingFree = Math.max(0, VOICE_FREE_BUILDS - done);
+
+  // ── THE UPGRADE REBUILD IS FREE, AND NOT OUT OF GENEROSITY ────────────────
+  // A voice built before the analysis became category-aware has never been
+  // asked the questions that make it specific to what this creator actually
+  // covers: how they say a spec, how they say a price, the words they use to
+  // tell somebody not to buy something. It is a worse profile than it should
+  // be, and it is worse because we changed the product, not because they did
+  // anything. Charging to repair our own change is the kind of thing a creator
+  // notices once and remembers, and it costs a few thousand input tokens.
+  //
+  // It does NOT consume a free build: `builds` is incremented on success either
+  // way, so this is a waiver on top of the allowance rather than a spend of it.
+  if (categoryUpgrade) {
+    return {
+      free: true,
+      cost: 0,
+      remaining_free: remainingFree,
+      per_video: VOICE_CREDITS_PER_VIDEO,
+      category_upgrade: true,
+    };
+  }
 
   return {
     free: remainingFree > 0,
     cost: remainingFree > 0 ? 0 : count * VOICE_CREDITS_PER_VIDEO,
     remaining_free: remainingFree,
     per_video: VOICE_CREDITS_PER_VIDEO,
+    category_upgrade: false,
   };
 }
 

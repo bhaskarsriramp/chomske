@@ -37,6 +37,7 @@ const Ctx = createContext(null);
 const FALLBACK = {
   voice: null,
   building: false,
+  buildingLane: null,
   progress: null,
   error: "",
   justBuilt: null,
@@ -64,7 +65,9 @@ export default function VoiceProvider({ children }) {
   // the POST returns before the next read does, so between the press and the
   // first refetch the row still says false. `starting` covers exactly that gap,
   // and is cleared the moment the server's own answer arrives either way.
-  const [starting, setStarting] = useState(false);
+  // Which lane a press optimistically claimed, or null. A lane id rather than
+  // a boolean so two lanes can be told apart while one is starting.
+  const [starting, setStarting] = useState(null);
   const [progress, setProgress] = useState(null);
 
   // Set when a build FINISHES while this session was watching it, so the
@@ -105,12 +108,18 @@ export default function VoiceProvider({ children }) {
   useEffect(() => {
     setError("");
     setProgress(null);
-    setStarting(false);
+    setStarting(null);
     setJustBuilt(null);
     watchingRef.current = false;
   }, [activeId]);
 
-  const building = starting || !!voice?.building;
+  // ── BUILDING IS NOW PER LANE ────────────────────────────────────────────
+  // A long-form analysis running must not grey out the short-form button, and
+  // vice versa: they read different videos and a creator waiting on one has no
+  // reason to be blocked from starting the other. `starting` is the optimistic
+  // local flag and carries the lane it was pressed for.
+  const buildingLane = starting || (voice?.building ? "short" : voice?.long_building ? "long" : null);
+  const building = !!buildingLane;
 
   /**
    * Start a build.
@@ -118,20 +127,24 @@ export default function VoiceProvider({ children }) {
    * The POST returns as soon as the work is claimed; everything real happens
    * after it, which is what the events and the poll below are for.
    */
-  const analyse = useCallback(async () => {
-    if (building || !activeId) return;
+  const analyse = useCallback(async (lane = "short") => {
+    // Guarded on THIS lane only. Pressing "analyse long-form" while the short
+    // build is still finishing is a legitimate thing to do.
+    if (!activeId) return;
+    if (lane === "long" ? voice?.long_building : voice?.building) return;
+    if (starting === lane) return;
     setError("");
     setJustBuilt(null);
-    setStarting(true);
-    setProgress({ stage: "starting" });
+    setStarting(lane);
+    setProgress({ stage: "starting", lane });
     watchingRef.current = true;
     try {
-      await api.post(`/profiles/${activeId}/analyse`, {}, { timeout: 60000 });
+      await api.post(`/profiles/${activeId}/analyse`, { lane }, { timeout: 60000 });
       // Confirms the claim landed and picks up `building: true` from the row,
       // so the spinner no longer rests on `starting` alone.
       await refresh();
     } catch (err) {
-      setStarting(false);
+      setStarting(null);
       setProgress(null);
       watchingRef.current = false;
       // Not an error: a rebuild they cannot yet afford is a purchase they have
@@ -143,7 +156,7 @@ export default function VoiceProvider({ children }) {
       }
       setError(errorMessage(err, "Couldn't start the analysis. Please try again."));
     }
-  }, [building, activeId, refresh, setBalance]);
+  }, [starting, activeId, refresh, setBalance, voice?.building, voice?.long_building]);
 
   // ── The live half ─────────────────────────────────────────────────────────
   // Registered once for the session rather than per screen: the events are for
@@ -159,15 +172,18 @@ export default function VoiceProvider({ children }) {
 
     const offStarted = onLiveEvent("voice:started", (e) => {
       if (!mine(e)) return;
-      setStarting(true);
-      setProgress((p) => p || { stage: "starting" });
+      // The server names the lane it started, so a build kicked off in another
+      // tab lights up the right one here rather than defaulting to short.
+      setStarting(e.lane || "short");
+      setProgress((p) => p || { stage: "starting", lane: e.lane || "short" });
     });
 
     const offProgress = onLiveEvent("voice:progress", (e) => {
       if (!mine(e)) return;
-      setStarting(true);
+      setStarting(e.lane || "short");
       setProgress({
         stage: e.stage || "analysing",
+        lane: e.lane || "short",
         done: e.done,
         total: e.total,
         videos: e.videos,
@@ -193,7 +209,7 @@ export default function VoiceProvider({ children }) {
 
     const offFailed = onLiveEvent("voice:failed", async (e) => {
       if (!mine(e)) return;
-      setStarting(false);
+      setStarting(null);
       setProgress(null);
       watchingRef.current = false;
       setError(e.message || "Couldn't analyse this voice. Please try again.");
@@ -219,7 +235,10 @@ export default function VoiceProvider({ children }) {
   // whatever the press or a missed event left behind.
   useEffect(() => {
     if (!voice) return;
-    if (voice.building) {
+    // Either lane still running keeps this in the waiting state. Clearing on
+    // `building` alone would end a long-form build's progress the moment the
+    // short lane settled, which is the state a creator watches for minutes.
+    if (voice.building || voice.long_building) {
       // Seeing a build in flight is enough to count as waiting on it, not only
       // having pressed the button. Somebody who reloads the page mid-analysis,
       // or opens the app in a second tab while it runs, is every bit as much
@@ -227,7 +246,7 @@ export default function VoiceProvider({ children }) {
       watchingRef.current = true;
       return;
     }
-    setStarting(false);
+    setStarting(null);
     setProgress(null);
     if (!watchingRef.current) return;
     watchingRef.current = false;
@@ -248,10 +267,10 @@ export default function VoiceProvider({ children }) {
 
   const value = useMemo(
     () => ({
-      voice, building, progress, error, justBuilt, loading,
+      voice, building, buildingLane, progress, error, justBuilt, loading,
       analyse, refresh, clearError, clearJustBuilt,
     }),
-    [voice, building, progress, error, justBuilt, loading, analyse, refresh, clearError, clearJustBuilt]
+    [voice, building, buildingLane, progress, error, justBuilt, loading, analyse, refresh, clearError, clearJustBuilt]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -191,6 +191,32 @@ export default function NewsFeed({
    * read mark means one badge lingers until the next click, which is not worth
    * either a spinner or an error in front of somebody who is just reading.
    */
+  /* ── PICKING SEVERAL STORIES FOR ONE BULLETIN ─────────────────────────────
+     Held as an ORDERED array of ids, not a Set. The order a creator ticks them
+     in is the running order of the video, and it is the one editorial decision
+     this screen exists to capture: they decide what leads. A Set would throw
+     that away and hand the writer an arbitrary sequence. */
+  const [picked, setPicked] = useState([]);
+  const [bulletin, setBulletin] = useState(false);
+
+  // Resolved in PICK order, not feed order. A story that scrolled out of the
+  // loaded window drops out rather than silently reordering the rest.
+  const bulletinItems = picked.map((id) => items.find((i) => i.id === id)).filter(Boolean);
+
+  const togglePick = useCallback((it) => {
+    setPicked((prev) => {
+      const next = prev.includes(it.id)
+        ? prev.filter((x) => x !== it.id)
+        : [...prev, it.id];
+      // Dropping below the minimum takes the bulletin pane down with it, rather
+      // than leaving an order screen open for a video that can no longer be
+      // written. Unticking is how somebody changes their mind, and the screen
+      // has to follow them back.
+      if (next.length < 3) setBulletin(false);
+      return next;
+    });
+  }, []);
+
   const open = useCallback((it) => {
     setOpenId(it.id);
     const key = seenKey(it);
@@ -675,9 +701,64 @@ export default function NewsFeed({
                     unread={isUnread(it)}
                     rowRef={it.id === openId ? selectedRef : null}
                     onOpen={() => open(it)}
+                    pickIndex={picked.indexOf(it.id)}
+                    onPick={() => togglePick(it)}
                   />
                 ))}
               </div>
+              {/* ── THE RUNNING ORDER, AND WHAT IT BUYS ────────────────────
+                  Appears only once something is ticked, so the ordinary
+                  one-story flow is untouched for anyone not making a bulletin.
+                  It carries the arithmetic a creator actually needs at this
+                  moment: how many stories, and roughly how long that video is,
+                  because story count is what decides both. */}
+              {picked.length > 0 && (
+                <div
+                  style={{
+                    position: "sticky", bottom: 0, zIndex: 5, marginTop: 12,
+                    display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+                    padding: "11px 13px", borderRadius: 12,
+                    background: "var(--card)", border: "1px solid var(--line)",
+                    boxShadow: "0 6px 20px -10px rgba(0,0,0,0.28)",
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)" }}>
+                      {picked.length} {picked.length === 1 ? "story" : "stories"} selected
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 2 }}>
+                      {picked.length < 3
+                        ? "Pick at least 3 to write one bulletin. Tap order matters: first picked leads the video."
+                        : "In the order you picked them. First leads the video."}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setPicked([])}
+                    style={{
+                      padding: "8px 12px", borderRadius: 9, fontSize: 12.5,
+                      border: "1px solid var(--line)", background: "transparent",
+                      color: "var(--ink-body)", cursor: "pointer",
+                    }}
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={() => { if (picked.length >= 3) setBulletin(true); }}
+                    disabled={picked.length < 3}
+                    className={picked.length >= 3 ? "hg-btn-primary" : undefined}
+                    style={{
+                      padding: "9px 15px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                      border: picked.length >= 3 ? "none" : "1px solid #DCDCDC",
+                      background: picked.length >= 3 ? "var(--primary)" : "#EDEDED",
+                      color: picked.length >= 3 ? "#fff" : "#5F5F5F",
+                      cursor: picked.length >= 3 ? "pointer" : "default",
+                    }}
+                  >
+                    Write bulletin
+                  </button>
+                </div>
+              )}
+
               {/* Evidence, not a promise. This used to say "Rechecked every 15
                   minutes", which a creator looking at an eight-hour-old top card
                   had no way to believe: they could not tell a quiet news day
@@ -703,7 +784,19 @@ export default function NewsFeed({
             display: "flex", flexDirection: "column", background: "var(--card)",
           }}
         >
-          {selected
+          {bulletin && bulletinItems.length > 1
+            ? <StoryDetail
+                key={`bulletin-${picked.join("-")}`}
+                id={bulletinItems[0].id}
+                ids={picked}
+                preview={bulletinItems[0]}
+                mode="pane"
+                voice={voice}
+                onVoiceChange={loadVoice}
+                onGoTranscribe={onGoTranscribe}
+                onGoVoice={onGoTranscribe}
+              />
+            : selected
             ? <StoryDetail
                 key={selected.id}
                 id={selected.id}
@@ -712,12 +805,28 @@ export default function NewsFeed({
                 voice={voice}
                 onVoiceChange={loadVoice}
                 onGoTranscribe={onGoTranscribe}
+                onGoVoice={onGoTranscribe}
               />
             : <PanePlaceholder loading={busy && !loadedOnce} />}
         </section>
       )}
 
-      {isNarrow && selected && (
+      {isNarrow && bulletin && bulletinItems.length > 1 && (
+        <StoryDetail
+          key={`bulletin-${picked.join("-")}`}
+          id={bulletinItems[0].id}
+          ids={picked}
+          preview={bulletinItems[0]}
+          mode="sheet"
+          onClose={() => setBulletin(false)}
+          voice={voice}
+          onVoiceChange={loadVoice}
+          onGoTranscribe={onGoTranscribe}
+          onGoVoice={onGoTranscribe}
+        />
+      )}
+
+      {isNarrow && !bulletin && selected && (
         <StoryDetail
           key={selected.id}
           id={selected.id}
@@ -727,6 +836,7 @@ export default function NewsFeed({
           voice={voice}
           onVoiceChange={loadVoice}
           onGoTranscribe={onGoTranscribe}
+          onGoVoice={onGoTranscribe}
         />
       )}
     </div>
@@ -999,7 +1109,7 @@ function CategoryStrip({ cats, value, onChange, gut }) {
  * category at a time, so every card came out the same colour, and a colour that
  * never varies has stopped carrying information anyway.
  */
-function StoryRow({ item, isPhone, active, unread, rowRef, onOpen }) {
+function StoryRow({ item, isPhone, active, unread, rowRef, onOpen, pickIndex = -1, onPick }) {
   // Up to two named sources then a count: "OpenAI, Hacker News" tells a creator
   // something a bare "4 sources" doesn't.
   const names = (item.sources || []).slice(0, 2).map(sourceLabel).join(", ");
@@ -1024,7 +1134,39 @@ function StoryRow({ item, isPhone, active, unread, rowRef, onOpen }) {
     item.points ? `${item.points} pts` : null,
   ].filter(Boolean).join("  ·  ");
 
-  return (
+  const picked = pickIndex >= 0;
+
+  /* ── WHY THE PICK CONTROL SITS OUTSIDE THE ROW BUTTON ─────────────────────
+     The row is itself a <button> that opens the story, and a button inside a
+     button is invalid HTML that browsers resolve by dropping one of them,
+     usually the inner one, which is the control that would stop working. So
+     the two live side by side in a flex row and the pick control is a real
+     button of its own.
+
+     It carries the pick NUMBER rather than a tick, because the order is the
+     product here: a creator glancing down the list can read their running
+     order off it without opening anything. */
+  const pickControl = onPick ? (
+    <button
+      onClick={onPick}
+      aria-pressed={picked}
+      aria-label={picked ? `Story ${pickIndex + 1} in your bulletin, remove` : "Add to bulletin"}
+      title={picked ? "Remove from bulletin" : "Add to bulletin"}
+      style={{
+        flex: "none", width: 26, height: 26, marginTop: 2, borderRadius: 7,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 11.5, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+        border: `1px solid ${picked ? "var(--primary)" : "var(--line)"}`,
+        background: picked ? "var(--primary)" : "transparent",
+        color: picked ? "#fff" : "var(--ink-mute)",
+        cursor: "pointer", lineHeight: 1,
+      }}
+    >
+      {picked ? pickIndex + 1 : "+"}
+    </button>
+  ) : null;
+
+  const row = (
     <button
       ref={rowRef}
       onClick={onOpen}
@@ -1100,6 +1242,17 @@ function StoryRow({ item, isPhone, active, unread, rowRef, onOpen }) {
         {meta}
       </span>
     </button>
+  );
+
+  // No pick control on screens that never offer one: the row is then exactly
+  // what it was, with no wrapper and no layout change.
+  if (!pickControl) return row;
+
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+      {pickControl}
+      <div style={{ flex: 1, minWidth: 0 }}>{row}</div>
+    </div>
   );
 }
 

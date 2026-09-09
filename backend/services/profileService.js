@@ -15,7 +15,7 @@ import VoiceProfile from "../models/VoiceProfile.js";
 import Transcript from "../models/Transcript.js";
 import Script from "../models/Script.js";
 import User from "../models/User.js";
-import { sanitizeSelection, isValidCategory } from "./categories.js";
+import { sanitizeSelection, coerceSelection, isValidCategory, isEnabledCategory } from "./categories.js";
 
 // How many channels one account may keep. ONE, deliberately.
 //
@@ -162,7 +162,10 @@ export async function ensureProfile(userId) {
     await Profile.create({
       user: userId,
       name: DEFAULT_PROFILE_NAME,
-      categories: sanitizeSelection(legacy?.categories || []),
+      // coerce, not sanitize: a legacy account whose only category has since
+      // been switched off would otherwise get an empty profile and no feed,
+      // which reads as the product being broken rather than as a change.
+      categories: coerceSelection(legacy?.categories || []),
       is_default: true,
       created_at: new Date(),
     });
@@ -348,7 +351,7 @@ export async function syncUserCategories(userId) {
   // watching a category that quietly never updates again, with nothing anywhere
   // saying why. The per-profile cap is still enforced where it belongs, on the
   // profile itself.
-  const union = [...new Set(rows.flatMap((r) => r.categories || []))].filter(isValidCategory);
+  const union = [...new Set(rows.flatMap((r) => r.categories || []))].filter(isEnabledCategory);
 
   await User.updateOne({ _id: userId }, { $set: { categories: union } }).catch(() => {});
   return union;

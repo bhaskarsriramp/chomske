@@ -27,7 +27,7 @@
  */
 import { GoogleGenAI } from "@google/genai";
 import NewsItem from "../models/NewsItem.js";
-import { getCategory } from "./categories.js";
+import { getCategory, formatIdsFor } from "./categories.js";
 import { publishNewsEvent } from "./newsEvents.js";
 import { noEmDash } from "../utils/prose.js";
 
@@ -207,6 +207,21 @@ when the event genuinely is not in this list:
 ${existingKeys.map((k) => `  ${k}`).join("\n")}\n`
     : "";
 
+  // The category's own formats, so the model chooses from a closed list rather
+  // than inventing a label nothing downstream can look up. Costs about five
+  // output tokens per item on a call that is already being made.
+  const formats = formatIdsFor(cat.id);
+  const formatAsk = formats.length
+    ? `
+  "format": which shape of video this story best supports, EXACTLY one of:
+            ${formats.join(", ")}.
+            Judge the story, not the length: a story with one concrete thing that
+            happened is "single_story"; one that is really an argument about a
+            trend, where the news is the occasion rather than the substance, is
+            "explainer". Choose "bulletin" only if the item is itself a roundup
+            of several unrelated things.`
+    : "";
+
   return `You are the editor for a channel that covers ${cat.editor}.
 
 These items have already been judged worth covering. For EACH one give:
@@ -219,12 +234,12 @@ These items have already been judged worth covering. For EACH one give:
 ${known}
   "angle": one short line on what the video would actually be ABOUT: the hook,
            in plain words.
-  "why":   a few words on why it is worth covering.
+  "why":   a few words on why it is worth covering.${formatAsk}
 
 Do not re-score anything. Do not add items. Do not drop items.
 
 Return STRICT JSON, an array with one object per item, in the same order:
-[{"i": 0, "story": "openai-astra-safety-risk", "angle": "...", "why": "..."}]
+[{"i": 0, "story": "openai-astra-safety-risk", "angle": "...", "why": "..."${formats.length ? `, "format": "${formats[0]}"` : ""}}]
 
 ITEMS:`;
 }
@@ -420,6 +435,13 @@ export async function rankNews(categoryId, { force = false } = {}) {
             ai_angle: noEmDash(d.angle).slice(0, 300),
             ai_reason: noEmDash(d.why).slice(0, 200),
           };
+
+          // Only a format this category actually defines. A model returning a
+          // plausible-looking id nothing can look up would leave the writer
+          // silently formatless, which is the failure this whole change exists
+          // to remove, so an unrecognised value is dropped rather than stored.
+          const fmt = String(d.format || "").trim();
+          if (fmt && formatIdsFor(categoryId).includes(fmt)) set.ai_format = fmt;
 
           // RE-CLUSTER ON THE MODEL'S STORY KEY. titleSignature only catches
           // stories whose WORDING overlaps, so "OpenAI's Astra Model" and

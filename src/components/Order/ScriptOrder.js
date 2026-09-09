@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import api from "../../api";
 import { useCredits } from "../../state/CreditsContext";
+import { useVoice } from "../../state/VoiceContext";
 
 /**
  * ScriptOrder: choose the voice, choose the length, see the price.
@@ -50,8 +51,9 @@ const QUOTE_RETRY_MS = 900;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null, cta = "Write this in my voice" }) {
+export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null, cta = "Write this in my voice", onGoVoice }) {
   const { balance, setBalance, openBuy, canBuy, rules } = useCredits();
+  const { voice } = useVoice();
 
   const [seconds, setSeconds] = useState(60);
   const [english, setEnglish] = useState(false);
@@ -158,9 +160,27 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
   // numbers on both sides turn the refusal on.
   const tooExpensive = cost !== null && typeof have === "number" && have < cost;
 
+  /* ── THE LENGTH DECIDES WHICH VOICE WRITES IT ─────────────────────────────
+     Past the split, a script stops being one product explained and becomes
+     several covered in sequence, which is a different way of talking and is
+     learned from different videos. If the creator has not built that voice yet
+     we cannot write the script, and the honest place to say so is here, on the
+     slider, before anything is bought.
+
+     Refusing at the slider rather than at the button is deliberate: the button
+     is where money is spent, and arriving there to be told no is worse than
+     never being offered it. The whole message is actionable, naming the number
+     of videos and where to add them. */
+  const split = voice?.lanes?.split_seconds || 120;
+  const needsLong = seconds >= split;
+  const longReady = !!voice?.lanes?.long?.ready;
+  const shortReady = !!voice?.lanes?.short?.ready;
+  const laneBlocked = needsLong && !longReady;
+  const longNeeds = voice?.lanes?.long?.needs ?? 3;
+
   // Nothing is ordered from a screen that is not showing this order's price.
-  const ready = !busy && cost !== null && !tooExpensive;
-  const dead = tooExpensive || priceFailed;
+  const ready = !busy && cost !== null && !tooExpensive && !laneBlocked;
+  const dead = tooExpensive || priceFailed || laneBlocked;
 
   return (
     <div>
@@ -203,6 +223,52 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
           aria-valuetext={durationLabel(seconds)}
           style={{ "--hg-range-pct": `${stops.length > 1 ? (idx / (stops.length - 1)) * 100 : 0}%` }}
         />
+
+        {/* ── WHY THIS LENGTH CANNOT BE WRITTEN YET ────────────────────────
+            Appears the moment the thumb crosses the split, not on submit. It
+            explains the reason rather than stating a rule, because the reason
+            is the honest one and it is also the argument for doing the thing
+            it asks for: past two minutes these videos are multi-story, and we
+            have not seen this creator do that yet. */}
+        {laneBlocked && (
+          <div
+            role="status"
+            style={{
+              display: "flex", alignItems: "flex-start", gap: 10,
+              padding: "11px 13px", borderRadius: 10, marginTop: 10,
+              background: "var(--warn-tint, rgba(180,120,0,0.08))",
+              border: "1px solid var(--warn-line, rgba(180,120,0,0.22))",
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", marginBottom: 3 }}>
+                {shortReady
+                  ? "We haven't learned your long-form voice yet"
+                  : "Analyse your voice first"}
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-body)", lineHeight: 1.55 }}>
+                {shortReady
+                  ? `Past ${Math.round(split / 60)} minutes you cover several products in a row, and how you move between them is something a Short never shows us. Add ${longNeeds > 0 ? longNeeds : 3} of your longer videos and run the long-form analysis.`
+                  : "Add a short video in My Voice and analyse it. That's what we learn how you talk from."}
+              </div>
+              {onGoVoice && (
+                <button
+                  onClick={onGoVoice}
+                  style={{
+                    marginTop: 7, padding: 0, border: "none", background: "transparent",
+                    fontSize: 12.5, fontWeight: 700, color: "var(--primary)",
+                    cursor: "pointer", textDecoration: "underline",
+                  }}
+                >
+                  Go to My voice
+                </button>
+              )}
+              <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 6 }}>
+                Or drag back under {Math.round(split / 60)} minutes to write this now.
+              </div>
+            </div>
+          </div>
+        )}
 
         <div
           aria-hidden="true"
@@ -268,6 +334,10 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
         >
           {busy
             ? "Writing…"
+            // Ahead of the price, because a missing voice is not a pricing
+            // problem and "Pricing…" forever would look like a hang.
+            : laneBlocked
+            ? (shortReady ? "Long-form voice needed" : "Voice needed")
             : priceFailed
             ? "Price unavailable"
             : pricing

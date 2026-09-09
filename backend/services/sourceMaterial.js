@@ -40,6 +40,11 @@ const DEEP_READ_SOURCES = parseInt(process.env.SCRIPT_DEEP_READ_SOURCES || "5", 
 const SHORT_READ_CHARS = parseInt(process.env.SCRIPT_SHORT_READ_CHARS || "2500", 10);
 const DEEP_READ_CHARS = parseInt(process.env.SCRIPT_DEEP_READ_CHARS || "3000", 10);
 
+// Total article reads shared across every story in a bulletin, divided by the
+// story count rather than spent per story. Ten stories at five reads each would
+// be fifty fetches for a script that gives each of them forty seconds.
+const BULLETIN_READ_BUDGET = parseInt(process.env.SCRIPT_BULLETIN_READ_BUDGET || "12", 10);
+
 /* ── THE FACT RULES ────────────────────────────────────────────────────────
    Rule 2 of the writer's prompt. Two of them, because there are exactly two
    situations, and pretending otherwise is how a creator ends up reading an
@@ -64,6 +69,40 @@ export const GROUNDED_FACT_RULE = `FACTS. Every factual claim in the script must
      thing this can do to them, and a short honest script beats a padded one.
    - Where the sources disagree or call something unconfirmed, say so the way
      this creator would say it.`;
+
+/**
+ * Several stories in one script. The grounded rule, plus containment.
+ *
+ * ── THE FAILURE THIS EXISTS TO STOP ─────────────────────────────────────────
+ * A bulletin puts ten stories in one prompt, and a model reading ten adjacent
+ * blocks of tech news will cheerfully carry a number from block three into block
+ * seven. Both are phones, both have prices, and the sentence it produces is
+ * fluent and completely wrong. On a single-story script this cannot happen,
+ * because there is nothing else in the prompt to borrow from.
+ *
+ * It is also the hardest error for a creator to catch: they are reading their
+ * own script aloud at speed, and "₹24,999" in the wrong paragraph looks exactly
+ * like "₹24,999" in the right one. So the boundary is stated as the first rule,
+ * in terms of the numbered blocks the material actually uses.
+ */
+export const BULLETIN_FACT_RULE = `FACTS. This script covers SEVERAL SEPARATE STORIES, and the single most
+   important rule is that they do not leak into each other:
+   - Each story block above is numbered. A claim made in the part of the script
+     covering story N may come ONLY from the block labelled STORY N. Not from
+     the block before it, not from the one after it.
+   - Never move a price, a spec, a date, a version number or a company name from
+     one story to another. Two of these stories being about phones does not make
+     their numbers interchangeable, and this is the most likely way this script
+     ends up wrong.
+   - Do not invent a connection between two stories. If the sources do not say
+     that one caused, resembles or responds to another, they are simply two
+     things that happened today.
+   - Everything in the grounded rule still applies within each block: no numbers,
+     dates, prices, versions, benchmarks, names or quotes that are not written
+     there, and nothing from your training about any of these subjects.
+   - A story with thin material gets a SHORTER block, not invented detail. An
+     honest twelve seconds on story six is correct; forty padded seconds is not.
+   - Do not predict what happens next or say what any of it "means for" anyone.`;
 
 /**
  * There is NO source material, only the creator's own brief. Idea mode, when
@@ -143,6 +182,7 @@ export const APPROVED_MATERIAL_FACT_RULE = `FACTS. The material above is the cre
  * supposed to be a twin of.
  */
 export async function materialFromNews(item, { seconds = 60 } = {}) {
+  if (Array.isArray(item)) return materialFromStories(item, { seconds });
   if (!item) throw new Error("Story not found.");
 
   // Scoped by category as well as cluster. cluster_id is the model's own story
@@ -201,6 +241,102 @@ export async function materialFromNews(item, { seconds = 60 } = {}) {
     factRule: GROUNDED_FACT_RULE,
     sources_used: coverage.map((c) => c.url).filter(Boolean),
     grounded: true,
+  };
+}
+
+/**
+ * Several ranked stories, for one bulletin.
+ *
+ * ── WHY THIS IS NOT materialFromNews IN A LOOP ──────────────────────────────
+ * Two reasons, and the second is the one that matters.
+ *
+ * The cheap reason is budget. A single story reads up to five articles in full.
+ * Ten stories doing the same would be fifty article reads and an input block far
+ * past what the writer can use well, for a script that gives each story about
+ * forty seconds. So the per-story depth is divided by the number of stories:
+ * a bulletin reads fewer sources per item, deliberately, because that is all
+ * forty seconds of script can carry.
+ *
+ * The important reason is that the stories must stay SEPARATE. Concatenating ten
+ * stories' facts into one block is how a bulletin ends up attributing Samsung's
+ * price to the Xiaomi story: nothing in the text says where one story's facts
+ * stop. So each arrives as its own labelled, numbered block, and the writer's
+ * bulletin format is told to treat the numbering as a hard boundary.
+ *
+ * The order is the creator's order, preserved exactly. They picked what leads.
+ */
+export async function materialFromStories(items, { seconds = 60 } = {}) {
+  const stories = (Array.isArray(items) ? items : []).filter(Boolean);
+  if (!stories.length) throw new Error("No stories selected.");
+  if (stories.length === 1) return materialFromNews(stories[0], { seconds });
+
+  // Per story, not per script. Ten stories in eight minutes is roughly forty
+  // seconds each, which one good source covers and five would only pad.
+  const perStory = Math.max(1, Math.round(BULLETIN_READ_BUDGET / stories.length));
+  const perSource = stories.length > 6 ? 1200 : SHORT_READ_CHARS;
+
+  const blocks = [];
+  const used = [];
+  let readOk = 0;
+
+  for (let i = 0; i < stories.length; i++) {
+    const it = stories[i];
+
+    const coverage = it.cluster_id
+      ? await NewsItem.find({ category: it.category, cluster_id: it.cluster_id })
+          .select("source title summary url published_at")
+          .sort({ published_at: -1 })
+          .limit(Math.max(2, perStory))
+          .lean()
+      : [it];
+
+    let articles = new Map();
+    try {
+      articles = await fetchArticles(
+        coverage.slice(0, perStory).map((c) => c.url).filter(Boolean),
+        { maxChars: perSource }
+      );
+      readOk += articles.size;
+    } catch (err) {
+      console.warn(`[material] bulletin story ${i + 1} read failed: ${err.message}`);
+    }
+
+    const lines = coverage.map((c) => {
+      const full = c.url ? articles.get(c.url) : "";
+      const body = full || (c.summary ? c.summary.slice(0, 260) : "");
+      return `  (${c.source}${full ? " · FULL ARTICLE" : " · headline only"}) ${c.title}${body ? `\n  ${body}` : ""}`;
+    });
+
+    // The numbered header is load-bearing, not decoration: it is what the
+    // bulletin format points at when it says a story may only use its own facts.
+    blocks.push(
+      `━━━━━━ STORY ${i + 1} of ${stories.length} ━━━━━━\n` +
+      `HEADLINE: ${it.title || ""}\n` +
+      (it.ai_angle ? `ANGLE: ${it.ai_angle}\n` : "") +
+      `FACTS FOR STORY ${i + 1} (nothing here belongs to any other story):\n` +
+      lines.join("\n")
+    );
+
+    used.push(...coverage.map((c) => c.url).filter(Boolean));
+  }
+
+  console.log(
+    `[material] bulletin: ${stories.length} stories, ${readOk} article(s) read in full, ` +
+    `${perStory} source(s) per story, ~${blocks.join("").length} chars`
+  );
+
+  return {
+    kind: "bulletin",
+    title: stories[0]?.title || "",
+    // No single angle: a bulletin's angle IS its running order, which the
+    // creator already decided by choosing the order they selected in.
+    angle: "",
+    facts: blocks.join("\n\n"),
+    factRule: BULLETIN_FACT_RULE,
+    sources_used: [...new Set(used)],
+    grounded: true,
+    story_count: stories.length,
+    story_titles: stories.map((s) => s.title || ""),
   };
 }
 
@@ -328,12 +464,17 @@ export async function materialFromSource(doc) {
 }
 
 /** One entry point, so callers never branch on which kind of order this is. */
-export async function buildMaterial({ item = null, source = null, seconds = 60 }) {
+export async function buildMaterial({ item = null, source = null, items = null, seconds = 60 }) {
   if (source) return materialFromSource(source);
+  // `items` is the bulletin path: several ranked stories, in the creator's own
+  // chosen order. Falls through to the single-story path when only one arrived,
+  // so the caller never has to branch on the count.
+  if (Array.isArray(items) && items.length) return materialFromStories(items, { seconds });
   return materialFromNews(item, { seconds });
 }
 
 export default {
-  buildMaterial, materialFromNews, materialFromSource,
+  buildMaterial, materialFromNews, materialFromStories, materialFromSource,
   GROUNDED_FACT_RULE, BRIEF_ONLY_FACT_RULE, APPROVED_MATERIAL_FACT_RULE,
+  BULLETIN_FACT_RULE,
 };

@@ -25,6 +25,10 @@ import { resolveProfile, voiceFor } from "./profileService.js";
 import { measureVoice } from "./voiceMetrics.js";
 import { transcribeYouTube } from "./geminiClient.js";
 import { publishUserEvent } from "./newsEvents.js";
+import { voiceSpecFor } from "./categories.js";
+import {
+  SHORT, LONG, laneQuery, laneForScript, laneReady, voiceForLane, laneStatus, LONG_MIN_VIDEOS,
+} from "./voiceLanes.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
@@ -39,6 +43,12 @@ const REBUILD_COOLDOWN_MS = parseInt(process.env.VOICE_REBUILD_COOLDOWN_MIN || "
 const HEAD_CHARS = 900;   // the hook, plus how they get into the topic
 const MID_CHARS = 600;    // how they explain something mid-flow
 const TAIL_CHARS = 700;   // the close and call to action
+
+// The long lane's interior budget, split across several slices rather than
+// taken as one block. See sample() for why: transitions live at story
+// boundaries, and one centre slice catches at most one of them.
+const LONG_MID_CHARS = parseInt(process.env.VOICE_LONG_MID_CHARS || "750", 10);
+const LONG_MID_SLICES = parseInt(process.env.VOICE_LONG_MID_SLICES || "3", 10);
 
 
 let _client = null;
@@ -55,16 +65,42 @@ function client() {
  * Short transcripts are sent whole, slicing a 900-character Short into three
  * overlapping pieces would just repeat it.
  */
-function sample(text) {
+function sample(text, lane = SHORT) {
   const t = String(text || "").trim();
   if (t.length <= HEAD_CHARS + MID_CHARS + TAIL_CHARS) return { whole: t };
 
-  const midStart = Math.floor(t.length / 2) - Math.floor(MID_CHARS / 2);
-  return {
-    head: t.slice(0, HEAD_CHARS),
-    mid: t.slice(midStart, midStart + MID_CHARS),
-    tail: t.slice(-TAIL_CHARS),
-  };
+  const head = t.slice(0, HEAD_CHARS);
+  const tail = t.slice(-TAIL_CHARS);
+
+  if (lane !== LONG) {
+    const midStart = Math.floor(t.length / 2) - Math.floor(MID_CHARS / 2);
+    return { head, mid: t.slice(midStart, midStart + MID_CHARS), tail };
+  }
+
+  // ── THE LONG LANE NEEDS THE MIDDLE, PLURAL ────────────────────────────────
+  // One centre slice is the right sample for a Short, where the middle is just
+  // "how they explain something". It is the wrong sample for a bulletin, where
+  // the thing we are here to learn, the join from one story to the next, happens
+  // at every boundary between items and nowhere else.
+  //
+  // A fourteen-story video has thirteen of those joins spread evenly through it,
+  // and a single centre slice catches at most one, by luck. Three evenly spaced
+  // slices catch three or four, which is enough for the analyst to see a repeated
+  // habit rather than one instance it might mistake for a rule. Costs about 150
+  // extra characters per transcript, against an input budget of thousands.
+  const body = t.slice(HEAD_CHARS, t.length - TAIL_CHARS);
+  const each = Math.round(LONG_MID_CHARS / LONG_MID_SLICES);
+  const mids = [];
+  for (let i = 0; i < LONG_MID_SLICES; i++) {
+    // Spread across the interior at 1/4, 2/4, 3/4 rather than at the very edges,
+    // which would overlap the head and tail we already have.
+    const at = Math.floor((body.length * (i + 1)) / (LONG_MID_SLICES + 1)) - Math.floor(each / 2);
+    const from = Math.max(0, Math.min(at, body.length - each));
+    const slice = body.slice(from, from + each).trim();
+    if (slice) mids.push(slice);
+  }
+
+  return { head, mids, tail };
 }
 
 const PROMPT_HEAD = `You are a voice analyst. Below are transcripts from ONE creator's videos, in the language they actually speak.
@@ -102,6 +138,93 @@ Return STRICT JSON only:
 TRANSCRIPTS:`;
 
 /**
+ * What this lane is being analysed FOR, stated to the analyst.
+ *
+ * ── WHY THE LANES GET DIFFERENT INSTRUCTIONS AND NOT JUST DIFFERENT INPUT ────
+ * Handing long transcripts to the short-form prompt produces a competent
+ * analysis of the wrong thing. The prompt asks about openings and sign-offs, so
+ * that is what it reports on, and a fourteen-story bulletin has exactly one of
+ * each across eight minutes: the analyst dutifully describes 5% of the video and
+ * ignores the structure that fills the other 95%.
+ *
+ * So the long lane is told what it is looking at and what matters in it. The
+ * transitions field in categories.js is where the answer lands; this is what
+ * makes the model go looking.
+ */
+const LANE_BRIEF = {
+  [SHORT]: `
+THESE ARE SHORT-FORM VIDEOS, under ninety seconds each. One subject per video,
+start to finish. The hook and the sign-off are most of the voice here, because
+there is no room for anything else, so weight them accordingly.`,
+
+  [LONG]: `
+THESE ARE LONG-FORM VIDEOS, several minutes each, and they are almost certainly
+NOT one subject. This creator is covering several products or stories in
+sequence in a single video.
+
+That changes what you are looking for. The opening and the sign-off still
+matter, but they are now a small fraction of the video, and the thing that
+actually carries it is how this person MOVES BETWEEN ITEMS: the words they say
+to close one story and start the next, whether they number them, whether they
+signpost what is coming, how they signal that the last one has finished.
+
+The excerpts below include several slices from the MIDDLE of each video for
+exactly this reason. Read them for joins, not just for content. If you find a
+phrase that recurs at more than one boundary, that is the single most valuable
+thing in this analysis: quote every distinct one you find, verbatim.
+
+Do not invent transitions that would be plausible for a creator like this. If
+the excerpts do not show them, say so with an empty array.`,
+};
+
+/**
+ * The analysis prompt for one lane of one category.
+ *
+ * The shared schema above is the floor. On top of it go the fields the category
+ * itself defines (services/categories.js, `voice`), which is where the questions
+ * that actually separate two tech creators live: how they say a spec, how they
+ * say a price, the exact words they use to tell somebody not to buy something.
+ *
+ * A category with no voice config produces exactly the prompt that existed
+ * before any of this, which is what makes this safe to add ahead of the other
+ * six categories being built out.
+ */
+function promptFor(lane, categoryId, compact) {
+  const base = compact ? PROMPT_COMPACT : PROMPT_HEAD;
+  const spec = voiceSpecFor(categoryId, lane);
+  const brief = LANE_BRIEF[lane] || "";
+
+  // The compact form exists to fit inside a token budget that the full one
+  // overflowed, so it does not get the category extras piled back on top.
+  if (compact) return `${base}${brief ? `\n${brief}\n` : ""}`;
+
+  const entries = Object.entries(spec.fields || {});
+  if (!entries.length) return `${base}${brief ? `\n${brief}\n` : ""}`;
+
+  // Spliced in BEFORE "TRANSCRIPTS:" so the schema stays one object rather than
+  // becoming two things the model has to reconcile.
+  const marker = "\nTRANSCRIPTS:";
+  const head = base.endsWith(marker) ? base.slice(0, -marker.length) : base;
+
+  const extra = entries
+    .map(([k, desc]) => `  "${k}": ${JSON.stringify(desc)}`)
+    .join(",\n");
+
+  return (
+    `${head}\n` +
+    `${brief}\n\n` +
+    `════════ THIS CREATOR'S SUBJECT ════════\n` +
+    `${spec.guidance}\n\n` +
+    `ALSO return these fields, in the SAME JSON object as everything above. They\n` +
+    `are the ones that separate this creator from every other creator covering the\n` +
+    `same subject, so answer them concretely and quote verbatim. Where you genuinely\n` +
+    `cannot tell from the transcripts, return an empty string or empty array rather\n` +
+    `than a guess:\n{\n${extra}\n}\n` +
+    marker
+  );
+}
+
+/**
  * The retry schema. Same analysis, none of the long-form fields.
  *
  * style_brief is the field the script writer actually leans on, so it survives;
@@ -136,8 +259,8 @@ TRANSCRIPTS:`;
  *
  * @returns {{ parsed: object|null, res: object|null }}
  */
-async function analyse(body, compact) {
-  const head = compact ? PROMPT_COMPACT : PROMPT_HEAD;
+async function analyse(body, compact, lane = SHORT, categoryId = "") {
+  const head = promptFor(lane, categoryId, compact);
 
   let res;
   try {
@@ -316,11 +439,15 @@ function announceBuilt(userId, profileId, doc) {
   }).catch(() => {});
 }
 
-async function readPendingVideos(userId, profileId) {
+async function readPendingVideos(userId, profileId, lane = SHORT) {
+  // Scoped to the lane being built. Reading video is the expensive call, and
+  // building the short voice must not silently pay to read five long videos
+  // that this analysis will then filter straight back out.
   const pending = await Transcript.find({
     user: userId,
     profile: profileId,
     status: "pending",
+    ...laneQuery(lane),
   }).limit(MAX_TRANSCRIPTS).lean();
 
   if (!pending.length) return { read: 0, failed: 0 };
@@ -395,45 +522,73 @@ async function readPendingVideos(userId, profileId) {
   return { read, failed: results.length - read };
 }
 
-export async function buildVoiceProfile(userId, profileId) {
+export async function buildVoiceProfile(userId, profileId, { lane = SHORT } = {}) {
   const { profile } = await resolveProfile(userId, profileId);
   const voice = await voiceFor(userId, profile._id);
 
+  // One profile now holds one category, so this is unambiguous. It decides which
+  // extra questions the analyst is asked, and it is recorded on the row so a
+  // later category change can be seen as staleness rather than silently
+  // producing answers about the wrong subject.
+  const categoryId = (profile.categories || [])[0] || "";
+
   // Everything added since the last build gets read now, at the one moment the
-  // creator has asked for a voice.
-  await readPendingVideos(userId, profile._id);
+  // creator has asked for a voice. Scoped to this lane: analysing the short
+  // voice must not pay to read five long videos it will not look at.
+  await readPendingVideos(userId, profile._id, lane);
 
   const transcripts = await Transcript.find({
     user: userId,
     profile: profile._id,
     status: "done",
     text: { $ne: "" },
+    ...laneQuery(lane),
   })
     .sort({ created_at: -1 })
     .limit(MAX_TRANSCRIPTS)
     .lean();
 
   if (!transcripts.length) {
-    return { profile: null, built: false, reason: "no_transcripts" };
+    return { profile: null, built: false, reason: "no_transcripts", lane };
+  }
+
+  // The long lane refuses to build on too little. One long video shows one
+  // episode's running order, which a model will happily generalise into a rule
+  // it then applies to every script. Three is where a repeated habit becomes
+  // distinguishable from a one-off, and building on less would produce a
+  // confident profile of something we have not actually observed.
+  if (lane === LONG && transcripts.length < LONG_MIN_VIDEOS) {
+    return {
+      profile: null,
+      built: false,
+      reason: "not_enough_long",
+      lane,
+      have: transcripts.length,
+      need: LONG_MIN_VIDEOS,
+    };
   }
 
   const blocks = transcripts.map((t, i) => {
-    const s = sample(t.text);
+    const s = sample(t.text, lane);
     const header = `--- VIDEO ${i + 1}${t.title ? `: ${t.title}` : ""} (${t.language_label || t.language || "unknown language"}) ---`;
     if (s.whole) return `${header}\n${s.whole}`;
-    return (
-      `${header}\n` +
-      `[OPENING]\n${s.head}\n\n` +
-      `[MIDDLE]\n${s.mid}\n\n` +
-      `[ENDING]\n${s.tail}`
-    );
+
+    // The long lane's several interior slices are labelled by position, so the
+    // analyst can tell "this is a different part of the same video" from "this
+    // is a different video", which is what makes a recurring join visible as
+    // recurring rather than as one phrase seen twice.
+    const middle = s.mids
+      ? s.mids.map((m, j) => `[MIDDLE ${j + 1} of ${s.mids.length}]\n${m}`).join("\n\n")
+      : `[MIDDLE]\n${s.mid}`;
+
+    return `${header}\n[OPENING]\n${s.head}\n\n${middle}\n\n[ENDING]\n${s.tail}`;
   });
 
   const body = blocks.join("\n\n");
 
-  announce(userId, profile._id, "analysing", { videos: transcripts.length });
+  announce(userId, profile._id, "analysing", { videos: transcripts.length, lane });
 
-  let { parsed, res } = await analyse(body, false);
+  let { parsed, res } = await analyse(body, false, lane, categoryId);
 
   // One retry, and only when the first response could not be salvaged at all.
   // Almost always a truncation: a profile full of verbatim Telugu or Devanagari
@@ -442,7 +597,7 @@ export async function buildVoiceProfile(userId, profileId) {
   // short form, which fits comfortably even in the worst case.
   if (!usable(parsed)) {
     console.warn("[voice] first pass unusable, retrying with the compact schema");
-    ({ parsed, res } = await analyse(body, true));
+    ({ parsed, res } = await analyse(body, true, lane, categoryId));
   }
 
   if (!usable(parsed)) {
@@ -468,18 +623,60 @@ export async function buildVoiceProfile(userId, profileId) {
   // scriptWriterService.js.
   const metrics = measureVoice(transcripts);
 
+  // ── WHERE THIS LANE'S ANSWERS LAND ────────────────────────────────────────
+  // The short lane writes to the top level, which is where it has always
+  // written and where every existing profile already is. The long lane writes
+  // into the `long` sub-document. One prefix, applied to every key below, so
+  // there is exactly one place that knows about the split rather than two
+  // parallel write paths that can drift.
+  const P = lane === LONG ? "long." : "";
+
   // Always written: these describe the build itself, not what was learned.
   const set = {
-    built_from: transcripts.map((t) => t._id),
-    transcript_count: transcripts.length,
-    language,
-    language_label: languageLabel,
-    confidence,
-    usage,
-    metrics,
-    built_at: new Date(),
-    build_failed_at: null,
+    [`${P}built_from`]: transcripts.map((t) => t._id),
+    [`${P}transcript_count`]: transcripts.length,
+    [`${P}language`]: language,
+    [`${P}language_label`]: languageLabel,
+    [`${P}confidence`]: confidence,
+    [`${P}metrics`]: metrics,
+    [`${P}built_at`]: new Date(),
+    [`${P}build_failed_at`]: null,
+    // Which category's questions were asked. Written for both lanes because
+    // either one going stale is a reason to re-ask.
+    built_for_category: categoryId,
   };
+
+  // Usage and the free-build counter stay at the top level in both lanes: they
+  // are about the account's spend, not about one voice, and a creator who has
+  // used both free builds has used both regardless of which lane they spent
+  // them on.
+  set.usage = usage;
+
+  // The short lane keeps writing the top-level language even when it is also
+  // the prefix, but the long lane must NOT overwrite the parent's copy: a
+  // creator whose long videos were misdetected would otherwise lose the
+  // language on the lane that was right.
+  if (lane === LONG) {
+    delete set.language;
+    delete set.language_label;
+    set["long.language"] = language;
+    set["long.language_label"] = languageLabel;
+  }
+
+  // ── The category-specific answers ─────────────────────────────────────────
+  // Collected by name from the category's own field list rather than by
+  // diffing against the shared schema, so a model that invents an extra key
+  // cannot smuggle it into storage.
+  const catFields = Object.keys(voiceSpecFor(categoryId, lane).fields || {});
+  if (catFields.length) {
+    const cv = {};
+    for (const k of catFields) {
+      const v = parsed[k];
+      if (Array.isArray(v)) { if (v.length) cv[k] = arr(v); }
+      else if (typeof v === "string" && v.trim()) cv[k] = str(v, 1200);
+    }
+    if (Object.keys(cv).length) set[`${P}category_voice`] = cv;
+  }
 
   // Written only when this pass actually produced something.
   //
@@ -504,7 +701,14 @@ export async function buildVoiceProfile(userId, profileId) {
     style_brief: str(parsed.style_brief, 4000),
   };
   for (const [k, v] of Object.entries(learned)) {
-    if (Array.isArray(v) ? v.length : v) set[k] = v;
+    // `topics` has no long-lane counterpart on the sub-schema: what a creator
+    // covers is a fact about them, not about one format, so it stays where the
+    // rest of the product already reads it from.
+    if (lane === LONG && k === "topics") {
+      if (v.length) set.topics = v;
+      continue;
+    }
+    if (Array.isArray(v) ? v.length : v) set[`${P}${k}`] = v;
   }
 
   // Scoped to the row AND the user: a profile id alone must never be enough to
@@ -515,16 +719,20 @@ export async function buildVoiceProfile(userId, profileId) {
     // than at the route because every path that produces a voice ends up on
     // this line: the Analyse button, and the auto-build the first script does.
     // A failed build never reaches here, so it cannot consume a free one.
-    { $set: set, $inc: { builds: 1 } },
+    { $set: set, $inc: { builds: 1, ...(lane === LONG ? { "long.builds": 1 } : {}) } },
     { new: true }
   );
 
   console.log(
-    `[voice] "${profile.name}" (${profile._id}) for ${userId} from ${transcripts.length} transcript(s) · ` +
-    `${languageLabel || language || "?"} · ${confidence} · $${usage.usd.toFixed(4)}`
+    `[voice] "${profile.name}" (${profile._id}) ${lane}-form for ${userId} from ` +
+    `${transcripts.length} transcript(s) · ${languageLabel || language || "?"} · ` +
+    `${confidence} · $${usage.usd.toFixed(4)}` +
+    (lane === LONG
+      ? ` · ${(set["long.category_voice"]?.bulletin_transitions || []).length} transition(s) captured`
+      : "")
   );
 
-  return { profile: doc, built: true };
+  return { profile: doc, built: true, lane };
 }
 
 /**
@@ -535,9 +743,41 @@ export async function buildVoiceProfile(userId, profileId) {
  * @param {string} userId
  * @param {{ profileId?: string, autoBuild?: boolean }} opts
  */
-export async function getUsableProfile(userId, { profileId, autoBuild = true } = {}) {
+export async function getUsableProfile(userId, { profileId, autoBuild = true, seconds = 0 } = {}) {
   const { profile: channel } = await resolveProfile(userId, profileId);
   const voice = await voiceFor(userId, channel._id);
+
+  // ── WHICH VOICE THIS ORDER NEEDS ──────────────────────────────────────────
+  // Derived from the length they bought, because that is the thing that decides
+  // whether they are getting one product explained or fourteen of them in
+  // sequence. See services/voiceLanes.js.
+  const lane = seconds ? laneForScript(seconds) : SHORT;
+
+  // ── THE LONG LANE IS NEVER AUTO-BUILT ─────────────────────────────────────
+  // The short lane may be built silently by a creator's first order, and that
+  // is a good surprise: they asked for a script and got one. The long lane
+  // cannot work the same way. It needs three long videos the creator may simply
+  // not have added, and building it silently would either fail mid-order or
+  // spend a free build on material they never chose to give us.
+  //
+  // So an unbuilt long lane is refused here and reported, not papered over by
+  // falling back to the short voice. Falling back is the specific failure this
+  // whole lane split exists to prevent: it would return a fluent eight-minute
+  // script that repeats one gesture fourteen times, and it would look fine
+  // right up until the creator read it aloud.
+  if (lane === LONG) {
+    const ready = voiceForLane(voice, LONG);
+    if (ready) return ready;
+
+    const e = new Error("long-form voice not built");
+    e.userMessage = laneReady(voice, SHORT)
+      ? `Scripts over two minutes are multi-story, and we haven't learned how you move ` +
+        `between stories yet. Add ${LONG_MIN_VIDEOS} of your longer videos in My Voice and ` +
+        `run the long-form analysis. You haven't been charged.`
+      : "Analyse your voice first, starting with your short videos. You haven't been charged.";
+    e.needsLane = LONG;
+    throw e;
+  }
 
   // A voice with nothing learned yet is not a profile. built_at is the marker:
   // the row exists from the moment the channel is created, so its mere presence
@@ -546,14 +786,17 @@ export async function getUsableProfile(userId, { profileId, autoBuild = true } =
 
   if (!existing) {
     if (!autoBuild) return null;
-    const { profile } = await buildVoiceProfile(userId, channel._id);
+    const { profile } = await buildVoiceProfile(userId, channel._id, { lane: SHORT });
     if (profile) announceBuilt(userId, channel._id, profile);
     return profile;
   }
 
   if (autoBuild) {
+    // Counted within the lane. A creator who added three long videos has not
+    // given the SHORT voice anything new to learn, and rebuilding it because
+    // the total moved would charge them for an analysis of the same material.
     const total = await Transcript.countDocuments({
-      user: userId, profile: channel._id, status: "done", text: { $ne: "" },
+      user: userId, profile: channel._id, status: "done", text: { $ne: "" }, ...laneQuery(SHORT),
     });
     const seen = existing.transcript_count || 0;
     // Only rebuild when there is genuinely more to learn from, and stop counting
@@ -568,7 +811,7 @@ export async function getUsableProfile(userId, { profileId, autoBuild = true } =
       if (Date.now() - failedAt < REBUILD_COOLDOWN_MS) return existing;
 
       try {
-        const { profile } = await buildVoiceProfile(userId, channel._id);
+        const { profile } = await buildVoiceProfile(userId, channel._id, { lane: SHORT });
         if (profile) announceBuilt(userId, channel._id, profile);
         return profile || existing;
       } catch (err) {
@@ -594,25 +837,55 @@ export async function getUsableProfile(userId, { profileId, autoBuild = true } =
 export async function profileStatus(userId, profileId) {
   const { profile: channel } = await resolveProfile(userId, profileId);
   const voice = await voiceFor(userId, channel._id);
+
   // Analysable, which includes videos that have been added but not yet read.
   // Counting only "done" would tell a creator who has just added three videos
   // that there is nothing to analyse, which is the opposite of true.
-  const total = await Transcript.countDocuments({
-    user: userId,
-    profile: channel._id,
+  const analysable = {
     $or: [{ status: "pending" }, { status: "processing" }, { status: "done", text: { $ne: "" } }],
-  });
+  };
+  const base = { user: userId, profile: channel._id };
+
+  const [total, shortCount, longCount] = await Promise.all([
+    Transcript.countDocuments({ ...base, ...analysable }),
+    Transcript.countDocuments({ ...base, ...analysable, ...laneQuery(SHORT) }),
+    Transcript.countDocuments({ ...base, ...analysable, ...laneQuery(LONG) }),
+  ]);
+
   const profile = voice.built_at ? voice.toObject?.() ?? voice : null;
+
+  // Staleness is per lane, because the lanes go stale independently: adding
+  // three long videos gives the LONG voice something new to learn and the short
+  // voice nothing at all, and a single flag would push the creator to rebuild
+  // the one that has not changed.
+  const staleIn = (built, count) =>
+    !!built && count > (built.transcript_count || 0) && (built.transcript_count || 0) < MAX_TRANSCRIPTS;
+
+  const longBuilt = voice.long?.built_at ? (voice.long.toObject?.() ?? voice.long) : null;
+
+  // ── THE ONE FREE REBUILD ──────────────────────────────────────────────────
+  // A voice built before category-aware analysis existed has never been asked
+  // the questions that make it specific to what this creator covers, and that
+  // is our doing, not theirs. Surfaced so the UI can offer the upgrade without
+  // it looking like an upsell, and honoured in creditPricing.voiceAnalysisCost.
+  const category = (channel.categories || [])[0] || "";
+  const needsCategoryRebuild =
+    !!profile && !!category && (voice.built_for_category || "") !== category;
 
   return {
     channel,
     voice,
     profile,
+    category,
     transcripts_available: total,
-    stale:
-      !!profile &&
-      total > (profile.transcript_count || 0) &&
-      (profile.transcript_count || 0) < MAX_TRANSCRIPTS,
+    stale: staleIn(profile, shortCount),
+    needs_category_rebuild: needsCategoryRebuild,
+    lanes: laneStatus(voice, { short: shortCount, long: longCount }),
+    lane_counts: { short: shortCount, long: longCount },
+    lane_stale: {
+      short: staleIn(profile, shortCount),
+      long: staleIn(longBuilt, longCount),
+    },
   };
 }
 

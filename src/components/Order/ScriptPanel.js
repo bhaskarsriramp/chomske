@@ -34,10 +34,16 @@ import UploadPackage from "./UploadPackage";
  */
 export default function ScriptPanel({
   storyId = null,
+  // ── A BULLETIN IS ORDERED AS A LIST, IN ORDER ───────────────────────────
+  // The creator's running order, which is an editorial decision and travels
+  // untouched to the writer. Empty or single means the ordinary one-story path,
+  // so every existing caller keeps working without knowing bulletins exist.
+  storyIds = null,
   sourceId = null,
   voice,
   onVoiceChange,
   onGoTranscribe,
+  onGoVoice,
   compact,
   cta,
   heading = "Your script",
@@ -135,7 +141,11 @@ export default function ScriptPanel({
       // server guess at that point is how a story gets written in the wrong
       // voice and charged for.
       const body = {
-        ...(sourceId ? { source_id: sourceId } : { news_id: storyId }),
+        ...(sourceId
+          ? { source_id: sourceId }
+          : storyIds && storyIds.length > 1
+            ? { news_ids: storyIds }
+            : { news_id: storyId }),
         force,
         profile_id: profileId || undefined,
       };
@@ -248,6 +258,7 @@ export default function ScriptPanel({
             compact={compact}
             sourceId={sourceId}
             cta={cta}
+            onGoVoice={onGoVoice || onGoTranscribe}
           />
           {!hasVoice && (
             <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.6 }}>

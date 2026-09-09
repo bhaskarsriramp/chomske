@@ -90,6 +90,13 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
   const [hint, setHint] = useState(false);
 
+  // ── WHICH OF THE TWO VOICES IS ON SCREEN ────────────────────────────────
+  // A creator has two: the short-form one, learned from Shorts, and the
+  // long-form one, learned from their multi-story videos. They are trained from
+  // different videos and used for different script lengths, so the whole screen
+  // switches with this rather than trying to show both sets at once.
+  const [lane, setLane] = useState("short");
+
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmVoiceDelete, setConfirmVoiceDelete] = useState(false);
@@ -106,6 +113,11 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
         ready: data.ready_count || 0,
         mixed: data.mixed_languages,
         maxSeconds: data.max_seconds || 60,
+        laneSlots: data.lane_slots || null,
+        lanes: data.lanes || null,
+        shortMax: data.short_max_seconds || 90,
+        longMin: data.long_min_seconds || 180,
+        splitSeconds: data.lane_split_seconds || 120,
       });
     } catch { /* secondary, never block the main flow on it */ }
   }, [activeId]);
@@ -140,7 +152,11 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   // poll we had followed the open transcript, not the set. `waiting` is a
   // boolean rather than the list itself so this re-arms when the answer
   // changes, not on every refresh.
-  const waiting = history.some((h) => h.status === "processing");
+  // Scoped to the visible lane once the rows carry one. A long video still
+  // being read is not a reason to tell somebody on the short tab to wait.
+  const waiting = history.some(
+    (h) => h.status === "processing" && (h.lane || "short") === lane
+  );
 
   useEffect(() => {
     if (!waiting) return;
@@ -210,7 +226,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
    */
   function analyseVoice() {
     setError("");
-    analyse();
+    analyse(lane);
   }
 
   // A finished build changes the counts the profile list carries, and the other
@@ -240,13 +256,32 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   }
 
   const gut = isPhone ? 16 : 30;
-  const full = meta?.slots ? meta.slots.left <= 0 : false;
-  const readyCount = meta?.ready || 0;
-  const canAnalyse = readyCount > 0;
-  const built = voice?.profile || null;
+  const isLong = lane === "long";
+
+  // Every count on this screen is the SELECTED lane's count. The server sends
+  // both, already separated, so nothing here has to know that lanes are decided
+  // by video duration.
+  const laneSlot = meta?.laneSlots?.[lane] || null;
+
+  const full = laneSlot ? laneSlot.left <= 0 : false;
+  const readyCount = laneSlot ? laneSlot.ready_count : (meta?.ready || 0);
+
+  // The long lane needs three videos before it can build at all: one long video
+  // shows one episode's running order, which is not yet a habit.
+  const minVideos = isLong ? (laneSlot?.min_videos || 3) : 1;
+  const shortReady = !!voice?.lanes?.short?.ready;
+  const laneLocked = isLong && !shortReady;
+  const canAnalyse = readyCount >= minVideos && !laneLocked;
+
+  const built = isLong ? (voice?.profile?.long || null) : (voice?.profile || null);
   // Behind if the analysis never saw the current set: either the server says
   // so, or a video was added or deleted since it last ran.
-  const stale = !!built && (voice?.stale || built.transcript_count !== readyCount);
+  const stale = !!built && ((voice?.lane_stale?.[lane] ?? voice?.stale) || built.transcript_count !== readyCount);
+
+  // Videos shown are the selected lane's videos. A creator on the long tab
+  // looking at their five Shorts, with an Analyse button that would ignore all
+  // of them, is the confusion this whole screen has to avoid.
+  const laneHistory = history.filter((h) => (h.lane || "short") === lane);
 
   // ── WHEN ANALYSING IS WORTH OFFERING ──────────────────────────────────────
   // Re-reading the same set produces the same voice and costs a model call, so
@@ -273,26 +308,40 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   // `waiting` comes first: a video added a moment ago is the likeliest reason
   // someone is prodding a button that will not move, and "add a video" is a
   // maddening thing to be told by a screen that is holding the one you added.
-  const blockedReason = waiting
+  const blockedReason = laneLocked
+    ? "Build your short-form voice first. It teaches us your hook and sign-off, which the long-form one builds on."
+    : waiting
     ? "Still reading the video you added. This turns on by itself once it is ready."
     : !canAnalyse
-    ? built
-      ? "The videos this voice was built from are gone. Add one below and this turns on."
-      : "Add one of your videos below first. That is what your voice is learned from."
+    ? isLong
+      ? `Add ${Math.max(0, minVideos - readyCount)} more long video${minVideos - readyCount === 1 ? "" : "s"}, over ${Math.round((meta?.longMin || 180) / 60)} minutes each. One long video shows us one episode's running order; ${minVideos} is where we can tell a habit from a one-off.`
+      : built
+        ? "The videos this voice was built from are gone. Add one below and this turns on."
+        : "Add one of your videos below first. That is what your voice is learned from."
     : `This voice is already built from these ${readyCount} video${readyCount === 1 ? "" : "s"}. Add another below, or delete one, and this turns on.`;
 
-  const summaryLine = !canAnalyse
+  const summaryLine = laneLocked
+    ? "Locked until your short-form voice is built."
+    : !canAnalyse
     ? built
       // Built once, and every video it was built from has since been deleted.
       // The voice still works; there is nothing left to rebuild it from.
       ? `Learned from ${built.transcript_count} video${built.transcript_count === 1 ? "" : "s"} that are no longer here.`
       : waiting
       ? "Reading the video you added. You can analyse as soon as it is ready."
-      : "Add a video below, then analyse."
+      : isLong
+        ? `Add ${Math.max(0, minVideos - readyCount)} more long video${minVideos - readyCount === 1 ? "" : "s"}, then analyse.`
+        : "Add a video below, then analyse."
     : stale
     ? `Your videos changed since this was built. Analyse again to use all ${readyCount} of them.`
     : built
-    ? `${built.language_label || "Learned"} · from ${built.transcript_count} video${built.transcript_count === 1 ? "" : "s"}`
+    ? isLong
+      // Proof, not a pat on the head. The number of transitions actually
+      // captured is what tells a creator the extra three uploads bought
+      // something real, and it is the one figure this lane exists to produce.
+      ? `From ${built.transcript_count} long video${built.transcript_count === 1 ? "" : "s"}` +
+        (built.transition_count ? ` · ${built.transition_count} of your own transitions captured` : " · no repeated transitions found yet")
+      : `${voice?.profile?.language_label || "Learned"} · from ${built.transcript_count} video${built.transcript_count === 1 ? "" : "s"}`
     : `Ready to read ${readyCount} video${readyCount === 1 ? "" : "s"}. This runs once over the set, not once per video.`;
 
   return (
@@ -304,10 +353,66 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
           My voice
         </h1>
 
-        <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 18px", lineHeight: 1.6 }}>
-          Add up to {meta?.slots?.max || 5} of your own short videos, under {meta?.maxSeconds || 60} seconds
-          each. We read how you open, the words you keep in English and how you sign off,
-          then write new scripts that sound like you.
+        <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 16px", lineHeight: 1.6 }}>
+          {isLong
+            ? `Add up to ${laneSlot?.max || 5} of your longer videos, over ${Math.round((meta?.longMin || 180) / 60)} minutes each. In these you cover several products in a row, and what we learn is the part a Short can never show us: how you move from one story to the next.`
+            : `Add up to ${laneSlot?.max || 5} of your own short videos, under ${meta?.shortMax || 90} seconds each. We read how you open, the words you keep in English and how you sign off, then write new scripts that sound like you.`}
+        </p>
+
+        {/* ── THE TWO VOICES ──────────────────────────────────────────────
+            Presented as two things a creator BUILDS, not as a settings toggle,
+            because that is what they are: two analyses over two sets of videos,
+            each used for a different length of script. The tab labels carry the
+            length each one writes, so the connection to the duration slider on
+            the ordering screen is visible here rather than discovered there. */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+          {[
+            { id: "short", label: "Short-form", sub: `Under ${Math.round((meta?.splitSeconds || 120) / 60)} min scripts` },
+            { id: "long", label: "Long-form", sub: `${Math.round((meta?.splitSeconds || 120) / 60)} to 8 min scripts` },
+          ].map((t) => {
+            const on = lane === t.id;
+            const laneDone = !!voice?.lanes?.[t.id]?.ready;
+            const locked = t.id === "long" && !shortReady;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setLane(t.id)}
+                aria-pressed={on}
+                style={{
+                  flex: isPhone ? "1 1 46%" : "0 0 auto",
+                  textAlign: "left",
+                  padding: "10px 14px",
+                  borderRadius: 11,
+                  border: `1px solid ${on ? "var(--primary)" : "var(--line)"}`,
+                  background: on ? "var(--primary-tint, rgba(0,0,0,0.03))" : "var(--card)",
+                  cursor: "pointer",
+                  minWidth: isPhone ? 0 : 190,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: on ? "var(--primary)" : "var(--ink)" }}>
+                    {t.label}
+                  </span>
+                  {laneDone ? (
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--ok, #1F7A4D)" }}>BUILT</span>
+                  ) : locked ? (
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--ink-mute)" }}>LOCKED</span>
+                  ) : null}
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-mute)", marginTop: 2 }}>{t.sub}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Said once, here, rather than as an error the first time they drag the
+            duration slider past two minutes and find it refused. */}
+        <p style={{ fontSize: isPhone ? 12.5 : 13, color: "var(--ink-mute)", margin: "0 0 18px", lineHeight: 1.6 }}>
+          {isLong
+            ? laneLocked
+              ? "Build the short-form voice first. It teaches your hook and sign-off, which this one builds on."
+              : `Under ${Math.round((meta?.splitSeconds || 120) / 60)} minutes you cover one product properly. Past it you cover seven or ten in a row, and that is a different way of talking. Scripts longer than ${Math.round((meta?.splitSeconds || 120) / 60)} minutes are written from this voice.`
+            : `Scripts under ${Math.round((meta?.splitSeconds || 120) / 60)} minutes are written from this voice. For longer, multi-story scripts, build the long-form one too.`}
         </p>
 
         {/* One voice per channel, so a creator who needs a second voice needs a
@@ -488,8 +593,8 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                 Add a video
               </span>
               <span style={{ fontSize: 12.5, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
-                {meta?.slots
-                  ? `${meta.slots.used} of ${meta.slots.max} added`
+                {laneSlot
+                  ? `${laneSlot.used} of ${laneSlot.max} ${isLong ? "long" : "short"} added`
                   : <Skeleton variant="text" width={74} height={10} />}
               </span>
             </div>
@@ -525,7 +630,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
             {full && (
               <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.55 }}>
-                All {meta.slots.max} slots used. Delete one below to add another.
+                All {laneSlot?.max || 5} {isLong ? "long-form" : "short-form"} slots used. Delete one below to add another.
               </p>
             )}
 
@@ -552,8 +657,8 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                 of this screen confused people. */}
             <div style={{ marginTop: 14 }}>
               <Videos
-                items={history}
-                loading={!meta?.slots}
+                items={laneHistory}
+                loading={!meta?.laneSlots}
                 isPhone={isPhone}
                 onDelete={setConfirmDelete}
               />

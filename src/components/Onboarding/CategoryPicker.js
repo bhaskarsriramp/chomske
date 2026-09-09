@@ -27,7 +27,7 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
   const isPhone = useIsMobile(680);
 
   const [cats, setCats] = useState([]);
-  const [max, setMax] = useState(3);
+  const [max, setMax] = useState(1);
   const [picked, setPicked] = useState([]);
   const [name, setName] = useState("My Profile");
   const [loading, setLoading] = useState(true);
@@ -41,9 +41,17 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
         const { data } = await api.get("/auth/categories");
         if (cancelled) return;
         setCats(data.categories || []);
-        setMax(data.max || 3);
+        setMax(data.max || 1);
         // Pre-fill when they're editing rather than onboarding.
-        setPicked((user?.categories || []).slice(0, data.max || 3));
+        const cap = data.max || 1;
+        const list = data.categories || [];
+        // ── ONE CATEGORY: PRESELECT IT ──────────────────────────────────
+        // Asking somebody to "choose" from a list of one is a question with no
+        // information in it, and a required tap that teaches nothing. The card
+        // is still shown, because it says what the product is about to do for
+        // them, but it arrives already chosen.
+        const prior = (user?.categories || []).filter((c) => list.some((x) => x.id === c));
+        setPicked(prior.length ? prior.slice(0, cap) : (cap === 1 && list.length === 1 ? [list[0].id] : []));
       } catch (err) {
         if (!cancelled) setError(errorMessage(err, "Couldn't load the categories."));
       } finally {
@@ -56,6 +64,11 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
   function toggle(id) {
     setError("");
     setPicked((p) => {
+      // At a cap of one this is a radio, not a checkbox: tapping a different
+      // card MOVES the selection rather than being silently ignored because
+      // the cap is already reached, which is what the old branch below did and
+      // which reads as an unresponsive button.
+      if (max === 1) return p.includes(id) ? p : [id];
       if (p.includes(id)) return p.filter((x) => x !== id);
       if (p.length >= max) return p;      // cap enforced here and on the server
       return [...p, id];
@@ -126,12 +139,14 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
           lineHeight: 1.6, color: "var(--ink-body)", margin: "0 0 8px",
         }}
       >
-        Pick up to {max}. We watch the news in those areas around the clock and every
-        morning show you what is worth covering, ranked, with every source that carried it.
+        {max === 1 && cats.length === 1
+          ? `We cover ${cats[0]?.label || "one area"} right now, properly: we watch it around the clock and every morning show you what is worth covering, ranked, with every source that carried it.`
+          : `Pick up to ${max}. We watch the news in those areas around the clock and every morning show you what is worth covering, ranked, with every source that carried it.`}
       </p>
       <p style={{ fontSize: isPhone ? 13.5 : 14.5, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 0 26px" }}>
-        We only pull stories from what you choose, so nothing else clutters your feed.
-        You can change this any time from Profile.
+        {max === 1 && cats.length === 1
+          ? "More areas are coming. Each one needs its own voice analysis and its own script formats before it is worth switching on, so they arrive one at a time rather than all at once and half-built."
+          : "We only pull stories from what you choose, so nothing else clutters your feed. You can change this any time from Profile."}
       </p>
 
       {/* The channel this is all for. Run more than one? Add the rest from
@@ -259,7 +274,9 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
           <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>
             {picked.length === 0
               ? "Choose at least one"
-              : `${picked.length} of ${max} selected`}
+              : max === 1
+                ? (cats.find((c) => c.id === picked[0])?.label || "Selected")
+                : `${picked.length} of ${max} selected`}
           </div>
           <button
             onClick={onSignOut}

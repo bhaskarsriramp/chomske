@@ -75,9 +75,12 @@ const US = { hl: "en-US", gl: "US", ceid: "US:en" };
  */
 export const CATEGORIES = [
   {
-    id: "ai_tech",
-    label: "AI & technology",
-    blurb: "Model launches, big tech moves, research that actually ships",
+    id: "tech_gadgets",
+    label: "Tech & gadgets",
+    blurb: "Phone launches, model releases, big tech moves, the deals worth knowing",
+    // The one category on offer. See ENABLED below for why the other six stay
+    // in this file fully configured rather than being deleted.
+    enabled: true,
     locale: US,
     // Was ["artificial intelligence", "OpenAI", "Anthropic Claude",
     // "Google Gemini AI", "AI model release"], which is three company names and
@@ -152,12 +155,158 @@ export const CATEGORIES = [
     top: "A frontier model launch, a major acquisition, a serious outage or breach, a landmark lawsuit ruling.",
     mid: "A notable release, a real benchmark result, a credible leak, a surprising study.",
     low: "Routine papers, listicles, opinion pieces, press releases with no news.",
+
+    /* ── WHAT THE VOICE ANALYST LOOKS FOR IN *THIS* CATEGORY ─────────────────
+       The shared analysis in services/voiceProfileService.js captures how a
+       person talks: openings, closings, fillers, code-mixing. That is necessary
+       and it is not sufficient, because two tech creators with identical
+       openings still sound nothing alike once they reach a spec sheet.
+
+       What separates them is category vocabulary, and it is almost entirely
+       unrecoverable from a generic prompt: whether a battery is "6000 mAh" or
+       "chhe hazaar", whether ₹15,000 is said as "pandrah hazaar" or "fifteen
+       thousand", whether every phone is silently benchmarked against one
+       reference phone. Ask for those by name and the model finds them; do not
+       ask, and you get "energetic and engaging" for the tenth time.
+
+       Each entry is field name → what the analyst is told to extract. They are
+       appended to the JSON schema, so adding a field here is a config change. */
+    voice: {
+      guidance:
+        `This creator makes technology and gadget videos. The most distinctive thing ` +
+        `about them is NOT their accent or their energy, it is the specific vocabulary ` +
+        `they use for products, numbers and money, and every one of those has a house ` +
+        `style that varies enormously between creators. Quote it verbatim, in the ` +
+        `original script. Where they keep an English word (and for model numbers, ` +
+        `brand names and units they almost always will), record that it stays English.`,
+
+      // Asked in both lanes: these are true of the creator, not of the format.
+      fields: {
+        spec_delivery:
+          "How they voice a specification. Do they say the unit ('6000 mAh', '120 hertz') " +
+          "or round it into speech ('chhe hazaar ka battery')? Do they pair every spec " +
+          "with a real-world consequence ('do din chalega') or just state it? Give verbatim examples.",
+        price_talk:
+          "How they say money. '₹15,000' spoken as digits, as 'pandrah hazaar', as 'fifteen " +
+          "thousand', or mixed? Do they always name a price, and do they pass judgement on " +
+          "the value out loud? Verbatim examples.",
+        verdict_vocabulary:
+          "The exact words they use to recommend, reject or hedge. Things like 'worth buying', " +
+          "'paisa vasool', 'gimmick', 'wait karo', 'avoid'. Verbatim, up to 8.",
+        comparison_habit:
+          "Do they benchmark against other products, and which ones do they use as the " +
+          "yardstick? Name the brands or models they keep returning to for comparison.",
+        brand_handling:
+          "Which brand and model names stay in English (nearly always all of them), any " +
+          "abbreviations or nicknames they use, and how they pronounce anything unusual.",
+        hype_calibration:
+          "Their default excitement level and what makes them break it. Are they the hype " +
+          "channel, the sceptic, or flat and factual? What actually impresses them?",
+        deal_callout:
+          "Whether and how they push links, offers or affiliate deals, phrased verbatim. " +
+          "Empty string if they never do it.",
+        viewer_address:
+          "The exact word or phrase they call the viewer. Verbatim, in their script.",
+      },
+
+      // Asked only in the lane named. The long lane's three fields are the whole
+      // reason this file has lanes at all: none of them can be observed in a Short.
+      laneFields: {
+        short: {
+          compression:
+            "How they fit one product into under ninety seconds. What do they cut, what do " +
+            "they always keep, and how fast do they reach the point?",
+        },
+        long: {
+          bulletin_transitions:
+            "THE MOST IMPORTANT FIELD IN THIS ANALYSIS. The verbatim phrases they use to " +
+            "move from one story to the next: 'chaliye aage badhte hain', 'next news', " +
+            "'ఇక తర్వాత'. Collect every distinct one you can find, up to 10, exactly as " +
+            "spoken. If you cannot find any, return an empty array rather than inventing " +
+            "plausible ones.",
+          segment_names:
+            "Recurring NAMED segments inside their long videos, verbatim: 'WTF News', " +
+            "'Deal of the Day', 'Quick Recap'. Empty array if they have none.",
+          running_order:
+            "How they sequence a multi-story video. Do they lead with the biggest story or " +
+            "build to it? Do they group by brand, by category, by importance? Do they " +
+            "signpost how many items are coming at the top?",
+        },
+      },
+    },
+
+    /* ── THE SHAPES OF VIDEO THIS CATEGORY ACTUALLY PUBLISHES ────────────────
+       Measured from live channels, not assumed. Two formats that look obvious
+       are deliberately absent: unboxing and hands-on review. They are the most
+       rigid skeletons in the category, which makes them tempting, and they are
+       unsourceable here: weight, heat, camera samples and "I used it for a week"
+       exist in nobody's news feed. A skeleton this product cannot honestly fill
+       is how a creator ends up reading an invented benchmark to their audience. */
+    script: {
+      formats: [
+        {
+          id: "single_story",
+          label: "One story, in depth",
+          lane: "short",
+          minStories: 1,
+          maxStories: 1,
+          beats: [
+            "Open the way they open, naming the product or company in the first sentence.",
+            "What actually happened or launched.",
+            "The specifications or numbers that matter, each tied to what it means in use.",
+            "Price and availability, where the sources give them.",
+            "Their verdict: is it worth it, and who for.",
+          ],
+          discipline:
+            "One subject only. Do not widen into the industry, the competitor, or what it " +
+            "signals about the market unless the sources do it first.",
+        },
+        {
+          id: "bulletin",
+          label: "Daily tech bulletin",
+          lane: "long",
+          minStories: 3,
+          maxStories: 14,
+          beats: [
+            "Their opening, then a quick signpost of what today's episode covers. Name two or three of the biggest items, not all of them.",
+            "Then one block per story, in the order given: what it is, what actually happened, the one number that matters, and their read on it.",
+            "Between every pair of stories, one of THEIR OWN transition phrases. Never the same one twice in a row.",
+            "Their recap and sign-off.",
+          ],
+          discipline:
+            "Every story gets its own facts and only its own facts. Do not carry a number " +
+            "from one story into another, and do not invent a link between two stories " +
+            "that the sources do not make. Stories with thin material get a shorter block, " +
+            "not invented detail.",
+        },
+        {
+          id: "explainer",
+          label: "Explainer or opinion",
+          lane: "long",
+          minStories: 1,
+          maxStories: 3,
+          beats: [
+            "The claim, stated plainly in their voice.",
+            "Why it is happening now.",
+            "The evidence, drawn only from the sources.",
+            "What it actually means for the viewer.",
+            "Where they land on it.",
+          ],
+          discipline:
+            "This is the one format where their opinion is the point, so their stance may " +
+            "be stated with confidence. The FACTS it rests on are still bound by the " +
+            "sources: no invented figures, no predictions dressed as reporting.",
+        },
+      ],
+    },
   },
 
   {
     id: "finance",
     label: "Stock market & finance",
     blurb: "Markets, results season, IPOs, RBI, the rupee",
+    // Built and kept, not offered. See MAX_CATEGORIES below.
+    enabled: false,
     locale: IN,
     // The one list that was already event-shaped. Widened rather than rewritten:
     // the old five covered indices, policy and IPOs but nothing about the rupee,
@@ -220,6 +369,8 @@ export const CATEGORIES = [
     id: "business",
     label: "Business & startups",
     blurb: "Funding rounds, founder moves, company shake-ups",
+    // Built and kept, not offered. See MAX_CATEGORIES below.
+    enabled: false,
     locale: IN,
     // "unicorn startup" returned 6 items and "layoffs company", unscoped, mostly
     // returned Volkswagen: a bare noun with no country in an India-locale
@@ -265,6 +416,8 @@ export const CATEGORIES = [
     id: "crypto",
     label: "Crypto & Web3",
     blurb: "Prices with a cause, regulation, hacks, launches",
+    // Built and kept, not offered. See MAX_CATEGORIES below.
+    enabled: false,
     locale: US,
     // ── THE CLEAREST CASE OF FETCHING WHAT YOU INTEND TO BIN ─────────────────
     // `low` below calls daily price commentary noise. "bitcoin price" and
@@ -312,6 +465,8 @@ export const CATEGORIES = [
     id: "entertainment",
     label: "Film & entertainment",
     blurb: "Releases, box office, casting, streaming",
+    // Built and kept, not offered. See MAX_CATEGORIES below.
+    enabled: false,
     locale: IN,
     // An India-locale film category whose only industry term was "Bollywood"
     // was missing the South Indian industries, which out-gross Hindi cinema in
@@ -353,6 +508,8 @@ export const CATEGORIES = [
     id: "sports",
     label: "Sports & cricket",
     blurb: "Results, squads, transfers, injuries",
+    // Built and kept, not offered. See MAX_CATEGORIES below.
+    enabled: false,
     locale: IN,
     // "IPL news" is a season, not a topic: for most of the year it returns
     // archive pages and filler, and it was one of only four lines. Cricket stays
@@ -391,6 +548,8 @@ export const CATEGORIES = [
     id: "science_health",
     label: "Science & health",
     blurb: "Studies that hold up, health guidance, space",
+    // Built and kept, not offered. See MAX_CATEGORIES below.
+    enabled: false,
     locale: US,
     // "scientific study finds" is a headline cliche rather than a subject, and
     // it was pulling in marketing copy that happened to use the phrase. These
@@ -431,8 +590,22 @@ export const CATEGORIES = [
 
 const BY_ID = new Map(CATEGORIES.map((c) => [c.id, c]));
 
-export const DEFAULT_CATEGORY = "ai_tech";
-export const MAX_CATEGORIES = parseInt(process.env.MAX_USER_CATEGORIES || "3", 10);
+export const DEFAULT_CATEGORY = "tech_gadgets";
+
+/**
+ * ── ONE CATEGORY, DONE PROPERLY ──────────────────────────────────────────────
+ * Was 3. The engine below this point is now category-specific in three separate
+ * places, the voice analysis, the script formats and the writer's prompt, and
+ * each of those is real work per category done properly rather than a config
+ * line. Offering seven of them half-built is worse for a creator than offering
+ * one that actually knows what a tech video is.
+ *
+ * The other six categories are still fully configured in this file, with their
+ * queries, feeds and editorial bars intact. They are switched off, not deleted,
+ * because turning one back on after building its `voice` and `script` blocks is
+ * then a one-word change rather than an archaeology exercise.
+ */
+export const MAX_CATEGORIES = parseInt(process.env.MAX_USER_CATEGORIES || "1", 10);
 
 export function getCategory(id) {
   return BY_ID.get(String(id || "")) || null;
@@ -442,9 +615,88 @@ export function isValidCategory(id) {
   return BY_ID.has(String(id || ""));
 }
 
-/** Only what the UI needs, the fetch config is server-side detail. */
+/** Switched on for users. Everything else here is built but not offered. */
+export function isEnabledCategory(id) {
+  return getCategory(id)?.enabled === true;
+}
+
+/** The enabled ones, in file order. */
+export function enabledCategories() {
+  return CATEGORIES.filter((c) => c.enabled === true);
+}
+
+/**
+ * Only what the UI needs, the fetch config is server-side detail.
+ *
+ * Filtered to the enabled set: a card a user can see is a card they can pick,
+ * and a picker that shows six disabled options is a worse answer than a picker
+ * that shows one real one.
+ */
 export function publicCategories() {
-  return CATEGORIES.map((c) => ({ id: c.id, label: c.label, blurb: c.blurb }));
+  return enabledCategories().map((c) => ({ id: c.id, label: c.label, blurb: c.blurb }));
+}
+
+/* ── The per-category engine config ────────────────────────────────────────── */
+
+/**
+ * The extra fields the voice analyst is asked for in this category and lane.
+ *
+ * Returns { guidance, fields } already merged, so the caller never has to know
+ * that some fields are shared and some are lane-specific. An unconfigured
+ * category returns empty and the analysis falls back to the shared prompt
+ * alone, which is exactly what it did before any of this existed.
+ */
+export function voiceSpecFor(categoryId, lane = "short") {
+  const v = getCategory(categoryId)?.voice;
+  if (!v) return { guidance: "", fields: {} };
+  return {
+    guidance: v.guidance || "",
+    fields: { ...(v.fields || {}), ...(v.laneFields?.[lane] || {}) },
+  };
+}
+
+/** Every format defined for a category, or [] if it has none yet. */
+export function formatsFor(categoryId) {
+  return getCategory(categoryId)?.script?.formats || [];
+}
+
+/** One format by id, scoped to its category so two categories may reuse an id. */
+export function getFormat(categoryId, formatId) {
+  return formatsFor(categoryId).find((f) => f.id === String(formatId || "")) || null;
+}
+
+/**
+ * Which format to write in, given the category, the lane and how many stories
+ * the creator actually picked.
+ *
+ * Story count decides it, because it is the one signal that cannot be wrong:
+ * somebody who selected nine stories is making a bulletin whatever the ranker
+ * guessed about any one of them. The ranker's per-item suggestion is used only
+ * to break the tie at a single story, where "is this a news hit or a thesis"
+ * is a genuine editorial judgement rather than arithmetic.
+ */
+export function pickFormat(categoryId, lane, storyCount = 1, suggested = "") {
+  const all = formatsFor(categoryId);
+  if (!all.length) return null;
+
+  const n = Math.max(1, Math.round(Number(storyCount) || 1));
+  const fits = all.filter(
+    (f) => f.lane === lane && n >= (f.minStories || 1) && n <= (f.maxStories || 1)
+  );
+
+  if (!fits.length) {
+    // No exact fit: fall back to any format in this lane, then to the first
+    // defined format, so the writer always has beats rather than none.
+    return all.find((f) => f.lane === lane) || all[0];
+  }
+  if (fits.length === 1) return fits[0];
+
+  return fits.find((f) => f.id === String(suggested || "")) || fits[0];
+}
+
+/** Format ids the ranker is allowed to suggest, for its stage-2 prompt. */
+export function formatIdsFor(categoryId) {
+  return formatsFor(categoryId).map((f) => f.id);
 }
 
 /**
@@ -456,11 +708,52 @@ export function sanitizeSelection(ids) {
   if (!Array.isArray(ids)) return [];
   const out = [];
   for (const raw of ids) {
-    const id = String(raw || "").trim();
-    if (isValidCategory(id) && !out.includes(id)) out.push(id);
+    const id = LEGACY_IDS[String(raw || "").trim()] || String(raw || "").trim();
+    // Enabled, not merely valid. A stored selection naming a switched-off
+    // category is exactly what every pre-existing account holds, and letting it
+    // through would mean serving a feed the engine can no longer write for.
+    if (isEnabledCategory(id) && !out.includes(id)) out.push(id);
     if (out.length >= MAX_CATEGORIES) break;
   }
   return out;
 }
 
-export default { CATEGORIES, getCategory, isValidCategory, publicCategories, sanitizeSelection, MAX_CATEGORIES, DEFAULT_CATEGORY };
+/**
+ * Ids that used to mean something else. Read on the way in, everywhere.
+ *
+ * `ai_tech` became `tech_gadgets` when the category stopped being about AI news
+ * and started being about what these channels actually publish, which is phones
+ * far more often than models. scripts/migrateSingleCategory.js rewrites the
+ * stored copies; this map is what makes an in-flight request, a cached client
+ * payload or an un-migrated row survive the gap rather than 400.
+ */
+export const LEGACY_IDS = { ai_tech: "tech_gadgets" };
+
+/** Map a possibly-legacy id forward. Returns "" for anything unrecognised. */
+export function canonicalCategory(id) {
+  const raw = String(id || "").trim();
+  const mapped = LEGACY_IDS[raw] || raw;
+  return isValidCategory(mapped) ? mapped : "";
+}
+
+/**
+ * A selection that is always usable, for callers that cannot show a picker.
+ *
+ * sanitizeSelection() returning [] is meaningful, it is what the onboarding gate
+ * reads as "has not chosen yet". This is the other question: give me something
+ * valid to work with regardless. With one category enabled the answer is always
+ * the same, which is the point.
+ */
+export function coerceSelection(ids) {
+  const clean = sanitizeSelection(ids);
+  if (clean.length) return clean;
+  const first = enabledCategories()[0];
+  return first ? [first.id] : [];
+}
+
+export default {
+  CATEGORIES, getCategory, isValidCategory, isEnabledCategory, enabledCategories,
+  publicCategories, sanitizeSelection, coerceSelection, canonicalCategory, LEGACY_IDS,
+  MAX_CATEGORIES, DEFAULT_CATEGORY,
+  voiceSpecFor, formatsFor, getFormat, pickFormat, formatIdsFor,
+};

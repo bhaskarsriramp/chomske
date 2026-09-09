@@ -28,7 +28,7 @@ import Transcript from "../models/Transcript.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
 import { getYouTubeVideoDetails, isApidirectConfigured } from "../services/apidirectClient.js";
-import { resolveProfile, listProfiles } from "../services/profileService.js";
+import { resolveProfile, listProfiles, voiceFor } from "../services/profileService.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 
 const router = express.Router();
@@ -42,15 +42,29 @@ const DAILY_LIMIT = parseInt(process.env.DAILY_TRANSCRIBE_LIMIT || "10", 10);
 // MAX_PROFILES and by the daily cap below.
 const MAX_VOICE_VIDEOS = parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
 
-// Short-form only. Voice profiling learns hooks and sign-offs, which are dense in
-// a Short and diluted across twenty minutes of a long video, and a long video
-// costs roughly 20× more to read for a weaker signal.
+// ── THE LENGTH GATE IS NOW TWO GATES ────────────────────────────────────────
+// It used to be one ceiling: short-form only, nothing over 90 seconds, on the
+// reasoning that hooks and sign-offs are dense in a Short and diluted across
+// twenty minutes. That reasoning is still correct and it is still why the short
+// lane exists. What it missed is that hooks and sign-offs are not the whole of
+// a voice once a script runs past two minutes.
 //
-// 90 seconds rather than 60: YouTube raised its own Shorts ceiling past a minute,
-// and creators were being refused their own uploads for running a few seconds
-// over. The extra thirty seconds costs little to read and removes a rejection
-// that looked like a bug.
-const MAX_VIDEO_SECONDS = parseInt(process.env.MAX_VIDEO_SECONDS || "90", 10);
+// Over two minutes these creators are not making a longer version of a Short.
+// They are making a different thing: seven to fourteen products in sequence,
+// where the skill that carries the video is the join between items. That move
+// occurs zero times in a Short, so no amount of short-form training material
+// can teach it. See services/voiceLanes.js.
+//
+// So a video is now sorted into a lane by its length, and the band between the
+// two lanes is refused: too long to be a dense sample, too short to reliably
+// contain a second story.
+import {
+  laneForVideo, laneQuery, laneStatus, SHORT, LONG,
+  SHORT_MAX_SECONDS, LONG_MIN_SECONDS, LONG_MIN_VIDEOS, LANE_SPLIT_SECONDS,
+} from "../services/voiceLanes.js";
+
+// Kept as an alias so the /limits payload and any older client keep working.
+const MAX_VIDEO_SECONDS = SHORT_MAX_SECONDS;
 
 /** POST /transcribe  { url } */
 router.post("/", authenticateToken, async (req, res) => {
@@ -90,15 +104,22 @@ router.post("/", authenticateToken, async (req, res) => {
       return res.json({ success: true, cached: true, transcript: shape(existing) });
     }
 
-    // Five videos define one voice. Enforced before anything is spent.
+    // ── The cheap guard, before the paid lookup ─────────────────────────────
+    // Five per lane, so a profile trains both voices without either crowding
+    // the other out. This early check is the TOTAL only: the lane a video
+    // belongs to is not known until its duration has been looked up, and doing
+    // that lookup for somebody who is already completely full would be paying
+    // to say no. The per-lane limit is enforced below, once the lane is known.
     const held = await Transcript.countDocuments({
       user: userId, profile: profile._id, status: { $ne: "failed" },
     });
-    if (held >= MAX_VOICE_VIDEOS) {
+    if (held >= MAX_VOICE_VIDEOS * 2) {
       return res.status(400).json({
         success: false,
         limit_reached: true,
-        message: `This profile holds ${MAX_VOICE_VIDEOS} videos. Delete one, or add another profile.`,
+        message:
+          `This profile holds ${MAX_VOICE_VIDEOS * 2} videos, ${MAX_VOICE_VIDEOS} short and ` +
+          `${MAX_VOICE_VIDEOS} long. Delete one, or add another profile.`,
       });
     }
 
@@ -170,15 +191,40 @@ router.post("/", authenticateToken, async (req, res) => {
       });
     }
 
-    if (duration > MAX_VIDEO_SECONDS) {
+    // ── WHICH LANE DOES THIS VIDEO TRAIN ────────────────────────────────────
+    // null is the band in the middle, 91 to 179 seconds, which trains neither.
+    // Refusing it names both bands, because a creator who just had a 2:30 video
+    // rejected needs to know which direction to go, and "too long" alone would
+    // send them the wrong way.
+    const lane = laneForVideo(duration);
+    if (!lane) {
       return res.status(400).json({
         success: false,
-        too_long: true,
+        wrong_length: true,
         duration,
         message:
-          `That video is ${formatDuration(duration)} long. Voice profiling uses short-form ` +
-          `videos only, up to ${MAX_VIDEO_SECONDS} seconds, because hooks and sign-offs are what ` +
-          `we learn from and a long video buries them.`,
+          `That video is ${formatDuration(duration)}, which falls between the two kinds we ` +
+          `learn from. Add a short video (under ${SHORT_MAX_SECONDS} seconds) to teach us your ` +
+          `hook and sign-off, or a full-length one (over ${Math.round(LONG_MIN_SECONDS / 60)} ` +
+          `minutes) to teach us how you move between stories.`,
+      });
+    }
+
+    // The per-lane cap, now that the lane is known. Named by lane, because
+    // "this profile holds 5 videos" while their short list shows two is the
+    // kind of message that reads as a bug rather than as a limit.
+    const inLane = await Transcript.countDocuments({
+      user: userId, profile: profile._id, status: { $ne: "failed" }, ...laneQuery(lane),
+    });
+    if (inLane >= MAX_VOICE_VIDEOS) {
+      return res.status(400).json({
+        success: false,
+        limit_reached: true,
+        lane,
+        message:
+          lane === SHORT
+            ? `This profile already holds ${MAX_VOICE_VIDEOS} short videos. Delete one to add another.`
+            : `This profile already holds ${MAX_VOICE_VIDEOS} long videos. Delete one to add another.`,
       });
     }
 
@@ -292,15 +338,58 @@ router.get("/", authenticateToken, async (req, res) => {
   // rather than silently blocked, because a genuinely bilingual creator exists.
   const languages = [...new Set(docs.map((d) => d.language_label).filter(Boolean))];
 
+  // ── The two lanes, and what each still needs ────────────────────────────
+  // Counted from what is actually on file rather than from a stored flag, so
+  // deleting a long video immediately takes the long lane back below its
+  // minimum instead of leaving a stale "ready" the ordering screen would then
+  // honour and the writer would then refuse.
+  const usable = docs.filter((d) => d.status !== "failed");
+  const shortDocs = usable.filter((d) => laneForVideo(d.duration_seconds) === SHORT);
+  const longDocs = usable.filter((d) => laneForVideo(d.duration_seconds) === LONG);
+
+  const vp = await voiceFor(req.user.id, profile._id);
+  const lanes = laneStatus(vp, { short: shortDocs.length, long: longDocs.length });
+
+  // Per lane, because "analysable" means something different in each: the short
+  // lane can build from one video, the long lane needs LONG_MIN_VIDEOS before
+  // it has seen a habit rather than one episode's running order.
+  const readyIn = (list) =>
+    list.filter((d) => d.status === "pending" || (d.status === "done" && d.text)).length;
+
   return res.json({
     success: true,
     profile_id: String(profile._id),
     profile_name: profile.name || "",
     transcripts: docs.map(shape),
-    slots: { used: held, max: MAX_VOICE_VIDEOS, left: Math.max(0, MAX_VOICE_VIDEOS - held) },
+    // Kept for any client still reading it, now the SHORT lane's slots, which
+    // is what it has always actually meant.
+    slots: {
+      used: shortDocs.length,
+      max: MAX_VOICE_VIDEOS,
+      left: Math.max(0, MAX_VOICE_VIDEOS - shortDocs.length),
+    },
+    lane_slots: {
+      short: {
+        used: shortDocs.length,
+        max: MAX_VOICE_VIDEOS,
+        left: Math.max(0, MAX_VOICE_VIDEOS - shortDocs.length),
+        ready_count: readyIn(shortDocs),
+      },
+      long: {
+        used: longDocs.length,
+        max: MAX_VOICE_VIDEOS,
+        left: Math.max(0, MAX_VOICE_VIDEOS - longDocs.length),
+        ready_count: readyIn(longDocs),
+        min_videos: LONG_MIN_VIDEOS,
+      },
+    },
+    lanes,
     ready_count: ready.length,
     mixed_languages: languages.length > 1 ? languages : null,
     max_seconds: MAX_VIDEO_SECONDS,
+    short_max_seconds: SHORT_MAX_SECONDS,
+    long_min_seconds: LONG_MIN_SECONDS,
+    lane_split_seconds: LANE_SPLIT_SECONDS,
     quota: { used: usedToday, limit: DAILY_LIMIT, left: Math.max(0, DAILY_LIMIT - usedToday) },
   });
 });
@@ -368,6 +457,7 @@ function shape(d) {
     channel: d.channel || "",
     thumbnail: d.thumbnail || "",
     duration_seconds: d.duration_seconds ?? null,
+    lane: laneForVideo(d.duration_seconds),
     error: d.error || "",
     created_at: d.created_at,
   };

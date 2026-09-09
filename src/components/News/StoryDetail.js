@@ -17,7 +17,7 @@ import { categoryColor } from "../../theme";
  *   pane:  the right half of the desktop split, always on screen
  *   sheet: a full-screen layer on phones, where a split has nowhere to go
  */
-export default function StoryDetail({ id, preview, mode = "pane", onClose, voice, onVoiceChange, onGoTranscribe }) {
+export default function StoryDetail({ id, ids = null, preview, mode = "pane", onClose, voice, onVoiceChange, onGoTranscribe, onGoVoice }) {
   // Seeded from the feed row so the header paints immediately; the request only
   // fills in coverage. Selecting a story should never flash an empty pane.
   const [item, setItem] = useState(preview || null);
@@ -123,6 +123,8 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
       voice={voice}
       onVoiceChange={onVoiceChange}
       onGoTranscribe={onGoTranscribe}
+      ids={ids}
+      onGoVoice={onGoVoice}
     />
   );
 
@@ -148,7 +150,7 @@ export default function StoryDetail({ id, preview, mode = "pane", onClose, voice
 
 /* ── Content ───────────────────────────────────────────────────────────── */
 
-function Body({ item, coverage, loading, error, brief, briefLoading, onClose, compact, voice, onVoiceChange, onGoTranscribe }) {
+function Body({ item, coverage, loading, error, brief, briefLoading, onClose, compact, voice, onVoiceChange, onGoTranscribe, ids = null, onGoVoice }) {
   // Shut by default. A well-covered story carries sixty-plus outlets, and an
   // open list that long buries everything under it, including the fact that
   // the page has ended. The count in the header is what most people came for;
@@ -249,12 +251,40 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
           </p>
         )}
 
+        {/* ── A BULLETIN IS NOT THIS STORY ────────────────────────────────
+            Everything above is the FIRST story's headline, brief and coverage,
+            because that is what this pane is built to show. Said plainly, so a
+            creator who ticked nine stories is not left thinking the order is
+            about to write one of them. The count is the honest correction. */}
+        {ids && ids.length > 1 && (
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+              padding: "10px 13px", borderRadius: 10, marginBottom: 14,
+              background: "var(--tint, rgba(0,0,0,0.035))",
+              border: "1px solid var(--line)",
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+                Writing a {ids.length}-story bulletin
+              </div>
+              <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 2, lineHeight: 1.5 }}>
+                In the order you picked them. The story above leads it. Pick a length over
+                two minutes, since a bulletin needs the room.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* The deliverable comes before the evidence: writing is why anyone opened
             this story, and burying the button under eight coverage links would put
             the product's whole point below the fold. */}
         <ScriptPanel
           storyId={String(item.id)}
+          storyIds={ids}
           voice={voice}
+          onGoVoice={onGoVoice}
           onVoiceChange={onVoiceChange}
           onGoTranscribe={onGoTranscribe}
           compact={compact}

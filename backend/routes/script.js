@@ -14,7 +14,8 @@ import Source from "../models/Source.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 import { writeScript, writeEnglishTwin, writePackaging } from "../services/scriptWriterService.js";
 import { buildMaterial } from "../services/sourceMaterial.js";
-import { getCategory } from "../services/categories.js";
+import { canonicalCategory, pickFormat, getCategory } from "../services/categories.js";
+import { laneForScript } from "../services/voiceLanes.js";
 import { buildVoiceProfile, getUsableProfile, profileStatus } from "../services/voiceProfileService.js";
 import { resolveProfile } from "../services/profileService.js";
 import { quote, PACKAGING_CREDITS, voiceAnalysisCost } from "../services/creditPricing.js";
@@ -26,6 +27,16 @@ const router = express.Router();
 // endpoint someone would hammer. Kept separate from the transcribe cap because
 // the two cost wildly different amounts.
 const DAILY_SCRIPT_LIMIT = parseInt(process.env.DAILY_SCRIPT_LIMIT || "30", 10);
+
+/**
+ * The most stories one bulletin may carry.
+ *
+ * Fourteen, taken from the largest real episode measured on a live channel
+ * rather than picked as a round number. Past that the per-story share of even
+ * an eight-minute script falls below the point where a story can be said at
+ * all, and the creator would be paying for a list of headlines.
+ */
+const MAX_BULLETIN_STORIES = parseInt(process.env.MAX_BULLETIN_STORIES || "14", 10);
 
 /**
  * Videos this account may have READ in a day.
@@ -51,14 +62,30 @@ const DAILY_VIDEO_READS = parseInt(process.env.DAILY_SOURCE_VIDEO_READS || "10",
  */
 router.get("/voice", authenticateToken, async (req, res) => {
   try {
-    const { channel, voice, profile, transcripts_available, stale } =
-      await profileStatus(req.user.id, req.query.profile);
+    const {
+      channel, voice, profile, transcripts_available, stale,
+      lanes, lane_counts, lane_stale, needs_category_rebuild, category,
+    } = await profileStatus(req.user.id, req.query.profile);
     return res.json({
       success: true,
       profile_id: String(channel._id),
       profile_name: channel.name || "",
       transcripts_available,
       stale,
+      // ── THE TWO VOICES ────────────────────────────────────────────────
+      // Everything the ordering screen needs to decide, on every drag of the
+      // duration slider, whether this length can be written at all and what
+      // to say if it cannot. Served here because every screen that could ask
+      // is already reading this endpoint, and a second source of truth is how
+      // the slider ends up promising a script the writer then refuses.
+      lanes,
+      lane_counts,
+      lane_stale,
+      category,
+      category_label: getCategory(category)?.label || "",
+      needs_category_rebuild,
+      long_building: !!voice?.long?.building,
+      long_build_error: voice?.long?.build_error || "",
       // The analysis now reads the videos first and runs to minutes, so the
       // client polls this instead of holding a request open. See
       // POST /profiles/:id/analyse.
@@ -75,9 +102,20 @@ router.get("/voice", authenticateToken, async (req, res) => {
       // still prefers its own live balance for the comparison, the same rule
       // ScriptOrder follows, so a top-up in another tab is not ignored.
       analysis: {
-        ...voiceAnalysisCost({ builds: voice?.builds || 0, videos: transcripts_available }),
+        ...voiceAnalysisCost({
+          builds: voice?.builds || 0,
+          videos: lane_counts?.short ?? transcripts_available,
+          categoryUpgrade: needs_category_rebuild,
+        }),
         builds: voice?.builds || 0,
-        videos: transcripts_available,
+        videos: lane_counts?.short ?? transcripts_available,
+      },
+      // Priced separately because it reads a different set of videos. It draws
+      // on the same free allowance, so a creator who has spent both pays for
+      // the long analysis, which is correct: it is a second real analysis.
+      long_analysis: {
+        ...voiceAnalysisCost({ builds: voice?.builds || 0, videos: lane_counts?.long || 0 }),
+        videos: lane_counts?.long || 0,
       },
       balance: await getBalance(req.user.id).catch(() => null),
     });
@@ -90,14 +128,17 @@ router.get("/voice", authenticateToken, async (req, res) => {
 /** POST /script/voice/rebuild  { profile? }, re-learn from that channel's videos. */
 router.post("/voice/rebuild", authenticateToken, async (req, res) => {
   try {
-    const { profile, built, reason } = await buildVoiceProfile(req.user.id, req.body?.profile);
+    const lane = String(req.body?.lane || "") === "long" ? "long" : "short";
+    const { profile, built, reason } = await buildVoiceProfile(req.user.id, req.body?.profile, { lane });
     if (!built) {
       return res.status(400).json({
         success: false,
         message:
           reason === "no_transcripts"
             ? "Transcribe at least one video first. That's what your voice is learned from."
-            : "Couldn't build a voice profile.",
+            : reason === "not_enough_long"
+              ? "We need three readable long videos to learn your multi-story style."
+              : "Couldn't build a voice profile.",
       });
     }
     return res.json({ success: true, profile: shapeProfile(profile) });
@@ -122,7 +163,16 @@ router.post("/", authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const newsId = String(req.body?.news_id || "");
+    // ── ONE STORY OR SEVERAL ────────────────────────────────────────────────
+    // `news_ids` is the bulletin path. The ORDER of the array is the creator's
+    // running order and is preserved end to end: they decided what leads, which
+    // is the one editorial judgement this product must never quietly override.
+    const newsIds = (Array.isArray(req.body?.news_ids) ? req.body.news_ids : [])
+      .map((v) => String(v || "").trim())
+      .filter(Boolean)
+      .slice(0, MAX_BULLETIN_STORIES);
+
+    const newsId = String(req.body?.news_id || "") || newsIds[0] || "";
     const sourceId = String(req.body?.source_id || "");
 
     if (!newsId && !sourceId) {
@@ -130,6 +180,7 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 
     let item = null;
+    let items = null;
     let source = null;
 
     if (sourceId) {
@@ -170,6 +221,35 @@ router.post("/", authenticateToken, async (req, res) => {
       }
       item = await NewsItem.findById(newsId).lean();
       if (!item) return res.status(404).json({ success: false, message: "Story not found" });
+
+      if (newsIds.length > 1) {
+        if (newsIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+          return res.status(400).json({ success: false, message: "Invalid story id" });
+        }
+        const found = await NewsItem.find({ _id: { $in: newsIds } }).lean();
+        const byId = new Map(found.map((f) => [String(f._id), f]));
+
+        // Re-ordered to match the request, because Mongo returns $in results in
+        // storage order and the creator's running order is the whole point.
+        items = newsIds.map((id) => byId.get(id)).filter(Boolean);
+
+        if (items.length !== newsIds.length) {
+          return res.status(404).json({
+            success: false,
+            message: "One of those stories is no longer available. Refresh and pick again.",
+          });
+        }
+        // A bulletin has to be one category: the fact rules, the format list and
+        // the voice are all category-scoped, and mixing would apply one
+        // category's editorial standard to another's material.
+        if (new Set(items.map((i) => i.category)).size > 1) {
+          return res.status(400).json({
+            success: false,
+            message: "Those stories are from different categories. Pick stories from one feed.",
+          });
+        }
+        item = items[0];
+      }
     }
 
     // Which channel this is for. Resolved before the cache check, because the
@@ -191,7 +271,13 @@ router.post("/", authenticateToken, async (req, res) => {
       // order costs only the writing.
       const key = source
         ? { source: source._id, duration_seconds: quote({ seconds: req.body?.seconds }).seconds }
-        : { news_item: item._id };
+        : items
+          // The whole running order, in order. Two bulletins over the same seven
+          // stories in a different sequence are two different videos, so an
+          // unordered match would hand back the wrong one; and without any match
+          // a double-click would bill twice for the identical script.
+          ? { news_items: items.map((i) => i._id), duration_seconds: quote({ seconds: req.body?.seconds }).seconds }
+          : { news_item: item._id, story_count: 1 };
       const existing = await Script.findOne({
         user: userId, ...key, profile: channel._id, status: { $ne: "failed" },
       })
@@ -317,9 +403,17 @@ router.post("/", authenticateToken, async (req, res) => {
         : {
             source_kind: "news",
             news_item: item._id,
+            // Only written for a real bulletin, so a single-story script keeps
+            // an empty array and every existing query behaves as it did.
+            ...(items ? { news_items: items.map((i) => i._id), story_count: items.length } : {}),
             story: item.cluster_id || "",
-            headline: item.title,
-            angle: item.ai_angle || "",
+            headline: items
+              // The history row for a bulletin has to name the video, not story
+              // one of fourteen, or My Scripts becomes a list of unrelated
+              // headlines with no way to tell which was the eight-minute one.
+              ? `${items.length} stories · ${item.title}`
+              : item.title,
+            angle: items ? "" : (item.ai_angle || ""),
           }),
     });
 
@@ -384,7 +478,7 @@ router.post("/", authenticateToken, async (req, res) => {
     // silently won. The flags are now passed explicitly, after the spread so
     // they beat the quote's `packaging` cost, and read from the request rather
     // than recovered from a price.
-    runScript(doc._id, userId, { item, sourceId: source?._id || null }, {
+    runScript(doc._id, userId, { item, items, sourceId: source?._id || null }, {
       ...order,
       englishTwin: !!req.body?.english,
       packaging: !!req.body?.packaging,
@@ -530,12 +624,18 @@ router.get("/:id", authenticateToken, async (req, res) => {
 async function runScript(id, userId, subject, order) {
   const started = Date.now();
   const { seconds = 60, englishTwin = false, packaging = false, profileId } = order || {};
-  const { item = null, sourceId = null } = subject || {};
+  const { item = null, items = null, sourceId = null } = subject || {};
 
   try {
+    // ── THE VOICE IS CHOSEN BY THE LENGTH THEY BOUGHT ───────────────────────
+    // `seconds` decides which of the creator's two voices this is written in,
+    // because it decides whether they are getting one product explained or
+    // fourteen in sequence. An unbuilt long lane throws here with a message
+    // naming what to add, and runScript's own catch refunds the order in full.
+    //
     // Built here rather than in the route so the first-ever script absorbs the
     // voice build without the request waiting on both.
-    const profile = await getUsableProfile(userId, { profileId, autoBuild: true });
+    const profile = await getUsableProfile(userId, { profileId, autoBuild: true, seconds });
     if (!profile) throw Object.assign(new Error("no profile"), {
       userMessage: "Add a video to this profile first. That's how we learn how you talk.",
     });
@@ -550,12 +650,26 @@ async function runScript(id, userId, subject, order) {
     // seconds newer, which is what a concurrent order from the same video needs
     // to see the cached transcript instead of buying a second read of it.
     const source = sourceId ? await Source.findById(sourceId).lean() : null;
-    const material = await buildMaterial({ item, source, seconds });
+    const material = await buildMaterial({ item, items, source, seconds });
+
+    // ── WHICH SHAPE OF VIDEO THIS IS ────────────────────────────────────────
+    // The category comes from the story; an Import or Idea has none, and then
+    // pickFormat returns null and the writer produces exactly what it always
+    // did. Story COUNT decides the format, with the ranker's per-item guess
+    // used only to break the tie at a single story: somebody who selected nine
+    // stories is making a bulletin whatever any one of them was judged to be.
+    const category = canonicalCategory(item?.category || "");
+    const lane = laneForScript(seconds);
+    const format = category
+      ? pickFormat(category, lane, material.story_count || 1, item?.ai_format || "")
+      : null;
 
     // Titles ride along with the script's own call, but only when the package
     // was bought: they are part of "Title, description & hashtags", not a
     // freebie attached to every script. See writeScript's `titles` option.
-    const out = await writeScript({ profile, material, seconds, titles: packaging });
+    const out = await writeScript({
+      profile, material, seconds, titles: packaging, category, format,
+    });
 
     await Script.updateOne(
       { _id: id },
@@ -568,6 +682,11 @@ async function runScript(id, userId, subject, order) {
           language: out.language,
           language_label: out.language_label,
           voice_confidence: profile.confidence || "",
+          // Recorded, not derived: which shape and which of the creator's two
+          // voices produced this is a fact about the past, and a history that
+          // re-derives itself from today's config is not a history.
+          format: format?.id || "",
+          voice_lane: lane,
           sources_used: out.sources_used,
           usage: out.usage || {},
           ms_taken: Date.now() - started,
@@ -784,6 +903,25 @@ function shapeProfile(p) {
     language_label: p.language_label || "",
     confidence: p.confidence || "thin",
     built_at: p.built_at,
+
+    // ── PROOF, NOT PROSE ──────────────────────────────────────────────────
+    // What was LEARNED still never leaves the server; sending the style_brief
+    // would hand over the asset the product is built around. What goes out is
+    // COUNTS: how many of their own phrases, how many transitions we captured.
+    // A creator looking at "9 transitions captured" can tell a real analysis
+    // from a shrug, which is exactly what the long lane needs to prove after
+    // asking them to upload three more videos.
+    signature_phrase_count: (p.signature_phrases || []).length,
+    category_voice_fields: Object.keys(p.category_voice || {}).length,
+    long: p.long?.built_at
+      ? {
+          built_at: p.long.built_at,
+          transcript_count: p.long.transcript_count || 0,
+          confidence: p.long.confidence || "thin",
+          transition_count: (p.long.category_voice?.bulletin_transitions || []).length,
+          category_voice_fields: Object.keys(p.long.category_voice || {}).length,
+        }
+      : null,
   };
 }
 

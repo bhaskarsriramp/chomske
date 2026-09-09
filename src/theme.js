@@ -133,7 +133,7 @@ export function cardBackground(index, active = false) {
  * reading; it is not asked to carry that alone.
  */
 export const CATEGORY_COLORS = {
-  ai_tech:        { ink: "#007887", solid: "#00A4B8", tint: "#EBF9FB", line: "#ABE7EE" },  // cyan   5.2:1
+  tech_gadgets:   { ink: "#007887", solid: "#00A4B8", tint: "#EBF9FB", line: "#ABE7EE" },  // cyan   5.2:1
   finance:        { ink: "#22640F", solid: "#3AAB1A", tint: "#F3F8F2", line: "#D0E2CB" },  // forest 7.2:1
   business:       { ink: "#267857", solid: "#36A879", tint: "#F2F8F5", line: "#CCE2D9" },  // pine   5.4:1
   crypto:         { ink: "#46832E", solid: "#59A73B", tint: "#F1F9ED", line: "#C5E6B8" },  // leaf   4.6:1
