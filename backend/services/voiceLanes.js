@@ -35,11 +35,16 @@
  * plainly to the creator instead of an arbitrary tier.
  *
  * ── WHY THE SHORT LANE NEEDED NO MIGRATION ───────────────────────────────────
- * routes/transcribe.js has always refused anything over MAX_VIDEO_SECONDS (90),
- * so every voice profile that has ever been built in this product was built from
+ * Until this file existed, routes/transcribe.js refused every video over ninety
+ * seconds, so every voice profile ever built in this product was built from
  * short-form video. The existing top-level fields on VoiceProfile therefore ARE
  * the short lane, already correct, already populated. The long lane is added
  * beside them as a sub-document rather than by restructuring what works.
+ *
+ * That also survives the ceiling moving to two minutes: raising it can only let
+ * MORE short-form video into a lane that already holds nothing else. The lane is
+ * derived from duration on every read rather than stored on the row, so old
+ * transcripts reclassify themselves correctly and no backfill is needed.
  */
 
 /* ── The three numbers ──────────────────────────────────────────────────────── */
@@ -47,11 +52,20 @@
 /**
  * The longest video that counts as short-form training material.
  *
- * Unchanged from the MAX_VIDEO_SECONDS it replaces, including the reasoning:
- * 90 rather than 60 because YouTube raised its own Shorts ceiling past a minute
- * and creators were being refused their own uploads for running a few seconds over.
+ * ── IT IS THE SAME NUMBER AS THE SCRIPT SPLIT, ON PURPOSE ────────────────────
+ * This was 90, inherited from the old MAX_VIDEO_SECONDS whose reasoning was
+ * about YouTube's Shorts ceiling. That was the wrong thing to peg it to, and it
+ * produced a rejection creators hit constantly: a 1m45s video, which is short
+ * form by any reading, was refused for being nine seconds past a limit derived
+ * from somebody else's product decision.
+ *
+ * The right peg is LANE_SPLIT_SECONDS. The short lane exists to write scripts
+ * under two minutes, so the videos that train it should be the videos that look
+ * like the thing it writes: under two minutes, one subject, start to finish. A
+ * training band and an output band that disagree is how a lane ends up learning
+ * from material it will never be asked to produce.
  */
-export const SHORT_MAX_SECONDS = parseInt(process.env.VOICE_SHORT_MAX_SECONDS || "90", 10);
+export const SHORT_MAX_SECONDS = parseInt(process.env.VOICE_SHORT_MAX_SECONDS || "120", 10);
 
 /**
  * The shortest video that counts as long-form training material.
@@ -104,13 +118,17 @@ export function laneForScript(seconds) {
 /**
  * Which lane a video of `duration` seconds trains, or null if it trains neither.
  *
- * ── WHY THERE IS A GAP IN THE MIDDLE ────────────────────────────────────────
- * 91 to 179 seconds belongs to neither lane, and that is on purpose rather than
- * an oversight in the arithmetic. A 2:30 video is too long to be the dense
- * hook-and-signoff sample the short lane wants, and too short to reliably
- * contain the multi-item structure the long lane exists to learn. Accepting it
- * into either lane would quietly poison that lane's training set with material
- * that does not demonstrate what the lane is for.
+ * ── WHY THERE IS STILL A GAP IN THE MIDDLE ──────────────────────────────────
+ * Two to three minutes belongs to neither lane, and that is on purpose rather
+ * than an oversight in the arithmetic. A 2:30 video is past the length the
+ * short lane writes at, and it is still, almost always, one subject: it does
+ * not contain the story-to-story joins the long lane exists to learn. Putting
+ * it in the long lane would quietly poison that lane's training set with
+ * material that never demonstrates the one thing that lane is for.
+ *
+ * The gap used to be ninety seconds wide and creators hit it constantly. At a
+ * short ceiling of two minutes it is a single minute, and everything inside it
+ * is genuinely ambiguous rather than merely unlucky.
  *
  * Callers turn null into an explicit refusal that names both bands, so a
  * creator is never left guessing which way to go.

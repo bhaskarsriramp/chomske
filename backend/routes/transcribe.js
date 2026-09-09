@@ -204,9 +204,9 @@ router.post("/", authenticateToken, async (req, res) => {
         duration,
         message:
           `That video is ${formatDuration(duration)}, which falls between the two kinds we ` +
-          `learn from. Add a short video (under ${SHORT_MAX_SECONDS} seconds) to teach us your ` +
-          `hook and sign-off, or a full-length one (over ${Math.round(LONG_MIN_SECONDS / 60)} ` +
-          `minutes) to teach us how you move between stories.`,
+          `learn from. Add a short video (under ${formatDuration(SHORT_MAX_SECONDS)}) to teach us ` +
+          `your hook and sign-off, or a full-length one (over ${formatDuration(LONG_MIN_SECONDS)}) ` +
+          `to teach us how you move between stories.`,
       });
     }
 

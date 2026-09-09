@@ -115,7 +115,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
         maxSeconds: data.max_seconds || 60,
         laneSlots: data.lane_slots || null,
         lanes: data.lanes || null,
-        shortMax: data.short_max_seconds || 90,
+        shortMax: data.short_max_seconds || 120,
         longMin: data.long_min_seconds || 180,
         splitSeconds: data.lane_split_seconds || 120,
       });
@@ -356,7 +356,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
         <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 16px", lineHeight: 1.6 }}>
           {isLong
             ? `Add up to ${laneSlot?.max || 5} of your longer videos, over ${Math.round((meta?.longMin || 180) / 60)} minutes each. In these you cover several products in a row, and what we learn is the part a Short can never show us: how you move from one story to the next.`
-            : `Add up to ${laneSlot?.max || 5} of your own short videos, under ${meta?.shortMax || 90} seconds each. We read how you open, the words you keep in English and how you sign off, then write new scripts that sound like you.`}
+            : `Add up to ${laneSlot?.max || 5} of your own short videos, under ${Math.round((meta?.shortMax || 120) / 60)} minutes each. We read how you open, the words you keep in English and how you sign off, then write new scripts that sound like you.`}
         </p>
 
         {/* ── THE TWO VOICES ──────────────────────────────────────────────
@@ -658,6 +658,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
             <div style={{ marginTop: 14 }}>
               <Videos
                 items={laneHistory}
+                isLong={isLong}
                 loading={!meta?.laneSlots}
                 isPhone={isPhone}
                 onDelete={setConfirmDelete}
@@ -769,7 +770,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
  * empty line and a list, because it appears in two places now: on its own
  * before there is a voice, and folded into what we learned once there is.
  */
-function Videos({ items, loading, isPhone, onDelete }) {
+function Videos({ items, loading, isPhone, onDelete, isLong = false }) {
   // Held back until the real list arrives. "Nothing added yet" shown for half a
   // second to someone who has four videos is a claim, and a wrong one.
   if (loading) return <VideoSkeleton />;
@@ -777,7 +778,9 @@ function Videos({ items, loading, isPhone, onDelete }) {
   if (!items.length) {
     return (
       <p style={{ fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.6, margin: 0 }}>
-        Nothing added yet. Paste a link to one of your own Shorts above.
+        {isLong
+          ? "Nothing added yet. Paste a link to one of your own longer videos above."
+          : "Nothing added yet. Paste a link to one of your own short videos above."}
       </p>
     );
   }
