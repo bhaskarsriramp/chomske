@@ -210,6 +210,7 @@ export async function writeScript({
   const formatBlock = renderFormat(format, material);
   const categoryVoiceBlock = renderCategoryVoice(profile, format);
   const performanceRule = renderPerformanceRule(profile);
+  const addressRule = renderAddressRule(profile, target);
 
   const prompt = `You are ghostwriting a short video script for a specific creator. It must be indistinguishable from something they wrote themselves.
 
@@ -264,7 +265,7 @@ ${formatBlock}
 4. ${BORROW_MANNER_NOT_CONTENT}
 5. LENGTH. ${lengthRule}
 6. ${performanceRule}
-7. ${ANTI_TELL}
+7. ${ANTI_TELL}${addressRule ? `\n8. ${addressRule}` : ""}
 
 Return STRICT JSON only:
 {
@@ -357,6 +358,12 @@ Return STRICT JSON only:
     const grade = gradeDraft(text, profile.metrics, {
       onScreenDensity: format?.onScreen?.density || null,
       showMePhrases: profile.category_voice?.show_me_phrases || [],
+      // The connective tissue, checked rather than hoped for. Every one of
+      // these came off this creator's own transcripts, so the check carries no
+      // assumption about which language they speak.
+      registerMarkers: profile.category_voice?.register_markers || [],
+      discourseParticles: profile.category_voice?.discourse_particles || [],
+      viewerAddress: profile.category_voice?.viewer_address || "",
       ...exampleAndSafeSpans(profile),
     });
     drift = grade.drift;
@@ -479,6 +486,9 @@ export function renderCategoryVoice(profile, format) {
     viewer_advice: "What they tell the viewer to DO",
     native_metaphor: "Figures of speech in their own language",
     reaction_beats: "Short standalone lines that carry feeling",
+    speech_register: "Which register of their language they speak",
+    section_transitions: "How they move between sections of one subject",
+    cross_promo: "How they point viewers at their own other videos",
   };
 
   const lines = [];
@@ -492,7 +502,14 @@ export function renderCategoryVoice(profile, format) {
     ? cv.bulletin_transitions.filter(Boolean)
     : [];
 
-  if (!lines.length && !transitions.length) return "";
+  // Computed before the emptiness check, not after it. The connective tissue
+  // has no entry in LABELS (it gets its own imperative block below rather than
+  // a bullet), so a profile carrying ONLY register markers and particles would
+  // otherwise fall through this guard and lose the one part of itself the
+  // writer most reliably drops.
+  const tissue = renderConnectiveTissue(cv);
+
+  if (!lines.length && !transitions.length && !tissue) return "";
 
   let block = `
 
@@ -528,8 +545,151 @@ stories plainly, in their own words, varying the join each time. Do not invent a
 catchphrase for them.`;
   }
 
+  block += tissue;
   block += renderOnScreen(cv, format);
   return block;
+}
+
+/**
+ * The words between the words.
+ *
+ * ── WHY THIS IS AN INSTRUCTION AND NOT ANOTHER BULLET ───────────────────────
+ * Everything renderCategoryVoice emits above is DESCRIPTION, and description is
+ * demonstrably enough for content moves: the creator's specs, prices, verdicts
+ * and on-screen cues all came back in the drafts, because each of them is a
+ * thing to say and the model had an example of it.
+ *
+ * It is demonstrably NOT enough for function words. Measured on one creator's
+ * four transcripts against the scripts written for him: his commonest particle
+ * ran at 1.76 per 100 words and the drafts used it zero times; he opens 12% of
+ * his sentences with one particular connector and the drafts opened none; 69%
+ * of his verb forms were the colloquial spoken ones and the drafts were 100%
+ * formal written. Roughly 35 expected occurrences, 2 delivered.
+ *
+ * The reason is mechanical rather than mysterious. A model writing in a
+ * language it knows well defaults to that language's WRITTEN register, because
+ * that is what most text is, and no amount of "match their style" moves it: the
+ * draft is clean, correct prose, and clean correct prose is precisely what a
+ * person talking does not produce. Being told the forms exist does not compete
+ * with that pull. Being told to use them, with the forms in hand and a grader
+ * counting them afterwards, does.
+ *
+ * Nothing here is language-specific. Whatever the analyst read off this
+ * creator's own transcripts is what gets quoted back.
+ */
+/**
+ * Talk TO the viewer, as often as they actually do.
+ *
+ * ── WHY A MEASURED NUMBER WAS NOT ENOUGH ────────────────────────────────────
+ * metricsBlock has always reported this: "Address: talks to the viewer (second
+ * person 4.9/100 words)". Reporting is not instructing, and the drafts came
+ * back at 1.6 — a third of his rate — with the grader flagging it and the
+ * rewrite failing to fix it. The same shape as the particle failure: a fact
+ * about the creator loses to the model's default, and the default here is
+ * strong, because the source material is news prose written in the third
+ * person and a model summarising it naturally keeps that register.
+ *
+ * Three things make it act instead:
+ *
+ *   1. A COUNT, NOT A RATE. "4.9 per 100 words" is arithmetic the model has to
+ *      do about a script it has not written yet. "About nine times in this
+ *      script" is a target it can check itself against as it writes.
+ *   2. THEIR OWN WORD FOR THE VIEWER, quoted, so this cannot be satisfied by
+ *      whatever second-person form the model reaches for first.
+ *   3. A TRANSFORM, not an exhortation. The gap is concentrated in one place:
+ *      specs and facts arrive as properties of a product and get written back
+ *      as properties of a product. Saying the same fact as something the viewer
+ *      GETS, CAN DO or WILL SEE is a mechanical rewrite of a sentence they
+ *      already have, which is a far easier instruction to follow than "be more
+ *      personal".
+ *
+ * Floor-checked before it is asked for: measured across this creator's four
+ * videos the rate ranges 3.0 to 7.8, so even his least viewer-directed video
+ * clears twice what the drafts produced. This is not a demand the material
+ * cannot support.
+ *
+ * Language-neutral: the rate and the word both come from this creator's own
+ * transcripts.
+ */
+export function renderAddressRule(profile, target) {
+  const rate = Number(profile?.metrics?.second_person_per_100) || 0;
+
+  // Below this a creator genuinely reports rather than addresses, and pushing
+  // them toward the viewer would be inventing a trait rather than matching one.
+  if (rate < 2) return "";
+
+  const mid = Number(target?.mid) || 0;
+  const times = Math.round((rate * mid) / 100);
+  if (!times) return "";
+
+  const own = (Array.isArray(profile?.category_voice?.viewer_address)
+    ? profile.category_voice.viewer_address
+    : [profile?.category_voice?.viewer_address])
+    .map((v) => String(v || "").trim())
+    .filter(Boolean);
+
+  return (
+    `TALK TO THEM. This creator addresses the viewer directly ${rate} times per 100 words, ` +
+    `which in a script this length is about ${times} times. That is a measured fact about ` +
+    `how they talk, and it is the single thing drafts for them get most wrong: the draft ` +
+    `describes the subject where they would be speaking to somebody.` +
+    (own.length ? ` Use their own word for the viewer: ${own.map((w) => `"${w}"`).join(", ")}.` : "") +
+    ` The fix is mechanical. The source material is written in the third person, about a ` +
+    `product. They do not talk that way. Wherever you would state a fact ABOUT the thing, ` +
+    `state it as what the viewer GETS, what they CAN DO with it, or what they are ABOUT TO ` +
+    `SEE. Same fact, same accuracy, addressed to a person. Do not manufacture the count with ` +
+    `filler questions at the end; it belongs spread through the body, on the specs and the ` +
+    `price, exactly where they put it.`
+  );
+}
+
+function renderConnectiveTissue(cv) {
+  const flat = (v) => (Array.isArray(v) ? v : [v]).map((x) => String(x || "").trim()).filter(Boolean);
+  const register = flat(cv.register_markers);
+  const particles = flat(cv.discourse_particles);
+  const never = flat(cv.never_does);
+
+  const parts = [];
+
+  if (register.length || particles.length) {
+    parts.push(
+`════ THE WORDS THEY ACTUALLY SPEAK WITH ════
+This is the part a written draft loses first, and it is the part a listener
+notices first. Do not write clean prose in this language. Write the way this
+person talks.`);
+
+    if (register.length) {
+      parts.push(
+`Their REGISTER. These are their own forms, and the formal written equivalents
+are NOT interchangeable with them. Use theirs, never the tidied-up version,
+every time the choice comes up:
+${register.map((r) => `  • "${r}"`).join("\n")}`);
+    }
+
+    if (particles.length) {
+      parts.push(
+`Their CONNECTIVES AND PARTICLES, with where each one sits. These are among the
+most frequent words in their speech, and a script without them reads as
+somebody else reading their notes:
+${particles.map((r) => `  • ${r}`).join("\n")}`);
+    }
+
+    parts.push(
+`These carry no meaning, so they can never make a claim and can never be wrong
+about the facts. That makes them the one thing here you should reuse freely, at
+the rate they use them.`);
+  }
+
+  if (never.length) {
+    parts.push(
+`════ THINGS THIS PERSON NEVER DOES ════
+Confirmed absent from every one of their transcripts. Writing any of these in is
+the fastest way to make the script sound like a different creator, and it is the
+kind of error they notice in the first line:
+${never.map((n) => `  • ${n}`).join("\n")}`);
+  }
+
+  return parts.length ? `\n\n${parts.join("\n\n")}` : "";
 }
 
 /**
@@ -697,6 +857,13 @@ function exampleAndSafeSpans(profile) {
     ...flat(cv.bulletin_transitions),
     ...flat(cv.segment_names),
     ...flat(cv.viewer_address),
+    // The connective tissue is meant to recur, by definition: a particle used
+    // once is not a particle. Flagging its reuse as contamination would fight
+    // the block above that asks for it.
+    ...flat(cv.register_markers),
+    ...flat(cv.discourse_particles),
+    ...flat(cv.section_transitions),
+    ...flat(cv.cross_promo),
   ];
 
   // Illustrations of a habit, quoting other videos about other products.

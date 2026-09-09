@@ -598,6 +598,94 @@ router.get("/", authenticateToken, async (req, res) => {
   }
 });
 
+/**
+ * GET /script/existing, have I already written this one?
+ *
+ * ── WHY THIS ENDPOINT HAD TO EXIST ──────────────────────────────────────────
+ * POST /script has always refused to bill twice for the same subject: without
+ * `force` it finds the previous script and hands it straight back as
+ * `cached: true`. That protected the wallet and nothing else, because the
+ * browser never asked. Clicking away from a story and back rebuilt the panel
+ * from nothing, so the creator was shown "Write this in my voice · 30 credits"
+ * over work they had already done, with My scripts as the only place it still
+ * existed. The cache was doing its job invisibly, which for a paid button is
+ * indistinguishable from not working.
+ *
+ * So the panel now asks first, and this answers.
+ *
+ * ── AND WHY IT DOES NOT KEY ON LENGTH ───────────────────────────────────────
+ * POST's cache key includes `duration_seconds` for a brought Source and for a
+ * bulletin, because a 60 second cut and a 3 minute cut of the same material are
+ * two different deliverables. This lookup deliberately ignores duration in all
+ * three cases and returns the NEWEST script for the subject.
+ *
+ * The question the two are answering is not the same one. POST asks "may I
+ * charge for this order", where length is part of the order. This asks "is
+ * there anything here already", and the honest answer to that is yes even when
+ * the creator is about to want a different length. Hiding a 60 second script
+ * because they might next ask for three minutes is the exact failure this
+ * endpoint exists to fix. The panel shows what is on file, says how long it is,
+ * and keeps ordering another one one click away.
+ */
+router.get("/existing", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const sourceId = String(req.query.source_id || "").trim();
+    const newsIds = String(req.query.news_ids || "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean)
+      .slice(0, MAX_BULLETIN_STORIES);
+    const newsId = String(req.query.news_id || "").trim() || newsIds[0] || "";
+
+    if (!newsId && !sourceId) {
+      return res.json({ success: true, script: null });
+    }
+
+    // Same channel scoping as POST. One story written for a creator's Telugu
+    // channel and their English one are two scripts, and showing either under
+    // the other is worse than showing neither.
+    const { profile: channel } = await resolveProfile(userId, req.query.profile_id || req.query.profile);
+
+    let key = null;
+    if (sourceId) {
+      if (!mongoose.Types.ObjectId.isValid(sourceId)) return res.json({ success: true, script: null });
+      key = { source: new mongoose.Types.ObjectId(sourceId) };
+    } else if (newsIds.length > 1) {
+      if (newsIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+        return res.json({ success: true, script: null });
+      }
+      // The running order is part of the identity of a bulletin, so this matches
+      // the sequence exactly rather than the set: the same seven stories in a
+      // different order is a different video, and handing back the other one
+      // would quietly rewrite an editorial decision.
+      key = { news_items: newsIds.map((id) => new mongoose.Types.ObjectId(id)) };
+    } else {
+      if (!mongoose.Types.ObjectId.isValid(newsId)) return res.json({ success: true, script: null });
+      key = { news_item: new mongoose.Types.ObjectId(newsId), story_count: 1 };
+    }
+
+    // `failed` is excluded because a failed script is refunded and there is
+    // nothing to hand back; `processing` is included on purpose, so a creator
+    // who navigates away mid-write and comes back finds it still being written
+    // rather than an order button that would charge them for a second copy.
+    const existing = await Script.findOne({
+      user: userId, ...key, profile: channel._id, status: { $ne: "failed" },
+    })
+      .sort({ created_at: -1 })
+      .lean();
+
+    return res.json({ success: true, script: existing ? shape(existing) : null });
+  } catch (err) {
+    console.error("[script] GET /existing failed:", err);
+    // Soft-fails to "nothing on file". The worst case of a wrong answer here is
+    // the panel a creator saw before this endpoint existed, and blocking the
+    // whole screen on a lookup that is an optimisation would be a worse trade.
+    return res.json({ success: true, script: null });
+  }
+});
+
 /** GET /script/:id, poll target. */
 router.get("/:id", authenticateToken, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {

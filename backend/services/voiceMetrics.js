@@ -46,27 +46,72 @@ const SCRIPTS = [
   ["gujarati", /[઀-૿]/g, "Gujarati"],
   ["gurmukhi", /[਀-੿]/g, "Punjabi"],
   ["odia", /[଀-୿]/g, "Odia"],
+  // Arabic block: Urdu, and Kashmiri and Sindhi as commonly written. Without
+  // it an Urdu transcript matches no native script and is reported as English,
+  // which then tells the writer to produce an English script.
+  ["arabic", /[؀-ۿ]/g, "Urdu"],
 ];
 
 const LATIN_WORD = /^[A-Za-z][A-Za-z'’.-]*$/;
 
 /**
- * Second-person and first-person markers, per language family.
- *
+ * ── SECOND- AND FIRST-PERSON MARKERS, AND WHY THIS IS ONLY A SEED ──────────
  * Whether a creator talks TO the viewer or ABOUT the subject is one of the
- * largest felt differences between two channels covering identical news, and it
- * is a handful of pronouns away from being measurable.
+ * largest felt differences between two channels covering identical news, and
+ * the verdict computed from it goes straight into the writing prompt.
+ *
+ * Which is exactly why the list below cannot be the whole answer. It covers
+ * Telugu, Hindi and English. dominantScript() above recognises ten scripts.
+ * For the other seven the count came back 0 and the verdict came back
+ * "balanced", so a Tamil creator saying "நீங்க" in every sentence, or a
+ * Bengali one saying "আপনি", was described to the writer as detached, and the
+ * writer duly produced a detached script. Measured, not theorised: see the
+ * four-language check in the commit that added this comment.
+ *
+ * Adding seven more lists would move the same bug to Urdu, to Konkani, to a
+ * creator who addresses the room rather than the viewer. So the list is a
+ * SEED, and two things override it:
+ *
+ *   1. markers passed in by the caller, taken from THIS creator's own
+ *      analysed speech (see measureVoice's `opts`), which is the only source
+ *      that is right by construction; and
+ *   2. silence. When neither the seed nor the creator's own markers match
+ *      anything, `address` comes back empty and metricsBlock omits the line
+ *      entirely. An unmeasured trait must not be reported as a measured one:
+ *      saying nothing costs the writer a hint, and saying "balanced" about a
+ *      creator who addresses the viewer constantly costs them their voice.
  */
-const YOU_MARKERS = [
-  "मीरु", "మీరు", "మీకు", "మీ", "మిమ్మల్ని",           // Telugu
+const SEED_YOU = [
+  "మీరు", "మీకు", "మీ", "మిమ్మల్ని",                     // Telugu
   "आप", "आपको", "आपके", "आपका", "तुम", "तुम्हें", "तेरा",   // Hindi
   "you", "your", "yours", "guys",
 ];
-const ME_MARKERS = [
+const SEED_ME = [
   "నేను", "నా", "నాకు", "మనం",                          // Telugu
   "मैं", "मुझे", "मेरा", "मेरी", "हम", "हमें",              // Hindi
   "i", "me", "my", "we", "our",
 ];
+
+/**
+ * Split a creator's own analysed phrases into countable tokens.
+ *
+ * `viewer_address` holds what THIS person calls their viewer, quoted verbatim
+ * from their transcripts in their own language, so it is the one address
+ * marker that is correct for every creator without anybody maintaining a
+ * table. It is a phrase, not a token, so it is split and the very short
+ * fragments dropped: a one-character particle would match half the transcript.
+ */
+function markerTokens(input) {
+  const parts = Array.isArray(input) ? input : [input];
+  const out = new Set();
+  for (const part of parts) {
+    for (const w of words(String(part || ""))) {
+      const k = w.toLowerCase();
+      if (k.length >= 2) out.add(k);
+    }
+  }
+  return [...out];
+}
 
 /* ── Tokenising ─────────────────────────────────────────────────────────── */
 
@@ -130,7 +175,7 @@ function byDocFrequency(perDoc, minDocs, limit) {
 
 /* ── One transcript ─────────────────────────────────────────────────────── */
 
-function measureOne(t) {
+function measureOne(t, youSet, meSet) {
   const text = String(t.text || "");
   const sents = sentences(text);
   const toks = words(text);
@@ -172,8 +217,8 @@ function measureOne(t) {
     starters.set(k, (starters.get(k) || 0) + 1);
   }
 
-  const you = toks.filter((w) => YOU_MARKERS.includes(w.toLowerCase())).length;
-  const me = toks.filter((w) => ME_MARKERS.includes(w.toLowerCase())).length;
+  const you = toks.filter((w) => youSet.has(w.toLowerCase())).length;
+  const me = toks.filter((w) => meSet.has(w.toLowerCase())).length;
 
   const secs = Number(t.duration_seconds) || 0;
 
@@ -218,11 +263,22 @@ const STOP_EN = new Set([
  * @param {Array<{text, duration_seconds, title, language_label}>} transcripts
  * @returns {object|null} null when there is not enough text to measure honestly
  */
-export function measureVoice(transcripts) {
+/**
+ * @param {object} [opts]
+ * @param {string|string[]} [opts.viewerAddress]  what THIS creator calls their
+ *   viewer, verbatim from their own analysed speech. Counted alongside the seed
+ *   above, which is what makes the address metric work in a language nobody
+ *   wrote a pronoun list for.
+ */
+export function measureVoice(transcripts, opts = {}) {
   const rows = (transcripts || []).filter((t) => String(t?.text || "").trim().length > 40);
   if (!rows.length) return null;
 
-  const each = rows.map(measureOne);
+  const ownYou = markerTokens(opts.viewerAddress);
+  const youSet = new Set([...SEED_YOU, ...ownYou].map((w) => w.toLowerCase()));
+  const meSet = new Set(SEED_ME.map((w) => w.toLowerCase()));
+
+  const each = rows.map((t) => measureOne(t, youSet, meSet));
 
   const tokens = each.reduce((n, m) => n + m.tokens, 0);
   const latin = each.reduce((n, m) => n + m.latin, 0);
@@ -287,7 +343,12 @@ export function measureVoice(transcripts) {
     // ── Who they are talking to ──
     second_person_per_100: round(tokens ? (you / tokens) * 100 : 0, 1),
     first_person_per_100: round(tokens ? (me / tokens) * 100 : 0, 1),
-    address: you > me * 1.3 ? "talks to the viewer" : me > you * 1.3 ? "talks about themselves" : "balanced",
+    // Empty when nothing matched at all, which means "not measured in this
+    // language", not "balanced". metricsBlock drops the line rather than
+    // asserting a stance nobody counted. See the seed comment above.
+    address: (you + me) === 0
+      ? ""
+      : you > me * 1.3 ? "talks to the viewer" : me > you * 1.3 ? "talks about themselves" : "balanced",
 
     // ── Delivery ──
     words_per_second: paces.length ? round(paces.reduce((a, b) => a + b, 0) / paces.length, 2) : null,
@@ -319,8 +380,16 @@ export function metricsBlock(m) {
     `Measured across ${m.videos} video${m.videos === 1 ? "" : "s"} (${m.words} words). These numbers are FACTS about this creator, computed from the transcripts. Do not contradict them.`,
     ``,
     `Base script: ${m.script}`,
-    `English mixed in: ${pc(m.english_ratio)} of all words`,
-    m.english_kept.length ? `Words they keep in English: ${m.english_kept.slice(0, 20).join(", ")}` : "",
+    // ── A CREATOR WHO SPEAKS ENGLISH IS NOT "98% CODE-MIXED" ──────────────
+    // english_ratio counts Latin-script words, which is exactly right when the
+    // base language is written in another script and meaningless when it is
+    // not: an English creator scores ~98%, and their commonest nouns get
+    // listed to the writer as "words they keep in English", which reads as an
+    // instruction to preserve a code-mix that does not exist.
+    m.script === "English" ? "" : `English mixed in: ${pc(m.english_ratio)} of all words`,
+    m.script !== "English" && m.english_kept.length
+      ? `Words they keep in English: ${m.english_kept.slice(0, 20).join(", ")}`
+      : "",
     ``,
     `Sentence length: ${m.mean_sentence_words} words on average (median ${m.median_sentence_words})`,
     `Short bursts (<=6 words): ${pc(m.short_sentence_ratio)} of sentences`,
@@ -328,7 +397,9 @@ export function metricsBlock(m) {
     `Questions: ${pc(m.question_ratio)} of sentences end in one`,
     m.exclaim_ratio > 0.02 ? `Exclamations: ${pc(m.exclaim_ratio)} of sentences` : "",
     ``,
-    `Address: ${m.address} (second person ${m.second_person_per_100}/100 words, first person ${m.first_person_per_100}/100)`,
+    m.address
+      ? `Address: ${m.address} (second person ${m.second_person_per_100}/100 words, first person ${m.first_person_per_100}/100)`
+      : "",
     m.words_per_second ? `Delivery: ${m.words_per_second} words per second` : "",
     ``,
     m.repeated_phrases.length ? `Phrases repeated across videos: ${m.repeated_phrases.slice(0, 12).join(" | ")}` : "",
@@ -388,7 +459,13 @@ export function longestReusedSpan(draft, examples, safePhrases, minWords = 5) {
 }
 
 export function gradeDraft(text, target, opts = {}) {
-  const measured = measureVoice([{ text, duration_seconds: null }]);
+  // The creator's own word for their viewer is handed down here for the same
+  // reason it is handed to the build: without it the second-person count is
+  // zero in every language the seed list does not cover, and the address check
+  // below would fire on every draft in those languages instead of none.
+  const measured = measureVoice([{ text, duration_seconds: null }], {
+    viewerAddress: opts.viewerAddress,
+  });
   if (!measured || !target) return { ok: true, drift: [], measured };
 
   const drift = [];
@@ -454,7 +531,7 @@ export function gradeDraft(text, target, opts = {}) {
   // Absolute gap, not relative: going from 40% English to 20% is the same felt
   // wrongness whichever direction it moves, and a ratio blows up near zero.
   const eGap = measured.english_ratio - target.english_ratio;
-  if (Math.abs(eGap) > 0.12) {
+  if (target.script !== "English" && Math.abs(eGap) > 0.12) {
     drift.push(
       `English mixing is ${pc(measured.english_ratio)} but this creator uses ${pc(target.english_ratio)}. ` +
       (eGap < 0
@@ -476,6 +553,83 @@ export function gradeDraft(text, target, opts = {}) {
   if (target.question_ratio > 0.12 && measured.question_ratio < target.question_ratio / 2) {
     drift.push(
       `They end ${pc(target.question_ratio)} of sentences with a question; this draft has ${pc(measured.question_ratio)}. Ask the viewer something.`
+    );
+  }
+
+  /* ── THE CONNECTIVE TISSUE, CHECKED RATHER THAN REQUESTED ─────────────────
+     These three are the reason gradeDraft grew past its original three axes.
+
+     Measured on one creator: at his own rates a 332-word script should carry
+     roughly 35 instances of his register, his particles and his way of
+     addressing the viewer. The drafts carried 2. Every one of those traits was
+     already described to the writer in prose, and prose lost to the model's
+     pull toward clean written language in that creator's tongue, every time.
+
+     So they are counted. All three are matched against strings the analyst read
+     off THIS creator's own transcripts, never a built-in list, which is what
+     makes them work the same way for a creator in any language.
+
+     Each is the weakest useful test, ZERO where there should be many, for the
+     same reason as the cue check above: a rewrite costs the creator a doubled
+     wait, and it should only be spent on a draft that missed the trait
+     completely rather than one that under-used it slightly. */
+
+  const has = (entries) => {
+    const hay = String(text || "");
+    return (entries || []).some((raw) => {
+      // Entries may arrive annotated ("<particle> - start of a sentence"),
+      // because knowing where a particle sits is what makes it usable. Split on
+      // the common separators and test the short fragments, so the check works
+      // whether the analyst annotated the entry or not.
+      const parts = String(raw || "").split(/\s[-–—:(]\s*|\(/);
+      return parts.some((p) => {
+        const frag = p.trim().replace(/[)"']+$/g, "");
+        return frag.length >= 2 && frag.split(/\s+/).length <= 4 && hay.includes(frag);
+      });
+    });
+  };
+
+  const register = opts.registerMarkers || [];
+  if (register.length && !has(register)) {
+    drift.push(
+      `This draft is written in the formal version of their language. They do not talk that ` +
+      `way: use their own forms, verbatim, wherever the choice comes up. ` +
+      `${register.slice(0, 6).map((r) => `"${r}"`).join(", ")}.`
+    );
+  }
+
+  const particles = opts.discourseParticles || [];
+  if (particles.length && !has(particles)) {
+    drift.push(
+      `Not one of this creator's connecting words or particles appears in this draft, and ` +
+      `they are among the most frequent words in their speech. Work them in where they ` +
+      `naturally sit: ${particles.slice(0, 6).map((p) => `"${p}"`).join(", ")}.`
+    );
+  }
+
+  // Only when the creator demonstrably addresses the viewer. A creator who
+  // reports rather than addresses is not drifting by doing the same.
+  if (
+    target.second_person_per_100 >= 2 &&
+    measured.second_person_per_100 < target.second_person_per_100 / 2
+  ) {
+    // Said as a shortfall in SENTENCES to convert, not as a rate to hit. The
+    // first version of this message quoted the two rates and asked the model to
+    // "turn the flat statements back into things said to the viewer", and the
+    // rewrite did not move the number at all: there was nothing in it to act
+    // on. This names the deficit, where to spend it, and the transform.
+    const short = Math.max(
+      1,
+      Math.round(((target.second_person_per_100 - measured.second_person_per_100) * measured.words) / 100),
+    );
+    drift.push(
+      `They address the viewer ${target.second_person_per_100} times per 100 words; this draft manages ` +
+      `${measured.second_person_per_100}. Roughly ${short} more sentence${short === 1 ? "" : "s"} need to be ` +
+      `spoken TO the viewer instead of about the product` +
+      (opts.viewerAddress ? `, using their own word for them: "${opts.viewerAddress}"` : "") +
+      `. Take the spec and price sentences and say the same facts as what the viewer gets, what they can ` +
+      `do with it, or what they are about to see. Change nothing about the facts themselves, and do not ` +
+      `add questions at the end to make up the count.`
     );
   }
 

@@ -133,11 +133,13 @@ const PROMPT_HEAD = `You are a voice analyst. Below are transcripts from ONE cre
 
 Your job: describe how THIS SPECIFIC PERSON talks, precisely enough that a writer could produce a new script nobody could tell apart from theirs.
 
-Be concrete and specific. "Energetic and engaging" is useless, every creator sounds like that in a description. "Opens by addressing the viewer as भाई and asking a question that assumes they already disagree" is useful.
+Be concrete and specific. "Energetic and engaging" is useless, every creator sounds like that in a description. "Opens with the same familiar word for the viewer every time, then asks a question that assumes they already disagree" is useful.
+
+Do not carry any word, phrase or habit from this instruction INTO your answer. The examples here describe shapes, not content. Every quoted string you return must come from the transcripts below.
 
 CRITICAL RULES:
-- Quote verbatim. Every example you give must be copied EXACTLY from the transcripts, in the original script (Devanagari stays Devanagari). Never translate, never transliterate, never tidy up.
-- If the creator mixes English into another language, record WHICH kinds of words stay English. This is the most distinctive thing about Indian tech creators and the easiest thing to get wrong.
+- Quote verbatim. Every example you give must be copied EXACTLY from the transcripts, in whatever script the transcript uses, unchanged. Never translate, never transliterate, never tidy up, and never convert one script into another.
+- If the creator mixes English into another language, record WHICH kinds of words stay English. This is the most distinctive thing about Indian tech creators and the easiest thing to get wrong. If they speak English throughout, say so and skip this rather than inventing a mix.
 - Base everything on evidence in the transcripts. If there is only one video, say what you can see and do not invent patterns you have no evidence for.
 - Note their filler words and verbal tics. These are what make a script sound human rather than written.
 
@@ -262,7 +264,7 @@ const PROMPT_COMPACT = `You are a voice analyst. Below are transcripts from ONE 
 
 Describe how THIS SPECIFIC PERSON talks, precisely enough that a writer could produce a new script nobody could tell apart from theirs.
 
-Quote verbatim, in the original script. Never translate, never transliterate, never tidy up. Record which kinds of words they keep in English.
+Quote verbatim, in whatever script the transcript uses. Never translate, never transliterate, never tidy up. Record which kinds of words they keep in English, or say they speak English throughout.
 
 Keep every field SHORT. Return STRICT JSON only, no markdown fences:
 {
@@ -647,7 +649,13 @@ export async function buildVoiceProfile(userId, profileId, { lane = SHORT } = {}
   // voice analysis could not succeed at all. It is also what supplies
   // words_per_second, which is how a chosen duration becomes a word target in
   // scriptWriterService.js.
-  const metrics = measureVoice(transcripts);
+  //
+  // `viewer_address` is handed across because it is the creator's OWN word for
+  // their viewer, quoted verbatim from these same transcripts in whatever
+  // language they speak. Without it the second-person count relies on a seed
+  // list covering three languages, and every creator outside it was measured
+  // at zero and reported to the writer as detached.
+  const metrics = measureVoice(transcripts, { viewerAddress: parsed.viewer_address });
 
   // ── WHERE THIS LANE'S ANSWERS LAND ────────────────────────────────────────
   // The short lane writes to the top level, which is where it has always

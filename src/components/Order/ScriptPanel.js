@@ -7,6 +7,7 @@ import { useVoice } from "../../state/VoiceContext";
 import VoiceAnalysing from "../Transcribe/VoiceAnalysing";
 import ScriptToggle, { EnglishNote } from "./ScriptToggle";
 import UploadPackage from "./UploadPackage";
+import { timeAgo } from "../News/newsUtils";
 
 /**
  * Turn whatever is selected into a script in the creator's own voice.
@@ -58,6 +59,21 @@ export default function ScriptPanel({
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
+  // ── WHAT IS ALREADY ON FILE FOR THIS SUBJECT ────────────────────────────
+  // Starts true, before any lookup has been made, and that default is the
+  // whole point. The order button carries a price, and rendering it for the
+  // half second between opening a story and hearing back is how somebody pays
+  // thirty credits for a script they already own. "I don't know yet" and
+  // "there is nothing here" have to look different on screen, so they are
+  // different states.
+  const [lookingUp, setLookingUp] = useState(true);
+
+  // They have seen the script on file and want a different one anyway, at a
+  // different length or simply another go. A flag rather than clearing
+  // `script`, so backing out of that order returns them to the finished work
+  // instead of to an empty panel.
+  const [reorder, setReorder] = useState(false);
+
   // The balance lives in one place for the whole app (see CreditsContext). It
   // is shown in the sidebar and the mobile header at the same time as here, and
   // three components each holding their own copy is three numbers that drift.
@@ -82,13 +98,20 @@ export default function ScriptPanel({
   // the subject is the story and on Import and Idea it is the source, and a
   // panel that only watched one of them would leave the other's script on
   // screen under something it was not written from.
-  const subjectKey = `${storyId || ""}|${sourceId || ""}`;
+  //
+  // The picked list is part of the key, not only its first story. Unticking the
+  // second of three stories leaves the leader unchanged, so a key built from
+  // `storyId` alone would hold a three-story bulletin on screen underneath a
+  // two-story order.
+  const subjectKey = `${storyId || ""}|${(storyIds || []).join(",")}|${sourceId || ""}`;
   useEffect(() => {
     clearInterval(pollRef.current);
     setScript(null);
     setError("");
     setCopied(false);
     setBusy(false);
+    setReorder(false);
+    setLookingUp(true);
   }, [subjectKey]);
 
   useEffect(() => () => clearInterval(pollRef.current), []);
@@ -127,6 +150,60 @@ export default function ScriptPanel({
   }, [onVoiceChange, refreshCredits]);
 
   /**
+   * ── ASK BEFORE OFFERING TO SELL ─────────────────────────────────────────
+   * POST /script has always refused to bill twice for the same story: it finds
+   * the previous script and returns it as `cached`. What it could not do is
+   * stop the panel OFFERING to write one, because the panel never asked. So
+   * clicking away from a story and back showed "Write this in my voice · 30
+   * credits" over finished work, and My scripts was the only place that work
+   * still appeared to exist. A cache nobody can see is indistinguishable from
+   * a cache that does not work.
+   *
+   * Runs on every subject change, including back to one visited a minute ago,
+   * because the answer changes: the script may have been written since, on this
+   * screen or another tab.
+   */
+  useEffect(() => {
+    if (!storyId && !sourceId) { setLookingUp(false); return; }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/script/existing", {
+          params: {
+            news_id: storyId || undefined,
+            news_ids: storyIds && storyIds.length > 1 ? storyIds.join(",") : undefined,
+            source_id: sourceId || undefined,
+            profile_id: profileId || undefined,
+          },
+        });
+        // Arrowing down the feed opens a lookup per story; only the one they
+        // are still looking at may write to this panel.
+        if (cancelled) return;
+        if (data.script) {
+          setScript(data.script);
+          // Still being written, most likely because they navigated away
+          // mid-generation and came back. Pick the poll up rather than leaving
+          // a spinner that resolves for nobody.
+          if (data.script.status === "processing" || data.script.extras_pending) {
+            setBusy(true);
+            startPolling(data.script.id);
+          }
+        }
+      } catch {
+        /* "nothing on file" is the safe answer: it lands on exactly the panel
+           that existed before this lookup did, and blocking the screen on an
+           optimisation would be the worse trade. */
+      } finally {
+        if (!cancelled) setLookingUp(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subjectKey, profileId, startPolling]);
+
+  /**
    * @param {object} order  { seconds, english, packaging }: what they chose in
    *   ScriptOrder. Absent on a regenerate, which repeats the original order.
    */
@@ -134,6 +211,7 @@ export default function ScriptPanel({
     if (busy) return;
     setError("");
     setCopied(false);
+    setReorder(false);
     setBusy(true);
     try {
       // The voice is sent explicitly rather than left to the server's default.
@@ -250,14 +328,53 @@ export default function ScriptPanel({
         <NeedsVoice onGoTranscribe={onGoTranscribe} />
       )}
 
-      {!buildingVoice && !script && (hasVoice || voice?.transcripts_available > 0) && (
+      {/* Still asking whether this story already has a script. Shown instead of
+          the order panel rather than alongside it: the button underneath says
+          "30 credits", and a button with a price on it must never appear on a
+          screen that is about to discover the work is already done. */}
+      {!buildingVoice && lookingUp && !script && <LookingUp />}
+
+      {/* `reorder` is the second door into this: they have read what is on file
+          and want another one anyway. */}
+      {!buildingVoice && !lookingUp && (!script || reorder) &&
+        (hasVoice || voice?.transcripts_available > 0) && (
         <div>
+          {reorder && (
+            <div
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                gap: 12, flexWrap: "wrap", marginBottom: 12,
+              }}
+            >
+              <span style={{ fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.55 }}>
+                You've written this one already. This orders a second version.
+              </span>
+              <button
+                type="button"
+                onClick={() => setReorder(false)}
+                className="hg-btn-ghost"
+                style={{
+                  fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
+                  border: "1px solid var(--line)", background: "var(--card)",
+                  color: "var(--ink-body)", cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                Back to it
+              </button>
+            </div>
+          )}
           <ScriptOrder
             busy={busy}
-            onGenerate={(order) => generate(false, order)}
+            // The force flag IS the re-order flag. Without it the server finds
+            // the script already on file and hands the same one back, so the
+            // creator presses a button that promises a new version and watches
+            // nothing change. With it, on the first order, every double-click
+            // would be a second charge, which is what the cache is there to
+            // prevent. Both are correct in exactly one of the two states.
+            onGenerate={(order) => generate(reorder, order)}
             compact={compact}
             sourceId={sourceId}
-            cta={cta}
+            cta={reorder ? "Write another version" : cta}
             onGoVoice={onGoVoice || onGoTranscribe}
           />
           {!hasVoice && (
@@ -297,13 +414,14 @@ export default function ScriptPanel({
         </div>
       )}
 
-      {script?.status === "done" && (
+      {script?.status === "done" && !reorder && (
         <Result
           script={script}
           compact={compact}
           copied={copied}
           onCopy={copyScript}
           busy={busy}
+          onWriteAnother={() => setReorder(true)}
         />
       )}
     </section>
@@ -352,6 +470,23 @@ function NeedsVoice({ onGoTranscribe }) {
   );
 }
 
+/**
+ * The half second before we know whether this story already has a script.
+ *
+ * Shaped like the order panel it replaces so the pane does not jump when the
+ * answer lands, and silent: it is too short-lived to deserve a sentence, and
+ * "checking…" on every story a creator arrows past would read as a slow app.
+ */
+function LookingUp() {
+  return (
+    <div aria-hidden="true" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="hg-skel" style={{ height: 13, borderRadius: 5, width: "34%" }} />
+      <div className="hg-skel" style={{ height: 40, borderRadius: 10 }} />
+      <div className="hg-skel" style={{ height: 44, borderRadius: 10, width: "52%" }} />
+    </div>
+  );
+}
+
 function Writing({ note }) {
   return (
     <div
@@ -378,7 +513,7 @@ function Writing({ note }) {
   );
 }
 
-function Result({ script, compact, copied, onCopy }) {
+function Result({ script, compact, copied, onCopy, onWriteAnother }) {
   const [view, setView] = useState("native");
 
   // A script can arrive without its twin and gain it a moment later (the extras
@@ -464,6 +599,32 @@ function Result({ script, compact, copied, onCopy }) {
         <p style={{ fontSize: 12, color: "var(--ink-mute)", margin: "12px 0 0", lineHeight: 1.6 }}>
           Written from {script.sources_used.length} source
           {script.sources_used.length === 1 ? "" : "s"} listed below.
+        </p>
+      )}
+
+      {/* ── ORDERING ANOTHER ONE IS DELIBERATELY DOWN HERE ─────────────────
+          Not in the card header next to Copy. A button that charges full price
+          for a second attempt does not belong one slip of the thumb away from
+          the one thing everybody came to press, which is why Rewrite was taken
+          out of that header in the first place. This is the same decision: it
+          says when the script was written, which is the fact somebody
+          returning to a story actually needs, and offers the re-order as a
+          sentence rather than a control. */}
+      {onWriteAnother && (
+        <p style={{ fontSize: 12, color: "var(--ink-mute)", margin: "8px 0 0", lineHeight: 1.6 }}>
+          Written {timeAgo(script.created_at)}
+          {script.duration_seconds ? `, ${fmtDuration(script.duration_seconds)}` : ""}.{" "}
+          <button
+            type="button"
+            onClick={onWriteAnother}
+            style={{
+              padding: 0, border: "none", background: "none", font: "inherit",
+              color: "var(--ink-body)", fontWeight: 600, textDecoration: "underline",
+              textUnderlineOffset: 2, cursor: "pointer",
+            }}
+          >
+            Write another version
+          </button>
         </p>
       )}
     </div>

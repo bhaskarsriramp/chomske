@@ -257,8 +257,26 @@ export const CATEGORIES = [
        * creator is CHARGED to pick up questions they never asked to be asked.
        * A mismatch on either the category or this number earns the free rebuild.
        */
-      version: 3,
+      version: 5,
 
+      /**
+       * ── NO EXAMPLE IN THIS FILE MAY COME FROM A REAL CREATOR ─────────────
+       * Every string below is sent, unchanged, to the analyser for EVERY
+       * creator on the platform. So an example phrase here is not an
+       * illustration, it is a thumbprint: the analyser reads "reaction beats,
+       * for example 'wow, nice'" and goes looking for that beat, in that
+       * register, in a language the creator may not speak. Version 3 of this
+       * spec carried one Telugu creator's own lines as the examples for
+       * reaction_beats, viewer_advice, native_metaphor and show_me_phrases,
+       * and his measured on-screen-cue rate as the expected rate for
+       * everybody. Every profile built against it was pulled toward one man
+       * in one language.
+       *
+       * The rule, and it has no exceptions: THESE PROMPTS DESCRIBE THE MOVE.
+       * THE CREATOR'S OWN TRANSCRIPTS SUPPLY THE WORDS. A unit ('6000 mAh')
+       * is a fact about hardware and may be quoted. Anything a person would
+       * SAY may not.
+       */
       guidance:
         `This creator makes technology and gadget videos. The most distinctive thing ` +
         `about them is NOT their accent or their energy, it is the specific vocabulary ` +
@@ -267,25 +285,31 @@ export const CATEGORIES = [
         `original script. Where they keep an English word (and for model numbers, ` +
         `brand names and units they almost always will), record that it stays English.\n\n` +
         `Pay particular attention to three things a transcript makes easy to miss, ` +
-        `because they read as filler and are not. Measured across four of one creator's ` +
-        `videos, 13% of their sentences POINT AT SOMETHING ON SCREEN, 12% carry a ` +
-        `personal reaction or memory, and 6% stop to explain what an unfamiliar company ` +
-        `or unit actually is. Those sentences are a third of the script and they are the ` +
-        `difference between a piece of writing and something a person can record.`,
+        `because they read as filler and are not: sentences that POINT AT SOMETHING ON ` +
+        `SCREEN, sentences carrying a personal reaction or a remembered experience, and ` +
+        `sentences that stop to explain what an unfamiliar company, unit or acronym ` +
+        `actually is. On a creator who leans on them these can be a third of the script, ` +
+        `and they are the difference between a piece of writing and something a person ` +
+        `can stand in front of a camera and record. Report THIS creator's own rate, read ` +
+        `off their transcripts. Some creators barely do any of it; that is a finding, not ` +
+        `a gap to fill.`,
 
       // Asked in both lanes: these are true of the creator, not of the format.
       fields: {
         spec_delivery:
-          "How they voice a specification. Do they say the unit ('6000 mAh', '120 hertz') " +
-          "or round it into speech ('chhe hazaar ka battery')? Do they pair every spec " +
-          "with a real-world consequence ('do din chalega') or just state it? Give verbatim examples.",
+          "How they voice a specification. Do they read the unit out as written ('6000 mAh', " +
+          "'120 hertz'), or round it into ordinary speech using their own language's number " +
+          "words? Do they pair every spec with a real-world consequence, or just state it and " +
+          "move on? Give verbatim examples in their own words.",
         price_talk:
-          "How they say money. '₹15,000' spoken as digits, as 'pandrah hazaar', as 'fifteen " +
-          "thousand', or mixed? Do they always name a price, and do they pass judgement on " +
-          "the value out loud? Verbatim examples.",
+          "How they say money. Is a figure like '₹15,000' spoken as digits, in their own " +
+          "language's number words, in English number words, or mixed? Do they always name a " +
+          "price, do they talk in price BANDS ('under X') as well as exact figures, and do " +
+          "they pass judgement on the value out loud? Verbatim examples.",
         verdict_vocabulary:
-          "The exact words they use to recommend, reject or hedge. Things like 'worth buying', " +
-          "'paisa vasool', 'gimmick', 'wait karo', 'avoid'. Verbatim, up to 8.",
+          "The exact words they use to recommend, to reject, and to withhold judgement, " +
+          "whatever those are in their language. Quote what they actually say, not a " +
+          "translation of it. Verbatim, up to 8.",
         comparison_habit:
           "Do they benchmark against other products, and which ones do they use as the " +
           "yardstick? Name the brands or models they keep returning to for comparison.",
@@ -315,15 +339,16 @@ export const CATEGORIES = [
           "an editor cuts footage to. Collect every distinct one, up to 10, exactly as spoken. " +
           "Return an empty array rather than inventing plausible ones. " +
           "ONLY REUSABLE ONES: keep the short general phrases that would work over any shot. " +
-          "EXCLUDE any phrase that only makes sense during a live demonstration of a product " +
-          "the creator is holding ('you are watching this live right now', 'here I am pressing " +
-          "it'), because those cannot be reused for a story they are only reporting on, and a " +
+          "EXCLUDE any phrase that only works while the creator is physically holding or " +
+          "operating the product, or that refers to something happening live in that very " +
+          "moment, because those cannot be reused for a story they are only reporting on, and a " +
           "cue that does not match what is on screen is a sentence a viewer cannot follow.",
         reaction_beats:
           "Short standalone lines that carry FEELING rather than information, spoken as their " +
-          "own sentence rather than tucked inside a longer one: 'wow, nice', 'those days " +
-          "won't come back'. Verbatim, up to 6. These are what make a script readable aloud " +
-          "instead of a wall of prose.",
+          "own sentence rather than tucked inside a longer one: an exclamation, a wistful " +
+          "aside, a blunt reaction. Verbatim, up to 6, in whatever words they actually use. " +
+          "These are what make a script readable aloud instead of a wall of prose. Return an " +
+          "empty array rather than inventing plausible ones.",
         personal_anecdote:
           "How they bring in their own experience, or a memory they assume the viewer shares. " +
           "Describe the move in one line and give one verbatim example of the whole thing, " +
@@ -333,14 +358,72 @@ export const CATEGORIES = [
           "unit the audience may not know. Give the pattern AND one full verbatim example, " +
           "including what they compare it to. Empty string if they never do this.",
         viewer_advice:
-          "What they tell the viewer to DO, as opposed to what they think of the product. " +
-          "Things like 'please don't sell it', 'definitely try this', 'use it carefully'. " +
-          "Verbatim, up to 6.",
+          "What they tell the viewer to DO, as opposed to what they think of the product: " +
+          "instructions, warnings, things to try, things to hold off on. Verbatim, up to 6, " +
+          "in their own words.",
         native_metaphor:
-          "Figures of speech in their own language, the colourful ones: 'they detonated a " +
-          "price bomb'. NOT their fillers or sign-offs, which are collected elsewhere. This " +
-          "is what makes writing read as theirs rather than as a translation. Verbatim, up " +
-          "to 6, empty array if they are plain-spoken.",
+          "Figures of speech in their own language, the colourful ones: the images they reach " +
+          "for instead of saying a thing plainly. NOT their fillers or sign-offs, which are " +
+          "collected elsewhere. This is what makes writing read as theirs rather than as a " +
+          "translation. Verbatim, up to 6, empty array if they are plain-spoken.",
+
+        /* ── THE CONNECTIVE TISSUE ──────────────────────────────────────────
+           Every field above this point asks about a MOVE: how they say a spec,
+           a price, a verdict. None of them asks about the words BETWEEN the
+           moves, and that turned out to be most of what makes a person
+           recognisable.
+
+           Measured on one creator: at his own rates, a 332-word script of his
+           should carry about 35 instances of his register and his connectives.
+           The generated scripts carried 2. Every content move we had stored a
+           verbatim example of came back; every function word we had never
+           asked about vanished, and the drafts read like clean written prose
+           by nobody in particular.
+
+           These four fields ask for the words nobody notices until they are
+           missing. */
+
+        speech_register:
+          "Every language has a careful written form and a relaxed spoken one, and in some " +
+          "languages the gap between them is enormous. Which does this creator use: the formal " +
+          "written register, the everyday spoken register, or a specific regional variety of " +
+          "it? Answer in one line, naming the variety if you can identify it. This matters " +
+          "more than any other field here: a listener hears it in the first sentence.",
+        register_markers:
+          "The VERBATIM forms that MARK the register you just named: the verb endings, " +
+          "contractions, pronunciations or word choices that a careful editor would " +
+          "'correct' into the formal written version. Give the creator's own form, exactly " +
+          "as they say it, up to 8. If they speak the formal written form throughout, return " +
+          "an empty array. Do not translate these and do not normalise the spelling.",
+        discourse_particles:
+          "The near-meaningless words holding their sentences together: the particle they " +
+          "attach for emphasis, the word they habitually begin a sentence with, the connector " +
+          "they use instead of a full stop, their fillers. These are usually among the most " +
+          "FREQUENT words in the whole transcript and the easiest to overlook, because they " +
+          "carry no information at all. Up to 10, verbatim, each with a note in the same " +
+          "string saying where it sits (start of a sentence, after the topic word, at the " +
+          "end). Return an empty array rather than guessing.",
+        section_transitions:
+          "How they move between SECTIONS OF ONE SUBJECT, as opposed to between separate " +
+          "stories: the phrase that closes off the camera and opens the battery, or ends the " +
+          "specs and starts the price. Verbatim, up to 8. Empty array if they run straight " +
+          "through without signposting.",
+
+        /* ── WHAT THEY DO THAT THE STORY DID NOT ASK FOR ─────────────────── */
+
+        cross_promo:
+          "Whether they point viewers at their OWN other videos or channel, and how. Some " +
+          "creators end every short video by sending people to a longer one; for them it is " +
+          "the whole point of the video and a script without it is missing its ending. Give " +
+          "the verbatim phrasing and say whether it is a standing habit or a one-off. Empty " +
+          "string if they never do it.",
+        never_does:
+          "NEGATIVE SPACE. Common things creators in this field do that THIS ONE NEVER DOES " +
+          "across any transcript: greeting the viewer, naming the channel up front, " +
+          "introducing themselves, asking for a subscribe before the content, thanking " +
+          "sponsors, and so on. Only list what you can confirm is absent from EVERY " +
+          "transcript. This is as load-bearing as anything they do say: an invented greeting " +
+          "is the fastest way to make a script sound like somebody else.",
       },
 
       // Asked only in the lane named. The long lane's three fields are the whole
@@ -348,19 +431,18 @@ export const CATEGORIES = [
       laneFields: {
         short: {
           compression:
-            "How they fit one product into under ninety seconds. What do they cut, what do " +
-            "they always keep, and how fast do they reach the point?",
+            "How they fit one product into a short-form slot of roughly two minutes or less. " +
+            "What do they cut, what do they always keep, and how fast do they reach the point?",
         },
         long: {
           bulletin_transitions:
             "THE MOST IMPORTANT FIELD IN THIS ANALYSIS. The verbatim phrases they use to " +
-            "move from one story to the next: 'chaliye aage badhte hain', 'next news', " +
-            "'ఇక తర్వాత'. Collect every distinct one you can find, up to 10, exactly as " +
-            "spoken. If you cannot find any, return an empty array rather than inventing " +
-            "plausible ones.",
+            "close one story and open the next. Collect every distinct one you can find, up " +
+            "to 10, exactly as spoken in their own language. If you cannot find any, return " +
+            "an empty array rather than inventing plausible ones.",
           segment_names:
-            "Recurring NAMED segments inside their long videos, verbatim: 'WTF News', " +
-            "'Deal of the Day', 'Quick Recap'. Empty array if they have none.",
+            "Recurring NAMED segments inside their long videos, quoted exactly as they say " +
+            "the name. Empty array if they have none.",
           running_order:
             "How they sequence a multi-story video. Do they lead with the biggest story or " +
             "build to it? Do they group by brand, by category, by importance? Do they " +

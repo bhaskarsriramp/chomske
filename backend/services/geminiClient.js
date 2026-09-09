@@ -50,9 +50,9 @@ function clientFor(apiKey) {
 const PROMPT = `You are transcribing a video. Return ONLY what the speaker actually says.
 
 ABSOLUTE RULES. Breaking any one of these makes the output useless:
-1. Transcribe in the SPOKEN language, in its OWN script. Hindi → Devanagari. Telugu → Telugu script. Bengali → Bengali script. Tamil → Tamil script.
-2. DO NOT translate. DO NOT transliterate into English letters. If the speaker says "मैं आपको बताता हूँ", write exactly that, never "main aapko batata hoon" and never "let me tell you".
-3. Keep code-mixing EXACTLY as spoken. Indian creators mix English words into Hindi sentences constantly ("basically हम इसको deploy कर देंगे"), keep the English words in English and the Hindi in Devanagari, precisely as said. Do not "clean up" the mixing.
+1. Transcribe in the SPOKEN language, in that language's OWN script, whichever language it is. Never substitute a different script.
+2. DO NOT translate. DO NOT transliterate into English letters. Write the speaker's own words in their own script: never spell them out phonetically in the Latin alphabet, and never replace them with an English rendering of what they meant.
+3. Keep code-mixing EXACTLY as spoken. Indian creators mix English words into their own language constantly, and which words they keep in English is the single most distinctive thing about how they talk. Keep the English words in the Latin alphabet and everything else in the speaker's own script, precisely as said. Do not "clean up" the mixing in either direction. If the speaker is talking English throughout, transcribe English throughout.
 4. Keep their real speech: filler words, repeated words, their catchphrases, the way they open and close. Do not smooth it into written prose. This transcript exists to capture how THIS person actually talks.
 5. Break into readable paragraphs at natural pauses or topic changes. No timestamps, no speaker labels, no bullet points, no commentary of your own.
 6. Transcribe the WHOLE video from start to finish. Do not summarise, do not stop early, do not write "[continues]".
