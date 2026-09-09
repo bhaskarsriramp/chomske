@@ -755,8 +755,35 @@ async function runScript(id, userId, subject, order) {
     // Titles ride along with the script's own call, but only when the package
     // was bought: they are part of "Title, description & hashtags", not a
     // freebie attached to every script. See writeScript's `titles` option.
+    // ── WHAT THIS CHANNEL HAS ALREADY BEEN SENT ─────────────────────────────
+    // Every script used to be written in ignorance of every other one, so the
+    // model reached for the creator's strongest phrase every single time and
+    // was right every single time. The creator, who reads them consecutively,
+    // sees one template with the nouns swapped. Scoped to this profile because
+    // it is this channel's voice that would be repeating itself, and excluding
+    // the row we are writing into right now.
+    //
+    // Soft-fails to null: variety is a refinement, and losing a paid script
+    // because a convenience query failed would be a bad trade.
+    let recentScripts = null;
+    try {
+      const prev = await Script.find({
+        // `profileId` is the CHANNEL, which is what a Script row carries and
+        // what a voice belongs to. `profile` in this scope is the voice itself.
+        user: userId, ...(profileId ? { profile: profileId } : {}),
+        _id: { $ne: id }, status: "done",
+      })
+        .sort({ created_at: -1 })
+        .limit(4)
+        .select("text")
+        .lean();
+      recentScripts = prev.map((p) => p.text).filter(Boolean);
+    } catch (err) {
+      console.warn("[script] couldn't read recent scripts for variety:", err.message);
+    }
+
     const out = await writeScript({
-      profile, material, seconds, titles: packaging, category, format,
+      profile, material, seconds, titles: packaging, category, format, recentScripts,
     });
 
     await Script.updateOne(

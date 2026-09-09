@@ -129,6 +129,80 @@ function sample(text, lane = SHORT) {
   return { head, mids, tail };
 }
 
+/**
+ * Which of the phrases we just stored does this creator ACTUALLY repeat?
+ *
+ * ── THE BUG THIS EXISTS TO KILL ─────────────────────────────────────────────
+ * The analysis returns arrays of verbatim phrases and the writer is handed them
+ * as "phrases they genuinely use". Nothing anywhere recorded how OFTEN, so a
+ * line said once and a sign-off said in every video arrived at the writer
+ * looking identical, and the writer used both in every script.
+ *
+ * Measured on a real profile, four videos, four generated scripts:
+ *
+ *   "నచ్చితే లైక్ చేయండి"        3 of 4 videos → 4 of 4 scripts   correct
+ *   "నిజంగానే మీ మైండ్ పోద్ది."   1 of 4 videos → 4 of 4 scripts   wrong
+ *
+ * The creator said the second one ONCE, about one product that genuinely
+ * astonished him, and the product then put it in every script he generated. A
+ * creator reading four scripts that all say "your mind will be blown" does not
+ * conclude that the analysis was thin; they conclude the product is a party
+ * trick. It is the single most damaging failure available to us, because it
+ * gets WORSE the more they use it.
+ *
+ * ── WHY THIS IS COUNTED HERE AND NOT ASKED FOR ──────────────────────────────
+ * The prompt could ask the analyst to report frequency, and the analyst could
+ * be wrong about it at no cost to itself. The transcripts are already in
+ * memory, the phrases are verbatim by construction, so this is a substring
+ * count: cheap, exact, and impossible to hallucinate.
+ *
+ * And it is a substring count in whatever script the creator speaks. There is
+ * no word list, no language rule and no tokenisation here that would work for
+ * Telugu and quietly fail for Tamil or Hindi.
+ *
+ * @returns {Object<string, number>} phrase → how many of their videos contain it
+ */
+function phraseDocCounts(set, prefix, transcripts) {
+  const texts = (transcripts || []).map((t) => String(t.text || ""));
+  if (!texts.length) return {};
+
+  // ── ONLY THE FIELDS WHERE REPETITION IS ACTUALLY A DEFECT ────────────────
+  // The failure being measured is an EXPRESSIVE line becoming a tic: a strong
+  // reaction, a vivid image, a verdict. Those are supposed to be rare, and a
+  // creator who says "your mind will be blown" about every phone has stopped
+  // meaning it.
+  //
+  // Most of the profile is the opposite. Register markers, particles, section
+  // transitions, on-screen cues, sign-offs and story joins are STRUCTURAL: they
+  // recur by definition, that recurrence is the point, and half the work in
+  // this file is spent getting them to recur MORE. Counting those here would
+  // arm a rule telling the writer to ration the very things it is elsewhere
+  // begging it to use, and would starve the cue check in gradeDraft of the
+  // phrases it requires. Openings and closings are excluded too: they are shown
+  // as patterns to study, and there is only ever one of each per script.
+  const fields = ["signature_phrases"];
+  const catFields = [
+    "reaction_beats", "native_metaphor", "viewer_advice", "verdict_vocabulary",
+  ];
+
+  const out = {};
+  const tally = (phrase) => {
+    const p = String(phrase || "").trim();
+    // Very short fragments match half a transcript and tell us nothing.
+    if (p.length < 3 || out[p] !== undefined) return;
+    out[p] = texts.filter((t) => t.includes(p)).length;
+  };
+
+  for (const f of fields) for (const v of set[`${prefix}${f}`] || []) tally(v);
+  const cv = set[`${prefix}category_voice`] || {};
+  for (const f of catFields) {
+    const v = cv[f];
+    if (Array.isArray(v)) v.forEach(tally);
+    else if (typeof v === "string") tally(v);
+  }
+  return out;
+}
+
 const PROMPT_HEAD = `You are a voice analyst. Below are transcripts from ONE creator's videos, in the language they actually speak.
 
 Your job: describe how THIS SPECIFIC PERSON talks, precisely enough that a writer could produce a new script nobody could tell apart from theirs.
@@ -747,6 +821,13 @@ export async function buildVoiceProfile(userId, profileId, { lane = SHORT } = {}
     }
     if (Array.isArray(v) ? v.length : v) set[`${P}${k}`] = v;
   }
+
+  // ── HOW OFTEN DO THEY ACTUALLY SAY THIS? ──────────────────────────────────
+  // Counted here, from the transcripts we already hold, because the analysis
+  // cannot be trusted to answer it and nothing downstream could tell the
+  // difference. See phraseDocCounts() for what went wrong without it.
+  const phraseDocs = phraseDocCounts(set, P, transcripts);
+  if (Object.keys(phraseDocs).length) set[`${P}phrase_docs`] = phraseDocs;
 
   // Scoped to the row AND the user: a profile id alone must never be enough to
   // overwrite somebody else's voice.

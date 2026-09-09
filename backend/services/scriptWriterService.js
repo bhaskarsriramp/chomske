@@ -143,6 +143,9 @@ const ANTI_TELL = `NEVER write like an AI. Specifically banned:
  */
 export async function writeScript({
   profile, material, seconds = 60, titles = false, category = "", format = null,
+  // The creator's last few scripts, newest first. Optional: every caller worked
+  // without it before, and a first script has nothing to vary from.
+  recentScripts = null,
 }) {
   if (!profile) throw new Error("No voice profile. Transcribe a video first.");
   if (!material) throw new Error("Nothing to write from.");
@@ -211,6 +214,8 @@ export async function writeScript({
   const categoryVoiceBlock = renderCategoryVoice(profile, format);
   const performanceRule = renderPerformanceRule(profile);
   const addressRule = renderAddressRule(profile, target);
+  const phraseDiscipline = renderPhraseDiscipline(profile, recentScripts);
+  const varietyRule = renderVarietyRule(profile, recentScripts);
 
   const prompt = `You are ghostwriting a short video script for a specific creator. It must be indistinguishable from something they wrote themselves.
 
@@ -237,7 +242,7 @@ ${bullets(profile.sample_closings) || "(none captured)"}
 Closing patterns: ${list(profile.closing_patterns)}
 
 Phrases and fillers they genuinely use (work several in naturally, do not force all):
-${list(profile.signature_phrases)}
+${list(habitualPhrases(profile))}
 
 Moves they reuse: ${list(profile.recurring_moves)}
 How they mix languages: ${profile.vocabulary_notes || "match the transcripts exactly"}
@@ -265,7 +270,7 @@ ${formatBlock}
 4. ${BORROW_MANNER_NOT_CONTENT}
 5. LENGTH. ${lengthRule}
 6. ${performanceRule}
-7. ${ANTI_TELL}${addressRule ? `\n8. ${addressRule}` : ""}
+7. ${ANTI_TELL}${addressRule ? `\n8. ${addressRule}` : ""}${phraseDiscipline ? `\n9. ${phraseDiscipline}` : ""}${varietyRule ? `\n10. ${varietyRule}` : ""}
 
 Return STRICT JSON only:
 {
@@ -364,6 +369,25 @@ Return STRICT JSON only:
       registerMarkers: profile.category_voice?.register_markers || [],
       discourseParticles: profile.category_voice?.discourse_particles || [],
       viewerAddress: profile.category_voice?.viewer_address || "",
+      // The openings we already sent this channel, and the parts of an opening
+      // that are theirs rather than ours and may legitimately recur.
+      recentOpenings: (recentScripts || [])
+        .map((t) => String(t || "").split(/\n+/).map((l) => l.trim()).find(Boolean) || "")
+        .filter(Boolean),
+      // Phrases the creator used once that have already gone out recently. The
+      // model reproduces these from its own priors even when the prompt does
+      // not contain them, so they are caught on the way out.
+      restingPhrases: (() => {
+        const r = phraseRecurrence(profile);
+        const spent = (recentScripts || []).map((t) => String(t || ""));
+        return r.oneOffs().filter((p) => spent.some((t) => t.includes(p)));
+      })(),
+      materialFacts: material.facts || "",
+      openingSafe: [
+        ...(Array.isArray(profile.sample_openings) ? profile.sample_openings : []),
+        ...(Array.isArray(profile.opening_patterns) ? profile.opening_patterns : []),
+        ...habitualPhrases(profile),
+      ],
       ...exampleAndSafeSpans(profile),
     });
     drift = grade.drift;
@@ -384,7 +408,24 @@ Return STRICT JSON only:
       "",
       ...drift.map((d) => `- ${d}`),
       "",
-      "Write it again, same facts, same angle, fixing exactly these. Change nothing else.",
+      // ── WHAT MAY CHANGE, AND WHAT MAY NOT ────────────────────────────────
+      // This used to read "same facts, same angle, fixing exactly these.
+      // Change nothing else", and that instruction contradicted half the notes
+      // above it. Told both to open on a different move AND to keep the same
+      // angle and change nothing else, the rewrite kept the opening: it is the
+      // only reading that satisfies the last sentence, which is also the most
+      // recent and most absolute one. Structural corrections could not be
+      // obeyed by a rewrite forbidden to restructure.
+      //
+      // The facts are the thing that must not move, and they are stated on
+      // their own so nothing dilutes them. Everything else is fair game,
+      // because everything else is what the notes are asking to change.
+      "Write it again. Every fact, number, price, date and name stays exactly as it is, and",
+      "you may not add any that were not in the source material.",
+      "",
+      "Everything else is yours to change: the opening, the order, the wording, which of their",
+      "phrases you reach for. Fix every point above. If a note asks you to open differently, that",
+      "means a different first move, not the same opening reworded.",
     ].join("\n");
   }
 
@@ -491,10 +532,31 @@ export function renderCategoryVoice(profile, format) {
     cross_promo: "How they point viewers at their own other videos",
   };
 
+  // ── ONE PHRASE, ONE MENTION ─────────────────────────────────────────────
+  // The analyst answers each question independently, so the same line can come
+  // back under two headings: on a real profile "మైండ్ పోద్ది" was filed as both
+  // a reaction beat and a native metaphor. Rendered twice it reads to the model
+  // as twice as characteristic, which is the opposite of true, and it was said
+  // once in four videos.
+  const seen = new Set();
+  const rec = phraseRecurrence(profile);
+
   const lines = [];
   for (const [key, label] of Object.entries(LABELS)) {
     const v = cv[key];
-    const text = Array.isArray(v) ? v.filter(Boolean).join(" · ") : String(v || "").trim();
+    let text;
+    if (Array.isArray(v)) {
+      const kept = v
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+        .filter((x) => !seen.has(x) && seen.add(x))
+        // A line the creator used once is not a habit and must not be handed
+        // over as one. It stays available, in its own block below, under a rule.
+        .filter((x) => !rec.isOneOff(x));
+      text = kept.join(" · ");
+    } else {
+      text = String(v || "").trim();
+    }
     if (text) lines.push(`${label}: ${text}`);
   }
 
@@ -577,6 +639,297 @@ catchphrase for them.`;
  * Nothing here is language-specific. Whatever the analyst read off this
  * creator's own transcripts is what gets quoted back.
  */
+/**
+ * Everything this creator is SUPPOSED to repeat, as one blob to test against.
+ *
+ * Their sign-off, their particles, their register, their on-screen cues and the
+ * openings they genuinely reuse all recur by design, and a repetition check
+ * that flagged those would be arguing with the rest of this file.
+ */
+function exemptFromRepeat(profile) {
+  const cv = profile?.category_voice || {};
+  const flat = (v) => (Array.isArray(v) ? v : [v]).map((x) => String(x || "").trim()).filter(Boolean);
+  return [
+    ...flat(profile?.sample_openings),
+    ...flat(profile?.sample_closings),
+    ...flat(profile?.closing_patterns),
+    ...flat(cv.show_me_phrases),
+    ...flat(cv.register_markers),
+    ...flat(cv.discourse_particles),
+    ...flat(cv.section_transitions),
+    ...flat(cv.bulletin_transitions),
+    ...flat(cv.segment_names),
+    ...flat(cv.viewer_address),
+    // Only the phrases they demonstrably repeat in their own videos. A one-off
+    // is not exempt, which is the whole point.
+    ...flat(profile?.signature_phrases).filter((p) => !phraseRecurrence(profile).isOneOff(p)),
+  ];
+}
+
+/**
+ * Do two phrases share a distinctive word?
+ *
+ * Used to tell "this repeated span IS the one-off phrase we are resting" from
+ * "this is an unrelated repetition". Word-level rather than substring, so it
+ * survives the inflection that defeats exact matching: "మైండ్ పోద్ది" and
+ * "మైండ్ బ్లాక్ అయ్యే" share no common suffix but do share a whole word.
+ *
+ * Short tokens are ignored because in most languages they are pronouns and
+ * particles that appear in half of everything.
+ */
+function shareWords(a, b, minLen = 4) {
+  const toks = (s) => new Set(
+    String(s || "").toLowerCase().replace(/[।.,!?;:"'“”‘’()]/g, " ").split(/\s+/)
+      .filter((w) => w.length >= minLen)
+  );
+  const A = toks(a);
+  for (const w of toks(b)) if (A.has(w)) return true;
+  return false;
+}
+
+/**
+ * Runs of words that keep turning up across this creator's recent scripts.
+ *
+ * ── WHY THIS LOOKS AT THE SCRIPTS AND NOT AT THE PROFILE ────────────────────
+ * The profile-side check compares a draft against stored phrases by exact
+ * string, and that misses the case that actually reached a creator. The stored
+ * one-off was "మైండ్ పోద్ది"; the scripts kept saying "మైండ్ పోయే". Same image,
+ * different inflection, no string match, four scripts in a row.
+ *
+ * Every language this product serves inflects, most of them far more than
+ * English, so a mechanism that only catches a phrase in the exact form the
+ * analyst happened to quote will keep missing the thing the creator complains
+ * about. Comparing the scripts to EACH OTHER sidesteps it entirely: whatever
+ * form the repetition took, it repeated, and it shows up here with no stemmer,
+ * no word list and nothing language-specific.
+ *
+ * It also catches repetition the profile never predicted, which is most of it.
+ *
+ * @param {string[]} recent   previous scripts, newest first
+ * @param {string[]} exempt   phrases the creator is meant to repeat
+ */
+function repeatedSpans(recent, exempt, { minWords = 2, maxWords = 6, minDocs = 2 } = {}) {
+  const norm = (s) => String(s || "").replace(/[।.,!?;:"'“”‘’()]/g, " ").replace(/\s+/g, " ").trim();
+  const safe = " " + exempt.map(norm).filter(Boolean).join(" | ") + " ";
+
+  // One set of n-grams per script, so a phrase repeated ten times inside a
+  // single script counts once. What matters is appearing in SEPARATE scripts.
+  const perScript = recent.map((t) => {
+    const w = norm(t).split(" ").filter(Boolean);
+    const grams = new Set();
+    for (let n = minWords; n <= maxWords; n++) {
+      for (let i = 0; i + n <= w.length; i++) grams.add(w.slice(i, i + n).join(" "));
+    }
+    return grams;
+  });
+
+  const docs = new Map();
+  for (const set of perScript) for (const g of set) docs.set(g, (docs.get(g) || 0) + 1);
+
+  let hits = [...docs.entries()]
+    .filter(([g, n]) => n >= minDocs && g.length >= 6 && !safe.includes(g))
+    .map(([p, n]) => ({ p, n }));
+
+  // Keep the longest form of each repetition. Without this one six-word repeat
+  // reports as a dozen overlapping windows of itself, and an instruction listing
+  // the same phrase eight ways is one the model skims.
+  //
+  // Containment alone is not enough, because the windows are SHIFTED rather than
+  // nested: "type Link and the DM", "Link and the DM will", "and the DM will
+  // come" are three separate strings describing one repeated sentence. So a
+  // candidate is dropped when it shares a run of words with something already
+  // kept, not only when it sits inside it.
+  const OVERLAP = 4;
+  hits.sort((a, b) => b.p.split(" ").length - a.p.split(" ").length || b.n - a.n);
+
+  const kept = [];
+  for (const h of hits) {
+    const w = h.p.split(" ");
+    const runs = [];
+    for (let i = 0; i + OVERLAP <= w.length; i++) runs.push(w.slice(i, i + OVERLAP).join(" "));
+    const overlaps = kept.some((k) =>
+      k.p.includes(h.p) || (runs.length ? runs.some((r) => k.p.includes(r)) : k.p.includes(h.p)));
+    if (overlaps) continue;
+    kept.push(h);
+    if (kept.length >= 6) break;
+  }
+  return kept;
+}
+
+/**
+ * What this creator has already been handed, so they are not handed it again.
+ *
+ * ── WHY RECURRENCE ALONE IS NOT ENOUGH ──────────────────────────────────────
+ * phraseRecurrence stops a one-off becoming a catchphrase. It cannot stop the
+ * other half of the problem, because that one is not a defect in the profile at
+ * all: a phrase the creator genuinely says in three of four videos is CORRECT
+ * to use, and using it in ten consecutive scripts is still ten identical
+ * scripts. Every script is written in ignorance of every other one, so the
+ * model reaches for the strongest available line every time and is right every
+ * time, and the creator is the only person who can see the pattern.
+ *
+ * They see it immediately. Four scripts opening the same way is the moment a
+ * voice model stops reading as "this understands me" and starts reading as a
+ * template with the nouns swapped.
+ *
+ * So the last few scripts are shown to the writer, as openings and as the lines
+ * it leaned on, with instructions to reach for something else. Not a ban:
+ * varying an opening is a thing this creator does across their own videos, and
+ * the profile holds several real openings precisely so there is somewhere else
+ * to go.
+ *
+ * Language-neutral: these are the creator's own previous scripts, whatever
+ * language they were written in, quoted back.
+ */
+export function renderVarietyRule(profile, recentScripts) {
+  const recent = (Array.isArray(recentScripts) ? recentScripts : [])
+    .map((t) => String(t || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  if (!recent.length) return "";
+
+  // ── THE PREVIOUS OPENINGS ARE DELIBERATELY NOT QUOTED ───────────────────
+  // They were, and it backfired precisely. This block listed the last four
+  // openings verbatim under "open this one differently", and the model read
+  // "ఈరోජ నేను మీకు ఒక మైండ్ పోయే…" four times and opened with a reworded
+  // version of it. Told not to reuse a phrase, a model still needs the phrase
+  // in context to know what not to do, and having it in context is most of the
+  // way to writing it.
+  //
+  // So the openings are counted, not shown. What IS shown is the far shorter
+  // list of runs that actually repeated, framed as forbidden rather than as
+  // examples, which is the same information with none of the invitation.
+  const openings = recent
+    .map((t) => t.split(/\n+/).map((l) => l.trim()).find(Boolean) || "")
+    .filter(Boolean);
+  if (!openings.length) return "";
+
+  // ── DO NOT NAME THE PHRASE WE ARE TRYING TO STARVE ──────────────────────
+  // A repeated span that came from a one-off expressive phrase is already
+  // handled twice over: renderPhraseDiscipline withdraws it from the prompt
+  // once it has been used, and gradeDraft rejects an opening that reuses it.
+  // Quoting it here as "do not say this" undoes both, because it is then the
+  // only place in the whole prompt where the phrase still appears, and the
+  // model wrote it back three runs in a row from this list alone.
+  //
+  // Structural repeats, a call to action, a stock transition, have no such
+  // safety net and are worth naming. So the list keeps those and drops
+  // anything overlapping a phrase we are deliberately resting.
+  const rec = phraseRecurrence(profile);
+  const resting = rec.oneOffs();
+  const overused = repeatedSpans(recent, exemptFromRepeat(profile))
+    .filter((x) => !resting.some((p) => shareWords(p, x.p)));
+
+  return (
+    `DO NOT REPEAT YOURSELF ACROSS SCRIPTS. We have already sent this creator ` +
+    `${recent.length} script${recent.length === 1 ? "" : "s"}, and they read them one after ` +
+    `another. Open this one on a different move from the last ones: pick a DIFFERENT one of ` +
+    `their real openings further up as your model, or come at the subject from another angle ` +
+    `entirely. Do not start with a superlative about how astonishing this is if that is the ` +
+    `obvious choice, it is the one they have had repeatedly.` +
+    (overused.length
+      ? `\n   And these exact runs of words already appear in more than one of those scripts, ` +
+        `without being anything this creator habitually says:\n` +
+        overused.map((x) => `   - "${x.p}" (in ${x.n} of them)`).join("\n") +
+        `\n   Do not use any of them again, in any form. Say that idea a different way, or ` +
+        `leave it out. Their real catchphrases and sign-offs are exempt from this and should ` +
+        `still appear as usual.`
+      : "")
+  );
+}
+
+/**
+ * How habitual is each of this creator's stored phrases?
+ *
+ * Reads `phrase_docs`, written at analysis time by counting the phrase in the
+ * creator's own transcripts (services/voiceProfileService.js). A phrase found
+ * in one video out of four is not a catchphrase, and handing it to the writer
+ * as one is how four consecutive scripts came back all saying the same line.
+ *
+ * ── WHY THREE VIDEOS IS THE FLOOR FOR JUDGING THIS ──────────────────────────
+ * With one video every phrase is 1 of 1; with two, 1 of 2 is as likely to mean
+ * "said in half their videos" as "said once". Below three there is no evidence
+ * to demote anything on, and demoting on no evidence would strip a thin
+ * profile of the little voice it has. So the whole mechanism switches off, and
+ * the creator gets exactly the behaviour they had before.
+ */
+function phraseRecurrence(profile) {
+  const docs = profile?.phrase_docs && typeof profile.phrase_docs === "object" ? profile.phrase_docs : null;
+  const videos = Number(profile?.transcript_count) || 0;
+  const usable = !!docs && videos >= 3;
+
+  return {
+    videos,
+    usable,
+    isOneOff: (phrase) => {
+      if (!usable) return false;
+      const n = docs[String(phrase || "").trim()];
+      return typeof n === "number" && n <= 1;
+    },
+    /** Every stored phrase the creator used exactly once, deduplicated. */
+    oneOffs: () => (usable
+      ? [...new Set(Object.keys(docs).filter((k) => docs[k] <= 1))]
+      : []),
+  };
+}
+
+/**
+ * Their catchphrases, minus the ones they only said once.
+ *
+ * The list is labelled "phrases they genuinely use" and invites the writer to
+ * work several in. That invitation is right for a sign-off appearing in three
+ * of four videos and wrong for a line appearing in one, and the two were
+ * arriving in the same array.
+ */
+function habitualPhrases(profile) {
+  const rec = phraseRecurrence(profile);
+  const all = Array.isArray(profile?.signature_phrases) ? profile.signature_phrases : [];
+  if (!rec.usable) return all;
+  const kept = all.filter((p) => !rec.isOneOff(p));
+  // Never hand back nothing. If the analysis found only one-offs, the creator
+  // still talks like that, and the discipline block is what keeps them rare.
+  return kept.length ? kept : all;
+}
+
+/**
+ * The phrases they said once, and the rule that keeps them rare.
+ *
+ * ── WHY THESE ARE SHOWN AT ALL RATHER THAN DROPPED ──────────────────────────
+ * Because they are real. A creator who once called something a "gold product"
+ * genuinely talks that way, and deleting the line would flatten them toward the
+ * average of every tech channel, which is the failure this whole product
+ * exists to avoid. The defect was never that the phrase was available; it was
+ * that it was indistinguishable from a sign-off they use every week, so the
+ * writer reached for it every time.
+ *
+ * So they stay, with the one fact that changes how they are used attached: he
+ * said this once. That is a budget, not a ban.
+ */
+function renderPhraseDiscipline(profile, recentScripts) {
+  const rec = phraseRecurrence(profile);
+  const recent = (Array.isArray(recentScripts) ? recentScripts : []).map((t) => String(t || ""));
+
+  // ── A PHRASE ALREADY SPENT IS NOT SHOWN AT ALL ──────────────────────────
+  // Listing it under "use at most one of these" still puts it in front of the
+  // model, and in front of the model is most of the way to in the script: three
+  // runs in a row opened on a reworded version of a phrase this block was
+  // warning about. Withdrawing it is the only version of this instruction that
+  // cannot be negotiated with. It becomes available again once it drops out of
+  // the recent window, which is exactly the behaviour wanted: rare, not banned.
+  const oneOffs = rec.oneOffs().filter((p) => !recent.some((t) => t.includes(p)));
+  if (!oneOffs.length) return "";
+
+  return (
+    `SAID ONCE, NOT A CATCHPHRASE. Each of these appears in exactly ONE of this ` +
+    `creator's ${rec.videos} videos. They are real, and they are not habits: they were ` +
+    `reactions to one particular product on one particular day. Treat them as a budget. ` +
+    `Use AT MOST ONE of them in this script, only if this subject genuinely earns the same ` +
+    `reaction, and never as the opening or the closing line. Using several, or using one ` +
+    `every time, turns the strongest thing about this creator into a verbal tic they do not ` +
+    `have:\n${oneOffs.map((p) => `   - "${p}"`).join("\n")}`
+  );
+}
+
 /**
  * Talk TO the viewer, as often as they actually do.
  *

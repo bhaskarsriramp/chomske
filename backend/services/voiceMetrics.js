@@ -633,6 +633,85 @@ export function gradeDraft(text, target, opts = {}) {
     );
   }
 
+  /* ── A PHRASE WE ARE RESTING, IN ANY FORM ─────────────────────────────────
+     The last resort, and the only thing that worked.
+
+     A one-off phrase was filtered out of the voice block, withdrawn from the
+     discipline block once spent, and excluded from the repetition list, until
+     the prompt provably did not contain it anywhere. The model wrote it anyway,
+     three runs out of three. It is not leaking from our data: "your mind will
+     be blown" is simply the stock superlative of the genre, and the model
+     reaches for it on its own.
+
+     Nothing said in a prompt can fix that, so this is measured on the output
+     instead. Matching is by distinctive WORD rather than by phrase, because the
+     model varies the inflection every time it is blocked.
+
+     Two exemptions keep it from firing on innocent drafts. A word that appears
+     in the source material is fair game: the story is allowed to be about a
+     product the creator once called something. And a word from a phrase they
+     genuinely repeat is fair game, because that is their voice. What is left is
+     narrow: a distinctive word, from a line they used once, about something
+     else. */
+  const resting = (opts.restingPhrases || []).filter(Boolean);
+  if (resting.length) {
+    const bag = (s) => String(s || "").toLowerCase().replace(/[।.,!?;:"'“”‘’()]/g, " ").split(/\s+/);
+    const inMaterial = new Set(bag(opts.materialFacts));
+    // The resting phrases are themselves in safePhrases, because that list is
+    // "things the creator may repeat" and they were classified before anyone
+    // counted how often they said them. Left in, they exempt their own words
+    // and this check can never fire on the case it exists for.
+    const inHabits = new Set(
+      (opts.safePhrases || [])
+        .filter((p) => !resting.some((r) => String(p).includes(r) || r.includes(String(p))))
+        .flatMap((p) => bag(p)),
+    );
+    const draftWords = new Set(bag(text));
+
+    const hit = resting
+      .map((p) => bag(p).find((w) =>
+        w.length >= 4 && draftWords.has(w) && !inMaterial.has(w) && !inHabits.has(w)))
+      .find(Boolean);
+
+    if (hit) {
+      drift.push(
+        `This reuses "${hit}", which comes from a line this creator used ONCE, in a video about ` +
+        `something else. It has already gone out in recent scripts and it is not one of their ` +
+        `habits. Cut it and say what is genuinely interesting about THIS product in plain ` +
+        `words. Do not substitute another way of saying the same thing.`
+      );
+    }
+  }
+
+  /* ── THE OPENING IS THE ONE LINE THAT MUST NOT REPEAT ─────────────────────
+     Prose could not hold this. Told not to reuse a one-off phrase, the model
+     stopped writing "మైండ్ పోద్ది" and wrote "మైండ్ పోయే"; told about that, it
+     wrote "మైండ్ బ్లాక్ అయ్యే". Three spellings of one image across three
+     scripts, none of them a string match for the last, all of them in the
+     opening line.
+
+     Chasing inflections is unwinnable and language-specific. Comparing this
+     opening to the openings we actually sent them is neither: whatever form the
+     repetition takes, the words repeat, and longestReusedSpan already measures
+     exactly that.
+
+     Spans that occur in their own real openings are exempt, so a creator whose
+     genuine habit is to start every video the same way keeps it. What gets
+     caught is the part that is OURS rather than theirs. */
+  const recentOpenings = (opts.recentOpenings || []).filter(Boolean);
+  if (recentOpenings.length) {
+    const opening = String(text || "").split(/\n+/).map((l) => l.trim()).find(Boolean) || "";
+    const reused = longestReusedSpan(opening, recentOpenings, opts.openingSafe || [], 4);
+    if (reused) {
+      drift.push(
+        `This opens almost exactly like a script we already sent them: "${reused}". They read ` +
+        `these one after another, so a repeated opening is the first thing they notice. Open ` +
+        `on a different move entirely, modelled on a DIFFERENT one of their own real openings. ` +
+        `Do not keep the same idea and reword it.`
+      );
+    }
+  }
+
   return { ok: drift.length === 0, drift, measured };
 }
 

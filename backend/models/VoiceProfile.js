@@ -94,6 +94,19 @@ const LongLaneSchema = new Schema({
   // The category-specific block for this lane. Same shape as the parent's.
   category_voice: { type: mongoose.Schema.Types.Mixed, default: null },
 
+  /**
+   * How many of their videos each stored phrase actually appears in.
+   *
+   * The analysis hands back arrays of verbatim phrases with no indication of
+   * whether a line is a habit or a one-off, and without this the writer treated
+   * them identically: a phrase said once in four videos went into four scripts
+   * out of four. See phraseDocCounts() in services/voiceProfileService.js.
+   *
+   * Mixed because the keys are the creator's own phrases, in their own script.
+   */
+  phrase_docs: { type: mongoose.Schema.Types.Mixed, default: null },
+
+
   confidence: { type: String, enum: ["thin", "fair", "good"], default: "thin" },
   built_at:   { type: Date, default: null },
   builds:     { type: Number, default: 0 },
@@ -173,6 +186,18 @@ const VoiceProfileSchema = new Schema({
    * it rather than being frozen here.
    */
   category_voice: { type: mongoose.Schema.Types.Mixed, default: null },
+
+  /**
+   * How many of their videos each stored phrase actually appears in.
+   *
+   * The analysis hands back arrays of verbatim phrases with no indication of
+   * whether a line is a habit or a one-off, and without this the writer treated
+   * them identically: a phrase said once in four videos went into four scripts
+   * out of four. See phraseDocCounts() in services/voiceProfileService.js.
+   *
+   * Mixed because the keys are the creator's own phrases, in their own script.
+   */
+  phrase_docs: { type: mongoose.Schema.Types.Mixed, default: null },
 
   /**
    * Which category's questions produced `category_voice`.
