@@ -60,7 +60,7 @@ const MAX_VOICE_VIDEOS = parseInt(process.env.MAX_VOICE_VIDEOS || "5", 10);
 // contain a second story.
 import {
   laneForVideo, laneQuery, laneStatus, SHORT, LONG,
-  SHORT_MAX_SECONDS, LONG_MIN_SECONDS, LONG_MIN_VIDEOS, LANE_SPLIT_SECONDS,
+  SHORT_MAX_SECONDS, LONG_MIN_SECONDS, LONG_MAX_SECONDS, LONG_MIN_VIDEOS, LANE_SPLIT_SECONDS,
 } from "../services/voiceLanes.js";
 
 // Kept as an alias so the /limits payload and any older client keep working.
@@ -192,10 +192,10 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 
     // ── WHICH LANE DOES THIS VIDEO TRAIN ────────────────────────────────────
-    // null is the band in the middle, 91 to 179 seconds, which trains neither.
-    // Refusing it names both bands, because a creator who just had a 2:30 video
-    // rejected needs to know which direction to go, and "too long" alone would
-    // send them the wrong way.
+    // There is no longer a band in the middle: everything up to
+    // SHORT_MAX_SECONDS trains the short lane and everything above it trains
+    // the long one. null now means one thing only, too long to learn from, so
+    // the refusal says that instead of explaining a gap that no longer exists.
     const lane = laneForVideo(duration);
     if (!lane) {
       return res.status(400).json({
@@ -203,10 +203,10 @@ router.post("/", authenticateToken, async (req, res) => {
         wrong_length: true,
         duration,
         message:
-          `That video is ${formatDuration(duration)}, which falls between the two kinds we ` +
-          `learn from. Add a short video (under ${formatDuration(SHORT_MAX_SECONDS)}) to teach us ` +
-          `your hook and sign-off, or a full-length one (over ${formatDuration(LONG_MIN_SECONDS)}) ` +
-          `to teach us how you move between stories.`,
+          `That video is ${formatDuration(duration)}, which is longer than we learn from. ` +
+          `Add one under ${formatDuration(LONG_MAX_SECONDS)}: a short video ` +
+          `(under ${formatDuration(SHORT_MAX_SECONDS)}) teaches us your hook and sign-off, and a ` +
+          `longer one teaches us how you move between stories.`,
       });
     }
 
@@ -389,6 +389,7 @@ router.get("/", authenticateToken, async (req, res) => {
     max_seconds: MAX_VIDEO_SECONDS,
     short_max_seconds: SHORT_MAX_SECONDS,
     long_min_seconds: LONG_MIN_SECONDS,
+    long_max_seconds: LONG_MAX_SECONDS,
     lane_split_seconds: LANE_SPLIT_SECONDS,
     quota: { used: usedToday, limit: DAILY_LIMIT, left: Math.max(0, DAILY_LIMIT - usedToday) },
   });

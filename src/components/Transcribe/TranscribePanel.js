@@ -115,8 +115,9 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
         maxSeconds: data.max_seconds || 60,
         laneSlots: data.lane_slots || null,
         lanes: data.lanes || null,
-        shortMax: data.short_max_seconds || 150,
+        shortMax: data.short_max_seconds || 180,
         longMin: data.long_min_seconds || 180,
+        longMax: data.long_max_seconds || 600,
         splitSeconds: data.lane_split_seconds || 120,
       });
     } catch { /* secondary, never block the main flow on it */ }
@@ -355,8 +356,12 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
         <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 16px", lineHeight: 1.6 }}>
           {isLong
-            ? `Add up to ${laneSlot?.max || 5} of your longer videos, over ${durationWords(meta?.longMin || 180)} each. In these you cover several products in a row, and what we learn is the part a Short can never show us: how you move from one story to the next.`
-            : `Add up to ${laneSlot?.max || 5} of your own short videos, under ${durationWords(meta?.shortMax || 150)} each. We read how you open, the words you keep in English and how you sign off, then write new scripts that sound like you.`}
+            // Both bounds, not just the lower one. A creator reading "over 3
+            // minutes each" reasonably reaches for their best long video, and
+            // finding out only on paste that a 20 minute one is refused is a
+            // worse moment than being told the range up front.
+            ? `Add up to ${laneSlot?.max || 5} of your longer videos, ${durationRange(meta?.longMin || 180, meta?.longMax || 600)} each. In these you cover several products in a row, and what we learn is the part a Short can never show us: how you move from one story to the next.`
+            : `Add up to ${laneSlot?.max || 5} of your own short videos, under ${durationWords(meta?.shortMax || 180)} each. We read how you open, the words you keep in English and how you sign off, then write new scripts that sound like you.`}
         </p>
 
         {/* ── THE TWO VOICES ──────────────────────────────────────────────
@@ -915,9 +920,13 @@ function VideoSkeleton() {
  *
  * formatDuration below gives "2:30", which is right on a row and wrong inside
  * "under 2:30 each". This also exists because the obvious shorthand is a bug:
- * Math.round(150 / 60) is 3, so a ceiling of two and a half minutes rendered as
- * "under 3 minutes", which is not a rounding nicety, it is the product telling
- * a creator they may upload something it will refuse.
+ * Math.round(seconds / 60) rounds a 150 second ceiling UP to "under 3 minutes",
+ * which is not a rounding nicety, it is the product telling a creator they may
+ * upload something it will refuse.
+ *
+ * The ceiling has since moved to a round three minutes and the trap is dormant,
+ * not gone: these bounds are environment variables and the next person to set
+ * one to a non-round number would reintroduce it silently.
  */
 function durationWords(seconds) {
   const s = Math.max(0, Math.round(Number(seconds) || 0));
@@ -927,6 +936,20 @@ function durationWords(seconds) {
   if (!rem) return `${m} ${m === 1 ? "minute" : "minutes"}`;
   if (rem === 30) return `${m}½ minutes`;
   return `${m} min ${rem} sec`;
+}
+
+/**
+ * A range in prose: "3 to 10 minutes", not "3 minutes to 10 minutes".
+ *
+ * Drops the unit from the lower bound only when both sides carry the same one,
+ * so a range that mixes units ("90 seconds to 10 minutes") still reads
+ * correctly rather than losing the half it needs.
+ */
+function durationRange(from, to) {
+  const a = durationWords(from);
+  const b = durationWords(to);
+  const unit = (w) => w.replace(/^[\d½\s]+/, "");
+  return unit(a) === unit(b) ? `${a.replace(unit(a), "").trim()} to ${b}` : `${a} to ${b}`;
 }
 
 function formatDuration(seconds) {

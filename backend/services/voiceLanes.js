@@ -52,6 +52,20 @@
 /**
  * The longest video that counts as short-form training material.
  *
+ * ── THIS IS NOW THE ONLY BOUNDARY BETWEEN THE LANES ──────────────────────────
+ * Three minutes. Everything at or under it trains the short lane, everything
+ * over it trains the long lane, and there is no longer a band in the middle
+ * that trains neither. That band was ninety seconds wide, then thirty, and
+ * every width of it produced the same conversation: a creator pastes a video
+ * they consider short, is told it is neither kind, and has to go and find a
+ * different one.
+ *
+ * LONG_MIN_SECONDS below is this same number read from the other side. It is
+ * kept as its own export because refusal messages and the UI talk about the
+ * long lane in its own terms, but the two must never hold different values: a
+ * gap between them silently rejects videos, and an overlap would put a single
+ * video in both lanes, counted twice and trained on twice.
+ *
  * ── WHY IT SITS ABOVE THE SCRIPT SPLIT ───────────────────────────────────────
  * Two and a half minutes, which is deliberately MORE than the two minutes the
  * short lane writes at. That looks like a mismatch and is not.
@@ -69,16 +83,18 @@
  * is the last length that is unambiguously single-subject rather than the last
  * length we would write.
  */
-export const SHORT_MAX_SECONDS = parseInt(process.env.VOICE_SHORT_MAX_SECONDS || "150", 10);
+export const SHORT_MAX_SECONDS = parseInt(process.env.VOICE_SHORT_MAX_SECONDS || "180", 10);
 
 /**
  * The shortest video that counts as long-form training material.
  *
- * Three minutes, not two. The boundary that matters for SCRIPTS is two minutes
- * (below), but a video needs to be comfortably past it to actually contain the
- * thing we are trying to learn. A 2:10 video is usually still one topic, so it
- * teaches nothing about transitions while looking like it should. Three minutes
- * is the point where a tech video is reliably covering more than one thing.
+ * Three minutes. The boundary that matters for SCRIPTS is two minutes (below),
+ * but a video needs to be past it to actually contain the thing we are trying
+ * to learn: a 2:10 video is usually still one topic, so it teaches nothing
+ * about transitions while looking like it should.
+ *
+ * The test against this is EXCLUSIVE where SHORT_MAX_SECONDS's is inclusive,
+ * which is what lets the two lanes share a number without overlapping on it.
  */
 export const LONG_MIN_SECONDS = parseInt(process.env.VOICE_LONG_MIN_SECONDS || "180", 10);
 
@@ -90,6 +106,29 @@ export const LONG_MIN_SECONDS = parseInt(process.env.VOICE_LONG_MIN_SECONDS || "
  * an order stops being one point and starts needing real material behind it.
  */
 export const LANE_SPLIT_SECONDS = parseInt(process.env.VOICE_LANE_SPLIT_SECONDS || "120", 10);
+
+/**
+ * The longest video we will learn from at all.
+ *
+ * Ten minutes, deliberately ABOVE the eight minute ceiling on scripts we write.
+ * The two numbers answer different questions: eight minutes is the longest
+ * video we will produce a script FOR, ten is the longest we will read to learn
+ * how somebody talks. A creator's own ten minute bulletin is a perfectly good
+ * demonstration of the joins the long lane exists to capture, and refusing it
+ * because it exceeds our own output ceiling would reject the best material
+ * they have.
+ *
+ * Past ten minutes a video stops being a sample of how this person makes a
+ * video and becomes a different format: a full review, a vlog, a stream.
+ * Learning a bulletin voice from forty minutes of livestream teaches a pace
+ * that is wrong for every script we would then produce from it.
+ *
+ * There was no upper bound at all before this. Any video over three minutes
+ * counted as long-form training material, so an hour of livestream was a valid
+ * sample, and reading one is also the single most expensive thing this product
+ * can be asked to do.
+ */
+export const LONG_MAX_SECONDS = parseInt(process.env.VOICE_LONG_MAX_SECONDS || "600", 10);
 
 /**
  * How many long videos before the long voice can be built at all.
@@ -146,14 +185,25 @@ export function laneForVideo(duration) {
   const d = Number(duration);
   if (!Number.isFinite(d) || d <= 0) return null;
   if (d <= SHORT_MAX_SECONDS) return SHORT;
-  if (d >= LONG_MIN_SECONDS) return LONG;
+  if (d <= LONG_MAX_SECONDS) return LONG;
   return null;
 }
 
-/** The Mongo filter selecting one lane's training videos. Derived, never stored. */
+/**
+ * The Mongo filter selecting one lane's training videos. Derived, never stored.
+ *
+ * These two must PARTITION rather than overlap, which is why the long side
+ * tests `$gt` against the short side's `$lte` and both now hang off the same
+ * constant. With inclusive comparisons on both sides a video of exactly the
+ * boundary length matches both lanes: it counts against both per-lane caps and
+ * gets trained on by both voices.
+ *
+ * The long side is also bounded above, so a video too long to be accepted
+ * today cannot be picked up as training material by a later rebuild.
+ */
 export function laneQuery(lane) {
   return lane === LONG
-    ? { duration_seconds: { $gte: LONG_MIN_SECONDS } }
+    ? { duration_seconds: { $gt: SHORT_MAX_SECONDS, $lte: LONG_MAX_SECONDS } }
     : { duration_seconds: { $gt: 0, $lte: SHORT_MAX_SECONDS } };
 }
 
@@ -248,6 +298,7 @@ export function laneStatus(vp, counts = {}) {
       min_videos: LONG_MIN_VIDEOS,
       needs: longNeeds,
       min_seconds: LONG_MIN_SECONDS,
+      max_seconds: LONG_MAX_SECONDS,
       locked: longLocked,
       can_build: !longLocked && longNeeds === 0,
       built_at: vp?.long?.built_at || null,
