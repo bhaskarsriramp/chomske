@@ -62,6 +62,12 @@ export const GROUNDED_FACT_RULE = `FACTS. Every factual claim in the script must
      If it is not in the source material, it does not exist for this script.
    - Invent no numbers, dates, prices, versions, percentages, benchmarks, names,
      job titles, quotes or place names.
+   - Do not assert a JUDGEMENT the sources do not support. "That one is
+     unnecessary", "this price is good", "the battery is the best in this range"
+     are claims exactly like numbers are, and a creator's own opinion phrases are
+     examples of HOW they judge, not permission to judge something the material
+     says nothing about. Where they would clearly have an opinion and the sources
+     give you nothing to base it on, say the fact and move on.
    - Do not predict what happens next, do not estimate impact, do not say what
      it "means for" anyone. Those are claims too, and they are not in the sources.
    - If the sources are thin, write a shorter script about what IS known. A
@@ -102,6 +108,12 @@ export const BULLETIN_FACT_RULE = `FACTS. This script covers SEVERAL SEPARATE ST
      there, and nothing from your training about any of these subjects.
    - A story with thin material gets a SHORTER block, not invented detail. An
      honest twelve seconds on story six is correct; forty padded seconds is not.
+   - Do not assert a JUDGEMENT the sources do not support. "That one is
+     unnecessary", "this price is good", "the battery is the best in this range"
+     are claims exactly like numbers are, and a creator's own opinion phrases are
+     examples of HOW they judge, not permission to judge something the material
+     says nothing about. Where they would clearly have an opinion and the sources
+     give you nothing to base it on, say the fact and move on.
    - Do not predict what happens next or say what any of it "means for" anyone.`;
 
 /**

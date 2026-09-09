@@ -27,6 +27,7 @@ import {
 } from "../services/profileService.js";
 import { buildVoiceProfile } from "../services/voiceProfileService.js";
 import { SHORT, LONG, laneQuery, LONG_MIN_VIDEOS, LONG_MIN_SECONDS } from "../services/voiceLanes.js";
+import { voiceSpecStale } from "../services/categories.js";
 import { kickoffCategories } from "../services/newsScheduler.js";
 import { getCategory } from "../services/categories.js";
 import { publishUserEvent } from "../services/newsEvents.js";
@@ -242,7 +243,14 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
       // The upgrade rebuild is on us: a voice built before category-aware
       // analysis has never been asked the questions that make it specific, and
       // that is our change, not something they asked for.
-      categoryUpgrade: !!(voice.built_at && (voice.built_for_category || "") !== ((profile.categories || [])[0] || "")),
+      // Stale on the category OR on the version of its question set. Checking
+      // only the category would charge every existing creator for the six
+      // fields added to that set, which they did not ask for.
+      categoryUpgrade: !!voice.built_at && voiceSpecStale(
+        (profile.categories || [])[0] || "",
+        voice.built_for_category,
+        voice.built_for_spec
+      ),
     });
 
     let charged = 0;

@@ -25,7 +25,7 @@ import { resolveProfile, voiceFor } from "./profileService.js";
 import { measureVoice } from "./voiceMetrics.js";
 import { transcribeYouTube } from "./geminiClient.js";
 import { publishUserEvent } from "./newsEvents.js";
-import { voiceSpecFor } from "./categories.js";
+import { voiceSpecFor, voiceSpecStale } from "./categories.js";
 import {
   SHORT, LONG, laneQuery, laneForScript, laneReady, voiceForLane, laneStatus, LONG_MIN_VIDEOS,
 } from "./voiceLanes.js";
@@ -50,6 +50,11 @@ const TAIL_CHARS = 700;   // the close and call to action
 const LONG_MID_CHARS = parseInt(process.env.VOICE_LONG_MID_CHARS || "750", 10);
 const LONG_MID_SLICES = parseInt(process.env.VOICE_LONG_MID_SLICES || "3", 10);
 
+// The short lane splits its own interior budget too, now that a "short" video
+// can run to two and a half minutes and contain a demonstration. Two, not
+// three: the stretch being covered is a third of the long lane's.
+const SHORT_MID_SLICES = parseInt(process.env.VOICE_SHORT_MID_SLICES || "2", 10);
+
 
 let _client = null;
 function client() {
@@ -73,8 +78,29 @@ function sample(text, lane = SHORT) {
   const tail = t.slice(-TAIL_CHARS);
 
   if (lane !== LONG) {
-    const midStart = Math.floor(t.length / 2) - Math.floor(MID_CHARS / 2);
-    return { head, mid: t.slice(midStart, midStart + MID_CHARS), tail };
+    // ── THE SHORT LANE NOW SPREADS TOO, FOR A DIFFERENT REASON ──────────────
+    // One centre slice was right when this lane was capped at ninety seconds:
+    // a Short is a hook, one point and a sign-off, and the middle is a single
+    // stretch of explanation. The cap is now two and a half minutes, and what
+    // sits in that extra minute is the demonstration, which is where the
+    // creator points at the screen.
+    //
+    // Those cues are what makes a script shootable, and they are spread through
+    // the demo rather than pooled at its centre. Measured on one creator's
+    // 55-second feature video, 44% of sentences pointed at something; a single
+    // centre slice sees a fraction of them and the profile concludes they
+    // rarely do it. Two slices at a third and two thirds cost about 150
+    // characters and cover the stretch where the showing happens.
+    const each = Math.round(MID_CHARS / SHORT_MID_SLICES);
+    const body = t.slice(HEAD_CHARS, t.length - TAIL_CHARS);
+    const mids = [];
+    for (let i = 0; i < SHORT_MID_SLICES; i++) {
+      const at = Math.floor((body.length * (i + 1)) / (SHORT_MID_SLICES + 1)) - Math.floor(each / 2);
+      const from = Math.max(0, Math.min(at, Math.max(0, body.length - each)));
+      const slice = body.slice(from, from + each).trim();
+      if (slice) mids.push(slice);
+    }
+    return { head, mids, tail };
   }
 
   // ── THE LONG LANE NEEDS THE MIDDLE, PLURAL ────────────────────────────────
@@ -641,9 +667,12 @@ export async function buildVoiceProfile(userId, profileId, { lane = SHORT } = {}
     [`${P}metrics`]: metrics,
     [`${P}built_at`]: new Date(),
     [`${P}build_failed_at`]: null,
-    // Which category's questions were asked. Written for both lanes because
-    // either one going stale is a reason to re-ask.
+    // Which category's questions were asked, AND which version of them. The
+    // category alone is not enough: once this file's field list grows, a profile
+    // still saying "tech_gadgets" looks current while missing every new answer,
+    // and the creator gets charged to pick them up. See voiceSpecStale().
     built_for_category: categoryId,
+    built_for_spec: voiceSpecFor(categoryId, lane).version || 1,
   };
 
   // Usage and the free-build counter stay at the top level in both lanes: they
@@ -870,7 +899,8 @@ export async function profileStatus(userId, profileId) {
   // it looking like an upsell, and honoured in creditPricing.voiceAnalysisCost.
   const category = (channel.categories || [])[0] || "";
   const needsCategoryRebuild =
-    !!profile && !!category && (voice.built_for_category || "") !== category;
+    !!profile && !!category &&
+    voiceSpecStale(category, voice.built_for_category, voice.built_for_spec);
 
   return {
     channel,

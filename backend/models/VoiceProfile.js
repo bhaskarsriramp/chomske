@@ -184,6 +184,20 @@ const VoiceProfileSchema = new Schema({
    */
   built_for_category: { type: String, default: "" },
 
+  /**
+   * Which VERSION of that category's question set produced them.
+   *
+   * built_for_category alone answers "were these answers about the right
+   * subject". It cannot answer "were they about the right subject, asked the
+   * way we ask now", and that is the case that actually recurs: the field list
+   * in services/categories.js grows, every stored profile keeps saying
+   * "tech_gadgets", the staleness check sees nothing wrong, and creators are
+   * charged for a rebuild that exists because we changed the questions.
+   *
+   * 0 means a profile built before versioning, which is stale by definition.
+   */
+  built_for_spec: { type: Number, default: 0 },
+
   // The long-form voice. Null until they add long videos and run it; see the
   // sub-schema above for why the short lane is not symmetric with it.
   long: { type: LongLaneSchema, default: () => ({}) },

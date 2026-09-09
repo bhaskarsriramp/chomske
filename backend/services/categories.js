@@ -249,13 +249,29 @@ export const CATEGORIES = [
        Each entry is field name → what the analyst is told to extract. They are
        appended to the JSON schema, so adding a field here is a config change. */
     voice: {
+      /**
+       * ── BUMP THIS WHENEVER A FIELD BELOW CHANGES ──────────────────────────
+       * Stored on the profile as `built_for_spec`. Without it, a profile that
+       * already carries built_for_category "tech_gadgets" looks current after
+       * this file gains six new fields, so the staleness check passes and the
+       * creator is CHARGED to pick up questions they never asked to be asked.
+       * A mismatch on either the category or this number earns the free rebuild.
+       */
+      version: 3,
+
       guidance:
         `This creator makes technology and gadget videos. The most distinctive thing ` +
         `about them is NOT their accent or their energy, it is the specific vocabulary ` +
         `they use for products, numbers and money, and every one of those has a house ` +
         `style that varies enormously between creators. Quote it verbatim, in the ` +
         `original script. Where they keep an English word (and for model numbers, ` +
-        `brand names and units they almost always will), record that it stays English.`,
+        `brand names and units they almost always will), record that it stays English.\n\n` +
+        `Pay particular attention to three things a transcript makes easy to miss, ` +
+        `because they read as filler and are not. Measured across four of one creator's ` +
+        `videos, 13% of their sentences POINT AT SOMETHING ON SCREEN, 12% carry a ` +
+        `personal reaction or memory, and 6% stop to explain what an unfamiliar company ` +
+        `or unit actually is. Those sentences are a third of the script and they are the ` +
+        `difference between a piece of writing and something a person can record.`,
 
       // Asked in both lanes: these are true of the creator, not of the format.
       fields: {
@@ -278,12 +294,53 @@ export const CATEGORIES = [
           "abbreviations or nicknames they use, and how they pronounce anything unusual.",
         hype_calibration:
           "Their default excitement level and what makes them break it. Are they the hype " +
-          "channel, the sceptic, or flat and factual? What actually impresses them?",
+          "channel, the sceptic, or flat and factual? What actually impresses them? Include " +
+          "the VERBATIM phrases they use to admit uncertainty, about an India launch, a " +
+          "price, or whether something arrives at all, because hedging honestly is part of " +
+          "how this kind of creator keeps their audience's trust.",
         deal_callout:
           "Whether and how they push links, offers or affiliate deals, phrased verbatim. " +
           "Empty string if they never do it.",
         viewer_address:
           "The exact word or phrase they call the viewer. Verbatim, in their script.",
+
+        /* ── THE THREE THINGS A SCRIPT NEEDS TO BE SHOOTABLE ────────────────
+           Everything above describes how they sound. These describe what they
+           DO while talking, and a script missing them is a correct essay that
+           nobody can stand in front of a camera and perform. */
+
+        show_me_phrases:
+          "THE MOST IMPORTANT NEW FIELD. The verbatim words they use to point at something " +
+          "on screen: 'look at this', 'you can see here', 'let's see'. These are the lines " +
+          "an editor cuts footage to. Collect every distinct one, up to 10, exactly as spoken. " +
+          "Return an empty array rather than inventing plausible ones. " +
+          "ONLY REUSABLE ONES: keep the short general phrases that would work over any shot. " +
+          "EXCLUDE any phrase that only makes sense during a live demonstration of a product " +
+          "the creator is holding ('you are watching this live right now', 'here I am pressing " +
+          "it'), because those cannot be reused for a story they are only reporting on, and a " +
+          "cue that does not match what is on screen is a sentence a viewer cannot follow.",
+        reaction_beats:
+          "Short standalone lines that carry FEELING rather than information, spoken as their " +
+          "own sentence rather than tucked inside a longer one: 'wow, nice', 'those days " +
+          "won't come back'. Verbatim, up to 6. These are what make a script readable aloud " +
+          "instead of a wall of prose.",
+        personal_anecdote:
+          "How they bring in their own experience, or a memory they assume the viewer shares. " +
+          "Describe the move in one line and give one verbatim example of the whole thing, " +
+          "not just the opening words.",
+        explainer_move:
+          "The shape they use when they stop to explain an unfamiliar company, acronym or " +
+          "unit the audience may not know. Give the pattern AND one full verbatim example, " +
+          "including what they compare it to. Empty string if they never do this.",
+        viewer_advice:
+          "What they tell the viewer to DO, as opposed to what they think of the product. " +
+          "Things like 'please don't sell it', 'definitely try this', 'use it carefully'. " +
+          "Verbatim, up to 6.",
+        native_metaphor:
+          "Figures of speech in their own language, the colourful ones: 'they detonated a " +
+          "price bomb'. NOT their fillers or sign-offs, which are collected elsewhere. This " +
+          "is what makes writing read as theirs rather than as a translation. Verbatim, up " +
+          "to 6, empty array if they are plain-spoken.",
       },
 
       // Asked only in the lane named. The long lane's three fields are the whole
@@ -337,6 +394,12 @@ export const CATEGORIES = [
           discipline:
             "One subject only. Do not widen into the industry, the competitor, or what it " +
             "signals about the market unless the sources do it first.",
+          onScreen: {
+            density: "some",
+            cueTo:
+              "the official render or product image, a spec table the creator puts up, the " +
+              "price on screen",
+          },
         },
         {
           id: "bulletin",
@@ -355,6 +418,16 @@ export const CATEGORIES = [
             "from one story into another, and do not invent a link between two stories " +
             "that the sources do not make. Stories with thin material get a shorter block, " +
             "not invented detail.",
+          onScreen: {
+            // Low, and measured rather than guessed: this creator's own price-list
+            // video pointed at the screen in 4% of its sentences against 44% in a
+            // feature demo. A bulletin is cutting between many products, so a cue
+            // in every block would be a cue nobody can follow.
+            density: "low",
+            cueTo:
+              "the product image or the price for the story being read at that moment, " +
+              "never anything belonging to another story in the same script",
+          },
         },
         {
           id: "explainer",
@@ -373,6 +446,12 @@ export const CATEGORIES = [
             "This is the one format where their opinion is the point, so their stance may " +
             "be stated with confidence. The FACTS it rests on are still bound by the " +
             "sources: no invented figures, no predictions dressed as reporting.",
+          onScreen: {
+            density: "low",
+            cueTo:
+              "a chart or comparison the creator builds themselves, or a figure named in " +
+              "the sources",
+          },
         },
       ],
     },
@@ -725,11 +804,30 @@ export function publicCategories() {
  */
 export function voiceSpecFor(categoryId, lane = "short") {
   const v = getCategory(categoryId)?.voice;
-  if (!v) return { guidance: "", fields: {} };
+  if (!v) return { guidance: "", fields: {}, version: 0 };
   return {
     guidance: v.guidance || "",
     fields: { ...(v.fields || {}), ...(v.laneFields?.[lane] || {}) },
+    version: v.version || 1,
   };
+}
+
+/**
+ * Is a stored profile's answer set older than the questions we now ask?
+ *
+ * Two ways to be stale, and both have to be checked. The profile may have been
+ * built for a DIFFERENT category, in which case its answers are about the wrong
+ * subject. Or it may have been built for this category before the field list
+ * changed, in which case the answers are right and incomplete.
+ *
+ * The second case is the one that bites: a profile carrying
+ * built_for_category "tech_gadgets" looks perfectly current, so nothing offers
+ * the rebuild and the creator pays for it the next time they press Analyse.
+ */
+export function voiceSpecStale(categoryId, builtForCategory, builtForSpec) {
+  if (!categoryId) return false;
+  if ((builtForCategory || "") !== categoryId) return true;
+  return Number(builtForSpec || 0) < (getCategory(categoryId)?.voice?.version || 1);
 }
 
 /** Every format defined for a category, or [] if it has none yet. */
@@ -832,5 +930,5 @@ export default {
   CATEGORIES, getCategory, isValidCategory, isEnabledCategory, enabledCategories,
   publicCategories, sanitizeSelection, coerceSelection, canonicalCategory, LEGACY_IDS,
   MAX_CATEGORIES, DEFAULT_CATEGORY,
-  voiceSpecFor, formatsFor, getFormat, pickFormat, formatIdsFor,
+  voiceSpecFor, voiceSpecStale, formatsFor, getFormat, pickFormat, formatIdsFor,
 };

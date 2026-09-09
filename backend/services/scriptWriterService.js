@@ -40,6 +40,53 @@ function client() {
 }
 
 /**
+ * ── EXAMPLE CONTAMINATION ────────────────────────────────────────────────────
+ * The single most damaging failure this prompt has, and it is caused by the
+ * thing that makes the prompt good. Feeding verbatim lines from a creator's own
+ * videos is what puts a script in their actual voice instead of an average of
+ * all creators. It also hands the model complete, fluent sentences about OTHER
+ * products, and the cheapest way to sound like someone is to reuse one.
+ *
+ * Both failures below are real, observed on live generations:
+ *
+ *   His Honor video:  "ఫ్రంట్ కూడా 50 megapixel కెమెరా ఉంటది కానీ అనవసరం అది"
+ *   The draft:        "ఫ్రంట్ కూడా 8 megapixel కెమెరా ఉంటది కానీ అనవసరం అది"
+ *
+ * One number swapped, and the opinion carried over whole. On the Honor phone
+ * the front camera genuinely was pointless, because its gimbal camera could
+ * face forwards; on this phone nothing of the sort is true and no source says
+ * anything like it. The creator would be reading his own catchphrase attached
+ * to a judgement he never made.
+ *
+ * The second is worse. Given his pen-fight opener, "tell me honestly, in school
+ * you definitely played this game", a draft about a battery invented a
+ * childhood memory of phone charging anxiety to fill the same shape. It
+ * manufactured an experience and put it in his mouth.
+ *
+ * The grounded fact rule did not stop either one, and was not going to: neither
+ * is an invented NUMBER, which is what that rule is written about and what it
+ * successfully prevents. This is its own rule, stated with the actual failures
+ * named, for the same reason ANTI_TELL below names its banned constructions
+ * rather than asking for "natural writing".
+ */
+const BORROW_MANNER_NOT_CONTENT = `EXAMPLES ARE MANNER, NOT CONTENT. Every quoted line above came from a DIFFERENT
+   video about a DIFFERENT product. Copy how those lines are built. Never copy
+   what they are about.
+   - Do not rewrite an example sentence with the subject swapped. If an example
+     calls a front camera pointless, that was true of that phone for a reason
+     that is not in front of you now, and reusing it invents an opinion.
+   - Do not manufacture a memory, a childhood, an experience or an anecdote to
+     fill the shape of one in the examples. If nothing in THIS material genuinely
+     reminds them of something, do not pretend it does. An invented memory in
+     their own voice is the worst thing on this page.
+   - A phrase is safe to reuse when it carries only TONE: a greeting, a sign-off,
+     a filler, a way of pointing at the screen, a turn of phrase. A phrase that
+     carries a CLAIM about a product may appear only where this material supports
+     that exact claim.
+   - When in doubt, say the thing plainly in their register. A plain sentence in
+     their voice is theirs. A borrowed sentence about the wrong product is not.`;
+
+/**
  * Rules against the tells that make writing read as machine-made. Lifted from the
  * same problem in the reference project: models reach for a small set of
  * constructions ("it's not just X, it's Y", "in today's fast-paced world") that
@@ -162,6 +209,7 @@ export async function writeScript({
   // with no config configured yet writes exactly as it did before.
   const formatBlock = renderFormat(format, material);
   const categoryVoiceBlock = renderCategoryVoice(profile, format);
+  const performanceRule = renderPerformanceRule(profile);
 
   const prompt = `You are ghostwriting a short video script for a specific creator. It must be indistinguishable from something they wrote themselves.
 
@@ -213,8 +261,10 @@ ${formatBlock}
 1. LANGUAGE. Write in ${language}, in the SAME script and the SAME code-mixing as the samples above. If their openings are in Devanagari with English words mixed in, the whole script must be Devanagari with English words mixed in. Do NOT translate. Do NOT transliterate into English letters. Do NOT write a cleaner or more formal version of how they talk.
 2. ${material.factRule}
 3. VOICE. Open the way THEY open, same energy and structure as their real openings, about this subject. Close the way THEY close. This is the whole job.
-4. LENGTH. ${lengthRule}
-5. ${ANTI_TELL}
+4. ${BORROW_MANNER_NOT_CONTENT}
+5. LENGTH. ${lengthRule}
+6. ${performanceRule}
+7. ${ANTI_TELL}
 
 Return STRICT JSON only:
 {
@@ -302,7 +352,13 @@ Return STRICT JSON only:
     // Nothing to grade against on a profile built before metrics existed.
     if (!profile.metrics) break;
 
-    const grade = gradeDraft(text, profile.metrics);
+    // The cue check needs to know what the format asked for and which phrases
+    // are this creator's own; neither is a property of the draft.
+    const grade = gradeDraft(text, profile.metrics, {
+      onScreenDensity: format?.onScreen?.density || null,
+      showMePhrases: profile.category_voice?.show_me_phrases || [],
+      ...exampleAndSafeSpans(profile),
+    });
     drift = grade.drift;
     if (grade.ok) break;
 
@@ -412,12 +468,17 @@ export function renderCategoryVoice(profile, format) {
     verdict_vocabulary: "The words they use to judge something",
     comparison_habit: "What they compare against",
     brand_handling: "How they handle brand and model names",
-    hype_calibration: "Their excitement level",
+    hype_calibration: "Their excitement level, and how they admit uncertainty",
     deal_callout: "How they mention deals or links",
     viewer_address: "What they call the viewer",
     compression: "How they fit a subject into very little time",
     segment_names: "Named segments they use",
     running_order: "How they sequence a multi-story video",
+    personal_anecdote: "How they bring in their own experience",
+    explainer_move: "How they explain something the audience may not know",
+    viewer_advice: "What they tell the viewer to DO",
+    native_metaphor: "Figures of speech in their own language",
+    reaction_beats: "Short standalone lines that carry feeling",
   };
 
   const lines = [];
@@ -438,7 +499,18 @@ export function renderCategoryVoice(profile, format) {
 HOW THEY TALK ABOUT THIS SUBJECT SPECIFICALLY. These are measured from their own
 videos and they are what separates them from every other creator covering the
 same story. Match them:
-${lines.map((l) => `  • ${l}`).join("\n")}`;
+${lines.map((l) => `  • ${l}`).join("\n")}
+
+  ── THESE ARE EXAMPLES, NOT SLOTS TO FILL ──
+  Every phrase above was said about a DIFFERENT product, in a context that made
+  it true. Use one only where its meaning genuinely applies here, and leave the
+  rest out. A script that works all of them in is a worse impression of this
+  person than one that uses two well.
+  Above all: several of these phrases carry a CLAIM, not just a tone. "That one
+  is unnecessary", "it is a good phone", "doubtful whether it arrives" are
+  judgements, and a judgement is a factual assertion exactly like a number is.
+  You may only make one where the source material supports it. Do not reach for
+  a phrase because it sounds like them and then invent the reason it is true.`;
 
   if (transitions.length) {
     block +=
@@ -456,7 +528,193 @@ stories plainly, in their own words, varying the join each time. Do not invent a
 catchphrase for them.`;
   }
 
+  block += renderOnScreen(cv, format);
   return block;
+}
+
+/**
+ * The lines that point at what is on screen.
+ *
+ * ── WHY THIS IS SEPARATE FROM EVERY OTHER VOICE FIELD ───────────────────────
+ * Everything else in the profile describes how a sentence SOUNDS. This one
+ * decides whether the script can be recorded at all. Measured across four of
+ * one creator's videos, 13% of their sentences point at something on screen,
+ * and in a feature demo it reaches 44%. A script with none of them is an essay:
+ * correct, in their voice, and impossible to stand in front of a camera and
+ * perform, because the moment they say "and the camera rotates" there is
+ * nothing cut to and no instruction for whoever is editing.
+ *
+ * ── THE RULE THAT MATTERS MORE THAN THE CUES THEMSELVES ─────────────────────
+ * A cue is a PROMISE THAT FOOTAGE EXISTS. In their own videos the creator was
+ * holding the device. A script written from a news story is not: nobody has the
+ * phone. Emitting "look, the gimbal turns like this" for hardware they have
+ * never touched hands them something they cannot shoot, and they find out
+ * halfway through recording, which is worse than no cue at all because the cue
+ * read as a plan.
+ *
+ * So the density comes from the FORMAT, not from the creator (the same person's
+ * price list is 4% and their demo 44%), and what may be pointed at is an
+ * explicit allow-list per format. Hands-on demonstration is never on it.
+ */
+function renderOnScreen(cv, format) {
+  const on = format?.onScreen;
+  if (!on) return "";
+
+  const phrases = Array.isArray(cv?.show_me_phrases) ? cv.show_me_phrases.filter(Boolean) : [];
+
+  const howOften = {
+    high: "Point at the screen often, several times in this script.",
+    some: "Point at the screen two or three times across this script, at the moments where there is genuinely something to look at.",
+    low: "Point at the screen sparingly, once or twice in the whole script.",
+  }[on.density] || "Point at the screen only where there is genuinely something to look at.";
+
+  return `
+
+════════ WHAT IS ON SCREEN ════════
+This person does not just narrate, they SHOW things, and the script has to carry
+that or it cannot be recorded. ${howOften}
+
+${phrases.length
+  ? `Use THEIR OWN words for it where one fits, verbatim:\n${phrases.map((p) => `  • "${p}"`).join("\n")}
+Each fits a particular kind of shot. Use one only where it matches what is on
+screen at that moment; where none fits, point plainly in their own idiom.`
+  : `We did not capture their pointing phrases, so keep these plain and in their own
+idiom rather than inventing a catchphrase.`}
+
+YOU MAY ONLY POINT AT: ${on.cueTo}.
+
+NEVER write a cue for something nobody has filmed. Do not describe holding the
+product, turning it, pressing it, or demonstrating it working. The creator is
+writing about news, they do not have this device, and a cue they cannot shoot is
+worse than no cue: they discover it halfway through recording. If there is
+nothing real to look at for a point, just say the point.`;
+}
+
+/**
+ * The rule that makes the script a performance rather than an essay.
+ *
+ * ── WHY LISTING THE FIELDS IS NOT ENOUGH ────────────────────────────────────
+ * renderCategoryVoice puts these in front of the model as description, and a
+ * model reading "how they bring in their own experience: they open with a
+ * childhood memory" will happily produce a script containing none of it. The
+ * fields say what is TRUE of the creator; this says what the draft must DO.
+ *
+ * Stated as a proportion rather than a count because the right number depends
+ * on length, and a count would produce four reaction beats in a forty-second
+ * Short. The proportions are the measured ones: across four of this creator's
+ * videos, 12% of sentences carried a personal reaction and 6% stopped to
+ * explain something. Asking for "about one in eight" reproduces the texture
+ * without pretending to a precision the measurement does not have.
+ *
+ * Degrades to a bare string when a profile has no category voice, which is what
+ * every profile built before this change looks like until it is re-analysed.
+ */
+export function renderPerformanceRule(profile) {
+  const cv = profile?.category_voice;
+  const has = (k) => {
+    const v = cv?.[k];
+    return Array.isArray(v) ? v.length > 0 : !!String(v || "").trim();
+  };
+  if (!cv || !(has("personal_anecdote") || has("explainer_move") || has("reaction_beats") ||
+               has("viewer_advice") || has("native_metaphor"))) {
+    return `PERFORMANCE. This is spoken out loud by a person on camera, not read off a page.
+   Let some sentences carry a reaction rather than a fact, and explain anything
+   the audience plausibly has not heard of instead of assuming it.`;
+  }
+
+  const bits = [];
+  if (has("personal_anecdote") || has("reaction_beats")) {
+    bits.push(
+      `- REACT, do not only report. About one sentence in eight should carry a feeling
+     rather than a fact, and several of theirs are a short standalone sentence
+     rather than a clause bolted onto a longer one. Their reaction lines quoted
+     above are safe to reuse as they stand, because they carry tone and nothing
+     else.
+     Their personal anecdote is NOT. It is there to show you the shape of the
+     move, and the move only works when this material genuinely calls for it. Do
+     not invent a memory or an experience to reach the count. Reacting to what is
+     actually in front of you is the point; a fabricated childhood is not a
+     reaction, it is a lie in their voice.`
+    );
+  }
+  if (has("explainer_move")) {
+    bits.push(
+      `- EXPLAIN WHAT THEY WOULD EXPLAIN. Whenever a company, an acronym or a unit comes
+     up that this audience plausibly does not know, stop and say what it is, in one
+     short line, using their own explaining move quoted above. A viewer who does not
+     know the name gets nothing from the sentence otherwise. Do NOT explain things
+     they obviously know, and never add a fact the sources do not contain in order
+     to explain something.`
+    );
+  }
+  if (has("viewer_advice")) {
+    bits.push(
+      `- TELL THEM WHAT TO DO. Where the material supports it, say what the viewer should
+     actually do about this, in their words. That is a different thing from judging
+     the product and it is what their audience comes back for.`
+    );
+  }
+  if (has("native_metaphor")) {
+    bits.push(
+      `- Use their own turns of phrase where one fits. Do not force one into every
+     paragraph; one landing well beats three that do not.`
+    );
+  }
+
+  return `PERFORMANCE. This is spoken out loud by a person on camera, not read off a page.
+   A script that only states facts is correct and unusable.
+${bits.join("\n")}`;
+}
+
+/**
+ * Split what the model was shown into "this is theirs, repeat it" and "this
+ * happened in another video, do not carry it over".
+ *
+ * ── THE LINE BETWEEN THEM IS WHETHER IT CARRIES A CLAIM ─────────────────────
+ * A sign-off, a filler, a way of pointing at the screen and a turn of phrase
+ * all carry TONE, and they are supposed to appear in every script; catching
+ * those would be flagging the product working correctly.
+ *
+ * The descriptive fields are the opposite. The analyst writes them by quoting a
+ * real sentence from a real video, so `spec_delivery` on this profile contains
+ * a complete judgement about the front camera of a phone this script is not
+ * about. That is the sentence the model keeps reusing, and it is the sentence
+ * this split exists to isolate.
+ */
+function exampleAndSafeSpans(profile) {
+  const cv = profile?.category_voice || {};
+  const flat = (v) => (Array.isArray(v) ? v : [v]).map((x) => String(x || "").trim()).filter(Boolean);
+
+  // Meant to recur. Never flagged.
+  const safePhrases = [
+    ...flat(profile.signature_phrases),
+    ...flat(profile.sample_closings),
+    ...flat(cv.show_me_phrases),
+    ...flat(cv.reaction_beats),
+    ...flat(cv.native_metaphor),
+    ...flat(cv.viewer_advice),
+    ...flat(cv.verdict_vocabulary),
+    ...flat(cv.bulletin_transitions),
+    ...flat(cv.segment_names),
+    ...flat(cv.viewer_address),
+  ];
+
+  // Illustrations of a habit, quoting other videos about other products.
+  const exampleSpans = [
+    ...flat(cv.spec_delivery),
+    ...flat(cv.price_talk),
+    ...flat(cv.comparison_habit),
+    ...flat(cv.brand_handling),
+    ...flat(cv.hype_calibration),
+    ...flat(cv.personal_anecdote),
+    ...flat(cv.explainer_move),
+    ...flat(cv.compression),
+    ...flat(cv.running_order),
+    ...flat(cv.deal_callout),
+    ...flat(profile.sample_openings),
+  ];
+
+  return { safePhrases, exampleSpans };
 }
 
 function list(a) {

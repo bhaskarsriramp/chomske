@@ -252,7 +252,27 @@ export function measureVoice(transcripts) {
 
     // ── Code-mixing: the single most distinctive axis for an Indian creator ──
     english_ratio: round(tokens ? latin / tokens : 0),
-    english_kept: byDocFrequency(each.map((m) => m.englishCounts), minDocs, 25).map((r) => r.term),
+
+    // ── WHY THIS ONE DOES NOT USE minDocs ─────────────────────────────────
+    // It did, and it was wrong in a way that quietly gutted the field. minDocs
+    // exists to stop a one-off being called a habit, which is right for
+    // repeated_phrases and sentence_starters below. It is the wrong test here,
+    // because these are not habits: they are evidence that a KIND of word stays
+    // English, and a brand name said once is exactly as good evidence as one
+    // said twice.
+    //
+    // Measured on a real profile of four short videos, the two-document rule
+    // reduced this list to a single word, "youtube", picked up from the outro.
+    // Filtered out were megapixel, arri, oneplus, iqoo, poco, nord, bbd, pixel,
+    // magic, capture, honor and sixteen others, all of them retained English in
+    // Telugu speech, each appearing in the one video about that product. The
+    // field whose entire job is telling the writer what stays English was
+    // returning boilerplate.
+    //
+    // So: presence is the bar, and frequency across the whole set decides the
+    // ORDER, which is what byDocFrequency's tiebreak already does. The cap of
+    // 25 is what keeps this from turning into a word list.
+    english_kept: byDocFrequency(each.map((m) => m.englishCounts), 1, 25).map((r) => r.term),
 
     // ── Shape ──
     sentences: sentCount,
@@ -330,12 +350,106 @@ export function metricsBlock(m) {
  *
  * @returns {{ ok, drift: string[], measured }}
  */
-export function gradeDraft(text, target) {
+/**
+ * The longest run of words the draft shares with material it was only shown as
+ * an example, ignoring anything the creator is supposed to repeat.
+ *
+ * @param {string} draft
+ * @param {string[]} examples     descriptive fields, which quote other videos
+ * @param {string[]} safePhrases  catchphrases, sign-offs, cues: reuse is correct
+ * @returns {string|null} the offending span, for the rewrite note
+ */
+export function longestReusedSpan(draft, examples, safePhrases, minWords = 5) {
+  const norm = (s) => String(s || "").replace(/[।.,!?;:"'“”‘’()]/g, " ").replace(/\s+/g, " ").trim();
+  const words = (s) => norm(s).split(" ").filter(Boolean);
+
+  const haystack = " " + examples.map(norm).join(" | ") + " ";
+  if (haystack.trim().length < 20) return null;
+
+  // Anything inside a phrase the creator genuinely repeats is exempt, so a
+  // sign-off that happens to also appear inside an example is not flagged.
+  const safe = safePhrases.map(norm).filter((p) => p.length > 3);
+
+  const w = words(draft);
+  let best = null;
+  for (let i = 0; i < w.length; i++) {
+    // Longest-first from each start, so the report names the whole lifted run
+    // rather than its first five words.
+    for (let n = Math.min(14, w.length - i); n >= minWords; n--) {
+      const span = w.slice(i, i + n).join(" ");
+      if (span.length < 12) continue;
+      if (!haystack.includes(" " + span + " ") && !haystack.includes(span)) continue;
+      if (safe.some((p) => p.includes(span) || span.includes(p))) continue;
+      if (!best || span.length > best.length) best = span;
+      break;
+    }
+  }
+  return best;
+}
+
+export function gradeDraft(text, target, opts = {}) {
   const measured = measureVoice([{ text, duration_seconds: null }]);
   if (!measured || !target) return { ok: true, drift: [], measured };
 
   const drift = [];
   const pc = (x) => `${Math.round(x * 100)}%`;
+
+  /* ── DID IT ACTUALLY POINT AT ANYTHING ────────────────────────────────────
+     The prompt asks for on-screen cues and the format says how many. Asking is
+     not the same as getting: this is the check that turns it from a hope into a
+     requirement, the same reason every other number here is measured rather
+     than requested politely.
+
+     Deliberately the weakest possible test, ZERO cues where the format wants
+     some. Counting them properly would mean deciding what "about one in eight"
+     rounds to on a forty-second script, and a grader that rewrites a good draft
+     over an arithmetic quibble costs the creator a doubled wait for nothing.
+     A script with none at all is the failure worth catching, and it is the one
+     that cannot be recorded.
+
+     Matched on the creator's OWN phrases, so this cannot be satisfied by a
+     generic English "look at this" appearing in a Telugu script. */
+  /* ── DID IT COPY A SENTENCE FROM ANOTHER VIDEO ────────────────────────────
+     The prompt's examples are what put a script in this creator's voice, and
+     they are also complete fluent sentences about OTHER products sitting right
+     there to be reused. Observed live, twice in three runs: an example saying a
+     50-megapixel front camera was pointless came back as an 8-megapixel front
+     camera being pointless, on a phone where nothing supports it, because the
+     tail of the sentence survived intact.
+
+     Two prose rules failed to stop it, which is the usual outcome when an
+     instruction argues with a concrete example. This does not argue. It takes
+     the spans the model was shown, slides a window over the draft, and reports
+     any long overlap.
+
+     The safe phrases are subtracted first. A creator's catchphrase, sign-off,
+     pointing phrase or turn of phrase is MEANT to come back verbatim, and
+     flagging those would fight the entire point of the profile. What is left is
+     the descriptive examples, which are about other products and belong to them. */
+  const reused = longestReusedSpan(text, opts.exampleSpans || [], opts.safePhrases || []);
+  if (reused) {
+    drift.push(
+      `This sentence is lifted from a DIFFERENT video about a DIFFERENT product: "${reused}". ` +
+      `Reusing it carries that video's claim onto this one, and nothing in this story supports it. ` +
+      `Say the point plainly in their register instead. Their catchphrases and sign-offs are fine ` +
+      `to repeat; a sentence about another product is not.`
+    );
+  }
+
+  const wantCues = opts.onScreenDensity && opts.onScreenDensity !== "none";
+  const cuePhrases = (opts.showMePhrases || []).map((p) => String(p || "").trim()).filter(Boolean);
+  if (wantCues && cuePhrases.length) {
+    const hay = String(text || "");
+    const found = cuePhrases.filter((p) => hay.includes(p)).length;
+    if (found === 0) {
+      drift.push(
+        `This script never points at anything on screen. This creator does that constantly, ` +
+        `and a script without it cannot be recorded. Work in ${opts.onScreenDensity === "low" ? "one" : "two or three"} ` +
+        `of their own cues, verbatim: ${cuePhrases.slice(0, 5).map((p) => `"${p}"`).join(", ")}. ` +
+        `Only point at things that exist without holding the product: a render, a spec table, a price on screen.`
+      );
+    }
+  }
 
   // Absolute gap, not relative: going from 40% English to 20% is the same felt
   // wrongness whichever direction it moves, and a ratio blows up near zero.
