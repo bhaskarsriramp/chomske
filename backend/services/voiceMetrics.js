@@ -633,6 +633,31 @@ export function gradeDraft(text, target, opts = {}) {
     );
   }
 
+  /* ── THE SCRIPT CALLING ITSELF THE WRONG KIND OF VIDEO ────────────────────
+     A creator's real sign-off was "see you tomorrow in another unboxing". It
+     went out verbatim on a guide to watching an Apple event, on a launch
+     announcement, and on a teaser for a phone nobody has. Every other guard
+     passed it, correctly: it is genuinely their sign-off, it is genuinely how
+     they close, and the prompt genuinely asks for it.
+
+     What none of them could see is that one word in it is a factual claim
+     about the video, and the claim was false. Told about it in prose, the model
+     kept writing it, so it is checked.
+
+     The word itself comes from the analysis of THIS creator's own closing, in
+     their own language, which is why there is no list of video types here and
+     nothing for a Hindi or Tamil creator to fall outside of. */
+  const banned = String(opts.forbiddenVideoWord || "").trim();
+  if (banned && String(text || "").includes(banned)) {
+    drift.push(
+      `This script calls itself "${banned}", and it is not one. That word is in their usual ` +
+      `sign-off because the video it was recorded on really was one; this one is written from ` +
+      `news coverage of something nobody has handled. Keep their closing exactly as it is in ` +
+      `every other respect and replace that one word with what this video actually is, or end ` +
+      `on the part of their sign-off that is always true.`
+    );
+  }
+
   /* ── A PHRASE WE ARE RESTING, IN ANY FORM ─────────────────────────────────
      The last resort, and the only thing that worked.
 

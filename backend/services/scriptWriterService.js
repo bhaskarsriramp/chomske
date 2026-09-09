@@ -213,6 +213,7 @@ export async function writeScript({
   const formatBlock = renderFormat(format, material);
   const categoryVoiceBlock = renderCategoryVoice(profile, format);
   const performanceRule = renderPerformanceRule(profile);
+  const shootableTruthRule = renderShootableTruthRule(material, format, profile);
   const addressRule = renderAddressRule(profile, target);
   const phraseDiscipline = renderPhraseDiscipline(profile, recentScripts);
   const varietyRule = renderVarietyRule(profile, recentScripts);
@@ -264,13 +265,27 @@ ${facts}
 SOURCE MATERIAL ENDS.
 ${formatBlock}
 ════════ RULES ════════
-1. LANGUAGE. Write in ${language}, in the SAME script and the SAME code-mixing as the samples above. If their openings are in Devanagari with English words mixed in, the whole script must be Devanagari with English words mixed in. Do NOT translate. Do NOT transliterate into English letters. Do NOT write a cleaner or more formal version of how they talk.
-2. ${material.factRule}
-3. VOICE. Open the way THEY open, same energy and structure as their real openings, about this subject. Close the way THEY close. This is the whole job.
-4. ${BORROW_MANNER_NOT_CONTENT}
-5. LENGTH. ${lengthRule}
-6. ${performanceRule}
-7. ${ANTI_TELL}${addressRule ? `\n8. ${addressRule}` : ""}${phraseDiscipline ? `\n9. ${phraseDiscipline}` : ""}${varietyRule ? `\n10. ${varietyRule}` : ""}
+${[
+  `LANGUAGE. Write in ${language}, in the SAME script and the SAME code-mixing as the samples above. If their openings are in Devanagari with English words mixed in, the whole script must be Devanagari with English words mixed in. Do NOT translate. Do NOT transliterate into English letters. Do NOT write a cleaner or more formal version of how they talk.`,
+  material.factRule,
+  // Sits immediately after the fact rule because it IS a fact rule: it governs
+  // the claims a script makes about itself rather than about the product.
+  shootableTruthRule,
+  `VOICE. Open the way THEY open, same energy and structure as their real openings, about this subject. Close the way THEY close. This is the whole job.`,
+  BORROW_MANNER_NOT_CONTENT,
+  `LENGTH. ${lengthRule}`,
+  performanceRule,
+  ANTI_TELL,
+  addressRule,
+  phraseDiscipline,
+  varietyRule,
+]
+  // Numbered here rather than by hand. The list has grown from five rules to
+  // eleven, several of them conditional, and hand-numbering a template around
+  // optional entries is how a prompt ends up with two rule 8s.
+  .filter((r) => String(r || "").trim())
+  .map((r, i) => `${i + 1}. ${r}`)
+  .join("\n")}
 
 Return STRICT JSON only:
 {
@@ -383,6 +398,11 @@ Return STRICT JSON only:
         return r.oneOffs().filter((p) => spent.some((t) => t.includes(p)));
       })(),
       materialFacts: material.facts || "",
+      // Only when the script is written from coverage. A creator writing about
+      // material they brought may well be making exactly that kind of video.
+      forbiddenVideoWord: material.grounded
+        ? profile.category_voice?.closing_video_word || ""
+        : "",
       openingSafe: [
         ...(Array.isArray(profile.sample_openings) ? profile.sample_openings : []),
         ...(Array.isArray(profile.opening_patterns) ? profile.opening_patterns : []),
@@ -781,6 +801,73 @@ function repeatedSpans(recent, exempt, { minWords = 2, maxWords = 6, minDocs = 2
  * Language-neutral: these are the creator's own previous scripts, whatever
  * language they were written in, quoted back.
  */
+/**
+ * The longest run of words two lines share, ignoring punctuation.
+ *
+ * Used to decide WHICH of a creator's several openings a given line was
+ * modelled on. Word runs rather than stems, so it behaves the same in every
+ * language this serves.
+ */
+function sharedRun(a, b) {
+  const w = (s) => String(s || "").toLowerCase()
+    .replace(/[।.,!?;:"'“”‘’()]/g, " ").split(/\s+/).filter(Boolean);
+  const A = w(a), B = w(b);
+  let best = 0;
+  for (let i = 0; i < A.length; i++) {
+    for (let j = 0; j < B.length; j++) {
+      let n = 0;
+      while (i + n < A.length && j + n < B.length && A[i + n] === B[j + n]) n++;
+      if (n > best) best = n;
+    }
+  }
+  return best;
+}
+
+/**
+ * Which of the creator's own openings has each recent script been following?
+ *
+ * ── THE FAILURE THIS ANSWERS ────────────────────────────────────────────────
+ * A creator with four videos had four genuinely different opening moves: one
+ * announced the video, one asked the viewer a direct question, two led with
+ * what people keep asking for. Three consecutive scripts all used the same one
+ * of those four, and the opening-repetition check in gradeDraft passed every
+ * time, correctly: the repeated words WERE in his own sample openings, so they
+ * were exempt as his habit.
+ *
+ * The exemption is right and it was answering the wrong question. Repeating a
+ * move this creator really uses is not the defect. Never using the other three
+ * is. A creator who varies their opening across their own videos and gets the
+ * same one from us every time is watching us flatten them.
+ *
+ * So instead of asking "is this opening too close to the last one", this asks
+ * which of their openings each recent script drew on, and the rule below hands
+ * the writer the ones that have gone unused. Positive framing on purpose: the
+ * unused openings can be quoted freely, because quoting them is the point,
+ * whereas quoting the over-used one would just invite it again.
+ */
+// Three words, not four. These creators open with a greeting that is itself one
+// or two words, so the run that identifies WHICH move follows it is short by
+// construction: "hi friends, many people" is three, and the fourth word is
+// already the part that varies between the moves. At four this matched nothing
+// and reported every opening as unused.
+function openingsRecentlyUsed(profile, recentOpenings, minRun = 3) {
+  const samples = (Array.isArray(profile?.sample_openings) ? profile.sample_openings : [])
+    .map((s) => String(s || "").trim()).filter(Boolean);
+  if (samples.length < 2) return { samples, used: new Set() };
+
+  const used = new Set();
+  for (const line of recentOpenings) {
+    let bestIdx = -1;
+    let bestRun = minRun - 1;
+    samples.forEach((s, i) => {
+      const run = sharedRun(line, s);
+      if (run > bestRun) { bestRun = run; bestIdx = i; }
+    });
+    if (bestIdx >= 0) used.add(bestIdx);
+  }
+  return { samples, used };
+}
+
 export function renderVarietyRule(profile, recentScripts) {
   const recent = (Array.isArray(recentScripts) ? recentScripts : [])
     .map((t) => String(t || "").trim())
@@ -820,13 +907,32 @@ export function renderVarietyRule(profile, recentScripts) {
   const overused = repeatedSpans(recent, exemptFromRepeat(profile))
     .filter((x) => !resting.some((p) => shareWords(p, x.p)));
 
+  // Which of their own openings are still unspent. Quoted, unlike everything
+  // else in this block, because these are the ones we want reached for.
+  const { samples, used } = openingsRecentlyUsed(profile, openings);
+  const unused = samples.filter((_, i) => !used.has(i));
+
+  const rotate = samples.length < 2 || !used.size
+    // Either they only have one opening on file, or the recent scripts did not
+    // follow any of them closely enough to say which. Claiming they "leaned on
+    // the same move" would then be a guess dressed as a measurement.
+    ? ""
+    : unused.length
+      ? `\n   This creator does not open every video the same way. The last ` +
+        `${recent.length === 1 ? "script" : `${recent.length} scripts`} all followed the same one ` +
+        `of their ${samples.length} opening moves, and these are the ones we have NOT used. ` +
+        `Model this opening on one of them instead:\n${unused.map((o) => `   - "${o}"`).join("\n")}`
+      : `\n   Every one of their opening moves has been used in a recent script. Do not repeat ` +
+        `the most recent one: pick whichever of their openings is furthest back, or open on the ` +
+        `story itself in their register.`;
+
   return (
     `DO NOT REPEAT YOURSELF ACROSS SCRIPTS. We have already sent this creator ` +
     `${recent.length} script${recent.length === 1 ? "" : "s"}, and they read them one after ` +
-    `another. Open this one on a different move from the last ones: pick a DIFFERENT one of ` +
-    `their real openings further up as your model, or come at the subject from another angle ` +
-    `entirely. Do not start with a superlative about how astonishing this is if that is the ` +
-    `obvious choice, it is the one they have had repeatedly.` +
+    `another. Open this one on a different move from the last ones. Do not start with a ` +
+    `superlative about how astonishing this is if that is the obvious choice, it is the one ` +
+    `they have had repeatedly.` +
+    rotate +
     (overused.length
       ? `\n   And these exact runs of words already appear in more than one of those scripts, ` +
         `without being anything this creator habitually says:\n` +
@@ -927,6 +1033,88 @@ function renderPhraseDiscipline(profile, recentScripts) {
     `reaction, and never as the opening or the closing line. Using several, or using one ` +
     `every time, turns the strongest thing about this creator into a verbal tic they do not ` +
     `have:\n${oneOffs.map((p) => `   - "${p}"`).join("\n")}`
+  );
+}
+
+/**
+ * The script may not lie about what kind of video it is.
+ *
+ * ── THE BUG ─────────────────────────────────────────────────────────────────
+ * A creator's real sign-off was "see you tomorrow in another unboxing, bye".
+ * It went out, verbatim and correctly quoted, on the end of three scripts: a
+ * guide to watching tonight's Apple event, an ASUS launch announcement, and a
+ * teaser for a OnePlus phone that does not exist yet. None of the three is an
+ * unboxing. One of them is about a product nobody outside the factory has
+ * touched.
+ *
+ * The same script said "here on my desk you can see" about a laptop that has
+ * not launched.
+ *
+ * ── WHY EVERY EXISTING GUARD MISSED IT ──────────────────────────────────────
+ * The fact rules govern claims about the PRODUCT: its price, its specs, its
+ * launch date, all checked against the source material. Nothing governed the
+ * claims a script makes about ITSELF, and those are just as false and rather
+ * more embarrassing, because the creator has to say them out loud about their
+ * own video.
+ *
+ * The sign-off in particular was protected by every mechanism at once. It is a
+ * genuine habit, so the recurrence check exempts it; it is in safePhrases, so
+ * the contamination check exempts it; and the prompt explicitly instructs
+ * "close the way THEY close". Everything worked as designed and the output was
+ * still wrong, because a phrase can be perfectly in-voice and factually false
+ * at the same time. Their catchphrases were recorded in videos that WERE
+ * unboxings.
+ *
+ * ── WHY THIS IS NOT A WORD LIST ─────────────────────────────────────────────
+ * The obvious fix is to look for "unboxing" and friends in the draft. That
+ * would work for one word in one language and fail for every creator who signs
+ * off promising a review, a giveaway, a comparison or a build, in any of the
+ * languages this product serves. What is stated instead is the TEST: does this
+ * line claim something about this video that is not true? A model can apply
+ * that to its own draft in any language; it cannot apply a list it does not
+ * have.
+ */
+export function renderShootableTruthRule(material, format, profile) {
+  // The news path is the one where this is guaranteed: the creator is writing
+  // from coverage of something they have not seen. Material they brought
+  // themselves may well be a product in their hands, and telling them they do
+  // not have it would be its own wrong claim.
+  if (!material?.grounded) return "";
+
+  const what = material.story_count > 1
+    ? "a news bulletin covering several stories"
+    : format?.id === "explainer"
+      ? "an explainer built from reporting"
+      : "a news item about something that has been announced or leaked";
+
+  return (
+    `DO NOT LIE ABOUT WHAT THIS VIDEO IS. This script is ${what}, written from the coverage ` +
+    `above. The creator has not seen, held, opened, used or tested anything in it, and for an ` +
+    `unreleased product nobody outside the company has. Every guard further up governs claims ` +
+    `about the PRODUCT; this one governs claims about the VIDEO, and those are just as false ` +
+    `when they are wrong.\n` +
+    `   - Do not call this, or imply it is, an unboxing, a review, a hands-on, a first look, a ` +
+    `test, a comparison or a giveaway. It is none of those.\n` +
+    `   - Do not place the product anywhere: not in their hands, not on their desk, not in ` +
+    `front of them. Do not say they have been using it, or how it felt.\n` +
+    (String(profile?.category_voice?.closing_video_word || "").trim()
+      // Named explicitly when the analysis found it, because "check your
+      // sign-off" is a thing to notice and "the word is X, do not write X" is a
+      // thing to do. The word came off this creator's own transcripts, so this
+      // stays language-neutral.
+      ? `   - THEIR SIGN-OFF NAMES A KIND OF VIDEO, and this is not one. The word is ` +
+        `"${String(profile.category_voice.closing_video_word).trim()}". Do NOT write it anywhere ` +
+        `in this script. Keep their closing otherwise word for word, its rhythm and its warmth, ` +
+        `and put in its place what this video actually is, or drop that clause and end on the ` +
+        `part of their sign-off that is always true.\n`
+      : `   - THEIR SIGN-OFF NEEDS CHECKING. Creators sign off by naming the kind of video they ` +
+        `usually make, and theirs was recorded on a video that genuinely was one. If their ` +
+        `closing promises the next video is a particular kind, or describes this one as a kind, ` +
+        `keep its rhythm, its warmth and its exact wording everywhere else, and change only the ` +
+        `word that is no longer true, to whatever this video actually is. If nothing fits, end ` +
+        `on the part of their sign-off that is always true.\n`) +
+    `   This is not a licence to flatten them. Everything about how they talk stays. What ` +
+    `changes is only a claim that would make them look like they had not watched their own video.`
   );
 }
 
@@ -1097,10 +1285,14 @@ idiom rather than inventing a catchphrase.`}
 YOU MAY ONLY POINT AT: ${on.cueTo}.
 
 NEVER write a cue for something nobody has filmed. Do not describe holding the
-product, turning it, pressing it, or demonstrating it working. The creator is
-writing about news, they do not have this device, and a cue they cannot shoot is
-worse than no cue: they discover it halfway through recording. If there is
-nothing real to look at for a point, just say the point.`;
+product, turning it, pressing it, or demonstrating it working. Do not PLACE it
+either: not on their desk, not in front of them, not next to anything. A draft
+for an unreleased laptop said "here on my desk you can see" and passed this
+rule, because it never touched the thing, which is the loophole this sentence
+closes. Pointing at a picture is fine; pointing at an object in the room is not.
+The creator is writing about news, they do not have this device, and a cue they
+cannot shoot is worse than no cue: they discover it halfway through recording.
+If there is nothing real to look at for a point, just say the point.`;
 }
 
 /**

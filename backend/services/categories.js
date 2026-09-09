@@ -257,7 +257,7 @@ export const CATEGORIES = [
        * creator is CHARGED to pick up questions they never asked to be asked.
        * A mismatch on either the category or this number earns the free rebuild.
        */
-      version: 5,
+      version: 6,
 
       /**
        * ── NO EXAMPLE IN THIS FILE MAY COME FROM A REAL CREATOR ─────────────
@@ -338,11 +338,20 @@ export const CATEGORIES = [
           "on screen: 'look at this', 'you can see here', 'let's see'. These are the lines " +
           "an editor cuts footage to. Collect every distinct one, up to 10, exactly as spoken. " +
           "Return an empty array rather than inventing plausible ones. " +
-          "ONLY REUSABLE ONES: keep the short general phrases that would work over any shot. " +
-          "EXCLUDE any phrase that only works while the creator is physically holding or " +
-          "operating the product, or that refers to something happening live in that very " +
-          "moment, because those cannot be reused for a story they are only reporting on, and a " +
-          "cue that does not match what is on screen is a sentence a viewer cannot follow.",
+          "ONLY REUSABLE ONES: keep the phrases that would work over ANY footage, including " +
+          "over a press render or a spec table the editor puts up. " +
+          "Put it in demo_only_phrases instead, not here, if it would only be true with the " +
+          "product physically present: the creator holding or operating it, the product on " +
+          "their desk or in front of them, two units side by side, or anything happening live " +
+          "in that moment. PRESENCE COUNTS, not just touch. A cue like 'here on my desk you " +
+          "can see it' is demo-only even though nobody picks anything up, and putting it here " +
+          "makes the writer claim the creator owns a product that has not launched.",
+        demo_only_phrases:
+          "The pointing phrases you just excluded: the ones that only make sense with the " +
+          "product actually there in front of them. Verbatim, up to 6, empty array if they " +
+          "have none. These are collected rather than discarded because they are real and they " +
+          "are usable the day this creator writes about something they do own, but they are " +
+          "false in a script written from news coverage.",
         reaction_beats:
           "Short standalone lines that carry FEELING rather than information, spoken as their " +
           "own sentence rather than tucked inside a longer one: an exclamation, a wistful " +
@@ -411,6 +420,14 @@ export const CATEGORIES = [
 
         /* ── WHAT THEY DO THAT THE STORY DID NOT ASK FOR ─────────────────── */
 
+        closing_video_word:
+          "Does their sign-off NAME a kind of video? Many creators close by promising the next " +
+          "one, and they name it: 'see you in the next unboxing', 'back tomorrow with another " +
+          "review', 'until the next giveaway'. If theirs does, return ONLY that word or short " +
+          "phrase, exactly as they say it in their own language. Empty string if their sign-off " +
+          "does not name a kind of video. This is not about their tone, it is a fact-check: " +
+          "that word is a claim about what the video IS, and it is false whenever we write them " +
+          "a script that is a different kind of video.",
         cross_promo:
           "Whether they point viewers at their OWN other videos or channel, and how. Some " +
           "creators end every short video by sending people to a longer one; for them it is " +
