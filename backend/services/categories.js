@@ -81,80 +81,157 @@ export const CATEGORIES = [
     // The one category on offer. See ENABLED below for why the other six stay
     // in this file fully configured rather than being deleted.
     enabled: true,
-    locale: US,
-    // Was ["artificial intelligence", "OpenAI", "Anthropic Claude",
-    // "Google Gemini AI", "AI model release"], which is three company names and
-    // a catch-all. Live A/B on the same hour: that list was 32% OpenAI-titled,
-    // this one is 19%, and the difference is made up of chips, breaches,
-    // outages, rulings and hardware launches rather than of nothing.
-    googleNews: [
-      "AI model launch",
-      "AI research breakthrough",
-      "AI safety incident",
-      "AI regulation lawsuit",
-      "semiconductor chip launch",
-      "AI chip data center",
-      "data breach cyberattack",
-      "cloud outage",
-      "tech product launch",
-      "big tech acquisition",
-    ],
-    // Paid-source terms, deliberately broader than the Google News ones above.
-    // Those are tuned to a free feed that rewards a narrow phrase; this endpoint
-    // is one paid request for thirty articles, so a term naming a single company
-    // spends it on that company's week rather than on the category. See
-    // sources/apidirectNews.js, which rotates through this whole list.
-    apidirectNews: [
-      "artificial intelligence news", "technology news", "AI model launch",
-      "tech industry", "AI research breakthrough", "semiconductor chip industry",
-      "AI startup funding", "big tech company news", "cybersecurity breach",
-      "consumer technology gadgets",
-    ],
-    // Company names dropped here for the same reason as above: HN's own front
-    // page surfaces the big labs constantly without being asked.
-    hn: ["AI", "LLM", "machine learning", "GPU", "chip", "security breach", "open source"],
-    arxiv: true,
-    github: true,
-    rss: [
-      { source: "openai", kind: "primary", url: "https://openai.com/news/rss.xml" },
-      { source: "deepmind", kind: "primary", url: "https://deepmind.google/blog/rss.xml" },
-      { source: "huggingface", kind: "primary", url: "https://huggingface.co/blog/feed.xml" },
-      // Added so the `primary` tier, which carries the heaviest source weight in
-      // the collector, is not three feeds of which one is the loudest publisher
-      // in the industry. A tier that small decides its own winner.
-      { source: "nvidia", kind: "primary", url: "https://blogs.nvidia.com/feed/" },
-      { source: "microsoft", kind: "primary", url: "https://blogs.microsoft.com/feed/" },
-      { source: "googleblog", kind: "primary", url: "https://blog.google/rss/" },
-      { source: "techcrunch-ai", kind: "outlet", url: "https://techcrunch.com/category/artificial-intelligence/feed/" },
-      { source: "venturebeat-ai", kind: "outlet", url: "https://venturebeat.com/category/ai/feed/" },
-      { source: "arstechnica", kind: "outlet", url: "https://feeds.arstechnica.com/arstechnica/index", filter: true },
-      { source: "theverge", kind: "outlet", url: "https://www.theverge.com/rss/index.xml", filter: true },
-      { source: "engadget", kind: "outlet", url: "https://www.engadget.com/rss.xml", filter: true },
-      { source: "wired", kind: "outlet", url: "https://www.wired.com/feed/rss", filter: true },
-      // Infrastructure and enterprise, which is where the outages, breaches and
-      // chip supply stories the new queries ask for actually get covered; the
-      // other four outlets here are all consumer-facing.
-      { source: "theregister", kind: "outlet", url: "https://www.theregister.com/headlines.atom", filter: true },
-    ],
-    // ── THIS TEST USED TO SAY "AI", NOT "TECHNOLOGY" ─────────────────────────
-    // It was a list of AI words, applied to the two general tech feeds, and it
-    // was throwing away most of what they publish: measured live, The Verge kept
-    // 1 item in 10 and Ars Technica 3 in 20. What it discarded was not noise, it
-    // was Europe's first commercial orbital rocket, the Cybercab investigation,
-    // an iPhone feature launch, the Fairphone 6. A category called "AI &
-    // technology" was filtering technology out of itself and keeping only the
-    // half that mentions AI, which is the other reason the feed read as
-    // all-OpenAI-all-the-time.
+    // ── INDIA, NOT THE US ───────────────────────────────────────────────────
+    // This was US, inherited from when the category was AI industry news. For a
+    // creator whose whole show is "what does this cost in rupees and when can
+    // you buy it here", a US feed is not merely less relevant, it is missing the
+    // one fact every story turns on. An Oppo launch has a different price, a
+    // different date and often a different model number in India.
+    locale: IN,
+
+    // ── THE QUERIES ARE ABOUT PRODUCTS PEOPLE BUY ───────────────────────────
+    // These used to be "AI model launch", "AI research breakthrough", "AI safety
+    // incident", "AI regulation lawsuit". Every one of them asks for the AI
+    // INDUSTRY: labs, papers, policy, funding. Measured against the feed those
+    // queries produced, not one story in the first twenty named a phone, a
+    // price or a rupee.
     //
-    // Now a real technology test. The same feeds keep 80%, and what still drops
-    // is what genuinely belongs elsewhere: Ars's medical and political coverage
-    // (science_health's job) and Wired's shopping guides (nobody's).
+    // The channels this category is for run a different show. Prasadtechintelugu
+    // episode 2242 was "Mobiles GST, GPT 6 Astra, Anker Sleeplab, GTA 6 PC, Edge
+    // 70 Neo"; TechFacts 1777 was "Samsung S27 Charging, Vi's New Name, Apple
+    // CEO Salary, JioHotstar, Xiaomi 165W Powerbank, Vivo T5, MiVi New Phone".
+    // Roughly six parts phones, two parts telecom and deals, one part
+    // accessories, one part apps and services, and AI only when it ships to a
+    // consumer.
+    //
+    // So one line per facet of THAT show. The no-company-names rule from the
+    // top of this file still holds: naming Samsung buys Samsung's week. The one
+    // apparent exception is the telecom line, and it is not an exception, it
+    // asks for the recharge plan, which is the event.
+    //
+    // ── KEEP THEM SHORT ─────────────────────────────────────────────────────
+    // Measured, not assumed. Google News punishes long noun piles badly enough
+    // to return nothing at all: "earbuds smartwatch power bank charger launched
+    // India" returned ZERO items on a live pass, while "power bank launched
+    // India" returned 59 and "earbuds launched India" 14. Three or four words
+    // is the working length, and every line below was probed at that length
+    // before it went in. If a facet needs two nouns, it needs two lines.
+    googleNews: [
+      "smartphone launched India price",
+      "smartphone launch date confirmed India",
+      "smartphone specifications leaked ahead of launch",
+      "mobile phone price cut India offer",
+      "smartphone sale offer discount India",
+      "power bank launched India",
+      "earbuds launched India",
+      "laptop launched India",
+      "app update new feature rollout users",
+      // The only AI line, and it asks for AI that SHIPS: an assistant in a
+      // phone, a feature in an app. The industry's labs, funding and research
+      // are what the old query set was made of and what `low` now scores 0-2.
+      "AI feature smartphone app rollout",
+    ],
+    // Telecom, the Jio/Airtel/Vi plan changes these channels run as their own
+    // segment, has no query here on purpose: every phrasing tried returned a
+    // single item, because Google News barely indexes it inside a one-day
+    // window. The telecomtalk feed below carries it properly, twenty items and
+    // something new every few hours, so a query slot spent on it is a slot
+    // wasted.
+
+    // Paid-source terms, deliberately broader than the Google News ones above:
+    // one paid request returns thirty articles, so a narrow phrase wastes it.
+    apidirectNews: [
+      "smartphone launch India", "mobile phone news India", "gadget launch India",
+      "smartphone price India", "consumer technology India", "telecom recharge plan India",
+      "laptop launch India", "wearables audio launch India", "smartphone deals offers",
+      "mobile app features update",
+    ],
+
+    // ── NO HACKER NEWS, NO ARXIV, NO GITHUB ─────────────────────────────────
+    // All three were on, and all three are wrong for this category rather than
+    // merely unhelpful. Hacker News is a developer forum: it supplied "Super
+    // Smash Brothers Melee has been 100% decompiled with the help of LLMs" and
+    // "Tao: Open math problems being non-renewably mined by AI", both of which
+    // scored well and neither of which a gadget channel could open a video with.
+    // arXiv is preprints. GitHub is repositories. A creator covering the POCO
+    // X8's battery has no use for any of them, and their volume was crowding out
+    // the launches that ARE the category.
+    hn: [],
+    arxiv: false,
+    github: false,
+
+    // ── FEEDS THAT ACTUALLY COVER PHONES, AND MOSTLY COVER THEM IN INDIA ────
+    // Every URL below was live-probed. The old list was openai, deepmind,
+    // huggingface, nvidia, microsoft, googleblog, techcrunch-ai and venturebeat-ai
+    // in the `primary` tier, which is to say the heaviest source weight in the
+    // collector was spent entirely on AI lab announcements.
+    //
+    // `primary` now means an outlet whose core beat is Indian consumer hardware,
+    // because that is what should win a tie in this category.
+    rss: [
+      // Indian gadget desks. Gadgets360 is NDTV's and is the closest thing this
+      // category has to a wire: a thousand items and something new most hours.
+      { source: "gadgets360", kind: "primary", url: "https://www.gadgets360.com/rss/news" },
+      { source: "fonearena", kind: "primary", url: "https://www.fonearena.com/blog/feed" },
+      { source: "smartprix", kind: "primary", url: "https://www.smartprix.com/bytes/feed/" },
+      { source: "ht-tech", kind: "primary", url: "https://tech.hindustantimes.com/rss/tech" },
+      // Telecom is its own segment on these channels, the Jio/Airtel/Vi plan
+      // changes and offers, and no general tech feed covers it properly.
+      { source: "telecomtalk", kind: "primary", url: "https://telecomtalk.info/feed/" },
+
+      // Phone launches worldwide. India gets most of these a week later, which
+      // is exactly the "coming soon" material these channels run on.
+      { source: "gsmarena", kind: "outlet", url: "https://www.gsmarena.com/rss-news-reviews.php3" },
+      { source: "androidauthority", kind: "outlet", url: "https://www.androidauthority.com/feed/" },
+      { source: "androidpolice", kind: "outlet", url: "https://www.androidpolice.com/feed/" },
+      { source: "xda", kind: "outlet", url: "https://www.xda-developers.com/feed/" },
+      { source: "techpp", kind: "outlet", url: "https://techpp.com/feed/" },
+
+      // General Indian tech desks: real gadget coverage mixed with politics,
+      // entertainment and business, so they are filtered.
+      { source: "indianexpress-tech", kind: "outlet", url: "https://indianexpress.com/section/technology/feed/", filter: true },
+      { source: "digit", kind: "outlet", url: "https://www.digit.in/feed/", filter: true },
+    ],
+
+    // ── THE TEST IS NOW "IS THERE A PRODUCT IN IT" ──────────────────────────
+    // The old one was a list of AI and big-tech words, which is what let an
+    // OpenAI funding round through and dropped a phone launch. This asks for
+    // the vocabulary of consumer hardware and the things that happen to it:
+    // launches, prices, batteries, cameras, plans, offers, updates.
     filterTerms:
-      /\b(ai|a\.i\.|artificial intelligence|llm|gpt|claude|gemini|openai|anthropic|deepmind|machine learning|neural|chatbot|agent|copilot|hugging ?face|inference|diffusion|model|algorithm|chips?|semiconductor|processor|gpu|nvidia|amd|intel|arm|qualcomm|tsmc|apple|google|microsoft|amazon|meta|tesla|spacex|samsung|sony|nintendo|valve|steam|iphone|ipad|android|windows|macos|linux|pixel|galaxy|laptop|smartphone|phone|tablet|headset|vr|wearable|e-?reader|console|gaming|robot|drone|satellite|rocket|orbital|ev|electric vehicle|battery|quantum|software|hardware|apps?|startup|cloud|server|data ?cent(er|re)|outage|breach|hack(ed)?|ransomware|malware|phishing|encryption|privacy|cyber|browser|chrome|firefox|open source|api|developer|programming|crypto|bitcoin|streaming|netflix|spotify|youtube|tiktok|social media|antitrust|regulat|lawsuit|ftc)\b/i,
-    editor: "AI and technology news, for a general curious audience rather than researchers",
-    top: "A frontier model launch, a major acquisition, a serious outage or breach, a landmark lawsuit ruling.",
-    mid: "A notable release, a real benchmark result, a credible leak, a surprising study.",
-    low: "Routine papers, listicles, opinion pieces, press releases with no news.",
+      /\b(smartphones?|phones?|mobiles?|handsets?|tablets?|laptops?|notebooks?|earbuds?|headphones?|earphones?|smartwatch(es)?|wearables?|power ?banks?|chargers?|smart ?tv|projector|camera|display|screen|battery|charging|processor|chipset|soc|snapdragon|dimensity|exynos|tensor|ram|storage|android|ios|iphone|ipad|macbook|galaxy|pixel|oneplus|xiaomi|redmi|poco|realme|vivo|iqoo|oppo|motorola|nothing|infinix|tecno|lava|micromax|samsung|apple|launch(ed|es)?|unveil(ed|s)?|price|priced|pricing|cost|discount|offers?|sale|deal|cashback|emi|gst|specs?|specifications?|features?|update|rollout|firmware|one ?ui|hyperos|oxygenos|beta|5g|4g|recharge|prepaid|postpaid|plan|tariff|data pack|jio|airtel|vodafone|\bvi\b|bsnl|app|whatsapp|upi|play store|app store)\b/i,
+
+    editor:
+      "phones, gadgets and consumer technology for an INDIAN audience: what launched, " +
+      "what it costs in rupees, when you can buy it, and what deal is on",
+
+    // ── WHAT DESERVES A VIDEO ON A GADGET CHANNEL ───────────────────────────
+    // The old bar rewarded "a frontier model launch, a major acquisition, a
+    // serious outage or breach, a landmark lawsuit ruling", which is why the
+    // feed filled with exactly those. A creator opening a video with a lawsuit
+    // ruling has no product to hold up.
+    top:
+      "A phone launched in India with a price, a big price cut or a GST or tariff change, " +
+      "a flagship's India availability and date, a major telecom plan or tariff change, " +
+      "a sale with real discounts on things people buy.",
+    mid:
+      "A credible spec leak or a confirmed launch date, a mid-range or budget launch, " +
+      "an accessory or wearable launch, a software update that visibly changes something, " +
+      "a widely used app shipping a real new feature.",
+    low:
+      "AI research, papers, benchmarks and lab drama. Funding rounds, valuations, share " +
+      "prices and analyst commentary. Enterprise, cloud, developer tooling and open-source " +
+      "project news. Policy and lawsuits with no product attached. Opinion columns. Anything " +
+      "with no product a viewer can actually buy, use or hold.",
+
+    // Read by buildPrompt in services/newsRanker.js and appended to the bar above.
+    caution:
+      "This channel's audience buys these products. A story carrying an India price, an " +
+      "India launch date or an India-specific offer is worth more than the same story " +
+      "without them. A US-only price or availability is a weaker version of the story, not " +
+      "an equal one. AI counts ONLY when it ships to consumers, an assistant in a phone, a " +
+      "feature in an app people use; AI as an industry, its labs, its funding, its research " +
+      "and its politics, is not this channel's subject however large the news is.",
 
     /* ── WHAT THE VOICE ANALYST LOOKS FOR IN *THIS* CATEGORY ─────────────────
        The shared analysis in services/voiceProfileService.js captures how a

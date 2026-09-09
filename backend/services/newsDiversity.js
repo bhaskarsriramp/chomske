@@ -81,7 +81,44 @@ const ENTITIES = [
   ["qualcomm",   /\b(qualcomm|snapdragon)\b/i],
   ["tsmc",       /\btsmc\b/i],
 
+  // ── PHONE BRANDS, WHICH IS WHAT ACTUALLY FLOODS A GADGET FEED ─────────────
+  // The list above was written when this category was AI industry news, so the
+  // things it knows how to space apart are labs and chipmakers. On a feed of
+  // Indian phone launches the entity that repeats is a phone brand: Xiaomi
+  // ships Redmi, POCO and its own line, and a launch week from any one of them
+  // can put four near-identical cards at the top of the feed.
+  //
+  // Sub-brands map to their PARENT on purpose. Redmi and POCO are both Xiaomi,
+  // and three Xiaomi launches spaced as three different companies is exactly
+  // the clustering this file exists to break up. iQOO is vivo's, and OnePlus
+  // and realme are BBK's alongside oppo, but those three are run and marketed
+  // as separate rivals in India and a viewer reads them that way, so they stay
+  // separate here.
+  ["xiaomi",     /\b(xiaomi|redmi|poco|hyperos|mi\s?\d)\b/i],
+  ["vivo",       /\b(vivo|iqoo|funtouch|originos)\b/i],
+  ["oppo",       /\b(oppo|coloros)\b/i],
+  ["oneplus",    /\b(oneplus|one ?plus|oxygenos)\b/i],
+  ["realme",     /\brealme\b/i],
+  ["motorola",   /\b(motorola|moto\s|lenovo)\b/i],
+  ["nothing",    /\b(nothing phone|nothing ear|cmf by nothing)\b/i],
+  ["transsion",  /\b(infinix|tecno|itel)\b/i],
+  ["honor",      /\bhonor\b/i],
+  ["huawei",     /\bhuawei\b/i],
+  ["asus",       /\b(asus|rog phone|zenfone|vivobook)\b/i],
+  ["lava",       /\b(lava|micromax)\b/i],
+  ["sony",       /\bsony\b/i],
+  ["boat",       /\b(boat lifestyle|boAt)\b/],
+  ["noise",      /\bnoise (buds|colorfit|smartwatch)\b/i],
+
+  // Telecom, which is its own recurring segment on these channels and where one
+  // operator's tariff week can otherwise take the whole feed.
+  ["airtel",     /\b(airtel|bharti airtel)\b/i],
+  ["vodafoneidea", /\b(vodafone idea|\bvi\b|vodafone)\b/i],
+  ["bsnl",       /\bbsnl\b/i],
+
   // Finance and business, India-weighted because those categories are.
+  // `jio` sits here rather than with telecom above because Reliance is the
+  // parent and the finance feed talks about it constantly.
   ["reliance",   /\b(reliance|jio)\b/i],
   ["adani",      /\badani\b/i],
   ["tata",       /\b(tata|tcs)\b/i],

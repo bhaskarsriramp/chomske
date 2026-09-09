@@ -41,8 +41,8 @@
  * the short lane, already correct, already populated. The long lane is added
  * beside them as a sub-document rather than by restructuring what works.
  *
- * That also survives the ceiling moving to two minutes: raising it can only let
- * MORE short-form video into a lane that already holds nothing else. The lane is
+ * That also survives every raise of the ceiling since: letting more in can only
+ * add short-form video to a lane that already holds nothing else. The lane is
  * derived from duration on every read rather than stored on the row, so old
  * transcripts reclassify themselves correctly and no backfill is needed.
  */
@@ -52,20 +52,24 @@
 /**
  * The longest video that counts as short-form training material.
  *
- * ── IT IS THE SAME NUMBER AS THE SCRIPT SPLIT, ON PURPOSE ────────────────────
- * This was 90, inherited from the old MAX_VIDEO_SECONDS whose reasoning was
- * about YouTube's Shorts ceiling. That was the wrong thing to peg it to, and it
- * produced a rejection creators hit constantly: a 1m45s video, which is short
- * form by any reading, was refused for being nine seconds past a limit derived
- * from somebody else's product decision.
+ * ── WHY IT SITS ABOVE THE SCRIPT SPLIT ───────────────────────────────────────
+ * Two and a half minutes, which is deliberately MORE than the two minutes the
+ * short lane writes at. That looks like a mismatch and is not.
  *
- * The right peg is LANE_SPLIT_SECONDS. The short lane exists to write scripts
- * under two minutes, so the videos that train it should be the videos that look
- * like the thing it writes: under two minutes, one subject, start to finish. A
- * training band and an output band that disagree is how a lane ends up learning
- * from material it will never be asked to produce.
+ * What this number bounds is what we LEARN from, and what the split bounds is
+ * what we PRODUCE. A single-subject video slightly longer than the longest
+ * script we write still demonstrates exactly what the short lane needs: one
+ * hook, one subject carried start to finish, one sign-off. Refusing it buys
+ * nothing, and refusing it is what creators were actually running into, first
+ * at ninety seconds and then at two.
+ *
+ * The real boundary this has to respect is the one below it, LONG_MIN_SECONDS.
+ * A video only belongs in the long lane once it reliably contains more than one
+ * story, and around two and a half minutes it still reliably does not, so this
+ * is the last length that is unambiguously single-subject rather than the last
+ * length we would write.
  */
-export const SHORT_MAX_SECONDS = parseInt(process.env.VOICE_SHORT_MAX_SECONDS || "120", 10);
+export const SHORT_MAX_SECONDS = parseInt(process.env.VOICE_SHORT_MAX_SECONDS || "150", 10);
 
 /**
  * The shortest video that counts as long-form training material.
@@ -119,16 +123,18 @@ export function laneForScript(seconds) {
  * Which lane a video of `duration` seconds trains, or null if it trains neither.
  *
  * ── WHY THERE IS STILL A GAP IN THE MIDDLE ──────────────────────────────────
- * Two to three minutes belongs to neither lane, and that is on purpose rather
- * than an oversight in the arithmetic. A 2:30 video is past the length the
- * short lane writes at, and it is still, almost always, one subject: it does
- * not contain the story-to-story joins the long lane exists to learn. Putting
- * it in the long lane would quietly poison that lane's training set with
- * material that never demonstrates the one thing that lane is for.
+ * 2:30 to 3:00 belongs to neither lane, and that is on purpose rather than an
+ * oversight in the arithmetic. It is the one stretch where the answer genuinely
+ * is not knowable from the length: a video in it might be one subject explored
+ * slowly, or it might be the first two items of a roundup. Putting it in the
+ * long lane on a guess would quietly poison that lane's training set with
+ * material that never demonstrates the one thing that lane is for, and the long
+ * lane is the whole reason this file exists.
  *
- * The gap used to be ninety seconds wide and creators hit it constantly. At a
- * short ceiling of two minutes it is a single minute, and everything inside it
- * is genuinely ambiguous rather than merely unlucky.
+ * The gap used to be ninety seconds wide and creators hit it constantly. It is
+ * now thirty seconds, 2:30 to 3:00, which is the genuinely ambiguous stretch:
+ * long enough that it might be two stories, short enough that it might be one.
+ * Everything outside it now lands somewhere.
  *
  * Callers turn null into an explicit refusal that names both bands, so a
  * creator is never left guessing which way to go.

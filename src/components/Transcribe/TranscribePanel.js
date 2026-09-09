@@ -115,7 +115,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
         maxSeconds: data.max_seconds || 60,
         laneSlots: data.lane_slots || null,
         lanes: data.lanes || null,
-        shortMax: data.short_max_seconds || 120,
+        shortMax: data.short_max_seconds || 150,
         longMin: data.long_min_seconds || 180,
         splitSeconds: data.lane_split_seconds || 120,
       });
@@ -314,7 +314,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
     ? "Still reading the video you added. This turns on by itself once it is ready."
     : !canAnalyse
     ? isLong
-      ? `Add ${Math.max(0, minVideos - readyCount)} more long video${minVideos - readyCount === 1 ? "" : "s"}, over ${Math.round((meta?.longMin || 180) / 60)} minutes each. One long video shows us one episode's running order; ${minVideos} is where we can tell a habit from a one-off.`
+      ? `Add ${Math.max(0, minVideos - readyCount)} more long video${minVideos - readyCount === 1 ? "" : "s"}, over ${durationWords(meta?.longMin || 180)} each. One long video shows us one episode's running order; ${minVideos} is where we can tell a habit from a one-off.`
       : built
         ? "The videos this voice was built from are gone. Add one below and this turns on."
         : "Add one of your videos below first. That is what your voice is learned from."
@@ -355,8 +355,8 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
         <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 16px", lineHeight: 1.6 }}>
           {isLong
-            ? `Add up to ${laneSlot?.max || 5} of your longer videos, over ${Math.round((meta?.longMin || 180) / 60)} minutes each. In these you cover several products in a row, and what we learn is the part a Short can never show us: how you move from one story to the next.`
-            : `Add up to ${laneSlot?.max || 5} of your own short videos, under ${Math.round((meta?.shortMax || 120) / 60)} minutes each. We read how you open, the words you keep in English and how you sign off, then write new scripts that sound like you.`}
+            ? `Add up to ${laneSlot?.max || 5} of your longer videos, over ${durationWords(meta?.longMin || 180)} each. In these you cover several products in a row, and what we learn is the part a Short can never show us: how you move from one story to the next.`
+            : `Add up to ${laneSlot?.max || 5} of your own short videos, under ${durationWords(meta?.shortMax || 150)} each. We read how you open, the words you keep in English and how you sign off, then write new scripts that sound like you.`}
         </p>
 
         {/* ── THE TWO VOICES ──────────────────────────────────────────────
@@ -910,6 +910,25 @@ function VideoSkeleton() {
 }
 
 /** "51s" under a minute, "1:24" over it. Nobody counts in 84 seconds. */
+/**
+ * A duration in prose, for sentences rather than for a badge.
+ *
+ * formatDuration below gives "2:30", which is right on a row and wrong inside
+ * "under 2:30 each". This also exists because the obvious shorthand is a bug:
+ * Math.round(150 / 60) is 3, so a ceiling of two and a half minutes rendered as
+ * "under 3 minutes", which is not a rounding nicety, it is the product telling
+ * a creator they may upload something it will refuse.
+ */
+function durationWords(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  if (s < 60) return `${s} seconds`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (!rem) return `${m} ${m === 1 ? "minute" : "minutes"}`;
+  if (rem === 30) return `${m}½ minutes`;
+  return `${m} min ${rem} sec`;
+}
+
 function formatDuration(seconds) {
   const s = Math.max(0, Math.round(Number(seconds) || 0));
   if (s < 60) return `${s}s`;
