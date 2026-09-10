@@ -36,6 +36,29 @@ export default function AdminPanel() {
   const [notes, setNotes] = useState("");
   const [checked, setChecked] = useState(null);
 
+  // The expanded row. Detail is a second request rather than part of the list:
+  // it carries every video, every visit and every script for one showcase, and
+  // loading that for fifty rows to render one would make the list slower the
+  // more successful the campaign gets.
+  const [openId, setOpenId] = useState("");
+  const [detail, setDetail] = useState(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  const toggleDetail = useCallback(async (id) => {
+    if (openId === id) { setOpenId(""); setDetail(null); return; }
+    setOpenId(id);
+    setDetail(null);
+    setLoadingDetail(true);
+    try {
+      const { data } = await api.get(`/admin/showcases/${id}`);
+      setDetail(data.showcase);
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't load that showcase."));
+    } finally {
+      setLoadingDetail(false);
+    }
+  }, [openId]);
+
   const load = useCallback(async () => {
     try {
       const { data } = await api.get("/admin/showcases");
@@ -254,6 +277,18 @@ export default function AdminPanel() {
               {r.url}
             </div>
           )}
+
+          <button onClick={() => toggleDetail(r.id)} style={{ ...linkBtn, marginTop: 12 }}>
+            {openId === r.id ? "Hide details" : "Full details"}
+          </button>
+
+          {openId === r.id && (
+            loadingDetail
+              ? <p style={{ ...muted, marginTop: 14 }}>Loading…</p>
+              : detail
+                ? <Detail d={detail} />
+                : null
+          )}
         </section>
       ))}
 
@@ -263,6 +298,135 @@ export default function AdminPanel() {
     </Wrap>
   );
 }
+
+/* ── The full record for one showcase ───────────────────────────────────── */
+
+/**
+ * Four questions, in the order an admin actually asks them:
+ *   what was this voice built from, what did we measure, who opened it, and
+ *   did they write anything.
+ *
+ * The last two are the campaign's only real feedback: an open is curiosity, a
+ * script is interest, and a link with opens and no scripts is telling you the
+ * demo lost them at the topic list rather than at the email.
+ */
+function Detail({ d }) {
+  const when = (t) => (t ? new Date(t).toLocaleString() : "—");
+  const mins = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.round((s || 0) % 60)).padStart(2, "0")}`;
+  const pc = (x) => (x === null || x === undefined ? "—" : `${Math.round(x * 100)}%`);
+  const m = d.voice?.metrics || {};
+
+  return (
+    <div style={{ marginTop: 16, borderTop: "1px solid var(--line, #E3E3E3)", paddingTop: 16 }}>
+
+      <Section title={`Videos it was built from (${d.videos_list?.length || 0})`}>
+        {(d.videos_list || []).map((v) => (
+          <Row key={v.video_id || v._id}>
+            <span style={{ color: v.status === "done" ? "var(--ink)" : "#C0392B" }}>
+              {v.status === "done" ? "✓" : v.status === "pending" ? "•" : "✕"}
+            </span>{" "}
+            {v.title || v.video_id}
+            <span style={dim}>
+              {"  "}· {mins(v.duration_seconds)}
+              {v.channel ? ` · ${v.channel}` : ""}
+              {v.language_label ? ` · ${v.language_label}` : ""}
+              {v.status !== "done" ? ` · ${v.status}` : ""}
+            </span>
+            {v.error && <div style={{ color: "#C0392B", fontSize: 12 }}>{v.error}</div>}
+          </Row>
+        ))}
+        {!d.videos_list?.length && <Row><span style={dim}>None.</span></Row>}
+      </Section>
+
+      {d.voice && (
+        <Section title="What the analysis measured">
+          <Row>
+            <span style={dim}>Built</span> {when(d.voice.built_at)}
+            <span style={dim}>{"  "}· category</span> {d.voice.built_for_category || "—"} (v{d.voice.built_for_spec})
+          </Row>
+          <Row>
+            <span style={dim}>Read</span> {m.videos ?? "—"} videos, {m.words ?? "—"} words · {m.script || "—"}
+          </Row>
+          <Row>
+            <span style={dim}>Code-mixing</span> {pc(m.english_ratio)} English
+            <span style={dim}>{"  "}· sentences</span> {m.mean_sentence_words ?? "—"} words avg
+            <span style={dim}>{"  "}· short</span> {pc(m.short_sentence_ratio)}
+            <span style={dim}>{"  "}· questions</span> {pc(m.question_ratio)}
+          </Row>
+          <Row>
+            <span style={dim}>Pace</span> {m.words_per_second ?? "—"} words/sec
+            {m.address ? <><span style={dim}>{"  "}· </span>{m.address}</> : null}
+          </Row>
+          {m.english_kept?.length > 0 && (
+            <Row><span style={dim}>Keeps in English</span> {m.english_kept.join(", ")}</Row>
+          )}
+          {m.opening_stems?.length > 0 && (
+            <Row><span style={dim}>Reused opening</span> {m.opening_stems.map((s) => `“${s}…”`).join("  ")}</Row>
+          )}
+          {m.repeated_phrases?.length > 0 && (
+            <Row><span style={dim}>Repeated phrases</span> {m.repeated_phrases.join(" · ")}</Row>
+          )}
+          <Row>
+            <span style={dim}>Captured</span> {d.voice.signature_phrase_count} catchphrases,{" "}
+            {d.voice.category_voice_fields} category-specific fields
+          </Row>
+        </Section>
+      )}
+
+      <Section title={`Visits — ${d.visitors || 0} distinct ${d.visitors === 1 ? "browser" : "browsers"}, ${d.opens} opens`}>
+        {(d.visits || []).map((v) => (
+          <Row key={v.id}>
+            <span style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{v.id}</span>
+            <span style={dim}>{"  "}· {v.device}</span>
+            <span style={dim}>{"  "}· first</span> {when(v.first_seen_at)}
+            <span style={dim}>{"  "}· last</span> {when(v.last_seen_at)}
+            <span style={dim}>{"  "}· </span>{v.scripts_generated} scripts, {v.credits_used} credits
+          </Row>
+        ))}
+        {!d.visits?.length && <Row><span style={dim}>Nobody has opened this link yet.</span></Row>}
+      </Section>
+
+      <Section title={`Scripts written (${d.scripts?.length || 0})`}>
+        {(d.scripts || []).map((s) => (
+          <Row key={s._id}>
+            <span style={{ color: s.status === "done" ? "var(--ink)" : "#C0392B" }}>
+              {s.status === "done" ? "✓" : s.status === "processing" ? "•" : "✕"}
+            </span>{" "}
+            {s.headline || "(untitled)"}
+            <span style={dim}>
+              {"  "}· {s.duration_seconds}s · {s.credits_charged} credits · {when(s.created_at)}
+            </span>
+          </Row>
+        ))}
+        {!d.scripts?.length && <Row><span style={dim}>None yet.</span></Row>}
+      </Section>
+
+      {d.notes && (
+        <Section title="Notes">
+          <Row>{d.notes}</Row>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{
+        fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em",
+        color: "var(--ink-mute)", marginBottom: 7,
+      }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Row({ children }) {
+  return <div style={{ fontSize: 13, lineHeight: 1.65, color: "var(--ink)", padding: "2px 0" }}>{children}</div>;
+}
+
+const dim = { color: "var(--ink-mute)" };
 
 /* ── Bits ───────────────────────────────────────────────────────────────── */
 
@@ -301,6 +465,10 @@ const input = {
   width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10,
   border: "1px solid var(--line, #E3E3E3)", fontSize: 14.5, color: "var(--ink)",
   background: "var(--bg, #fff)",
+};
+const linkBtn = {
+  padding: 0, border: "none", background: "transparent", color: "var(--ink-mute)",
+  fontSize: 13, cursor: "pointer", textDecoration: "underline",
 };
 const okRow = { padding: "3px 0", color: "var(--ink)" };
 const badRow = { padding: "3px 0", color: "#C0392B" };

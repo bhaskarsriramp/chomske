@@ -16,6 +16,7 @@ import mongoose from "mongoose";
 import User from "../models/User.js";
 import Profile from "../models/Profile.js";
 import Transcript from "../models/Transcript.js";
+import Script from "../models/Script.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import ShowcaseVisit from "../models/ShowcaseVisit.js";
 import { requireAdmin } from "../middleware/authenticateToken.js";
@@ -76,10 +77,81 @@ async function shapeShowcase(row, { deep = false } = {}) {
     // Distinct browsers, which is the number that answers "did HE open it".
     // `opens` counts hits and cannot tell twenty of ours from twenty of his.
     out.visitors = await ShowcaseVisit.countDocuments({ showcase: row._id });
+
+    // ── THE VIDEOS THE VOICE WAS BUILT FROM ─────────────────────────────────
+    // Which ones were read, which failed, and how long each is. A thin or odd
+    // voice is nearly always explained here: one video that never transcribed,
+    // or five from a channel that turned out not to be theirs.
     out.videos_list = await Transcript.find({ user: row._id })
-      .select("title url duration_seconds status thumbnail channel error")
+      .select("title url video_id duration_seconds status thumbnail channel views error created_at language_label")
       .sort({ created_at: 1 })
       .lean();
+
+    // ── WHO OPENED IT, AND WHEN ─────────────────────────────────────────────
+    // One row per browser. The visitor id is truncated on the way out: it is a
+    // session identifier, and the admin only ever needs to tell two visitors
+    // apart, never to reconstruct one.
+    const visits = await ShowcaseVisit.find({ showcase: row._id })
+      .sort({ first_seen_at: 1 })
+      .limit(100)
+      .lean();
+    out.visits = visits.map((v) => ({
+      id: String(v.visitor_id || "").slice(0, 6),
+      first_seen_at: v.first_seen_at,
+      last_seen_at: v.last_seen_at,
+      scripts_generated: v.scripts_generated || 0,
+      credits_used: v.credits_used || 0,
+      // Enough to tell a phone from a laptop, which is the only question the
+      // full string is ever asked here.
+      device: /Mobi|Android|iPhone/i.test(v.user_agent || "") ? "phone" : "desktop",
+    }));
+
+    // ── WHAT THEY ACTUALLY WROTE ────────────────────────────────────────────
+    // An open is curiosity; a script is interest. This is the column that says
+    // whether the outreach worked.
+    out.scripts = await Script.find({ user: row._id })
+      .select("headline status duration_seconds credits_charged created_at error")
+      .sort({ created_at: -1 })
+      .limit(50)
+      .lean();
+
+    // ── THE VOICE ITSELF ────────────────────────────────────────────────────
+    // Measured facts only, the same line routes/script.js draws: style_brief
+    // and category_voice never leave the server, not even for an admin, so
+    // there is exactly one rule about that asset rather than one with an
+    // exception in it. What is here is enough to judge whether an analysis is
+    // worth sending: how much it read, what it measured, how sure it is.
+    if (voice?.built_at) {
+      const full = await VoiceProfile.findOne({ profile: profile._id })
+        .select("metrics signature_phrases category_voice built_at built_for_category built_for_spec")
+        .lean();
+      const m = full?.metrics || {};
+      out.voice = {
+        built_at: full?.built_at || null,
+        built_for_category: full?.built_for_category || "",
+        built_for_spec: full?.built_for_spec || 0,
+        signature_phrase_count: (full?.signature_phrases || []).length,
+        category_voice_fields: Object.keys(full?.category_voice || {}).length,
+        metrics: {
+          videos: m.videos ?? null,
+          words: m.words ?? null,
+          script: m.script || "",
+          english_ratio: m.english_ratio ?? null,
+          english_kept: (m.english_kept || []).slice(0, 15),
+          mean_sentence_words: m.mean_sentence_words ?? null,
+          short_sentence_ratio: m.short_sentence_ratio ?? null,
+          question_ratio: m.question_ratio ?? null,
+          words_per_second: m.words_per_second ?? null,
+          address: m.address || "",
+          opening_stems: (m.opening_stems || []).slice(0, 5),
+          repeated_phrases: (m.repeated_phrases || []).slice(0, 12),
+          sentence_starters: (m.sentence_starters || []).slice(0, 10),
+        },
+      };
+    }
+
+    out.notes = row.showcase?.notes || "";
+    out.created_by = row.showcase?.created_by ? String(row.showcase.created_by) : "";
   }
 
   return out;
