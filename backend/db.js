@@ -1,13 +1,15 @@
 /**
  * db.js: one Mongo connection for the process.
  *
- * Lipi has its own Atlas cluster, so this is deliberately plain: username and
- * host sit in code, only the password comes from the environment. Same shape as
- * betaFounderProduction.
+ * Lipi shares the Atlas account/cluster with betaFounderProduction, so this is
+ * deliberately plain: username and host sit in code, only the password comes
+ * from the environment.
  *
  * The one thing worth keeping is the `/hinglish` in the path. A URI that ends
- * `…mongodb.net/?appName=…` connects to the cluster's default `test` database
- * instead, which is where data goes to quietly get lost.
+ * `…mongodb.net/?appName=…` — the shape betaFounderProduction uses — connects to
+ * the cluster's default `test` database instead, which is where data goes to
+ * quietly get lost. Same cluster, different database: that path segment is the
+ * only thing separating Lipi's collections from betaFounder's.
  *
  * Unlike the reference project (which fires connect() and never awaits it), this
  * AWAITS and rethrows: a server that boots against a dead database answers every
@@ -15,12 +17,12 @@
  */
 import mongoose from "mongoose";
 
-const username = "sreeram_db_user";
+const username = "myhandlein_db_user";
 const password = process.env.MONGODB_PASSWORD;
 
 const dbUrl =
   "mongodb+srv://" + username + ":" + password +
-  "@cluster0.ds8pal0.mongodb.net/hinglish?retryWrites=true&w=majority&appName=Cluster0";
+  "@cluster0.itfkrwb.mongodb.net/hinglish?retryWrites=true&w=majority&appName=Cluster0";
 
 export default async function connectToMongo() {
   // Escape hatch, unset in production. Its reason for existing is the migration

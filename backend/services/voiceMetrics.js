@@ -54,6 +54,126 @@ const SCRIPTS = [
 
 const LATIN_WORD = /^[A-Za-z][A-Za-z'’.-]*$/;
 
+/* ── Repairing a script that slipped into a neighbouring alphabet ──────────── */
+
+/**
+ * The first codepoint of each Indic block, keyed the same way as SCRIPTS above.
+ *
+ * These blocks are not laid out independently. They are all derived from ISCII,
+ * so the same OFFSET means the same sound in every one of them: 0x2A is PA in
+ * Devanagari, Telugu, Malayalam and Tamil alike. That is what makes the repair
+ * below a lookup rather than a transliteration engine.
+ */
+const BLOCK_BASE = {
+  devanagari: 0x0900, bengali: 0x0980, gurmukhi: 0x0A00, gujarati: 0x0A80,
+  odia: 0x0B00, tamil: 0x0B80, telugu: 0x0C00, kannada: 0x0C80, malayalam: 0x0D00,
+};
+
+/**
+ * Malayalam's chillu letters, which have no counterpart at their own offset.
+ *
+ * Expressed as the CONSONANT offset they stand for, so the replacement is built
+ * in whatever the target script is: consonant + virama. Malayalam is the only
+ * block in regular use here that puts letters this high, and it is also the one
+ * the model slips into most.
+ */
+const CHILLU_CONSONANT = {
+  0x7a: 0x23, 0x7b: 0x28, 0x7c: 0x30, 0x7d: 0x32, 0x7e: 0x33, 0x7f: 0x15,
+};
+
+/** The common ISCII-aligned range. Above it the blocks stop agreeing. */
+const ALIGNED_MAX = 0x6f;
+const VIRAMA = 0x4d;
+
+/**
+ * Fix characters that came from the wrong Indic script.
+ *
+ * ── THE FAILURE ─────────────────────────────────────────────────────────────
+ * A Telugu script came back reading "మొబൈల్", "ఆപ്പിల్", "ఫోల్డబുൽ". Every one
+ * of those is a Telugu word with Malayalam codepoints spliced into the middle
+ * of it: U+0D48 where U+0C48 belonged, a whole Malayalam "പ്പി" inside the word
+ * for Apple. A reader sees boxes or an alphabet they do not read, in the middle
+ * of a sentence they otherwise understand.
+ *
+ * It is a known behaviour of multilingual models rather than anything wrong with
+ * the prompt: the scripts are visually and phonetically parallel, and the
+ * sampler occasionally lands one block over. No instruction reliably prevents
+ * it, and the creator cannot fix it by hand without knowing Unicode.
+ *
+ * ── WHY THE REPAIR IS SAFE ──────────────────────────────────────────────────
+ * Because the blocks are ISCII-aligned, the correct character is the SAME
+ * offset in the right block, so this is arithmetic rather than a guess.
+ * U+0D48 - 0x0D00 = 0x48; 0x0C00 + 0x48 = U+0C48, which is exactly the vowel
+ * sign that was meant. Nothing is translated and no word is rewritten.
+ *
+ * Three guards keep it from doing harm:
+ *   - it only ever runs when one block clearly dominates, so a genuinely
+ *     bilingual passage is left alone;
+ *   - it only remaps the ISCII-aligned range, where the correspondence holds,
+ *     plus the chillus above it that have a known equivalent;
+ *   - anything it cannot map confidently is left exactly as it was, because a
+ *     visible stray character is better than a silently wrong one.
+ *
+ * Entirely language-neutral: the target block is whichever one the text is
+ * mostly written in, so this repairs a Malayalam slip in Telugu and a
+ * Devanagari slip in Tamil with the same code.
+ *
+ * @returns {{ text: string, fixed: number, from: string[] }}
+ */
+export function repairMixedScript(input) {
+  const text = String(input || "");
+  if (!text) return { text, fixed: 0, from: [] };
+
+  const counts = new Map();
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    for (const [key, base] of Object.entries(BLOCK_BASE)) {
+      if (cp >= base && cp <= base + 0x7f) { counts.set(key, (counts.get(key) || 0) + 1); break; }
+    }
+  }
+  if (!counts.size) return { text, fixed: 0, from: [] };
+
+  const total = [...counts.values()].reduce((a, b) => a + b, 0);
+  const [domKey, domCount] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+
+  // A real second language in the same script set is not a defect. Only a
+  // clearly dominant base with a scattering of strays is.
+  if (total < 20 || domCount / total < 0.8) return { text, fixed: 0, from: [] };
+
+  const base = BLOCK_BASE[domKey];
+  let fixed = 0;
+  const from = new Set();
+  let out = "";
+
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    let handled = false;
+
+    for (const [key, other] of Object.entries(BLOCK_BASE)) {
+      if (key === domKey) continue;
+      if (cp < other || cp > other + 0x7f) continue;
+
+      const offset = cp - other;
+      if (offset <= ALIGNED_MAX) {
+        out += String.fromCodePoint(base + offset);
+        fixed++; from.add(key);
+      } else if (CHILLU_CONSONANT[offset] !== undefined) {
+        out += String.fromCodePoint(base + CHILLU_CONSONANT[offset], base + VIRAMA);
+        fixed++; from.add(key);
+      } else {
+        // No confident equivalent. Left as it stands rather than guessed at.
+        out += ch;
+      }
+      handled = true;
+      break;
+    }
+
+    if (!handled) out += ch;
+  }
+
+  return { text: out, fixed, from: [...from] };
+}
+
 /**
  * ── SECOND- AND FIRST-PERSON MARKERS, AND WHY THIS IS ONLY A SEED ──────────
  * Whether a creator talks TO the viewer or ABOUT the subject is one of the

@@ -110,16 +110,16 @@ export const LANE_SPLIT_SECONDS = parseInt(process.env.VOICE_LANE_SPLIT_SECONDS 
 /**
  * The longest video we will learn from at all.
  *
- * Ten minutes, deliberately ABOVE the eight minute ceiling on scripts we write.
+ * Fifteen minutes, deliberately far ABOVE the eight minute ceiling on scripts.
  * The two numbers answer different questions: eight minutes is the longest
  * video we will produce a script FOR, ten is the longest we will read to learn
- * how somebody talks. A creator's own ten minute bulletin is a perfectly good
+ * how somebody talks. A creator's own long bulletin is a perfectly good
  * demonstration of the joins the long lane exists to capture, and refusing it
  * because it exceeds our own output ceiling would reject the best material
  * they have.
  *
- * Past ten minutes a video stops being a sample of how this person makes a
- * video and becomes a different format: a full review, a vlog, a stream.
+ * Past fifteen minutes a video stops being a sample of how this person makes a
+ * video and becomes a different format: a long review, a vlog, a stream.
  * Learning a bulletin voice from forty minutes of livestream teaches a pace
  * that is wrong for every script we would then produce from it.
  *
@@ -128,7 +128,7 @@ export const LANE_SPLIT_SECONDS = parseInt(process.env.VOICE_LANE_SPLIT_SECONDS 
  * sample, and reading one is also the single most expensive thing this product
  * can be asked to do.
  */
-export const LONG_MAX_SECONDS = parseInt(process.env.VOICE_LONG_MAX_SECONDS || "600", 10);
+export const LONG_MAX_SECONDS = parseInt(process.env.VOICE_LONG_MAX_SECONDS || "900", 10);
 
 /**
  * How many long videos before the long voice can be built at all.

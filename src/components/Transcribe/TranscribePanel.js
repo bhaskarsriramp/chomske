@@ -117,7 +117,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
         lanes: data.lanes || null,
         shortMax: data.short_max_seconds || 180,
         longMin: data.long_min_seconds || 180,
-        longMax: data.long_max_seconds || 600,
+        longMax: data.long_max_seconds || 900,
         splitSeconds: data.lane_split_seconds || 120,
       });
     } catch { /* secondary, never block the main flow on it */ }
@@ -367,13 +367,21 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
         {/* ── THE TWO VOICES ──────────────────────────────────────────────
             Presented as two things a creator BUILDS, not as a settings toggle,
             because that is what they are: two analyses over two sets of videos,
-            each used for a different length of script. The tab labels carry the
-            length each one writes, so the connection to the duration slider on
-            the ordering screen is visible here rather than discovered there. */}
+            each used for a different length of script.
+
+            ── THE TABS NAME VIDEOS, NOT SCRIPTS ──
+            They used to carry the script length each voice writes ("under 2 min
+            scripts"), which is a true and useful fact in the wrong place. This
+            is the screen where a creator pastes video URLs, so the number they
+            need at the moment of choosing a tab is which videos go in it, and
+            the old labels sat directly above an input that rejected videos on
+            bounds they never mentioned. What each voice WRITES is still said,
+            one line below, where it answers the next question instead of
+            competing with this one. */}
         <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
           {[
-            { id: "short", label: "Short-form", sub: `Under ${Math.round((meta?.splitSeconds || 120) / 60)} min scripts` },
-            { id: "long", label: "Long-form", sub: `${Math.round((meta?.splitSeconds || 120) / 60)} to 8 min scripts` },
+            { id: "short", label: "Short-form", sub: `Videos under ${durationShort(meta?.shortMax || 180)}` },
+            { id: "long", label: "Long-form", sub: `Videos ${durationRangeShort(meta?.longMin || 180, meta?.longMax || 900)}` },
           ].map((t) => {
             const on = lane === t.id;
             const laneDone = !!voice?.lanes?.[t.id]?.ready;
@@ -936,6 +944,26 @@ function durationWords(seconds) {
   if (!rem) return `${m} ${m === 1 ? "minute" : "minutes"}`;
   if (rem === 30) return `${m}½ minutes`;
   return `${m} min ${rem} sec`;
+}
+
+/**
+ * The compact form, for a tab label rather than a sentence: "3 min", "2½ min".
+ *
+ * Shares durationWords' arithmetic rather than reaching for Math.round, which
+ * is the same trap: rounding a 150 second bound to "3 min" advertises a length
+ * the server refuses. Abbreviating afterwards keeps one implementation of the
+ * part that can be wrong.
+ */
+function durationShort(seconds) {
+  return durationWords(seconds).replace(/\s*\bminutes?\b/, " min").replace(/\s*\bseconds\b/, "s").trim();
+}
+
+/** The compact range: "3–15 min", dropping the repeated unit. */
+function durationRangeShort(from, to) {
+  const a = durationShort(from);
+  const b = durationShort(to);
+  const unit = (w) => w.replace(/^[\d½\s]+/, "");
+  return unit(a) === unit(b) ? `${a.replace(unit(a), "").trim()}–${b}` : `${a}–${b}`;
 }
 
 /**
