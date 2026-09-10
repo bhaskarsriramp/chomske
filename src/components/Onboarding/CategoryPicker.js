@@ -45,13 +45,20 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
         // Pre-fill when they're editing rather than onboarding.
         const cap = data.max || 1;
         const list = data.categories || [];
+        // ── EVERY COUNT BELOW IS OF WHAT CAN BE CHOSEN ──────────────────
+        // The list now also carries announced-but-unbuilt areas (coming_soon),
+        // which are cards, not options. Counting them here would break the
+        // preselect: with one real category and three announced ones, `list`
+        // is four long, the "exactly one" branch stops firing, and a picker
+        // with a single pickable card arrives with nothing chosen.
+        const pickable = list.filter((c) => !c.coming_soon);
         // ── ONE CATEGORY: PRESELECT IT ──────────────────────────────────
         // Asking somebody to "choose" from a list of one is a question with no
         // information in it, and a required tap that teaches nothing. The card
         // is still shown, because it says what the product is about to do for
         // them, but it arrives already chosen.
-        const prior = (user?.categories || []).filter((c) => list.some((x) => x.id === c));
-        setPicked(prior.length ? prior.slice(0, cap) : (cap === 1 && list.length === 1 ? [list[0].id] : []));
+        const prior = (user?.categories || []).filter((c) => pickable.some((x) => x.id === c));
+        setPicked(prior.length ? prior.slice(0, cap) : (cap === 1 && pickable.length === 1 ? [pickable[0].id] : []));
       } catch (err) {
         if (!cancelled) setError(errorMessage(err, "Couldn't load the categories."));
       } finally {
@@ -96,6 +103,9 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
 
   const full = picked.length >= max;
   const gut = isPhone ? "20px" : "clamp(32px, 6vw, 120px)";
+  // What can actually be chosen. The rest of `cats` is announced, not offered,
+  // and the copy below is about how many areas we COVER, not how many we name.
+  const selectable = cats.filter((c) => !c.coming_soon);
 
   return (
     <div
@@ -139,13 +149,13 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
           lineHeight: 1.6, color: "var(--ink-body)", margin: "0 0 8px",
         }}
       >
-        {max === 1 && cats.length === 1
-          ? `We cover ${cats[0]?.label || "one area"} right now, properly: we watch it around the clock and every morning show you what is worth covering, ranked, with every source that carried it.`
+        {max === 1 && selectable.length === 1
+          ? `We cover ${selectable[0]?.label || "one area"} right now, properly: we watch it around the clock and every morning show you what is worth covering, ranked, with every source that carried it.`
           : `Pick up to ${max}. We watch the news in those areas around the clock and every morning show you what is worth covering, ranked, with every source that carried it.`}
       </p>
       <p style={{ fontSize: isPhone ? 13.5 : 14.5, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 0 26px" }}>
-        {max === 1 && cats.length === 1
-          ? "More areas are coming. Each one needs its own voice analysis and its own script formats before it is worth switching on, so they arrive one at a time rather than all at once and half-built."
+        {max === 1 && selectable.length === 1
+          ? "The areas below it are next. Each one needs its own voice analysis and its own script formats before it is worth switching on, so they arrive one at a time rather than all at once and half-built."
           : "We only pull stories from what you choose, so nothing else clutters your feed. You can change this any time from Profile."}
       </p>
 
@@ -205,28 +215,48 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
         >
           {cats.map((c) => {
             const on = picked.includes(c.id);
+            // ── ANNOUNCED, NOT OFFERED ──────────────────────────────────────
+            // A card for an area we have not built. It is here so a cricket or
+            // an exams channel can see itself on this screen instead of
+            // concluding the product is only for phone reviewers, and it is
+            // inert: no hue, no hover, no press, and the server drops the id
+            // even if one is posted (sanitizeSelection gates on `enabled`).
+            const soon = Boolean(c.coming_soon);
             // Greyed rather than removed once the cap is hit: hiding options would
             // make the screen change shape under the cursor mid-decision.
-            const blocked = !on && full;
+            const blocked = !soon && !on && full;
             // Each category owns a hue from here on. Meeting it at the moment of
             // choosing is what makes the same colour legible later on a feed row.
-            const col = categoryColor(c.id);
+            // A coming-soon card is deliberately left neutral: the hue is a
+            // promise that this colour means this category on a feed row, and
+            // there is no feed row to keep that promise on yet.
+            const col = categoryColor(soon ? "__none__" : c.id);
             return (
               <button
                 key={c.id}
-                onClick={() => toggle(c.id)}
-                aria-pressed={on}
-                disabled={blocked}
-                className={on || blocked ? undefined : "hg-pick"}
+                type="button"
+                onClick={soon ? undefined : () => toggle(c.id)}
+                aria-pressed={soon ? undefined : on}
+                aria-disabled={soon || blocked}
+                disabled={soon || blocked}
+                className={on || blocked || soon ? undefined : "hg-pick"}
                 style={{
                   position: "relative", textAlign: "left",
                   padding: isPhone ? "16px 16px" : "19px 18px",
-                  borderRadius: 14, cursor: blocked ? "not-allowed" : "pointer",
-                  background: on
-                    ? col.tint
-                    : `linear-gradient(168deg, ${col.tint} 0%, var(--card) 66%)`,
-                  border: `1.5px solid ${on ? col.solid : col.line}`,
-                  opacity: blocked ? 0.42 : 1,
+                  borderRadius: 14,
+                  cursor: soon ? "default" : blocked ? "not-allowed" : "pointer",
+                  background: soon
+                    ? "var(--card)"
+                    : on
+                      ? col.tint
+                      : `linear-gradient(168deg, ${col.tint} 0%, var(--card) 66%)`,
+                  border: soon
+                    ? "1.5px dashed var(--line, #E3E3E3)"
+                    : `1.5px solid ${on ? col.solid : col.line}`,
+                  // Not the 0.42 a cap-blocked card gets. That one is being
+                  // refused and should look it; this one is an announcement and
+                  // still has to be readable.
+                  opacity: soon ? 0.72 : blocked ? 0.42 : 1,
                   transition: "border-color .13s ease, background .13s ease, opacity .13s ease",
                 }}
               >
@@ -239,15 +269,30 @@ export default function CategoryPicker({ user, onDone, onSignOut }) {
                   <span style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
                     <span
                       aria-hidden="true"
-                      style={{ width: 8, height: 8, borderRadius: "50%", background: col.solid, flexShrink: 0 }}
+                      style={{
+                        width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                        background: soon ? "transparent" : col.solid,
+                        border: soon ? `1.5px solid ${col.solid}` : "none",
+                      }}
                     />
-                    <span style={{ fontSize: isPhone ? 15.5 : 16.5, fontWeight: 650, color: "var(--ink)", letterSpacing: "-0.015em" }}>
+                    <span
+                      style={{
+                        fontSize: isPhone ? 15.5 : 16.5, fontWeight: 650,
+                        color: soon ? "var(--ink-body)" : "var(--ink)",
+                        letterSpacing: "-0.015em",
+                      }}
+                    >
                       {c.label}
                     </span>
                   </span>
-                  <Check on={on} color={col.solid} />
+                  {soon ? <SoonPill /> : <Check on={on} color={col.solid} />}
                 </span>
-                <span style={{ display: "block", fontSize: 13.5, lineHeight: 1.55, color: "var(--ink-body)" }}>
+                <span
+                  style={{
+                    display: "block", fontSize: 13.5, lineHeight: 1.55,
+                    color: soon ? "var(--ink-mute)" : "var(--ink-body)",
+                  }}
+                >
                   {c.blurb}
                 </span>
               </button>
@@ -325,6 +370,30 @@ function Check({ on, color = "var(--ink)" }) {
           <path d="M4 12.5l5.5 5.5L20 6.5" />
         </svg>
       )}
+    </span>
+  );
+}
+
+/**
+ * The badge on an announced-but-unbuilt category.
+ *
+ * Sits where the checkbox sits on a real card, because the question a reader
+ * has at that spot is "can I pick this", and the honest answer for these is no
+ * yet. Not aria-hidden, unlike Check: the tick is decoration on top of
+ * aria-pressed, whereas this text IS the explanation for why the card is
+ * disabled, and a screen reader that skips it leaves the card unexplained.
+ */
+function SoonPill() {
+  return (
+    <span
+      style={{
+        flexShrink: 0, padding: "3px 9px", borderRadius: 999,
+        fontSize: 11, fontWeight: 650, letterSpacing: "0.02em",
+        color: "var(--ink-mute)", background: "var(--bg, #F4F4F4)",
+        border: "1px solid var(--line, #E3E3E3)", whiteSpace: "nowrap",
+      }}
+    >
+      Coming soon
     </span>
   );
 }

@@ -722,6 +722,9 @@ export const CATEGORIES = [
     blurb: "Releases, box office, casting, streaming",
     // Built and kept, not offered. See MAX_CATEGORIES below.
     enabled: false,
+    // Shown on the picker as "coming soon". The number is display order among
+    // the preview cards, not priority. See previewCategories().
+    preview: 2,
     locale: IN,
     // An India-locale film category whose only industry term was "Bollywood"
     // was missing the South Indian industries, which out-gross Hindi cinema in
@@ -765,6 +768,9 @@ export const CATEGORIES = [
     blurb: "Results, squads, transfers, injuries",
     // Built and kept, not offered. See MAX_CATEGORIES below.
     enabled: false,
+    // Shown on the picker as "coming soon". The number is display order among
+    // the preview cards, not priority. See previewCategories().
+    preview: 1,
     locale: IN,
     // "IPL news" is a season, not a topic: for most of the year it returns
     // archive pages and filler, and it was one of only four lines. Cricket stays
@@ -841,6 +847,40 @@ export const CATEGORIES = [
       "Do NOT overstate a finding. A study on mice is not a cure, and a correlation is not a cause. Say plainly what was and was not shown.",
   },
 
+  /**
+   * ── THE ONE ENTRY HERE THAT IS NOT BUILT ────────────────────────────────────
+   * Every other category above is finished and switched off. This one is the
+   * opposite: it is a NAME on the picker and nothing else, carried so creators
+   * can see it is coming and tell us they want it.
+   *
+   * It deliberately has no googleNews, no apidirectNews, no rss and no editor
+   * brief. Writing those from a desk is how a category ships broken: every URL
+   * in this file was live-probed and returned items, and inventing a plausible
+   * feed list for a subject nobody has tested would put unprobed sources into
+   * the one file whose whole discipline is that they were checked.
+   *
+   * ── WHAT IT NEEDS BEFORE `enabled` CAN BECOME TRUE ──────────────────────────
+   *   1. probed sources: the exam boards and notification portals that actually
+   *      publish (SSC, UPSC, IBPS, RRB, state PSCs), each returning items
+   *   2. a `voice` block: this category asks questions no other one does, how
+   *      they read a vacancy count, a date, an eligibility rule, a fee
+   *   3. `script.formats`: a notification video is not a review or a bulletin
+   *   4. a `caution`: dates and eligibility are the whole value here, and a
+   *      hallucinated last date costs somebody an exam. This is the strictest
+   *      caution on the file when it is written.
+   *
+   * Until all four exist it stays false, and sanitizeSelection() guarantees no
+   * account can hold it regardless of what the client posts.
+   */
+  {
+    id: "jobs_exams",
+    label: "Govt jobs & exams",
+    blurb: "Notifications, dates, results, admit cards",
+    enabled: false,
+    preview: 3,
+    locale: IN,
+  },
+
 ];
 
 const BY_ID = new Map(CATEGORIES.map((c) => [c.id, c]));
@@ -881,14 +921,44 @@ export function enabledCategories() {
 }
 
 /**
+ * Switched off, but named on the picker as "coming soon".
+ *
+ * Deliberately a separate flag from `enabled` rather than its inverse. Most of
+ * the categories in this file are finished and switched off for reasons that
+ * have nothing to do with a creator, and listing all of them would promise six
+ * things at once. `preview` is the small, chosen subset we are willing to say
+ * out loud is coming.
+ *
+ * Its value is a display ORDER, because file order is grouped by when each
+ * category was built and reads as arbitrary on the picker. Sorted here rather
+ * than in the client so both stay in one place.
+ */
+export function previewCategories() {
+  return CATEGORIES
+    .filter((c) => c.enabled !== true && Number(c.preview) > 0)
+    .sort((a, b) => Number(a.preview) - Number(b.preview));
+}
+
+/**
  * Only what the UI needs, the fetch config is server-side detail.
  *
- * Filtered to the enabled set: a card a user can see is a card they can pick,
- * and a picker that shows six disabled options is a worse answer than a picker
- * that shows one real one.
+ * ── WHY THIS NO LONGER RETURNS ONLY WHAT CAN BE PICKED ───────────────────────
+ * It used to, on the reasoning that "a card a user can see is a card they can
+ * pick". That is right about DISABLED cards, which are a dead end, and wrong
+ * about announced ones: a creator who makes cricket videos and sees a picker
+ * offering only phones concludes the product is not for them and leaves, when
+ * the true answer is "not yet, and it is being built".
+ *
+ * So the list is enabled + preview, and every row says which it is. The
+ * `coming_soon` flag is what the picker renders as un-selectable, and it is a
+ * label, NOT the security boundary: sanitizeSelection() gates on `enabled`, so
+ * a client that posts a preview id back gets it dropped rather than honoured.
  */
 export function publicCategories() {
-  return enabledCategories().map((c) => ({ id: c.id, label: c.label, blurb: c.blurb }));
+  return [
+    ...enabledCategories().map((c) => ({ id: c.id, label: c.label, blurb: c.blurb, coming_soon: false })),
+    ...previewCategories().map((c) => ({ id: c.id, label: c.label, blurb: c.blurb, coming_soon: true })),
+  ];
 }
 
 /* ── The per-category engine config ────────────────────────────────────────── */
@@ -1027,6 +1097,7 @@ export function coerceSelection(ids) {
 
 export default {
   CATEGORIES, getCategory, isValidCategory, isEnabledCategory, enabledCategories,
+  previewCategories,
   publicCategories, sanitizeSelection, coerceSelection, canonicalCategory, LEGACY_IDS,
   MAX_CATEGORIES, DEFAULT_CATEGORY,
   voiceSpecFor, voiceSpecStale, formatsFor, getFormat, pickFormat, formatIdsFor,
