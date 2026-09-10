@@ -4,6 +4,9 @@ import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Logo from "../Shell/Logo";
 
+/** Where the page's one sign-in button lives, for the closing CTA to scroll to. */
+const SIGNIN_ANCHOR = "lipi-signin";
+
 /**
  * The landing page.
  *
@@ -379,7 +382,7 @@ export default function LandingPage({ onSignedIn, checking }) {
       <WhatYouGet isMobile={isMobile} pad={pad} />
       <VoiceProof isMobile={isMobile} pad={pad} />
       <Niches isMobile={isMobile} pad={pad} />
-      <ClosingCta isMobile={isMobile} pad={pad} onCredential={handleCredential} busy={busy} />
+      <ClosingCta isMobile={isMobile} pad={pad} busy={busy} />
       <Footer pad={pad} isMobile={isMobile} />
       </div>
     </div>
@@ -510,13 +513,24 @@ function Hero({ isMobile, pad, onCredential, onError, error, busy }) {
           your language.
         </p>
 
+        {/* ── THE ONLY GoogleLogin ON THIS PAGE ──────────────────────────────
+            google.accounts.id.initialize() is global singleton state, so a
+            second <GoogleLogin> anywhere on the page overwrites this one and
+            Google's own console warning says so: "only the last initialized
+            instance will be used". The closing CTA used to render its own, which
+            left THIS button, the one most people actually click, bound to a dead
+            instance and failing at Google's consent screen with a 401.
+
+            The id is what the closing CTA scrolls to instead. */}
         <div
+          id={SIGNIN_ANCHOR}
           className="hg-reveal"
           style={{
             display: "flex", flexWrap: "wrap", gap: 14,
             justifyContent: "center", alignItems: "center",
             margin: `${isMobile ? 26 : 34}px 0 0`,
             transitionDelay: ".18s",
+            scrollMarginTop: 96,
           }}
         >
           <SignIn onCredential={onCredential} onError={onError} busy={busy} />
@@ -1977,7 +1991,20 @@ function Niches({ isMobile, pad }) {
   );
 }
 
-function ClosingCta({ isMobile, pad, onCredential, busy }) {
+/**
+ * ── WHY THIS SENDS PEOPLE UP THE PAGE INSTEAD OF SIGNING THEM IN ─────────────
+ * It used to render its own <SignIn>, which meant two <GoogleLogin> components
+ * on one page and two calls to google.accounts.id.initialize(). That call is
+ * global singleton state: the second one wins, and Google logs "only the last
+ * initialized instance will be used". The hero button was the loser, so the
+ * button most visitors click was wired to an instance that had been replaced,
+ * and Google rejected the consent request with a 401.
+ *
+ * A second Google button cannot be made safe here, only removed, and Google's
+ * brand terms forbid drawing our own. So the closing CTA does the one thing it
+ * can honestly do: take them to the real button.
+ */
+function ClosingCta({ isMobile, pad, busy }) {
   return (
     <section style={{ position: "relative", padding: `${isMobile ? 62 : 100}px ${pad} ${isMobile ? 70 : 116}px`, overflow: "hidden" }}>
       {/* The two blurred washes that used to sit under this heading are gone
@@ -1999,7 +2026,25 @@ function ClosingCta({ isMobile, pad, onCredential, busy }) {
           is already chosen and the script is already written.
         </p>
         <div style={{ display: "flex", justifyContent: "center" }}>
-          <SignIn onCredential={onCredential} onError={() => {}} busy={busy} />
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              const el = document.getElementById(SIGNIN_ANCHOR);
+              if (!el) return window.scrollTo({ top: 0, behavior: "smooth" });
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              height: 44, padding: "0 26px", borderRadius: 999,
+              border: "none", background: "var(--d-ink)", color: "#0F0E0C",
+              fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em",
+              cursor: busy ? "default" : "pointer",
+              opacity: busy ? 0.55 : 1, transition: "opacity .2s ease",
+            }}
+          >
+            Continue with Google
+          </button>
         </div>
         <div style={{ marginTop: 14, fontSize: 12.5, color: "var(--d-mute)" }}>
           100 Free credits to start.
