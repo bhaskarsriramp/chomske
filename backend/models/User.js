@@ -120,4 +120,26 @@ const UserSchema = new Schema({
 // collide on a slug. Sparse because every human account leaves it unset.
 UserSchema.index({ "showcase.slug": 1 }, { unique: true, sparse: true });
 
+/**
+ * Is this row a real, signed-in person?
+ *
+ * ── WHY A MISSING `kind` MEANS "human" AND NOT "unknown" ─────────────────────
+ * `kind` carries default: "human", and a schema default is applied when a
+ * DOCUMENT IS CREATED, never when an existing one is read. Every account that
+ * signed in before this field existed therefore has no `kind` key at all, and
+ * .lean() hands those back exactly as they are stored, with `kind: undefined`.
+ *
+ * So the obvious test, `row.kind !== "human"`, is true for every pre-existing
+ * account in the database and false only for rows written after this deploy. It
+ * shipped that way once: it locked the first admin out of the admin panel with
+ * a 404, on an account whose `admin` flag was set correctly, and it would have
+ * refused the claim step for every creator who signed up before today.
+ *
+ * Treating absent as human is correct rather than merely lenient: showcases did
+ * not exist before this field did, so a row without it cannot be one.
+ */
+export function isHumanRow(row) {
+  return (row?.kind || "human") === "human";
+}
+
 export default mongoose.models.User || mongoose.model("User", UserSchema, "users");

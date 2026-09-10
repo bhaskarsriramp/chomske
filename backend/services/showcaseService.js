@@ -35,7 +35,7 @@
  */
 import crypto from "crypto";
 import mongoose from "mongoose";
-import User from "../models/User.js";
+import User, { isHumanRow } from "../models/User.js";
 import Profile from "../models/Profile.js";
 import Transcript from "../models/Transcript.js";
 import VoiceProfile from "../models/VoiceProfile.js";
@@ -377,8 +377,12 @@ export async function claimShowcase(showcaseId, realUserId) {
   if (!showcase) return { claimed: false, reason: "not_found" };
   if (showcase.showcase?.claimed_by) return { claimed: false, reason: "already_claimed" };
 
+  // isHumanRow rather than a strict comparison: an account created before
+  // `kind` existed has no such field on a lean read, and the strict test would
+  // refuse the claim for every creator who signed up before this shipped. See
+  // models/User.js.
   const target = await User.findById(realUserId).lean();
-  if (!target || target.kind !== "human") return { claimed: false, reason: "bad_target" };
+  if (!target || !isHumanRow(target)) return { claimed: false, reason: "bad_target" };
 
   const profiles = await Profile.find({ user: showcaseId }).select("_id").lean();
   const profileIds = profiles.map((p) => p._id);

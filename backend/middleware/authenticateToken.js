@@ -6,7 +6,7 @@
  * logged in" locally, it asks GET /auth/me instead, which is the intended flow.
  */
 import jwt from "jsonwebtoken";
-import User from "../models/User.js";
+import User, { isHumanRow } from "../models/User.js";
 
 export const COOKIE_NAME = "hinglish_token";
 
@@ -160,7 +160,10 @@ export async function requireAdmin(req, res, next) {
 
   try {
     const row = await User.findById(user.id).select("admin kind").lean();
-    if (!row?.admin || row.kind !== "human") {
+    // isHumanRow, not `row.kind === "human"`: a lean read of an account created
+    // before `kind` existed has no such field, and the strict test 404s every
+    // one of them. See models/User.js.
+    if (!row?.admin || !isHumanRow(row)) {
       // Deliberately the same answer as a missing route. An endpoint that says
       // "you are not an admin" has confirmed the endpoint exists.
       return res.status(404).json({ success: false, message: "Not found" });
