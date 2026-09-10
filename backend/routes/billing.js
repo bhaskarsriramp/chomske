@@ -35,7 +35,7 @@ import CreditPayment from "../models/CreditPayment.js";
 import Source from "../models/Source.js";
 import { PACKS, getPack, DURATION_PRESETS, SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, PACKAGING_CREDITS, ENGLISH_TWIN_RATE, quote } from "../services/creditPricing.js";
 import { getBalance, grant, history } from "../services/creditsService.js";
-import authenticateToken from "../middleware/authenticateToken.js";
+import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
 
 const router = express.Router();
 
@@ -88,7 +88,7 @@ router.get("/packs", authenticateToken, async (req, res) => {
 });
 
 /** GET /billing/wallet, balance and recent movements. */
-router.get("/wallet", authenticateToken, async (req, res) => {
+router.get("/wallet", authenticateAny, async (req, res) => {
   try {
     const [balance, rows] = await Promise.all([
       getBalance(req.user.id),
@@ -121,7 +121,7 @@ router.get("/wallet", authenticateToken, async (req, res) => {
  * video at the two minute price, in exactly the same way `amount` in an order
  * body would be buying a Studio pack for a rupee.
  */
-router.get("/quote", authenticateToken, async (req, res) => {
+router.get("/quote", authenticateAny, async (req, res) => {
   // ── THE SOURCE HALF IS PRICED FROM THE STORED DOCUMENT ───────────────────
   // Never from the request. What a video costs depends on how long it is, and
   // "how long is it" is a fact we bought from apidirect during the preview;

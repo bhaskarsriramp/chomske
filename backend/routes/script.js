@@ -11,7 +11,8 @@ import mongoose from "mongoose";
 import NewsItem from "../models/NewsItem.js";
 import Script from "../models/Script.js";
 import Source from "../models/Source.js";
-import authenticateToken from "../middleware/authenticateToken.js";
+import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
+import { recordScript } from "../services/showcaseService.js";
 import { writeScript, writeEnglishTwin, writePackaging } from "../services/scriptWriterService.js";
 import { buildMaterial } from "../services/sourceMaterial.js";
 import { canonicalCategory, pickFormat, getCategory } from "../services/categories.js";
@@ -60,7 +61,7 @@ const DAILY_VIDEO_READS = parseInt(process.env.DAILY_SOURCE_VIDEO_READS || "10",
  * because it is the shape the writing screens read, "is there a voice to write
  * in, and how much of one", for whichever profile is selected.
  */
-router.get("/voice", authenticateToken, async (req, res) => {
+router.get("/voice", authenticateAny, async (req, res) => {
   try {
     const {
       channel, voice, profile, transcripts_available, stale,
@@ -159,7 +160,7 @@ router.post("/voice/rebuild", authenticateToken, async (req, res) => {
  * flow, same polling contract. The difference between the three screens is what
  * gets read, and that lives in services/sourceMaterial.js.
  */
-router.post("/", authenticateToken, async (req, res) => {
+router.post("/", authenticateAny, async (req, res) => {
   try {
     const userId = req.user.id;
 
@@ -486,6 +487,14 @@ router.post("/", authenticateToken, async (req, res) => {
       profileId: channel._id,
     }).catch((err) => console.error(`[script] unhandled failure for ${doc._id}:`, err));
 
+    // Counted for the admin panel, which needs to know whether the creator we
+    // sent a link to actually generated anything: an open is curiosity, a
+    // script is interest. Fire-and-forget, and only for showcase sessions, so
+    // it can never slow or fail an ordinary creator's request.
+    if (req.user.kind === "showcase") {
+      recordScript(userId, req.user.visitor_id, charged).catch(() => {});
+    }
+
     return res.status(202).json({
       success: true,
       cached: false,
@@ -511,7 +520,7 @@ router.post("/", authenticateToken, async (req, res) => {
  *   ?before=ISO   cursor: created_at strictly older than this
  *   ?profile=id   only scripts written for that channel; omit for all of them
  */
-router.get("/", authenticateToken, async (req, res) => {
+router.get("/", authenticateAny, async (req, res) => {
   try {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 
@@ -627,7 +636,7 @@ router.get("/", authenticateToken, async (req, res) => {
  * endpoint exists to fix. The panel shows what is on file, says how long it is,
  * and keeps ordering another one one click away.
  */
-router.get("/existing", authenticateToken, async (req, res) => {
+router.get("/existing", authenticateAny, async (req, res) => {
   try {
     const userId = req.user.id;
 
@@ -687,7 +696,7 @@ router.get("/existing", authenticateToken, async (req, res) => {
 });
 
 /** GET /script/:id, poll target. */
-router.get("/:id", authenticateToken, async (req, res) => {
+router.get("/:id", authenticateAny, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });
   }

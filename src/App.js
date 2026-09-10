@@ -30,6 +30,12 @@ const RefundPolicy = lazy(() => import("./components/Legal/RefundPolicy"));
 const ShippingPolicy = lazy(() => import("./components/Legal/ShippingPolicy"));
 const Contact = lazy(() => import("./components/Legal/Contact"));
 
+// Both are lazy for the same reason as everything above: a visitor to the
+// landing page must not download the admin workbench, and a creator opening a
+// private demo link must not download the dashboard.
+const AdminPanel = lazy(() => import("./components/Admin/AdminPanel"));
+const ShowcasePage = lazy(() => import("./components/Showcase/ShowcasePage"));
+
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || "341385315335-6p5l9nqi7hrm953k4ucr48gr2fvpq6eu.apps.googleusercontent.com";
 
 export default function App() {
@@ -106,6 +112,20 @@ export default function App() {
                 should have to sign in to read our terms. They are also opened in
                 a new tab from the footer, so each one is a real address that
                 works cold, with no app state behind it. */}
+            {/* ── The private outreach demo ─────────────────────────────────
+                Deliberately outside the auth gate: the slug IS the credential,
+                and the entire point is that a creator we emailed cold does not
+                have to create an account to see what we built for them. The
+                server scopes what that session can reach; see
+                middleware/authenticateToken.js. */}
+            <Route path="/v/:slug" element={<ShowcasePage />} />
+
+            {/* Gated server-side, not here. This route renders "Not found" for
+                anyone whose /admin/me check fails, and every endpoint behind it
+                answers 404 without the flag, so the route existing in the
+                bundle gives nothing away. */}
+            <Route path="/admin" element={<AdminPanel />} />
+
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/refunds" element={<RefundPolicy />} />

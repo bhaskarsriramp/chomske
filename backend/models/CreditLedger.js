@@ -28,7 +28,11 @@ const CreditLedgerSchema = new Schema({
   reason: {
     type: String,
     required: true,
-    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment"],
+    // "showcase" is the grant that stocks an outreach link's wallet. Separated
+    // from "signup" so marketing spend never lands in the same bucket as a real
+    // account's opening balance: these credits are a cost, not a liability to a
+    // customer, and reconciling revenue means being able to exclude them.
+    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase"],
     index: true,
   },
 

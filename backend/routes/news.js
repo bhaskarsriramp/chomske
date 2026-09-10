@@ -18,7 +18,7 @@ import { allSources } from "../services/sources/index.js";
 import { heatOf, latestOf } from "../services/newsHeat.js";
 import { spaceByEntity } from "../services/newsDiversity.js";
 import { fetchAndRank } from "../services/newsScheduler.js";
-import authenticateToken from "../middleware/authenticateToken.js";
+import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
 
 const router = express.Router();
 
@@ -51,7 +51,7 @@ const STALE_HOURS = parseFloat(process.env.NEWS_STALE_HOURS || "3");
  * Ordering is by how live a story is, not by the single newest link, see
  * services/newsHeat.js for the formula and why it exists.
  */
-router.get("/", authenticateToken, async (req, res) => {
+router.get("/", authenticateAny, async (req, res) => {
   try {
     const hours = Math.min(72, Math.max(1, parseInt(req.query.hours, 10) || 24));
     const minScore = Math.max(0, Math.min(10, parseInt(req.query.min_score, 10) || 4));
@@ -360,7 +360,7 @@ router.post("/refresh", authenticateToken, async (req, res) => {
  * the brief drops in when it lands. Almost always cached by then: the collector
  * pre-generates briefs for feed-visible stories after each ranking pass.
  */
-router.get("/:id/brief", authenticateToken, async (req, res) => {
+router.get("/:id/brief", authenticateAny, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });
   }
@@ -379,7 +379,7 @@ router.get("/:id/brief", authenticateToken, async (req, res) => {
 });
 
 /** GET /news/:id, one story, plus every source that covered it. */
-router.get("/:id", authenticateToken, async (req, res) => {
+router.get("/:id", authenticateAny, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });
   }
@@ -445,7 +445,7 @@ function storyKey(d) {
  * changes nothing. Failure is answered with success, losing a read mark means
  * a badge lingers, which is not worth an error in front of somebody.
  */
-router.post("/seen", authenticateToken, async (req, res) => {
+router.post("/seen", authenticateAny, async (req, res) => {
   try {
     const raw = Array.isArray(req.body?.stories)
       ? req.body.stories

@@ -21,7 +21,10 @@ import sourceRoutes from "./routes/source.js";
 import statsRoutes from "./routes/stats.js";
 import billingRoutes from "./routes/billing.js";
 import profileRoutes from "./routes/profiles.js";
+import adminRoutes from "./routes/admin.js";
+import showcaseRoutes from "./routes/showcase.js";
 import VoiceProfile from "./models/VoiceProfile.js";
+import User from "./models/User.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
 import { initSocketServer } from "./socket/index.js";
@@ -116,6 +119,21 @@ app.use(
 app.use("/profiles", profileRoutes);
 app.use("/stats", statsRoutes);
 
+// ── Outreach showcases ──────────────────────────────────────────────────────
+// The admin workbench, and the private share links it produces.
+//
+// /v/ carries a tighter ceiling than anything else here because it is the only
+// surface reachable with NO account at all: the slug is the whole credential,
+// so the open endpoint is the one place a stranger could sit and guess. Eight
+// random base62 characters against 10 attempts a minute is not a threat, but
+// the limiter is what makes that sentence true rather than hopeful.
+app.use("/admin", adminRoutes);
+app.use(
+  "/v",
+  rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false }),
+  showcaseRoutes
+);
+
 // 404 + error handler. Errors are logged in full and answered generically,
 // stack traces and provider messages must never reach the browser.
 app.use((req, res) => res.status(404).json({ success: false, message: "Not found" }));
@@ -157,6 +175,21 @@ function assertConfig() {
     // scripts/migrateProfiles.js --apply, which backfills first.
     await VoiceProfile.syncIndexes().catch((err) =>
       console.error("[server] voice_profiles index sync failed:", err.message)
+    );
+
+    // ── Make google_sub's unique index SPARSE ───────────────────────────────
+    // Same class of problem, opposite direction. `users.google_sub` carried a
+    // plain unique index, which is right for accounts that came from a sign-in
+    // and impossible for a showcase, which has no Google account behind it. A
+    // plain unique index treats every missing value as the same value, so the
+    // FIRST showcase inserts and the second fails with E11000 against a
+    // database that has the old index, while working locally against a fresh
+    // one. Exactly the trap the note above describes.
+    //
+    // syncIndexes() rebuilds it sparse, and adds the unique sparse index on
+    // showcase.slug that guarantees two links can never collide.
+    await User.syncIndexes().catch((err) =>
+      console.error("[server] users index sync failed:", err.message)
     );
 
     // http.createServer rather than app.listen, because Socket.IO attaches to

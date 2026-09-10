@@ -25,14 +25,19 @@ import {
   listProfiles, ensureProfile, resolveProfile, createProfile, updateProfile,
   setDefaultProfile, deleteProfile, shapeProfile, voiceFor, MAX_PROFILES,
 } from "../services/profileService.js";
-import { buildVoiceProfile } from "../services/voiceProfileService.js";
+// One implementation, shared with the admin showcase builder, so the voice a
+// creator gets and the voice we show them in an outreach demo are produced by
+// exactly the same analysis. See services/voiceBuildRunner.js.
+import { runVoiceBuild } from "../services/voiceBuildRunner.js";
 import { SHORT, LONG, laneQuery, LONG_MIN_VIDEOS, LONG_MIN_SECONDS } from "../services/voiceLanes.js";
 import { voiceSpecStale } from "../services/categories.js";
 import { kickoffCategories } from "../services/newsScheduler.js";
 import { getCategory } from "../services/categories.js";
 import { publishUserEvent } from "../services/newsEvents.js";
 import { voiceAnalysisCost } from "../services/creditPricing.js";
-import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
+// `refund` moved out with runBuild: the only refund on this path is the one a
+// failed analysis issues, and that now lives in services/voiceBuildRunner.js.
+import { spend, getBalance, InsufficientCredits } from "../services/creditsService.js";
 
 const router = express.Router();
 
@@ -298,7 +303,7 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
 
     // Fire and forget. Everything after this point runs with no request behind
     // it, which is exactly why it has to announce itself.
-    runBuild(userId, profile._id, voice._id, profileId, charged, lane).catch(() => {});
+    runVoiceBuild(userId, profile._id, voice._id, profileId, charged, lane).catch(() => {});
 
     return res.status(202).json({ success: true, building: true, lane });
   } catch (err) {
@@ -306,81 +311,6 @@ router.post("/:id/analyse", authenticateToken, async (req, res) => {
     return res.status(500).json({ success: false, message: "Couldn't start this analysis." });
   }
 });
-
-/**
- * Run one build to its end, clear the flag, and say what happened.
- *
- * ── WHY THE ORDER IN HERE MATTERS ────────────────────────────────────────────
- * The `building` flag is cleared BEFORE the event goes out, every time. The
- * client's reaction to voice:built is to re-read GET /script/voice, so an event
- * that overtook the write would hand it a row still saying `building: true` and
- * put the screen straight back into the spinner it was just told to leave, on a
- * build that had already finished. Same reason the failure path clears first.
- *
- * Nothing in here is allowed to throw. It runs with no request behind it, so a
- * rejection has nobody to report to and would only leave `building` set, which
- * is the one state that blocks the next Analyse press.
- */
-async function runBuild(userId, profileObjectId, voiceId, profileId, charged = 0, lane = SHORT) {
-  try {
-    const { built, profile: doc, reason } = await buildVoiceProfile(userId, profileObjectId, { lane });
-
-    const buildError = built
-      ? ""
-      : reason === "no_transcripts"
-        ? "None of the videos could be read. Check they are public and try again."
-        : reason === "not_enough_long"
-          ? `Only ${doc ? "" : ""}some of those long videos could be read. We need ${LONG_MIN_VIDEOS} readable long videos to learn your multi-story style.`
-          : "Couldn't build this voice.";
-
-    // Nothing was produced, so nothing is owed. The free-build counter is only
-    // advanced on success (see buildVoiceProfile), so a refunded attempt does
-    // not quietly use one up either.
-    if (!built && charged > 0) {
-      await refund(userId, charged, {
-        refType: "VoiceProfile", refId: voiceId, note: "Voice analysis failed",
-      }).catch(() => {});
-    }
-
-    await VoiceProfile.updateOne(
-      { _id: voiceId },
-      lane === LONG
-        ? { $set: { "long.building": false, "long.build_error": buildError } }
-        : { $set: { building: false, build_error: buildError } }
-    );
-
-    await publishUserEvent(built
-      ? {
-          type: "voice:built",
-          user: userId,
-          profile: profileId,
-          // The facts the success dialog needs, so it can open on the event
-          // instead of waiting a round trip for the refetch. What was LEARNED
-          // is not here and never will be, see shapeProfile in routes/script.js.
-          lane,
-          transcript_count: (lane === LONG ? doc?.long?.transcript_count : doc?.transcript_count) || 0,
-          language_label: doc?.language_label || "",
-          confidence: (lane === LONG ? doc?.long?.confidence : doc?.confidence) || "",
-        }
-      : { type: "voice:failed", user: userId, profile: profileId, lane, message: buildError });
-  } catch (err) {
-    console.error("[profiles] analyse failed:", err.message);
-    const message = err.userMessage || "Couldn't analyse this voice. Please try again.";
-    if (charged > 0) {
-      await refund(userId, charged, {
-        refType: "VoiceProfile", refId: voiceId, note: "Voice analysis failed",
-      }).catch(() => {});
-    }
-    await VoiceProfile.updateOne(
-      { _id: voiceId },
-      lane === LONG
-        ? { $set: { "long.building": false, "long.build_error": message } }
-        : { $set: { building: false, build_error: message } }
-    ).catch(() => {});
-    await publishUserEvent({ type: "voice:failed", user: userId, profile: profileId, lane, message })
-      .catch(() => {});
-  }
-}
 
 /**
  * DELETE /profiles/:id/voice, throw away the voice AND the videos behind it.
