@@ -1,4 +1,5 @@
 import { useCredits } from "../../state/CreditsContext";
+import { useShowcase } from "../../state/ShowcaseContext";
 
 /**
  * The credits card that sits at the bottom of the nav.
@@ -26,8 +27,17 @@ function thresholds(rules) {
   return { cheapest, low: cheapest * 2 };
 }
 
-export default function CreditsCard({ compact = false }) {
+/**
+ * @param {boolean} showcase  A visitor holding a private outreach link.
+ *   The card still shows the balance, because it still decides whether the next
+ *   thing they try will work, but the action underneath it changes: "Buy
+ *   credits" is meaningless when there is no account for credits to go into, and
+ *   a stranger asked to pay before they have signed up simply leaves. The ask is
+ *   to keep the voice we already built for them, which costs them nothing.
+ */
+export default function CreditsCard({ compact = false, showcase = false }) {
   const { balance, openBuy, canBuy, rules } = useCredits();
+  const { openSignUp } = useShowcase();
   const { cheapest, low: LOW } = thresholds(rules);
 
   const known = typeof balance === "number";
@@ -79,7 +89,7 @@ export default function CreditsCard({ compact = false }) {
         {low && (
           <div style={{ fontSize: 11.5, color: "#AB2C41", lineHeight: 1.5, margin: "0 0 9px" }}>
             {balance === 0
-              ? "Top up to keep writing."
+              ? showcase ? "Create an account to keep writing." : "Top up to keep writing."
               : cantWrite
               // Said plainly. Anything softer here is a promise the next screen
               // has to break.
@@ -88,9 +98,12 @@ export default function CreditsCard({ compact = false }) {
           </div>
         )}
 
-        {canBuy && (
+        {/* The showcase button is always shown, where Buy is gated on payments
+            being configured: this one has nothing to configure, and it is the
+            only invitation to sign up anywhere in the rail. */}
+        {(showcase || canBuy) && (
           <button
-            onClick={openBuy}
+            onClick={showcase ? openSignUp : openBuy}
             className="hg-btn-primary"
             style={{
               width: "100%", fontSize: 13, fontWeight: 600,
@@ -98,7 +111,7 @@ export default function CreditsCard({ compact = false }) {
               background: "var(--primary)", color: "#fff", cursor: "pointer",
             }}
           >
-            Buy credits
+            {showcase ? "Create account" : "Buy credits"}
           </button>
         )}
       </div>
@@ -109,13 +122,20 @@ export default function CreditsCard({ compact = false }) {
 /** The compact version for the mobile header. Tapping it opens the same dialog. */
 export function CreditsPill() {
   const { balance, openBuy, canBuy, rules } = useCredits();
+  const { isShowcase, openSignUp } = useShowcase();
   const known = typeof balance === "number";
   const low = known && balance < thresholds(rules).low;
 
+  // On a phone the whole rail is behind a hamburger, so this pill is the only
+  // permanently visible credit control. For a showcase visitor it has to open
+  // the same invitation the card does, or the ask is two taps deep on the
+  // device most of them will read the email on.
+  const onTap = isShowcase ? () => openSignUp("credits") : canBuy ? openBuy : undefined;
+
   return (
     <button
-      onClick={canBuy ? openBuy : undefined}
-      aria-label={known ? `${balance} credits. Buy more.` : "Credits"}
+      onClick={onTap}
+      aria-label={known ? `${balance} credits. ${isShowcase ? "Create an account." : "Buy more."}` : "Credits"}
       style={{
         display: "inline-flex", alignItems: "center", gap: 5,
         fontSize: 12, fontWeight: 650, whiteSpace: "nowrap",
@@ -123,7 +143,7 @@ export function CreditsPill() {
         border: `1px solid ${low ? "#F3D3D8" : "var(--line)"}`,
         background: low ? "#FCF0F2" : "var(--card)",
         color: low ? "#AB2C41" : "var(--ink-body)",
-        cursor: canBuy ? "pointer" : "default",
+        cursor: onTap ? "pointer" : "default",
       }}
     >
       <span style={{ fontWeight: 500, opacity: 0.8 }}>Credits left:</span>

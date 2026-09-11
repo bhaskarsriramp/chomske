@@ -57,7 +57,32 @@ const SECTIONS = [
   },
 ];
 
-export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
+/**
+ * ── THE SHOWCASE RAIL ────────────────────────────────────────────────────────
+ * Same shell, fewer doors. A visitor holding a private outreach link gets
+ * Analysis (where they land, and the reason the link was worth opening), then
+ * the ordinary Create / My voice / My scripts they would have as a customer.
+ *
+ * The Account section is absent rather than disabled. Dashboard, Profile and
+ * Support are all about an account that does not exist yet, and a greyed row is
+ * a promise of something being withheld; an absent one is simply not part of
+ * this screen. The sign-up invitation lives in one place instead, on the credits
+ * card, so there is one ask rather than four dead ends.
+ */
+const SHOWCASE_SECTIONS = [
+  {
+    label: "Studio",
+    items: [
+      { id: "analysis", label: "Analysis", icon: SparkIcon },
+      { id: "discover", label: "Create", icon: TargetIcon, match: ["discover", "import", "idea"] },
+      { id: "voice", label: "My voice", icon: WaveIcon },
+      { id: "scripts", label: "My scripts", icon: ScriptIcon },
+    ],
+  },
+];
+
+export default function Sidebar({ tab, onTab, isNarrow, open, onClose, showcase = false }) {
+  const sections = showcase ? SHOWCASE_SECTIONS : SECTIONS;
   const nav = (
     <nav
       style={{
@@ -80,7 +105,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
       )}
 
       <div className="hg-scroll" style={{ flex: 1, minHeight: 0, padding: `${isNarrow ? 16 : 0}px 12px 16px` }}>
-        {SECTIONS.map((section) => (
+        {sections.map((section) => (
           <div key={section.label} style={{ marginBottom: 20 }}>
             <div
               style={{
@@ -125,7 +150,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose }) {
           every screen, permanently, and Profile exists precisely to hold that.
           A balance is the opposite kind of fact. It changes without them acting,
           and it decides whether the next thing they try will work. */}
-      <CreditsCard compact={isNarrow} />
+      <CreditsCard compact={isNarrow} showcase={showcase} />
     </nav>
   );
 
@@ -180,6 +205,17 @@ function WaveIcon() {
   return (
     <svg {...svg} aria-hidden="true">
       <path d="M4 11v2M8 7.5v9M12 4.5v15M16 8.5v7M20 11v2" />
+    </svg>
+  );
+}
+
+// Analysis. A measuring mark rather than a magic sparkle: what this screen
+// shows is counted, and an AI-shimmer icon would promise the opposite.
+function SparkIcon() {
+  return (
+    <svg {...svg} aria-hidden="true">
+      <path d="M4 19V5M4 19h16" />
+      <path d="M8 16v-4M12.5 16V8M17 16v-6" />
     </svg>
   );
 }

@@ -34,7 +34,7 @@ const Contact = lazy(() => import("./components/Legal/Contact"));
 // landing page must not download the admin workbench, and a creator opening a
 // private demo link must not download the dashboard.
 const AdminPanel = lazy(() => import("./components/Admin/AdminPanel"));
-const ShowcasePage = lazy(() => import("./components/Showcase/ShowcasePage"));
+const ShowcaseEntry = lazy(() => import("./components/Showcase/ShowcaseEntry"));
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || "341385315335-6p5l9nqi7hrm953k4ucr48gr2fvpq6eu.apps.googleusercontent.com";
 
@@ -118,7 +118,7 @@ export default function App() {
                 have to create an account to see what we built for them. The
                 server scopes what that session can reach; see
                 middleware/authenticateToken.js. */}
-            <Route path="/v/:slug" element={<ShowcasePage />} />
+            <Route path="/v/:slug" element={<ShowcaseEntry />} />
 
             {/* Gated server-side, not here. This route renders "Not found" for
                 anyone whose /admin/me check fails, and every endpoint behind it

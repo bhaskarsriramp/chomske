@@ -12,6 +12,8 @@ import Logo from "../Shell/Logo";
 import CreditsProvider from "../../state/CreditsContext";
 import ProfileProvider, { useProfiles } from "../../state/ProfileContext";
 import VoiceProvider from "../../state/VoiceContext";
+import ShowcaseProvider, { useShowcase } from "../../state/ShowcaseContext";
+import AnalysisPanel from "../Showcase/AnalysisPanel";
 import { CreditsPill } from "../Shell/CreditsCard";
 
 /**
@@ -41,7 +43,10 @@ import { CreditsPill } from "../Shell/CreditsCard";
  * catch-all redirect below and lands on Discover, which is what it used to show.
  */
 export const CREATE_TABS = ["discover", "import", "idea"];
-export const TAB_IDS = [...CREATE_TABS, "voice", "scripts", "dashboard", "profile", "support"];
+// "analysis" is reachable only in showcase mode, but it lives in the shared
+// list so a stale link or a refresh on it resolves rather than bouncing to
+// Discover. Shell below sends a human who lands there to Discover instead.
+export const TAB_IDS = [...CREATE_TABS, "analysis", "voice", "scripts", "dashboard", "profile", "support"];
 
 /**
  * All three providers wrap the whole shell rather than individual panels.
@@ -57,15 +62,25 @@ export const TAB_IDS = [...CREATE_TABS, "voice", "scripts", "dashboard", "profil
  * that panel was; owned here, it follows them. VoiceProvider is inside
  * ProfileProvider because it reads the active channel.
  */
+/**
+ * ShowcaseProvider is OUTSIDE the other three, and that ordering matters.
+ *
+ * It owns the sign-up dialog, which is the one thing on this screen that
+ * outlives everything else: pressing Continue with Google replaces the session
+ * and reloads the app. Nesting it under the credits or profile providers would
+ * put a dialog that ends the session inside state scoped to that session.
+ */
 export default function Dashboard(props) {
   return (
-    <CreditsProvider>
-      <ProfileProvider>
-        <VoiceProvider>
-          <Shell {...props} />
-        </VoiceProvider>
-      </ProfileProvider>
-    </CreditsProvider>
+    <ShowcaseProvider user={props.user}>
+      <CreditsProvider>
+        <ProfileProvider>
+          <VoiceProvider>
+            <Shell {...props} />
+          </VoiceProvider>
+        </ProfileProvider>
+      </CreditsProvider>
+    </ShowcaseProvider>
   );
 }
 
@@ -84,6 +99,7 @@ function Shell({ user, onSignOut }) {
   const [drawer, setDrawer] = useState(false);
 
   const { activeId, refresh: refreshProfiles } = useProfiles();
+  const { isShowcase } = useShowcase();
 
   const openTab = useCallback((id) => {
     navigate(`/app/${id}`);
@@ -124,6 +140,17 @@ function Shell({ user, onSignOut }) {
   // is what it used to show.
   if (!TAB_IDS.includes(tabParam)) return <Navigate to="/app/discover" replace />;
 
+  // Three screens exist only for one of the two session kinds, and landing on
+  // the wrong one should move you rather than render an empty shell: a showcase
+  // has no account to show a Dashboard, Profile or Support page for, and a
+  // signed-in creator has no showcase to analyse.
+  if (isShowcase && ["dashboard", "profile", "support"].includes(tab)) {
+    return <Navigate to="/app/discover" replace />;
+  }
+  if (!isShowcase && tab === "analysis") {
+    return <Navigate to="/app/discover" replace />;
+  }
+
   return (
     <div className="hg-app" style={{ display: "flex", background: "var(--paper)" }}>
       <Sidebar
@@ -132,6 +159,7 @@ function Shell({ user, onSignOut }) {
         isNarrow={isNarrow}
         open={drawer}
         onClose={() => setDrawer(false)}
+        showcase={isShowcase}
       />
 
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -181,6 +209,16 @@ function Shell({ user, onSignOut }) {
         )}
 
         <main style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          {/* Where a showcase link lands. Remounted on each visit rather than
+              kept alive: it holds no in-flight work, and it is the screen most
+              likely to be returned to after the videos change, at which point
+              the numbers on it are the old ones. */}
+          {isShowcase && tab === "analysis" && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+              <AnalysisPanel user={user} onGoCreate={() => openTab("discover")} />
+            </div>
+          )}
+
           {/* One page for all three Create modes. Mounted under a single key so
               switching between them never unmounts the others: each can have a
               paid generation polling for a result, and the shell's whole

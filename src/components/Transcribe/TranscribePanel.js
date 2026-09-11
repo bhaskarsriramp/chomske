@@ -4,6 +4,7 @@ import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
 import { useProfiles } from "../../state/ProfileContext";
 import { useVoice } from "../../state/VoiceContext";
+import { useShowcase } from "../../state/ShowcaseContext";
 import { useCredits } from "../../state/CreditsContext";
 import VoiceAnalysing from "./VoiceAnalysing";
 
@@ -98,6 +99,11 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   const [lane, setLane] = useState("short");
 
   const [confirmDelete, setConfirmDelete] = useState(null);
+  // A showcase visitor may look at everything here and change nothing: the
+  // videos and the voice belong to a demo an admin built. Every mutating
+  // control is swapped for the invitation to sign up, at which point all of it
+  // becomes theirs to edit. See state/ShowcaseContext.js.
+  const { isShowcase, openSignUp } = useShowcase();
   const [deleting, setDeleting] = useState(false);
   const [confirmVoiceDelete, setConfirmVoiceDelete] = useState(false);
   const [deletingVoice, setDeletingVoice] = useState(false);
@@ -179,6 +185,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
   async function handleSubmit(e) {
     e?.preventDefault();
+    if (isShowcase) return openSignUp("voice");
     if (submitting) return;
     setError("");
 
@@ -226,6 +233,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
    * and holds the result whether or not this panel is still on screen.
    */
   function analyseVoice() {
+    if (isShowcase) return openSignUp("voice");
     setError("");
     analyse(lane);
   }
@@ -674,7 +682,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                 isLong={isLong}
                 loading={!meta?.laneSlots}
                 isPhone={isPhone}
-                onDelete={setConfirmDelete}
+                onDelete={isShowcase ? () => openSignUp("voice") : setConfirmDelete}
               />
             </div>
           </div>
@@ -699,7 +707,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
           {built && (
             <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
               <button
-                onClick={() => setConfirmVoiceDelete(true)}
+                onClick={() => (isShowcase ? openSignUp("voice") : setConfirmVoiceDelete(true))}
                 style={{
                   border: "none", background: "none", padding: 0,
                   fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", color: "var(--ink-mute)",

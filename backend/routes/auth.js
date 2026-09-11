@@ -231,6 +231,29 @@ function publicUser(u) {
     // what a channel covers read it from GET /profiles instead.
     categories: u.categories || [],
     onboarded: !!u.onboarded_at,
+
+    // ── WHAT KIND OF SESSION IS LOOKING ────────────────────────────────────
+    // A showcase visitor holding a private link is, as far as this endpoint is
+    // concerned, signed in: readSession resolves their cookie to the showcase
+    // User row, so /auth/me answers with it and the app shell boots normally.
+    //
+    // That is the whole design. The demo is the REAL app in a restricted mode,
+    // not a second implementation of it: the sidebar, the feed, the ordering
+    // screen and the script writer are the ones a paying creator uses, and the
+    // only difference is which controls are offered. A parallel demo UI would
+    // drift from the product within a month and show prospects something we do
+    // not actually sell.
+    //
+    // So the client branches on this one field. Nothing here is a security
+    // boundary; the server already refuses a showcase session everywhere it
+    // matters (see middleware/authenticateToken.js). This decides what to DRAW.
+    kind: u.kind || "human",
+    showcase: u.kind === "showcase"
+      ? {
+          display_name: u.showcase?.display_name || u.name || "",
+          slug: u.showcase?.slug || "",
+        }
+      : null,
   };
 }
 
