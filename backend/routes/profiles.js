@@ -20,7 +20,7 @@ import mongoose from "mongoose";
 import Transcript from "../models/Transcript.js";
 import Script from "../models/Script.js";
 import VoiceProfile from "../models/VoiceProfile.js";
-import authenticateToken from "../middleware/authenticateToken.js";
+import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
 import {
   listProfiles, ensureProfile, resolveProfile, createProfile, updateProfile,
   setDefaultProfile, deleteProfile, shapeProfile, voiceFor, MAX_PROFILES,
@@ -48,7 +48,7 @@ const router = express.Router();
  * predates profiles, both come back with something to select rather than an
  * empty dropdown and a dead end.
  */
-router.get("/", authenticateToken, async (req, res) => {
+router.get("/", authenticateAny, async (req, res) => {
   try {
     await ensureProfile(req.user.id);
     const profiles = await listProfiles(req.user.id);
@@ -349,7 +349,7 @@ router.delete("/:id/voice", authenticateToken, async (req, res) => {
 });
 
 /** What deleting one would actually destroy. Drives the confirmation. */
-router.get("/:id/usage", authenticateToken, async (req, res) => {
+router.get("/:id/usage", authenticateAny, async (req, res) => {
   try {
     const { profile } = await resolveProfile(req.user.id, req.params.id);
     const [videos, scripts] = await Promise.all([

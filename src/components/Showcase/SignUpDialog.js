@@ -108,8 +108,8 @@ export default function SignUpDialog({ open, onClose, showcaseId, reason }) {
         </h2>
 
         <p style={{ fontSize: 14.5, lineHeight: 1.65, color: "var(--ink-body)", margin: "0 0 8px" }}>
-          Sign in and everything here — the videos, the analysis, the scripts you've
-          written — moves onto your account. You won't be asked to paste anything or
+          Sign in and everything here, the videos, the analysis, the scripts you've
+          written, moves onto your account. You won't be asked to paste anything or
           wait for the analysis again.
         </p>
         <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 0 22px" }}>

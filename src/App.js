@@ -118,7 +118,13 @@ export default function App() {
                 have to create an account to see what we built for them. The
                 server scopes what that session can reach; see
                 middleware/authenticateToken.js. */}
-            <Route path="/v/:slug" element={<ShowcaseEntry />} />
+            {/* onOpened re-reads /auth/me before the redirect. Without it the
+                redirect lands on /app/:tab while `user` is still the null this
+                app resolved at first paint, seconds before the showcase cookie
+                existed, and that route sends a null user back to the landing
+                page. The link opened, the session was valid, and the visitor
+                was bounced to the front door anyway. */}
+            <Route path="/v/:slug" element={<ShowcaseEntry onOpened={refreshUser} />} />
 
             {/* Gated server-side, not here. This route renders "Not found" for
                 anyone whose /admin/me check fails, and every endpoint behind it

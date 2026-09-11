@@ -3,7 +3,7 @@ import api from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 
 /**
- * "Analysis" — the first screen a showcase visitor lands on.
+ * "Analysis": the first screen a showcase visitor lands on.
  *
  * ── WHY THIS IS THE FIRST SCREEN AND NOT THE FEED ────────────────────────────
  * Somebody who has never heard of us opens a link from a cold email. Dropping
@@ -17,11 +17,17 @@ import useIsMobile from "../../hooks/useIsMobile";
  * loop (services/voiceMetrics.js), which is what makes it checkable against
  * videos they made themselves. That is the whole persuasion.
  *
- * ── THE DISCLOSURE IS ABOVE THE FOLD, NOT IN A FOOTER ────────────────────────
- * A person who finds a page carrying their own name and their own sentences
- * asks three things in order: what is this, who can see it, how do I stop it.
- * Answering before they have to ask is the decent thing, and in practice it is
- * what stops a polite objection becoming a public one.
+ * ── WHERE THE DISCLOSURE SITS, AND WHY IT MOVED ──────────────────────────────
+ * It used to be a bordered banner above the headline, which meant the page
+ * opened by apologising for itself: the first thing a creator read was a
+ * paragraph about what we had not done, before anything showed them why the
+ * link was worth opening.
+ *
+ * It now sits at the foot of the page, quieter, and still says all three things
+ * a person finding their own name here will want to know: what this is, who can
+ * see it, and how to stop it. The off switch in particular stays, because
+ * somebody who can end it in one click is far likelier to simply look at it
+ * than somebody who has to find an address to email.
  */
 export default function AnalysisPanel({ user, onGoCreate }) {
   const isPhone = useIsMobile(760);
@@ -87,29 +93,13 @@ export default function AnalysisPanel({ user, onGoCreate }) {
 
   return (
     <Page pad={pad}>
-      <div
-        style={{
-          border: "1px solid var(--line)", borderRadius: 12,
-          padding: isPhone ? "12px 14px" : "13px 16px", marginBottom: isPhone ? 24 : 30,
-          fontSize: 13, lineHeight: 1.6, color: "var(--ink-mute)", background: "var(--card)",
-        }}
-      >
-        We built this from {a?.videos || "a few"} of your public videos to show you what it
-        does. <strong style={{ color: "var(--ink-body)" }}>Nothing has been published</strong> — this
-        page isn't indexed and the link is private to you.{" "}
-        <button onClick={retire} disabled={retiring} style={linkBtn}>
-          {retiring ? "Removing…" : "Remove it"}
-        </button>{" "}
-        and it's gone for good.
-      </div>
-
       <h1 style={h1(isPhone)}>{name}, this is how you talk.</h1>
       <p style={{ ...body(isPhone), maxWidth: 720 }}>
         {state === "loading"
           ? "Reading what we measured…"
           : state === "failed"
             ? "We couldn't load the analysis just now. The writing below still works."
-            : `We read ${a?.videos || "your"} of your videos and measured them — no guessing, no adjectives. Everything below is counted from your own words.`}
+            : `We read ${a?.videos || "your"} of your videos and measured them. No guessing, no adjectives. Everything below is counted from your own words.`}
       </p>
 
       {stats.length > 0 && (
@@ -147,7 +137,7 @@ export default function AnalysisPanel({ user, onGoCreate }) {
       {a?.signature_phrase_count > 0 && (
         <p style={{ fontSize: 13, lineHeight: 1.65, color: "var(--ink-mute)", marginTop: 20, maxWidth: 720 }}>
           We also captured {a.signature_phrase_count} of your catchphrases and {a.category_voice_fields} things
-          specific to how you cover tech — how you say a spec, how you say a price, the exact words
+          specific to how you cover tech: how you say a spec, how you say a price, the exact words
           you use to tell someone not to buy something. Those stay on our side; they're what the
           writing runs on.
         </p>
@@ -156,6 +146,26 @@ export default function AnalysisPanel({ user, onGoCreate }) {
       <button onClick={onGoCreate} style={primaryBtn(isPhone)}>
         Now watch it write today's news in your voice →
       </button>
+
+      {/* ── THE OFF SWITCH, MOVED RATHER THAN DROPPED ──────────────────────
+          The banner that used to carry this sat above the headline and was the
+          first thing on the page, which made the page read as an apology
+          before it read as a demo. Gone.
+
+          The control itself stays, quietly, at the bottom. Somebody who does
+          not want a page built from their videos should be able to end it here
+          in one click rather than by finding an address to email, and a person
+          who can stop it themselves is far likelier to just look at it. */}
+      <div style={{ marginTop: isPhone ? 34 : 46, paddingTop: 18, borderTop: "1px solid var(--line)" }}>
+        <p style={{ fontSize: 12.5, lineHeight: 1.65, color: "var(--ink-mute)", margin: 0, maxWidth: 640 }}>
+          Built from {a?.videos || "a few"} of your public videos. Nothing has been published:
+          this page is not indexed and the link is private to you.{" "}
+          <button onClick={retire} disabled={retiring} style={linkBtn}>
+            {retiring ? "Removing…" : "Remove it"}
+          </button>{" "}
+          and it is gone for good.
+        </p>
+      </div>
     </Page>
   );
 }

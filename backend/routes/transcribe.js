@@ -29,7 +29,7 @@ import VoiceProfile from "../models/VoiceProfile.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
 import { getYouTubeVideoDetails, isApidirectConfigured } from "../services/apidirectClient.js";
 import { resolveProfile, listProfiles, voiceFor } from "../services/profileService.js";
-import authenticateToken from "../middleware/authenticateToken.js";
+import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
 
 const router = express.Router();
 const DAILY_LIMIT = parseInt(process.env.DAILY_TRANSCRIBE_LIMIT || "10", 10);
@@ -292,7 +292,7 @@ router.post("/", authenticateToken, async (req, res) => {
 });
 
 /** GET /transcribe/:id, poll target. */
-router.get("/:id", authenticateToken, async (req, res) => {
+router.get("/:id", authenticateAny, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });
   }
@@ -304,7 +304,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
 });
 
 /** GET /transcribe?profile=…, the videos in one profile, newest first. */
-router.get("/", authenticateToken, async (req, res) => {
+router.get("/", authenticateAny, async (req, res) => {
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 
   const { profile } = await resolveProfile(req.user.id, req.query.profile);

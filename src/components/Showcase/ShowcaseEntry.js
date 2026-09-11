@@ -4,7 +4,7 @@ import api, { errorMessage } from "../../api";
 import Logo from "../Shell/Logo";
 
 /**
- * /v/:slug — the door, and nothing else.
+ * /v/:slug: the door, and nothing else.
  *
  * ── WHY THIS RENDERS ALMOST NOTHING ──────────────────────────────────────────
  * The first version of this was a whole bespoke page: its own intro, its own
@@ -23,7 +23,7 @@ import Logo from "../Shell/Logo";
  * it is before it says anything else. That now lives in AnalysisPanel, the first
  * screen they land on.
  */
-export default function ShowcaseEntry() {
+export default function ShowcaseEntry({ onOpened }) {
   const { slug } = useParams();
   const navigate = useNavigate();
   const [error, setError] = useState("");
@@ -49,6 +49,19 @@ export default function ShowcaseEntry() {
       try {
         await api.post(`/v/${slug}/open`);
         if (cancelled) return;
+
+        // ── RE-READ THE SESSION BEFORE MOVING ─────────────────────────────
+        // The cookie only came into existence a line ago. App resolved
+        // /auth/me at first paint, when this visitor had no session at all,
+        // and still holds `user: null`. Navigating on that stale value sends
+        // them to /app/analysis, which sees a null user and redirects to the
+        // landing page: a valid link, a valid session, and the front door.
+        //
+        // Awaited, so the state update is queued before the navigation that
+        // reads it. React applies both in one render, in that order.
+        await onOpened?.();
+        if (cancelled) return;
+
         // replace, not push: the back button should leave the app, not drop
         // them onto a door they have already walked through.
         navigate("/app/analysis", { replace: true });
@@ -57,7 +70,7 @@ export default function ShowcaseEntry() {
       }
     })();
     return () => { cancelled = true; };
-  }, [slug, navigate]);
+  }, [slug, navigate, onOpened]);
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--paper, #FAFAF8)", padding: "44px clamp(20px, 6vw, 90px)" }}>
