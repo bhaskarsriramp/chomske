@@ -4,6 +4,10 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 
 import api from "./api";
 import LandingPage from "./components/Landing/LandingPage";
+// Eager, not lazy: it is what stands in for every lazy chunk, so loading it
+// behind a chunk boundary would mean nothing to show during the wait it exists
+// to cover. Roughly a kilobyte.
+import Skeleton from "./components/Shell/Skeleton";
 
 /* ── WHAT IS SPLIT, AND WHY ──────────────────────────────────────────────────
    A stranger arriving at trylipi.online sees exactly one screen: the landing
@@ -162,10 +166,36 @@ function warmAppChunks() {
   import("./components/Onboarding/CategoryPicker").catch(() => {});
 }
 
+/**
+ * What is on screen while a chunk downloads, or while /auth/me is in flight.
+ *
+ * ── WHY THIS IS NOT THE WORD "LOADING" ANY MORE ──────────────────────────────
+ * It was, centred on white. That is fine on a fast connection, where it flashes
+ * for 80ms, and it is the wrong thing on a mid-range phone on a weak Indian
+ * network, where the app chunk takes seconds: a nearly blank page with one
+ * small grey word on it reads as broken, and somebody who thinks a page is
+ * broken closes it before it can finish.
+ *
+ * A skeleton cannot be misread as a failure. It is deliberately generic rather
+ * than a copy of the app shell, because this fallback also covers the legal
+ * pages and the showcase door, and a left navigation rail drawn in front of a
+ * privacy policy would be a different kind of lie.
+ */
 function Booting() {
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: "var(--ink-mute)", fontSize: 14 }}>
-      Loading…
+    <div style={{ minHeight: "100vh", background: "var(--paper, #FAFAF8)", padding: "44px clamp(20px, 6vw, 90px)" }}>
+      <div style={{ maxWidth: 760 }}>
+        <Skeleton variant="rectangular" width={104} height={26} style={{ borderRadius: 7 }} />
+        <div style={{ height: 34 }} />
+        <Skeleton variant="text" width="66%" height={34} />
+        <div style={{ height: 16 }} />
+        <Skeleton variant="text" width="88%" height={13} />
+        <Skeleton variant="text" width="74%" height={13} />
+        <div style={{ height: 30 }} />
+        <Skeleton variant="rectangular" height={92} />
+        <div style={{ height: 12 }} />
+        <Skeleton variant="rectangular" height={92} />
+      </div>
     </div>
   );
 }

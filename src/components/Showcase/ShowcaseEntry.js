@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api, { errorMessage } from "../../api";
 import Logo from "../Shell/Logo";
+import Skeleton from "../Shell/Skeleton";
 
 /**
  * /v/:slug: the door, and nothing else.
@@ -85,7 +86,52 @@ export default function ShowcaseEntry({ onOpened }) {
           </p>
         </>
       ) : (
-        <p style={{ fontSize: 15.5, color: "var(--ink-body)" }}>Opening…</p>
+        /* ── WHAT A SLOW CONNECTION SEES ──────────────────────────────────
+           Three things happen before the real screen can render: the slug is
+           traded for a session, /auth/me is re-read, and the app's chunk is
+           fetched. On a phone on a weak connection that is seconds, and the
+           word "Opening…" on a white page for seconds reads as broken.
+
+           So the wait is shaped like the destination: the same headline, the
+           same stat grid, the same detail rows AnalysisPanel is about to draw.
+           Nothing jumps when it arrives, and the page looks like it is working
+           rather than like it has failed. */
+        <div style={{ maxWidth: 980 }}>
+          <Skeleton variant="text" width="70%" height={42} />
+          <div style={{ height: 14 }} />
+          <Skeleton variant="text" width="86%" height={14} />
+          <Skeleton variant="text" width="62%" height={14} />
+
+          <div
+            style={{
+              display: "grid", gap: 13, marginTop: 30,
+              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+            }}
+          >
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div
+                key={i}
+                style={{
+                  background: "var(--card, #fff)", border: "1px solid var(--line, #E3E3E3)",
+                  borderRadius: 14, padding: "16px 17px",
+                }}
+              >
+                <Skeleton variant="text" width="58%" height={10} />
+                <div style={{ height: 8 }} />
+                <Skeleton variant="text" width="74%" height={24} />
+              </div>
+            ))}
+          </div>
+
+          {[0, 1].map((i) => (
+            <div key={i} style={{ marginTop: 25 }}>
+              <Skeleton variant="text" width={168} height={10} />
+              <div style={{ height: 8 }} />
+              <Skeleton variant="text" width="92%" height={14} />
+              <Skeleton variant="text" width="70%" height={14} />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

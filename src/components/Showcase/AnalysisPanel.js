@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import api from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
+import Skeleton from "../Shell/Skeleton";
 
 /**
  * "Analysis": the first screen a showcase visitor lands on.
@@ -17,27 +18,23 @@ import useIsMobile from "../../hooks/useIsMobile";
  * loop (services/voiceMetrics.js), which is what makes it checkable against
  * videos they made themselves. That is the whole persuasion.
  *
- * ── WHERE THE DISCLOSURE SITS, AND WHY IT MOVED ──────────────────────────────
+ * ── WHERE THE DISCLOSURE SITS ────────────────────────────────────────────────
  * It used to be a bordered banner above the headline, which meant the page
  * opened by apologising for itself: the first thing a creator read was a
  * paragraph about what we had not done, before anything showed them why the
  * link was worth opening.
  *
- * It now sits at the foot of the page, quieter, and still says all three things
- * a person finding their own name here will want to know: what this is, who can
- * see it, and how to stop it. The off switch in particular stays, because
- * somebody who can end it in one click is far likelier to simply look at it
- * than somebody who has to find an address to email.
+ * It is now one quiet line at the foot of the page, saying what this was built
+ * from and that nothing has been published. The self-serve off switch that sat
+ * beside it has been removed by request; a takedown is handled from the admin
+ * panel, which can deactivate a showcase or rotate its link.
  */
 export default function AnalysisPanel({ user, onGoCreate }) {
   const isPhone = useIsMobile(760);
   const [a, setA] = useState(null);
   const [state, setState] = useState("loading");
-  const [retiring, setRetiring] = useState(false);
-  const [retired, setRetired] = useState(false);
 
   const name = user?.showcase?.display_name || user?.name || "you";
-  const slug = user?.showcase?.slug || "";
 
   useEffect(() => {
     let cancelled = false;
@@ -52,27 +49,54 @@ export default function AnalysisPanel({ user, onGoCreate }) {
     return () => { cancelled = true; };
   }, []);
 
-  async function retire() {
-    if (!window.confirm("Remove this page and the voice profile behind it? This can't be undone.")) return;
-    setRetiring(true);
-    try {
-      await api.post(`/v/${slug}/retire`);
-      setRetired(true);
-    } catch {
-      setRetiring(false);
-    }
-  }
-
   const pad = isPhone ? "20px" : "clamp(28px, 4vw, 56px)";
 
-  if (retired) {
+  // ── THE WAIT IS THE FIRST IMPRESSION ──────────────────────────────────────
+  // This screen is reached by clicking a link in a cold email, often on a phone
+  // on a slow connection, and it is the moment the whole outreach either works
+  // or does not. A blank white panel for two seconds reads as broken, and a
+  // creator who thinks it is broken closes the tab before anything loads.
+  //
+  // The skeleton mirrors the real layout, headline, paragraph, five stat cards,
+  // two detail rows, so nothing jumps when the numbers land. The name is shown
+  // for real even here: it comes from the session rather than the request, so
+  // there is no reason to hide the one thing that proves this page is about
+  // them.
+  if (state === "loading") {
     return (
       <Page pad={pad}>
-        <h1 style={h1(isPhone)}>Removed.</h1>
-        <p style={body(isPhone)}>
-          This page and the voice profile behind it are gone. Nothing was ever published,
-          and we won't contact you about it again. Sorry for the intrusion.
-        </p>
+        <Skeleton variant="text" width="72%" height={isPhone ? 30 : 44} />
+        <div style={{ height: 14 }} />
+        <Skeleton variant="text" width="88%" height={14} />
+        <Skeleton variant="text" width="64%" height={14} />
+
+        <div
+          style={{
+            display: "grid", gap: isPhone ? 10 : 13, margin: `${isPhone ? 24 : 30}px 0 0`,
+            gridTemplateColumns: isPhone ? "1fr 1fr" : "repeat(auto-fit, minmax(170px, 1fr))",
+          }}
+        >
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} style={card(isPhone)}>
+              <Skeleton variant="text" width="58%" height={10} />
+              <div style={{ height: 8 }} />
+              <Skeleton variant="text" width="74%" height={isPhone ? 20 : 24} />
+            </div>
+          ))}
+        </div>
+
+        {[0, 1].map((i) => (
+          <div key={i} style={{ marginTop: isPhone ? 20 : 25 }}>
+            <Skeleton variant="text" width={168} height={10} />
+            <div style={{ height: 8 }} />
+            <Skeleton variant="text" width="92%" height={14} />
+            <Skeleton variant="text" width="70%" height={14} />
+          </div>
+        ))}
+
+        <div style={{ marginTop: isPhone ? 26 : 34 }}>
+          <Skeleton variant="rectangular" width={320} height={48} style={{ borderRadius: 999, maxWidth: "100%" }} />
+        </div>
       </Page>
     );
   }
@@ -95,11 +119,9 @@ export default function AnalysisPanel({ user, onGoCreate }) {
     <Page pad={pad}>
       <h1 style={h1(isPhone)}>{name}, this is how you talk.</h1>
       <p style={{ ...body(isPhone), maxWidth: 720 }}>
-        {state === "loading"
-          ? "Reading what we measured…"
-          : state === "failed"
-            ? "We couldn't load the analysis just now. The writing below still works."
-            : `We read ${a?.videos || "your"} of your videos and measured them. No guessing, no adjectives. Everything below is counted from your own words.`}
+        {state === "failed"
+          ? "We couldn't load the analysis just now. The writing below still works."
+          : `We read ${a?.videos || "your"} of your videos and measured them. No guessing, no adjectives. Everything below is counted from your own words.`}
       </p>
 
       {stats.length > 0 && (
@@ -147,23 +169,14 @@ export default function AnalysisPanel({ user, onGoCreate }) {
         Now watch it write today's news in your voice →
       </button>
 
-      {/* ── THE OFF SWITCH, MOVED RATHER THAN DROPPED ──────────────────────
-          The banner that used to carry this sat above the headline and was the
-          first thing on the page, which made the page read as an apology
-          before it read as a demo. Gone.
-
-          The control itself stays, quietly, at the bottom. Somebody who does
-          not want a page built from their videos should be able to end it here
-          in one click rather than by finding an address to email, and a person
-          who can stop it themselves is far likelier to just look at it. */}
+      {/* The provenance line, and only that. The self-serve off switch that
+          used to sit here is gone by request; a creator who wants the page
+          taken down is handled from the admin panel, which can turn a showcase
+          off or rotate its link. */}
       <div style={{ marginTop: isPhone ? 34 : 46, paddingTop: 18, borderTop: "1px solid var(--line)" }}>
         <p style={{ fontSize: 12.5, lineHeight: 1.65, color: "var(--ink-mute)", margin: 0, maxWidth: 640 }}>
           Built from {a?.videos || "a few"} of your public videos. Nothing has been published:
-          this page is not indexed and the link is private to you.{" "}
-          <button onClick={retire} disabled={retiring} style={linkBtn}>
-            {retiring ? "Removing…" : "Remove it"}
-          </button>{" "}
-          and it is gone for good.
+          this page is not indexed and the link is private to you.
         </p>
       </div>
     </Page>
@@ -210,7 +223,3 @@ const primaryBtn = (isPhone) => ({
   background: "var(--ink)", color: "#fff",
   fontSize: isPhone ? 14.5 : 15.5, fontWeight: 650, cursor: "pointer",
 });
-const linkBtn = {
-  padding: 0, border: "none", background: "transparent", color: "var(--ink-body)",
-  fontSize: 13, cursor: "pointer", textDecoration: "underline",
-};
