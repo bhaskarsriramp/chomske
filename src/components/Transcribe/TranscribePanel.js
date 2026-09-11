@@ -393,12 +393,24 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
           ].map((t) => {
             const on = lane === t.id;
             const laneDone = !!voice?.lanes?.[t.id]?.ready;
-            const locked = t.id === "long" && !shortReady;
+            // ── LONG-FORM IS LOCKED IN A SHOWCASE ────────────────────────────
+            // A showcase is built from five short videos and nothing else: the
+            // long lane needs three long ones of its own, which only the
+            // creator can add, and adding anything is exactly what they cannot
+            // do here. Leaving the card live would open an empty lane whose one
+            // instruction is "add three videos", under an Add button that opens
+            // a sign-up dialog. The lock reuses the affordance this card
+            // already has for the same situation.
+            const locked = t.id === "long" && (!shortReady || isShowcase);
             return (
               <button
                 key={t.id}
-                onClick={() => setLane(t.id)}
+                onClick={() => {
+                  if (t.id === "long" && isShowcase) return openSignUp("voice");
+                  setLane(t.id);
+                }}
                 aria-pressed={on}
+                aria-disabled={locked || undefined}
                 style={{
                   flex: isPhone ? "1 1 46%" : "0 0 auto",
                   textAlign: "left",
@@ -407,6 +419,7 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                   border: `1px solid ${on ? "var(--primary)" : "var(--line)"}`,
                   background: on ? "var(--primary-tint, rgba(0,0,0,0.03))" : "var(--card)",
                   cursor: "pointer",
+                  opacity: locked ? 0.6 : 1,
                   minWidth: isPhone ? 0 : 190,
                 }}
               >
@@ -451,8 +464,13 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
               These videos teach{" "}
               <strong style={{ color: "var(--ink)" }}>{activeProfile.name}</strong>
             </span>
+            {/* Renaming lives on the Profile screen, which a showcase session
+                has no access to: the rail does not offer it and the shell
+                redirects it away. So this would have been a link to a bounce.
+                It asks for the account instead, which is the thing actually
+                standing between them and renaming it. */}
             <button
-              onClick={onGoProfiles}
+              onClick={isShowcase ? () => openSignUp("voice") : onGoProfiles}
               style={{
                 marginLeft: "auto", border: "none", background: "none", padding: 0,
                 fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", color: "var(--made)",
