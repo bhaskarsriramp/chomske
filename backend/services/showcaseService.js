@@ -38,6 +38,7 @@ import mongoose from "mongoose";
 import User, { isHumanRow } from "../models/User.js";
 import Profile from "../models/Profile.js";
 import Transcript from "../models/Transcript.js";
+import Script from "../models/Script.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import ShowcaseVisit from "../models/ShowcaseVisit.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
@@ -402,13 +403,57 @@ export async function claimShowcase(showcaseId, realUserId) {
 
   const session = await mongoose.startSession();
   let moved = 0;
+  let scripts = 0;
   try {
     await session.withTransaction(async () => {
       const r1 = await Profile.updateMany({ user: showcaseId }, { $set: { user: realUserId } }, { session });
       await VoiceProfile.updateMany({ user: showcaseId }, { $set: { user: realUserId } }, { session });
       await Transcript.updateMany({ user: showcaseId }, { $set: { user: realUserId } }, { session });
+
+      // ── THE SCRIPTS COME TOO ──────────────────────────────────────────────
+      // They were paid for out of the link's allowance, and they are the proof
+      // the demo worked: somebody who wrote three scripts before signing up
+      // should find those three in My scripts, not an empty list and a vague
+      // memory. The sign-up dialog promises exactly this, and until now the
+      // promise was not kept, the Script rows stayed behind on the showcase.
+      //
+      // Safe as an updateMany: Script indexes `user` but does not make it
+      // unique with anything, so nothing can collide on the way across.
+      const r2 = await Script.updateMany({ user: showcaseId }, { $set: { user: realUserId } }, { session });
+      scripts = r2.modifiedCount || 0;
       moved = r1.modifiedCount || 0;
 
+      // ── AND THEY DO NOT GET ASKED WHAT THEY COVER ─────────────────────────
+      // A brand new account has onboarded_at null, which puts the category
+      // picker in front of the app. For somebody arriving from a showcase that
+      // is a question we already know the answer to: the showcase has a
+      // category, its feed has been running on it, and the voice was analysed
+      // against it. Asking anyway makes a liar of the dialog they just used,
+      // which said they would not be asked to set anything up again.
+      //
+      // Only for an account that has not onboarded. Somebody who already has
+      // categories of their own keeps them; this must never overwrite a real
+      // creator's choices with a demo's.
+      if (!target.onboarded_at) {
+        await User.updateOne(
+          { _id: realUserId },
+          {
+            $set: {
+              categories: showcase.categories || [],
+              onboarded_at: new Date(),
+            },
+          },
+          { session }
+        );
+      }
+
+      // ── WHAT IS DELIBERATELY NOT MOVED: THE WALLET ────────────────────────
+      // The link's remaining balance stays on the showcase row and dies with
+      // it. The new account gets its own SIGNUP_FREE_CREDITS from the ordinary
+      // lazy wallet creation on first read, so a creator who spent nothing on
+      // the demo does not arrive with 200, and one who spent all of it still
+      // arrives with a full 100. Claiming can never be a way to mint credits
+      // by opening lots of links.
       await User.updateOne(
         { _id: showcaseId },
         {
@@ -430,8 +475,11 @@ export async function claimShowcase(showcaseId, realUserId) {
     await session.endSession();
   }
 
-  console.log(`[showcase] "${showcase.showcase?.display_name}" claimed by ${realUserId} (${moved} profile(s))`);
-  return { claimed: true, profiles: moved, had_existing: existing > 0 };
+  console.log(
+    `[showcase] "${showcase.showcase?.display_name}" claimed by ${realUserId} ` +
+    `(${moved} profile(s), ${scripts} script(s))`
+  );
+  return { claimed: true, profiles: moved, scripts, had_existing: existing > 0 };
 }
 
 export default {
