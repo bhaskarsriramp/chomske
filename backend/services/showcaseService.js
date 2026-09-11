@@ -45,7 +45,7 @@ import { getYouTubeVideoDetails } from "./apidirectClient.js";
 import { laneForVideo, SHORT, SHORT_MAX_SECONDS } from "./voiceLanes.js";
 import { ensureProfile } from "./profileService.js";
 import { runVoiceBuild } from "./voiceBuildRunner.js";
-import { grant } from "./creditsService.js";
+import { openWallet } from "./creditsService.js";
 import { DEFAULT_CATEGORY } from "./categories.js";
 
 /**
@@ -241,8 +241,13 @@ export async function createShowcase({ adminId, displayName, urls = [], notes = 
     }).catch(() => {});
   }
 
-  // The link's whole budget, granted once, at creation.
-  await grant(showcase._id, SHOWCASE_CREDITS, {
+  // ── THE LINK'S WHOLE BUDGET, SET ONCE, AT CREATION ────────────────────────
+  // openWallet, not grant. grant() calls getWallet() first, and getWallet
+  // CREATES a missing wallet with SIGNUP_FREE_CREDITS: granting 100 on top of
+  // that opened every showcase with 200, half of it booked to "signup" for an
+  // account that never signed up. openWallet inserts the row itself, so the
+  // opening balance is exactly SHOWCASE_CREDITS.
+  await openWallet(showcase._id, SHOWCASE_CREDITS, {
     reason: "showcase",
     refType: "User",
     refId: showcase._id,

@@ -158,6 +158,68 @@ export async function grant(userId, amount, { reason = "purchase", refType = "",
 }
 
 /**
+ * Open a wallet with a chosen balance instead of the signup grant.
+ *
+ * ── WHY grant() IS THE WRONG TOOL FOR THIS ───────────────────────────────────
+ * grant() calls getWallet() first, and getWallet CREATES the wallet with
+ * SIGNUP_FREE_CREDITS when none exists. So granting an opening balance to a
+ * brand new account adds to a balance that was just conjured rather than
+ * setting it: a showcase meant to carry 100 credits opened with 200, one
+ * hundred of them booked to "signup" for an account nobody ever signed up for.
+ *
+ * This inserts the row itself, so getWallet's $setOnInsert never fires and the
+ * opening balance is exactly what was asked for. If a wallet somehow already
+ * exists, it is left completely alone: an opening balance is by definition a
+ * thing that happens once, and silently resetting a live balance to a
+ * "default" is how credits somebody paid for disappear.
+ *
+ * @returns {{ balance, opened }} `opened` false when a wallet was already there
+ */
+export async function openWallet(userId, amount, { reason = "adjustment", refType = "", refId = null, note = "" } = {}) {
+  const credits = Math.max(0, Math.ceil(Number(amount) || 0));
+  const now = new Date();
+
+  const existing = await CreditWallet.findOne({ user: userId });
+  if (existing) return { balance: existing.balance, opened: false };
+
+  let wallet;
+  try {
+    wallet = await CreditWallet.create({
+      user: userId,
+      balance: credits,
+      lifetime_purchased: 0,
+      lifetime_spent: 0,
+      // Stamped so getWallet's upsert treats this as an existing wallet and
+      // never tops it up with the signup grant on the first read.
+      signup_granted_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+  } catch (err) {
+    // Lost a race to another request. Theirs is as good as ours.
+    if (err?.code === 11000) {
+      const w = await CreditWallet.findOne({ user: userId });
+      return { balance: w?.balance ?? 0, opened: false };
+    }
+    throw err;
+  }
+
+  if (credits > 0) {
+    await CreditLedger.create({
+      user: userId,
+      delta: credits,
+      reason,
+      balance_after: wallet.balance,
+      ref_type: refType,
+      ref_id: refId,
+      note,
+    }).catch((err) => console.error("[credits] ledger write failed (openWallet):", err.message));
+  }
+
+  return { balance: wallet.balance, opened: true };
+}
+
+/**
  * Give back credits for a job that was charged and then failed.
  *
  * Called from the script runner's failure path. A creator who was billed for a
@@ -196,4 +258,4 @@ export async function reconcile(userId) {
   return { balance, ledgerSum, ok: balance === ledgerSum, drift: balance - ledgerSum };
 }
 
-export default { getWallet, getBalance, spend, grant, refund, history, reconcile, InsufficientCredits };
+export default { getWallet, getBalance, spend, grant, openWallet, refund, history, reconcile, InsufficientCredits };
