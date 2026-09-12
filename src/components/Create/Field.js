@@ -35,17 +35,25 @@ export function Column({ children, compact }) {
   );
 }
 
-export function Heading({ title, blurb, compact }) {
+/**
+ * @param {boolean} hideTitle  On a phone the panel's title moves up into the
+ *   bar beside the mode switch (see CreatePage), so repeating it here would
+ *   print the same word twice, forty pixels apart. The blurb stays: it is the
+ *   part that explains the screen, and the bar has no room for it.
+ */
+export function Heading({ title, blurb, compact, hideTitle = false }) {
   return (
     <div style={{ marginBottom: compact ? 20 : 26 }}>
-      <h1
-        style={{
-          fontSize: compact ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
-          color: "var(--ink)", margin: "0 0 6px",
-        }}
-      >
-        {title}
-      </h1>
+      {!hideTitle && (
+        <h1
+          style={{
+            fontSize: compact ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em",
+            color: "var(--ink)", margin: "0 0 6px",
+          }}
+        >
+          {title}
+        </h1>
+      )}
       <p style={{ fontSize: 13.5, color: "var(--ink-body)", margin: 0, lineHeight: 1.6 }}>
         {blurb}
       </p>

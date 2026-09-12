@@ -39,7 +39,7 @@ import Field, { Column, Heading } from "./Field";
  * on their own, they come with links, so they need no sign-off, and adding a
  * review step to the one path that least needs it would be pure friction.
  */
-export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compact, limits }) {
+export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compact, limits , hideTitle = false }) {
   const maxPrompt = limits?.max_prompt_chars ?? 2000;
   const maxText = limits?.max_text_chars ?? 6000;
   const lookupCredits = limits?.lookup_credits ?? 10;
@@ -143,6 +143,7 @@ export default function IdeaPanel({ voice, onVoiceChange, onGoTranscribe, compac
     <Column compact={compact}>
       <Heading
         title="Idea"
+        hideTitle={hideTitle}
         blurb="Tell us what you want the video to be about, the way you'd explain it to someone. We'll draft it, you check it, then we write it at the length you pick, in your voice."
         compact={compact}
       />

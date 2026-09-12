@@ -7,6 +7,7 @@ import { useVoice } from "../../state/VoiceContext";
 import VoiceAnalysing from "../Transcribe/VoiceAnalysing";
 import ScriptToggle, { EnglishNote } from "./ScriptToggle";
 import UploadPackage from "./UploadPackage";
+import ShootPack from "./ShootPack";
 import { timeAgo } from "../News/newsUtils";
 
 /**
@@ -73,6 +74,11 @@ export default function ScriptPanel({
   // `script`, so backing out of that order returns them to the finished work
   // instead of to an empty panel.
   const [reorder, setReorder] = useState(false);
+
+  // The shoot pack overlay. Not a route: it belongs to one script, and giving
+  // it a URL would mean a link that resolves to nothing the moment the panel
+  // behind it is showing a different story.
+  const [shoot, setShoot] = useState(false);
 
   // The balance lives in one place for the whole app (see CreditsContext). It
   // is shown in the sidebar and the mobile header at the same time as here, and
@@ -204,8 +210,12 @@ export default function ScriptPanel({
   }, [subjectKey, profileId, startPolling]);
 
   /**
-   * @param {object} order  { seconds, english, packaging }: what they chose in
+   * @param {object} order  { seconds, packaging }: what they chose in
    *   ScriptOrder. Absent on a regenerate, which repeats the original order.
+   *
+   * `english` is deliberately never sent any more. The server still knows how
+   * to write the twin, and legacy scripts that have one still render it, but
+   * nothing here asks for a new one. See the note in ScriptOrder.
    */
   async function generate(force = false, order = null) {
     if (busy) return;
@@ -229,13 +239,14 @@ export default function ScriptPanel({
       };
       if (order) {
         body.seconds = order.seconds;
-        body.english = order.english;
         body.packaging = order.packaging;
       } else if (script?.duration_seconds) {
         // A regenerate repeats what was bought the first time, including the
-        // add-ons: it is a redo, not a downgrade, and it is charged again.
+        // add-on: it is a redo, not a downgrade, and it is charged again.
+        // Except the twin, which is no longer on the menu, so a regenerate of
+        // an old script that had one comes back without it rather than
+        // silently billing for something the creator can no longer choose.
         body.seconds = script.duration_seconds;
-        body.english = !!script.english_text;
         body.packaging = !!script.description;
       }
 
@@ -422,6 +433,18 @@ export default function ScriptPanel({
           onCopy={copyScript}
           busy={busy}
           onWriteAnother={() => setReorder(true)}
+          onOpenShoot={() => setShoot(true)}
+        />
+      )}
+
+      {/* Full-screen over the app rather than a panel below it. A shoot pack is
+          read while setting up a camera, not while browsing, and the shot list
+          has to be the only thing on the screen for that to work. */}
+      {shoot && script?.status === "done" && (
+        <ShootPack
+          script={script}
+          onClose={() => setShoot(false)}
+          onUpdated={(next) => setScript((s) => ({ ...s, ...next }))}
         />
       )}
     </section>
@@ -513,7 +536,7 @@ function Writing({ note }) {
   );
 }
 
-function Result({ script, compact, copied, onCopy, onWriteAnother }) {
+function Result({ script, compact, copied, onCopy, onWriteAnother, onOpenShoot }) {
   const [view, setView] = useState("native");
 
   // A script can arrive without its twin and gain it a moment later (the extras
@@ -550,10 +573,35 @@ function Result({ script, compact, copied, onCopy, onWriteAnother }) {
               already paid for, one click away from the thing they actually
               wanted. Ordering another script is still possible from the panel
               above, where the price is on the button. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* ── THE ACTION ROW ──────────────────────────────────────────────
+              Wraps rather than scrolls, and the two buttons keep the same
+              order at every width, so the one a creator reaches for does not
+              move between their phone and their desk.
+
+              B-roll sits to the LEFT of Copy deliberately. Copy is what you
+              press when you are finished with this screen; B-roll is what you
+              press when you are not, and the thing that continues the job
+              should come before the thing that ends it. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {hasEnglish && (
               <ScriptToggle value={view} onChange={setView} nativeLabel={script.language_label} />
             )}
+            <button
+              onClick={onOpenShoot}
+              className="hg-btn-ghost"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
+                border: `1px solid ${script.shoot_pack ? "var(--made-line)" : "var(--line)"}`,
+                background: script.shoot_pack ? "var(--made-tint)" : "var(--card)",
+                color: "var(--ink-body)", cursor: "pointer", whiteSpace: "nowrap",
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 7h13v10H3zM16 10l5-3v10l-5-3" />
+              </svg>
+              B-roll
+            </button>
             <button
               onClick={() => onCopy(showing)}
               className="hg-btn-ghost"
@@ -561,6 +609,7 @@ function Result({ script, compact, copied, onCopy, onWriteAnother }) {
                 fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
                 border: "1px solid var(--line)", background: "var(--card)",
                 color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer",
+                whiteSpace: "nowrap",
               }}
             >
               {copied ? "Copied" : "Copy script"}

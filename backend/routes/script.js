@@ -13,13 +13,14 @@ import Script from "../models/Script.js";
 import Source from "../models/Source.js";
 import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
 import { recordScript } from "../services/showcaseService.js";
+import { buildShootPack } from "../services/shootPackService.js";
 import { writeScript, writeEnglishTwin, writePackaging } from "../services/scriptWriterService.js";
 import { buildMaterial } from "../services/sourceMaterial.js";
 import { canonicalCategory, pickFormat, getCategory } from "../services/categories.js";
 import { laneForScript } from "../services/voiceLanes.js";
 import { buildVoiceProfile, getUsableProfile, profileStatus } from "../services/voiceProfileService.js";
-import { resolveProfile } from "../services/profileService.js";
-import { quote, PACKAGING_CREDITS, voiceAnalysisCost } from "../services/creditPricing.js";
+import { resolveProfile, voiceFor } from "../services/profileService.js";
+import { quote, PACKAGING_CREDITS, SHOOT_PACK_CREDITS, voiceAnalysisCost } from "../services/creditPricing.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 
 const router = express.Router();
@@ -707,6 +708,113 @@ router.get("/:id", authenticateAny, async (req, res) => {
 });
 
 /**
+ * POST /script/:id/shoot, the shoot pack for a finished script.
+ *
+ * ── HELD OPEN, UNLIKE EVERYTHING ELSE HERE ──────────────────────────────────
+ * Script generation is kicked off and polled because it runs to minutes. This
+ * is one small call over text we already hold, landing in a few seconds, and a
+ * creator who pressed a button and is looking at a spinner would rather wait
+ * three seconds than be handed a polling state machine. If it ever grows past
+ * a request timeout it moves to the async shape; today that would be
+ * engineering for a problem nobody has.
+ *
+ * ── CHARGED ONCE, EVER ──────────────────────────────────────────────────────
+ * The script it describes is immutable, so the pack is too. A cached pack is
+ * returned free on every later open, and the spend happens strictly after the
+ * build succeeds: charging first and refunding on failure is the pattern used
+ * for the script itself, and it is the wrong one here because the work is
+ * short enough to simply do first and bill for after.
+ */
+router.post("/:id/shoot", authenticateAny, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid id" });
+    }
+
+    const doc = await Script.findOne({ _id: req.params.id, user: req.user.id });
+    if (!doc) return res.status(404).json({ success: false, message: "Not found" });
+
+    if (doc.status !== "done" || !doc.text) {
+      return res.status(400).json({ success: false, message: "This script isn't finished yet." });
+    }
+
+    // Already bought. Free, every time, forever.
+    if (doc.shoot_pack) {
+      return res.json({ success: true, cached: true, shoot_pack: doc.shoot_pack, charged: 0 });
+    }
+
+    const voice = await voiceFor(req.user.id, doc.profile);
+    if (!voice?.built_at) {
+      return res.status(400).json({
+        success: false,
+        message: "Build your voice first. The cues come from your own videos.",
+      });
+    }
+
+    let built;
+    try {
+      built = await buildShootPack({
+        text: doc.text,
+        voice: voice.toObject ? voice.toObject() : voice,
+        seconds: doc.duration_seconds || 60,
+      });
+    } catch (err) {
+      await Script.updateOne(
+        { _id: doc._id },
+        { $set: { shoot_pack_error: err.userMessage || "Couldn't build the shoot pack." } }
+      ).catch(() => {});
+      return res.status(502).json({
+        success: false,
+        message: err.userMessage || "Couldn't build the shoot pack. Please try again.",
+      });
+    }
+
+    // Built, so now it can be paid for. Insufficient credits is not an error,
+    // it is a top-up prompt, and the same 402 shape every other route uses.
+    let charged = 0;
+    try {
+      const spent = await spend(req.user.id, SHOOT_PACK_CREDITS, {
+        reason: "packaging",
+        refType: "Script",
+        refId: doc._id,
+        note: "Shoot pack",
+      });
+      charged = spent.spent;
+    } catch (err) {
+      if (err instanceof InsufficientCredits) {
+        return res.status(402).json({
+          success: false,
+          insufficient_credits: true,
+          needed: SHOOT_PACK_CREDITS,
+          balance: err.balance ?? (await getBalance(req.user.id).catch(() => 0)),
+          message: `A shoot pack costs ${SHOOT_PACK_CREDITS} credits.`,
+        });
+      }
+      throw err;
+    }
+
+    await Script.updateOne(
+      { _id: doc._id },
+      {
+        $set: { shoot_pack: built.pack, shoot_pack_at: new Date(), shoot_pack_error: "" },
+        $inc: { credits_charged: charged },
+      }
+    );
+
+    return res.json({
+      success: true,
+      cached: false,
+      shoot_pack: built.pack,
+      charged,
+      balance: await getBalance(req.user.id).catch(() => null),
+    });
+  } catch (err) {
+    console.error("[script] shoot pack failed:", err);
+    return res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+});
+
+/**
  * The work, off the request path. Never throws to the caller.
  *
  * @param {object} order  what was bought: { seconds, englishTwin, packaging, charged }
@@ -994,6 +1102,12 @@ function shape(d) {
     english_hook: d.english_hook || "",
     english_error: d.english_error || "",
     description: d.description || "",
+
+    // The shoot pack, when one has been bought. Null is the honest answer for
+    // a script nobody has asked to shoot yet, and it is what the B-roll button
+    // reads to decide between "open" and "build".
+    shoot_pack: d.shoot_pack || null,
+    shoot_pack_error: d.shoot_pack_error || "",
     hashtags: d.hashtags || [],
     thumbnail_lines: d.thumbnail_lines || [],
 

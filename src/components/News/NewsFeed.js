@@ -99,6 +99,10 @@ export default function NewsFeed({
   // a repetition and becomes the only thing left to do, so EmptyState keeps it.
   onGoImport = null,
   onGoIdea = null,
+  // A phone shows this pane's title up in the mode-switch bar instead, so the
+  // heading row here, the title and the paid Fetch button beside it, is not
+  // drawn at all. See components/Create/CreatePage.js.
+  hideHeading = false,
 }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
@@ -617,7 +621,18 @@ export default function NewsFeed({
           background: "var(--paper)",
         }}
       >
-        <div style={{ padding: `${isPhone ? 16 : 20}px 0 12px`, flexShrink: 0 }}>
+        <div style={{ padding: `${hideHeading ? 10 : isPhone ? 16 : 20}px 0 12px`, flexShrink: 0 }}>
+          {/* ── THE WHOLE ROW GOES ON A PHONE ──────────────────────────────
+              The title has moved up beside the mode switch (see CreatePage),
+              and Fetch goes with it rather than following it up there.
+
+              Fetch is a deliberate omission, not an oversight. It spends real
+              money on a paid source and ranking pass, it is the one control on
+              this screen that can be pressed by accident while scrolling a
+              feed with a thumb, and these creators do this work at a desk. The
+              feed still refreshes itself when it goes stale, so a phone loses
+              the button and none of the freshness. */}
+          {!hideHeading && (
           <div
             style={{
               display: "flex", alignItems: "baseline", justifyContent: "space-between",
@@ -652,8 +667,18 @@ export default function NewsFeed({
               }}
             />
           </div>
+          )}
 
-          {feedCats.length > 0 && (
+          {/* ── A PICKER NEEDS SOMETHING TO PICK BETWEEN ────────────────────
+              MAX_CATEGORIES is 1 and tech_gadgets is the only enabled
+              category, so this strip has been rendering a single chip that
+              filters a feed already filtered to it: a control that cannot
+              change anything, taking a row on every screen.
+
+              Gated on there being a real choice rather than deleted, so the
+              day a second category is switched on the picker comes back by
+              itself. See services/categories.js. */}
+          {feedCats.length > 1 && (
             <CategoryStrip cats={feedCats} value={cat} onChange={setCat} gut={gut} />
           )}
 
@@ -794,6 +819,7 @@ export default function NewsFeed({
                 voice={voice}
                 onVoiceChange={loadVoice}
                 onGoTranscribe={onGoTranscribe}
+                multiCategory={feedCats.length > 1}
                 onGoVoice={onGoTranscribe}
               />
             : selected
@@ -805,6 +831,7 @@ export default function NewsFeed({
                 voice={voice}
                 onVoiceChange={loadVoice}
                 onGoTranscribe={onGoTranscribe}
+                multiCategory={feedCats.length > 1}
                 onGoVoice={onGoTranscribe}
               />
             : <PanePlaceholder loading={busy && !loadedOnce} />}

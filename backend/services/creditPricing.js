@@ -74,6 +74,25 @@ export const ENGLISH_TWIN_RATE = 0.5;
  *  with length, it is one short call whatever the script's duration. */
 export const PACKAGING_CREDITS = 15;
 
+/**
+ * The shoot pack: on-screen cues bound to lines, a shot list, and the B-roll
+ * to have ready before sitting down.
+ *
+ * ── WHY IT IS FLAT, AND WHY IT IS BOUGHT AFTER THE SCRIPT ───────────────────
+ * Flat for the same reason packaging is: it is one call over a finished
+ * script, and an eight-minute bulletin costs us barely more to mark up than a
+ * Short does. Most of what it needs is already on the voice profile
+ * (show_me_phrases, demo_only_phrases) and the timecodes are arithmetic over a
+ * measured speaking pace, not inference.
+ *
+ * Bought AFTER, from the script itself, rather than ticked before it is
+ * written. A creator cannot tell whether they want a shot list for a script
+ * they have not read, and asking them to decide up front means most of them
+ * either pay for something they never open or discover the feature exists only
+ * after they have finished recording.
+ */
+export const SHOOT_PACK_CREDITS = parseInt(process.env.SHOOT_PACK_CREDITS || "15", 10);
+
 /* ── WHAT THE SCRIPT IS WRITTEN FROM ────────────────────────────────────────
  *
  * Until now there was one answer: a ranked news story, whose research was paid
@@ -349,7 +368,7 @@ export function wordTarget(seconds, wordsPerSecond) {
 
 export default {
   SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, DURATION_PRESETS,
-  ENGLISH_TWIN_RATE, PACKAGING_CREDITS, SIGNUP_FREE_CREDITS, PACKS,
+  ENGLISH_TWIN_RATE, PACKAGING_CREDITS, SHOOT_PACK_CREDITS, SIGNUP_FREE_CREDITS, PACKS,
   MAX_SOURCE_VIDEO_SECONDS, MAX_SOURCE_LINKS, MAX_SOURCE_TEXT_CHARS, MAX_PROMPT_CHARS,
   VIDEO_READ_FREE_SECONDS, VIDEO_READ_BLOCK_SECONDS, VIDEO_READ_CREDITS_PER_BLOCK,
   LOOKUP_CREDITS, readCost,

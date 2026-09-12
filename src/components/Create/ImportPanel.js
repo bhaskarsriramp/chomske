@@ -28,7 +28,7 @@ import Field, { Column, Heading } from "./Field";
  * button that does the reading. The order panel underneath is then the same
  * ScriptOrder the news feed uses, at exactly the same prices.
  */
-export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, compact, limits }) {
+export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, compact, limits , hideTitle = false }) {
   const maxLinks = limits?.max_links ?? 5;
   const maxText = limits?.max_text_chars ?? 6000;
   const maxVideoMin = Math.round((limits?.max_video_seconds ?? 600) / 60);
@@ -112,6 +112,7 @@ export default function ImportPanel({ voice, onVoiceChange, onGoTranscribe, comp
     <Column compact={compact}>
       <Heading
         title="Import"
+        hideTitle={hideTitle}
         blurb={`Bring your own material. A YouTube video up to ${maxVideoMin} minutes, up to ${maxLinks} article links, or paste the text straight in. We read it, then write it in your voice.`}
         compact={compact}
       />

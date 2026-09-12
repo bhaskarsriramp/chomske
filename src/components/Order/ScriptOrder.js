@@ -56,7 +56,6 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
   const { voice } = useVoice();
 
   const [seconds, setSeconds] = useState(60);
-  const [english, setEnglish] = useState(false);
   const [packaging, setPackaging] = useState(false);
 
   // The bounds are the server's, not ours. It clamps to them anyway, and a
@@ -91,7 +90,7 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
      Three things follow, and together they are the fix: ask once when the thumb
      settles, abort whatever is still in flight, and let no number reach the
      screen unless it was priced for this exact order. */
-  const orderKey = `${seconds}|${english ? 1 : 0}|${packaging ? 1 : 0}|${sourceId || ""}`;
+  const orderKey = `${seconds}|${packaging ? 1 : 0}|${sourceId || ""}`;
 
   const [quote, setQuote] = useState(null);      // { key, data }
   const [priceFailed, setPriceFailed] = useState(false);
@@ -111,7 +110,6 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
           const { data } = await api.get("/billing/quote", {
             params: {
               seconds,
-              english: english ? 1 : 0,
               packaging: packaging ? 1 : 0,
               // Omitted entirely on the Discover path, where api.js drops
               // null params rather than sending "source_id=null".
@@ -139,7 +137,7 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
       controller.abort();
       clearTimeout(timer);
     };
-  }, [orderKey, seconds, english, packaging, sourceId, setBalance, retry]);
+  }, [orderKey, seconds, packaging, sourceId, setBalance, retry]);
 
   // The one place a price is allowed through, and the reason a stale one cannot
   // be displayed, compared against a balance, or ordered from.
@@ -286,16 +284,20 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
           These prices scale with the duration too, so they are read off the
           same checked quote as the total. A "+45 cr" left over from the last
           length is the same lie in smaller type. */}
+      {/* ── ONE ADD-ON, NOT TWO ────────────────────────────────────────────
+          The English twin used to sit above this. It was removed: it asked a
+          creator to decide, before reading a single line, whether they also
+          wanted the whole thing again in a language their channel does not
+          publish in, and it doubled the width of a decision that should be one
+          checkbox.
+
+          The shoot pack took its place, and deliberately NOT here. It is
+          bought from the finished script (see the B-roll button on the result)
+          because nobody can tell whether they want a shot list for a script
+          they have not read yet. */}
       <div style={{ marginBottom: 14 }}>
         <Label>Add</Label>
         <div style={{ display: "grid", gap: 7 }}>
-          <Toggle
-            on={english}
-            onChange={() => setEnglish((v) => !v)}
-            title="Also write it in English"
-            note="Same story for a global audience. English content earns several times more per view."
-            cost={priced?.twin}
-          />
           <Toggle
             on={packaging}
             onChange={() => setPackaging((v) => !v)}
@@ -318,7 +320,7 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
           and this one has to be read: it is the explanation. */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <button
-          onClick={() => { if (ready) onGenerate({ seconds, english, packaging }); }}
+          onClick={() => { if (ready) onGenerate({ seconds, packaging }); }}
           disabled={!ready}
           className={ready ? "hg-btn-primary" : undefined}
           style={{

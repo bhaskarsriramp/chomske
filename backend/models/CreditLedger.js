@@ -32,7 +32,15 @@ const CreditLedgerSchema = new Schema({
     // from "signup" so marketing spend never lands in the same bucket as a real
     // account's opening balance: these credits are a cost, not a liability to a
     // customer, and reconciling revenue means being able to exclude them.
-    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase"],
+    // ── "voice_analysis" WAS MISSING, AND IT COST REAL AUDIT ROWS ───────────
+    // routes/profiles.js spends with this reason on every paid re-analysis.
+    // It was not in this list, so the ledger insert failed validation, and the
+    // insert in creditsService.spend() is deliberately .catch()-swallowed (a
+    // missing audit row must never fail work the creator has already been
+    // charged for). Net effect: the wallet was debited and NOTHING was
+    // written. Silent, and invisible to reconcile(), which is itself never
+    // called. Every paid voice rebuild ever run is missing from the ledger.
+    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase", "voice_analysis"],
     index: true,
   },
 

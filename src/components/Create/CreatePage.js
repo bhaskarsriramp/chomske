@@ -8,6 +8,13 @@ import ModeSwitch from "./ModeSwitch";
 import { useVoice } from "../../state/VoiceContext";
 
 /**
+ * The heading each panel would otherwise draw for itself, hoisted so a phone
+ * can show it on the same line as the switch. Keyed by mode, because the bar
+ * is the one piece of chrome that survives switching panels.
+ */
+const MOBILE_TITLES = { discover: "What to cover today", import: "Import", idea: "Idea" };
+
+/**
  * Create: the one screen where a script gets made, and the three ways in.
  *
  * ── WHAT CHANGED, AND WHY IT IS ONE SCREEN AND NOT THREE ─────────────────────
@@ -79,15 +86,44 @@ export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, width: "100%" }}>
       {/* ── The switch, above everything ────────────────────────────────────
-          Its own thin bar rather than inline with a panel heading, because each
-          of the three panels owns its heading and putting the control inside
-          one of them would make it look like that panel's setting. */}
+          On a desktop it keeps its own thin bar, because each of the three
+          panels owns its heading and putting the control inside one of them
+          would make it look like that panel's setting.
+
+          ── ON A PHONE IT SHARES THE ROW WITH THE TITLE ─────────────────────
+          A phone had three stacked rows before this: the switch, then the
+          panel's own heading with its refresh button, then the category chip.
+          That is most of the first screen spent on furniture, above a feed that
+          is the reason anyone opened the app.
+
+          So on a phone the title moves up here and sits on one line with the
+          switch, and each panel stops drawing its own (see `hideTitle`). The
+          title has to live in THIS component rather than inside the panels,
+          because the switch is what moves between them: rendered inside
+          NewsFeed it would vanish the moment somebody switched to Import, and
+          there would be no way back. */}
       <div
         style={{
-          flexShrink: 0, padding: `${isPhone ? 12 : 14}px ${gut}px`,
+          flexShrink: 0, padding: `${isPhone ? 10 : 14}px ${gut}px`,
           borderBottom: "1px solid var(--line)", background: "var(--card)",
+          display: "flex", alignItems: "center", gap: 10,
+          justifyContent: isPhone ? "space-between" : "flex-start",
         }}
       >
+        {isPhone && (
+          <h1
+            style={{
+              // Capped at 18 so "What to cover today" and three tabs fit one
+              // line on a 360px screen. A tab wrapping to a second row is the
+              // exact thing this layout exists to prevent.
+              fontSize: 18, fontWeight: 750, letterSpacing: "-0.03em",
+              color: "var(--ink)", margin: 0, minWidth: 0,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}
+          >
+            {MOBILE_TITLES[mode] || ""}
+          </h1>
+        )}
         <ModeSwitch mode={mode} onMode={onMode} compact={isPhone} />
       </div>
 
@@ -100,6 +136,7 @@ export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) 
             onGoTranscribe={onGoTranscribe}
             onGoImport={() => onMode("import")}
             onGoIdea={() => onMode("idea")}
+            hideHeading={isPhone}
           />
         </div>
 
@@ -109,6 +146,7 @@ export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) 
             onVoiceChange={onVoiceChange}
             onGoTranscribe={onGoTranscribe}
             compact={isNarrow}
+            hideTitle={isPhone}
             limits={limits}
           />
         </div>
@@ -119,6 +157,7 @@ export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) 
             onVoiceChange={onVoiceChange}
             onGoTranscribe={onGoTranscribe}
             compact={isNarrow}
+            hideTitle={isPhone}
             limits={limits}
           />
         </div>

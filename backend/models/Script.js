@@ -88,6 +88,17 @@ const ScriptSchema = new Schema({
     links:         [{ type: String }],
     text_chars:    { type: Number, default: 0 },
     prompt:        { type: String, default: "" },
+
+    // ── THE IDEA DRAFT THEY ACTUALLY APPROVED ──────────────────────────────
+    // routes/script.js writes this and reads it back, but it was never
+    // declared here, so Mongoose strict mode dropped it on every write and the
+    // read always returned "". The prompt above records what they ASKED for;
+    // this records the material they read, edited and signed off, which is the
+    // only record of what the script was really written from when an Idea had
+    // no coverage behind it. Losing it means a script whose provenance cannot
+    // be reconstructed, in the one product whose promise is "check the facts
+    // before you say them".
+    approved_text: { type: String, default: "" },
     // Whether the Idea brief was researched, and whether that research found
     // anything. Both are needed: a lookup that came back empty is refunded and
     // the script is written from the brief alone, and the creator is told so.
@@ -170,6 +181,26 @@ const ScriptSchema = new Schema({
   description:     { type: String, default: "" },
   hashtags:        [{ type: String }],
   thumbnail_lines: [{ type: String }],
+
+  /**
+   * ── THE SHOOT PACK ─────────────────────────────────────────────────────────
+   * What turns a page of text into something a person can stand in front of a
+   * camera and record: every line timecoded at THIS creator's measured pace,
+   * their own on-screen cues bound to the lines that carry them, a shot list
+   * derived from those cues, and the footage to have ready first.
+   *
+   * Bought from the finished script rather than ticked before it is written,
+   * so it is stored here rather than being a field on the order. Mixed because
+   * its shape is owned by services/shootPackService.js, and freezing that shape
+   * in the schema would mean a migration every time a cue type is added.
+   *
+   * Null until somebody asks for one. Generated once and kept: the script it
+   * describes cannot change, so neither can the pack, and a creator who opens
+   * it twice must not be charged twice.
+   */
+  shoot_pack:       { type: mongoose.Schema.Types.Mixed, default: null },
+  shoot_pack_at:    { type: Date, default: null },
+  shoot_pack_error: { type: String, default: "" },
 
   usage: {
     input_tokens:    { type: Number, default: 0 },

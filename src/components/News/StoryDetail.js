@@ -17,7 +17,7 @@ import { categoryColor } from "../../theme";
  *   pane:  the right half of the desktop split, always on screen
  *   sheet: a full-screen layer on phones, where a split has nowhere to go
  */
-export default function StoryDetail({ id, ids = null, preview, mode = "pane", onClose, voice, onVoiceChange, onGoTranscribe, onGoVoice }) {
+export default function StoryDetail({ id, ids = null, preview, mode = "pane", onClose, voice, onVoiceChange, onGoTranscribe, onGoVoice, multiCategory = false }) {
   // Seeded from the feed row so the header paints immediately; the request only
   // fills in coverage. Selecting a story should never flash an empty pane.
   const [item, setItem] = useState(preview || null);
@@ -125,6 +125,7 @@ export default function StoryDetail({ id, ids = null, preview, mode = "pane", on
       onGoTranscribe={onGoTranscribe}
       ids={ids}
       onGoVoice={onGoVoice}
+      multiCategory={multiCategory}
     />
   );
 
@@ -150,7 +151,7 @@ export default function StoryDetail({ id, ids = null, preview, mode = "pane", on
 
 /* ── Content ───────────────────────────────────────────────────────────── */
 
-function Body({ item, coverage, loading, error, brief, briefLoading, onClose, compact, voice, onVoiceChange, onGoTranscribe, ids = null, onGoVoice }) {
+function Body({ item, coverage, loading, error, brief, briefLoading, onClose, compact, voice, onVoiceChange, onGoTranscribe, ids = null, onGoVoice, multiCategory = false }) {
   // Shut by default. A well-covered story carries sixty-plus outlets, and an
   // open list that long buries everything under it, including the fact that
   // the page has ended. The count in the header is what most people came for;
@@ -171,10 +172,19 @@ function Body({ item, coverage, loading, error, brief, briefLoading, onClose, co
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          {/* The category, not the score. The number told a creator nothing here
-              that the sentence explaining it further down doesn't tell them
-              better, and it opened the pane with a mark out of ten. */}
-          {item.category_label && <CategoryChip id={item.category} label={item.category_label} />}
+          {/* ── THE CATEGORY CHIP IS GONE WHILE THERE IS ONLY ONE ───────────
+              It replaced the score here, which was right: a mark out of ten
+              was the wrong thing to open with. But with one enabled category
+              every story in the product carries the same label, so the chip
+              tells a creator something they cannot not know, in the most
+              prominent spot on the pane.
+
+              `multiCategory` comes from the feed, which already knows how many
+              the profile covers. The chip returns on its own the day a second
+              one is switched on. */}
+          {multiCategory && item.category_label && (
+            <CategoryChip id={item.category} label={item.category_label} />
+          )}
           <span
             style={{
               fontSize: 12.5, color: "var(--ink-mute)",
