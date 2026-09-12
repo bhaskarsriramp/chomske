@@ -113,10 +113,11 @@ export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) 
         {isPhone && (
           <h1
             style={{
-              // Capped at 18 so "What to cover today" and three tabs fit one
-              // line on a 360px screen. A tab wrapping to a second row is the
-              // exact thing this layout exists to prevent.
-              fontSize: 18, fontWeight: 750, letterSpacing: "-0.03em",
+              // 16, not 18. At 18 "What to cover today" ran out of room next to
+              // three tabs and ellipsised to "What to cover to…", which is worse
+              // than smaller type: a truncated heading reads as a layout fault,
+              // and the weight is what carries the hierarchy here anyway.
+              fontSize: 16, fontWeight: 750, letterSpacing: "-0.02em",
               color: "var(--ink)", margin: 0, minWidth: 0,
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             }}
