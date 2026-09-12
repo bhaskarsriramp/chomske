@@ -29,7 +29,7 @@
 import Source, { sourceHash } from "../models/Source.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
 import { canonicalUrl } from "../utils/normalize.js";
-import { getYouTubeVideoDetails, isApidirectConfigured } from "./apidirectClient.js";
+import { getVideoMetadata, isVideoMetadataConfigured } from "./videoMetadata.js";
 import { fetchArticles } from "./tinyfishClient.js";
 import { researchPrompt } from "./promptResearchService.js";
 import { draftFromIdea } from "./ideaDraftService.js";
@@ -153,7 +153,7 @@ async function resolveVideo(input) {
     );
   }
 
-  if (!isApidirectConfigured()) {
+  if (!isVideoMetadataConfigured()) {
     throw new SourceRejected(
       "We can't check video lengths right now, so videos are paused. Paste a link or some text instead.",
       { length_unknown: true }
@@ -163,7 +163,7 @@ async function resolveVideo(input) {
   let meta = null;
   let lookupError = null;
   try {
-    meta = await getYouTubeVideoDetails(parsed.url);
+    meta = await getVideoMetadata(parsed.url);
   } catch (err) {
     lookupError = err;
     console.warn(`[source] duration lookup failed for ${parsed.videoId}: ${err.message}`);

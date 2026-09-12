@@ -54,6 +54,33 @@ const SCRIPTS = [
 
 const LATIN_WORD = /^[A-Za-z][A-Za-z'’.-]*$/;
 
+/**
+ * Is any of this written in a script that is not the Latin alphabet?
+ *
+ * The question a Roman transliteration needs answered before it is attempted.
+ * A script already written in Latin letters, an English twin or a creator whose
+ * own language IS English, has nothing to transliterate, and asking a model to
+ * "write this in Roman letters" when it already is produces either a no-op or a
+ * quiet paraphrase. Both are worse than not calling it.
+ *
+ * Reuses SCRIPTS rather than its own regex on purpose: the set of alphabets this
+ * product recognises is one list, and a language added there should not need a
+ * second edit here to become transliterable.
+ *
+ * Deliberately a THRESHOLD and not "any single character". A Telugu script
+ * quoting one Devanagari brand name is still a Telugu script, but an English
+ * script carrying a single stray Indic character, which is exactly what
+ * repairMixedScript exists to clean up, must not be mistaken for one.
+ */
+export function hasNativeScript(text, minChars = 12) {
+  const s = String(text || "");
+  if (!s) return false;
+  for (const [, re] of SCRIPTS) {
+    if ((s.match(re) || []).length >= minChars) return true;
+  }
+  return false;
+}
+
 /* ── Repairing a script that slipped into a neighbouring alphabet ──────────── */
 
 /**
@@ -860,4 +887,4 @@ export function gradeDraft(text, target, opts = {}) {
   return { ok: drift.length === 0, drift, measured };
 }
 
-export default { measureVoice, metricsBlock, gradeDraft, sentences, words };
+export default { measureVoice, metricsBlock, gradeDraft, sentences, words, hasNativeScript };

@@ -18,7 +18,7 @@
  * to their audience is the worst thing this product could do to them.
  */
 import { GoogleGenAI } from "@google/genai";
-import { metricsBlock, gradeDraft } from "./voiceMetrics.js";
+import { metricsBlock, gradeDraft, sentences, hasNativeScript } from "./voiceMetrics.js";
 import { wordTarget } from "./creditPricing.js";
 import { noEmDash, noEmDashAll, dropDashes, trimTo } from "../utils/prose.js";
 
@@ -1556,6 +1556,149 @@ Return STRICT JSON only:
 }
 
 /**
+ * The same script, in Roman letters.
+ *
+ * ── WHAT THIS IS, AND WHAT IT IS NOT ─────────────────────────────────────────
+ * Transliteration, not translation. The words do not change, the language does
+ * not change, only the alphabet does. "Apple వాళ్ళు నిన్న నైట్ లాంచ్ చేశారు"
+ * becomes "Apple vaallu ninna night launch chesaaru". Read aloud, the two are
+ * indistinguishable. The English twin above is the other thing entirely: a
+ * different language for a different room.
+ *
+ * ── WHY A CREATOR WANTS IT ───────────────────────────────────────────────────
+ * Because reading a language and speaking it are different skills, and a great
+ * many Indian creators read Roman faster than their own script. Typing Telugu
+ * or Devanagari on a QWERTY keyboard means 47-plus base letters with diacritics
+ * and conjuncts, so a decade of WhatsApp, comments and captions has been spelt
+ * out in English letters instead. The comments under these creators' own videos
+ * are the proof: "Camera quality increase avuthadha update cheste?" is Telugu,
+ * written by a Telugu viewer, without one Telugu character in it.
+ *
+ * That matters most in front of a lens. A creator who reads the prompter in the
+ * alphabet they read slowest sounds stilted, blames the script, and leaves. The
+ * script was never wrong; it was in the wrong letters.
+ *
+ * ── WHY IT IS FREE, AND WRITTEN EVERY TIME ───────────────────────────────────
+ * It is not a second deliverable, it is the same deliverable in a second
+ * alphabet, and charging for the ability to READ what you already bought is the
+ * kind of pricing that loses a customer over twelve rupees. It is also one short
+ * mechanical call over text that is already in hand, which is why it happens
+ * during generation rather than being a button that costs credits and makes
+ * somebody wait a second time.
+ *
+ * ── WHY THE SENTENCE COUNT IS ENFORCED ───────────────────────────────────────
+ * The shoot pack timecodes every line at the creator's measured pace, and the
+ * teleprompter scrolls those lines. For the Roman view to work in either, line N
+ * of the transliteration has to BE line N of the script. So the prompt demands
+ * one output sentence per input sentence, and the caller checks: a mismatched
+ * count still serves the whole-script view, where nothing is zipped, but the
+ * shoot pack declines to offer Roman rather than pairing the wrong line with the
+ * wrong timecode.
+ *
+ * @returns {Promise<{text: string, aligned: boolean, usage: object}|null>} null
+ *   when the script is already Latin, so there is nothing to do, or the call
+ *   failed. `aligned` is whether the line counts matched.
+ */
+export async function writeRomanScript({ text, languageLabel = "" } = {}) {
+  const source = String(text || "").trim();
+  if (!source) return null;
+
+  // Already in Latin letters. An English script, or a creator whose own
+  // language is English, has nothing to transliterate.
+  if (!hasNativeScript(source)) return null;
+
+  const wanted = sentences(source).length;
+
+  const prompt = `Rewrite the script below in ROMAN LETTERS (the English alphabet).
+
+You are TRANSLITERATING, not translating. Every word stays the same word in the same language. Only the alphabet changes. A person reading your output aloud must produce exactly the same audio as a person reading the original aloud.
+
+${languageLabel ? `The script is in: ${languageLabel}\n` : ""}
+════════ HOW TO SPELL IT ════════
+Spell it the way this creator's own viewers type in the comments: informal, phonetic, the popular everyday spelling. NOT academic transliteration.
+
+  - NO diacritics or special marks. Not ā, ī, ṭ, ṅ, ś, ṇ. Only a-z.
+  - Write what it SOUNDS like: "chesaaru", "avuthadha", "ravatledu", "chepthunnanu", "kaavali", "ippudu", "bagundi".
+  - Double the vowel for a long vowel ("vaallu", "chesaaru"), single for short ("ninna", "ipudu").
+
+════════ WORDS THAT MUST NOT CHANGE ════════
+Any word already written in English stays EXACTLY as it is, with its original spelling and capitalisation. Do not phonetically respell it, do not translate it, do not lowercase it.
+
+  iPhone stays iPhone. Apple stays Apple. Snapdragon stays Snapdragon.
+  launch stays launch. price stays price. battery stays battery. 5G stays 5G.
+
+Numbers, prices, model numbers, units and symbols stay exactly as written: ₹1,00,000 stays ₹1,00,000. 120Hz stays 120Hz.
+
+════════ STRUCTURE ════════
+1. EXACTLY ${wanted} sentence${wanted === 1 ? "" : "s"}, in the same order. Do not merge two sentences, do not split one, do not add or drop any.
+2. Keep every paragraph break exactly where it is.
+3. Keep all punctuation. A question mark stays a question mark.
+4. Add nothing. No notes, no explanations, no headings, no pronunciation guides.
+5. Remove nothing. Every word in the original must appear in your output.
+
+════════ EXAMPLE ════════
+Input:  Apple వాళ్ళు నిన్న నైట్ Apple న్యూ iPhones అయితే లాంచ్ చేశారు. అవేంటో చెప్తాను, ఫస్ట్ వీడియో సేవ్ చేసుకోండి.
+Output: Apple vaallu ninna night Apple new iPhones aithe launch chesaaru. Avento cheptaanu, first video save chesukondi.
+
+THE SCRIPT TO TRANSLITERATE BEGINS.
+"""
+${source}
+"""
+THE SCRIPT TO TRANSLITERATE ENDS.
+
+Return STRICT JSON only:
+{
+  "roman": "the full script in Roman letters, same paragraph breaks"
+}`;
+
+  try {
+    const res = await client().models.generateContent({
+      model: MODEL,
+      contents: prompt,
+      config: {
+        // Low, and lower than anything else in this file. Every other call here
+        // is asked to write; this one is asked to spell. Temperature is what
+        // turns a transliteration into a paraphrase.
+        temperature: 0.2,
+        responseMimeType: "application/json",
+        // Matched to the English twin. Worth watching on the longest scripts:
+        // transliterated Indic words tokenise far worse than English ones
+        // ("chesukondi" is several tokens, not one), so an eight minute script
+        // uses noticeably more of this budget than its word count suggests. A
+        // truncated response fails the JSON parse below, returns null, and
+        // costs the creator nothing but the tab, which is the right way for
+        // this to degrade. If the warning below starts appearing on long
+        // scripts, this is the number to raise.
+        maxOutputTokens: 8192,
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+
+    const parsed = JSON.parse(res.text || "{}");
+    const out = noEmDash(parsed.roman);
+    if (!out) return null;
+
+    // A transliteration that came back still in the original alphabet is a
+    // failed call that happened to return valid JSON, which is worse than an
+    // error: it would show the creator a "Roman" tab holding Telugu.
+    if (hasNativeScript(out)) {
+      console.warn("[script] roman transliteration came back in native script, discarded");
+      return null;
+    }
+
+    const got = sentences(out).length;
+    if (got !== wanted) {
+      console.warn(`[script] roman line count ${got} != ${wanted}, whole-script view only`);
+    }
+
+    return { text: out, aligned: got === wanted, usage: readUsage(res) };
+  } catch (err) {
+    console.error("[script] roman transliteration failed:", err.message);
+    return null;
+  }
+}
+
+/**
  * The packaging pack, everything the upload form asks for.
  *
  * The tedious twenty minutes after the script is finished: a title that earns
@@ -1660,4 +1803,4 @@ Rules: every factual claim traces to the script above. Invent nothing. ${ANTI_TE
   }
 }
 
-export default { writeScript, writeEnglishTwin, writePackaging };
+export default { writeScript, writeEnglishTwin, writeRomanScript, writePackaging };

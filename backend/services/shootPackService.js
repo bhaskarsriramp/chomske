@@ -161,7 +161,7 @@ Return STRICT JSON only:
  * @param {number} input.seconds     the ordered duration, for sanity only
  * @returns {{ pack, usage }}
  */
-export async function buildShootPack({ text, voice, seconds = 60 }) {
+export async function buildShootPack({ text, romanText = "", voice, seconds = 60 }) {
   const script = String(text || "").trim();
   if (!script) throw Object.assign(new Error("no script"), { userMessage: "This script is empty." });
 
@@ -169,6 +169,23 @@ export async function buildShootPack({ text, voice, seconds = 60 }) {
   const wps = voice?.metrics?.words_per_second || FALLBACK_WORDS_PER_SECOND;
 
   const lines = timeline(script, wps);
+
+  // ── The same lines, in Roman letters ──────────────────────────────────────
+  // Split with the SAME sentence splitter, so index i of one is index i of the
+  // other, and paired by position rather than by matching text: there is no
+  // text to match, the two are different alphabets.
+  //
+  // Guarded by a length check even though routes/script.js only passes an
+  // aligned transliteration. The splitter runs here on the raw strings, and a
+  // transliteration that gained or lost a full stop somewhere would silently
+  // shift every line after it, putting the wrong words on the wrong timecode
+  // for the rest of the shoot. A missing Roman toggle is a small
+  // disappointment; a prompter reading the wrong line is a ruined take.
+  const romanLines = romanText ? sentences(String(romanText)) : [];
+  const romanOk = romanLines.length === lines.length && lines.length > 0;
+  if (romanText && !romanOk) {
+    console.warn(`[shoot] roman lines ${romanLines.length} != ${lines.length}, omitting roman from pack`);
+  }
   const cues = findCues(lines, cv.show_me_phrases);
   const held = heldBack(cv.demo_only_phrases);
 
@@ -243,8 +260,15 @@ export async function buildShootPack({ text, voice, seconds = 60 }) {
     pack: {
       words_per_second: Number(wps),
       total_seconds: lines.length ? lines[lines.length - 1].until : 0,
-      lines: lines.map((l) => ({
+      // Whether the Roman view can be offered at all. Read by the client so a
+      // toggle is drawn only where there is something behind it.
+      has_roman: romanOk,
+      lines: lines.map((l, i) => ({
         ...l,
+        // Empty string rather than absent when there is no Roman, so the shape
+        // of a line does not change between packs and the client can read the
+        // field unconditionally.
+        roman: romanOk ? romanLines[i] : "",
         cue: cuedLines.has(l.n) ? cues.find((c) => c.line === l.n).phrase : "",
         shot: shots.find((s) => s.line === l.n)?.n || null,
       })),

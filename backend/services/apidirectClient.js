@@ -2,13 +2,28 @@
  * apidirectClient.js: read-only wrapper around apidirect.io.
  *
  * Two endpoints are used:
- *   GET /v1/youtube/video?url=<watch url>      →  video.duration (integer SECONDS)
  *   GET /v1/news/articles?query=…              →  fresh news, minutes old
+ *   GET /v1/youtube/video?url=<watch url>      →  FALLBACK ONLY, see below
  *
  * The duration is why this file first existed. Voice profiling only accepts
  * short-form videos, and there is no way to know a video's length from its URL,
  * so the check has to happen before we pay Gemini to read it. Rejecting a
- * 40-minute video for $0.005 instead of transcribing it for ₹60 is the trade.
+ * 40-minute video for $0.005 instead of transcribing it for ₹60 was the trade.
+ *
+ * ── THAT JOB HAS MOVED ───────────────────────────────────────────────────────
+ * YouTube's own videos.list answers the same question for ONE free quota unit
+ * against 10,000 a day, and takes fifty ids per request for that same unit. It
+ * is now the primary provider: see services/youtubeDataClient.js, and
+ * services/videoMetadata.js for the facade that chooses between them.
+ *
+ * Cost was only half the reason. This endpoint was returning NORMALISED titles
+ * rather than real ones, translating a Telugu title into English and stripping
+ * the creator's own emoji and hashtags, which is wrong in a list whose whole
+ * job is letting a creator recognise their own video.
+ *
+ * getYouTubeVideoDetails() below is kept and still correct. It is reached only
+ * when the YouTube lookup fails, because the length gate fails closed and one
+ * bad hour at Google should not take "add a video" down with it.
  *
  * News articles came later, for a different reason: every free source in
  * services/sources has a floor on how fresh it can be (Google News RSS serves a

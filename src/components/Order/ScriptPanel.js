@@ -80,6 +80,24 @@ export default function ScriptPanel({
   // behind it is showing a different story.
   const [shoot, setShoot] = useState(false);
 
+  /**
+   * Which version of the script is being read: native, roman or english.
+   *
+   * ── WHY IT LIVES UP HERE AND NOT IN THE CARD ──────────────────────────────
+   * It used to be local to Result, which was right while it only chose between
+   * a script and its English twin: two things you read at a desk, on one card.
+   *
+   * Roman changes that, because Roman is not a different document, it is the
+   * same document in the alphabet this creator reads fastest. Somebody who
+   * switched the card to Roman did not express a preference about the card;
+   * they told us how they read. Making them say it a second time in the shoot
+   * pack, and a third time in the teleprompter, at the exact moment they are
+   * setting up a camera, is the worst possible place to ask.
+   *
+   * So the choice is made once and carried into the overlay.
+   */
+  const [view, setView] = useState("native");
+
   // The balance lives in one place for the whole app (see CreditsContext). It
   // is shown in the sidebar and the mobile header at the same time as here, and
   // three components each holding their own copy is three numbers that drift.
@@ -432,6 +450,8 @@ export default function ScriptPanel({
           copied={copied}
           onCopy={copyScript}
           busy={busy}
+          view={view}
+          onView={setView}
           onWriteAnother={() => setReorder(true)}
           onOpenShoot={() => setShoot(true)}
         />
@@ -443,6 +463,12 @@ export default function ScriptPanel({
       {shoot && script?.status === "done" && (
         <ShootPack
           script={script}
+          // Opens in whatever the creator was already reading. `english` is
+          // deliberately collapsed to native here: the shoot pack's timecodes,
+          // cues and shot list are all bound to the lines of the script that
+          // was actually written, and the twin is a different set of sentences
+          // with no line-level correspondence to them.
+          roman={view === "roman"}
           onClose={() => setShoot(false)}
           onUpdated={(next) => setScript((s) => ({ ...s, ...next }))}
         />
@@ -536,14 +562,31 @@ function Writing({ note }) {
   );
 }
 
-function Result({ script, compact, copied, onCopy, onWriteAnother, onOpenShoot }) {
-  const [view, setView] = useState("native");
-
+function Result({ script, compact, copied, onCopy, view, onView, onWriteAnother, onOpenShoot }) {
   // A script can arrive without its twin and gain it a moment later (the extras
   // are written after the script is marked done, see backend routes/script.js),
   // so this is read on every render rather than captured once.
+  //
+  // The Roman version is not like that: it is written BEFORE the status flips,
+  // so it is either there when the card first paints or it is never coming.
   const hasEnglish = !!script.english_text;
-  const showing = view === "english" && hasEnglish ? script.english_text : script.text;
+  const hasRoman = !!script.roman_text;
+
+  // Falls back to the native text rather than to an empty card if `view` ever
+  // names a version this script does not have, which is what happens for the
+  // half-second after a regenerate replaces a script that had a twin with one
+  // that does not.
+  const showing =
+    view === "english" && hasEnglish ? script.english_text
+      : view === "roman" && hasRoman ? script.roman_text
+        : script.text;
+
+  // Only the native script wants the Noto Indic stack. Roman and English are
+  // both Latin text, and the Indic face would render them in a fallback for no
+  // reason. Roman keeps the native line height, though: it is the same
+  // sentences at the same length, read at the same pace, and the looser English
+  // leading would make it look like a different document.
+  const isLatinView = view === "english" || view === "roman";
 
   return (
     <div className="hg-rise">
@@ -583,9 +626,17 @@ function Result({ script, compact, copied, onCopy, onWriteAnother, onOpenShoot }
               press when you are not, and the thing that continues the job
               should come before the thing that ends it. */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            {hasEnglish && (
-              <ScriptToggle value={view} onChange={setView} nativeLabel={script.language_label} />
-            )}
+            <ScriptToggle
+              value={view}
+              onChange={onView}
+              nativeLabel={script.language_label}
+              hasRoman={hasRoman}
+              hasEnglish={hasEnglish}
+            />
+            {/* Renders nothing at all when the script has neither, so the
+                conditional that used to live here moved inside the component:
+                there are two independent reasons to draw it now, and deciding
+                that at the call site meant every call site repeating it. */}
             <button
               onClick={onOpenShoot}
               className="hg-btn-ghost"
@@ -619,14 +670,13 @@ function Result({ script, compact, copied, onCopy, onWriteAnother, onOpenShoot }
 
         {script.english_error && <EnglishNote message={script.english_error} />}
 
-        {/* `indic` only on the script in their own language: it selects the
-            Noto Indic stack, and applying it to the English twin would render
-            Latin text in a fallback face for no reason. Keyed on the view so
-            the switch is a real swap rather than a mutation of one node, which
-            is what lets the fade read as a change of content. */}
+        {/* `indic` only on the script in their own language, see isLatinView
+            above. Keyed on the view so the switch is a real swap rather than a
+            mutation of one node, which is what lets the fade read as a change
+            of content. */}
         <div
           key={view}
-          className={view === "english" ? "hg-fade" : "indic hg-fade"}
+          className={isLatinView ? "hg-fade" : "indic hg-fade"}
           style={{
             padding: compact ? 17 : 22,
             fontSize: compact ? 15.5 : 16.5,

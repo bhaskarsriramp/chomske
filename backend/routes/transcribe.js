@@ -8,9 +8,9 @@
  * already spent five video reads. The expensive call was triggered by an action
  * that costs nothing to take back.
  *
- * So adding a video now buys only the cheap metadata lookup (title, length,
- * thumbnail, about half a cent) and stores the row as "pending". Gemini is not
- * called at all. Every pending video for a channel is read in one go when the
+ * So adding a video now buys only the metadata lookup (title, length,
+ * thumbnail, one free YouTube quota unit) and stores the row as "pending".
+ * Gemini is not called at all. Every pending video for a channel is read in one go when the
  * creator presses Analyse my voice, which is the moment they have actually
  * asked for something, see services/voiceProfileService.js.
  *
@@ -27,7 +27,7 @@ import mongoose from "mongoose";
 import Transcript from "../models/Transcript.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
-import { getYouTubeVideoDetails, isApidirectConfigured } from "../services/apidirectClient.js";
+import { getVideoMetadata, isVideoMetadataConfigured } from "../services/videoMetadata.js";
 import { resolveProfile, listProfiles, voiceFor } from "../services/profileService.js";
 import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
 
@@ -141,15 +141,18 @@ router.post("/", authenticateToken, async (req, res) => {
 
     // ── Length gate, BEFORE paying Gemini to read it ────────────────────────
     // Reading video is this product's whole cost, and it scales with duration.
-    // One $0.005 lookup here is the difference between rejecting a 40-minute
-    // video and transcribing it first to discover it was too long. Gemini is
-    // never asked how long something is, that would be paying the expensive
-    // model to answer a question the cheap endpoint already answers.
+    // This lookup is the difference between rejecting a 40-minute video and
+    // transcribing it first to discover it was too long. Gemini is never asked
+    // how long something is, that would be paying the expensive model to answer
+    // a question a metadata call already answers.
+    //
+    // That call is now YouTube's own videos.list, one free quota unit against
+    // 10,000 a day, rather than a paid endpoint. See services/videoMetadata.js.
     let meta = null;
     let lookupError = null;
-    if (isApidirectConfigured()) {
+    if (isVideoMetadataConfigured()) {
       try {
-        meta = await getYouTubeVideoDetails(parsed.url);
+        meta = await getVideoMetadata(parsed.url);
       } catch (err) {
         lookupError = err;
         console.warn(`[transcribe] duration lookup failed for ${parsed.videoId}: ${err.message}`);
@@ -180,12 +183,12 @@ router.post("/", authenticateToken, async (req, res) => {
       const exhausted = lookupError?.keyExhausted === true;
       console.warn(
         `[transcribe] REFUSED ${parsed.videoId}: length unverifiable ` +
-        `(${!isApidirectConfigured() ? "no apidirect key" : exhausted ? "key exhausted" : "lookup failed"})`
+        `(${!isVideoMetadataConfigured() ? "no metadata key" : exhausted ? "key exhausted" : "lookup failed"})`
       );
       return res.status(503).json({
         success: false,
         length_unknown: true,
-        message: exhausted || !isApidirectConfigured()
+        message: exhausted || !isVideoMetadataConfigured()
           ? "We can't check video lengths right now, so new videos are paused. Please try again later."
           : "We couldn't read that video's details. Check the link is a public YouTube video and try again.",
       });
@@ -236,12 +239,13 @@ router.post("/", authenticateToken, async (req, res) => {
       thumbnail: meta.thumbnail || "",
       description: String(meta.description || "").slice(0, 5000),
       views: Number.isFinite(meta.views) ? meta.views : null,
-      category: meta.category || "",
       keywords: meta.keywords || [],
-      // "2009-10-25 06:57:33" is UTC without a marker, left alone it would be
-      // read in the server's local zone and land 5.5 hours out on an IST box.
-      // An unparseable value becomes null rather than an Invalid Date, which
-      // Mongoose would reject and take the whole insert down with it.
+      // YouTube returns proper ISO-8601 with a Z, so this is now a pass-through
+      // for the main provider. It stays because the apidirect fallback still
+      // sends "2009-10-25 06:57:33", UTC without a marker, which left alone
+      // would be read in the server's local zone and land 5.5 hours out on an
+      // IST box. An unparseable value becomes null rather than an Invalid Date,
+      // which Mongoose would reject and take the whole insert down with it.
       published_at: parsePublished(meta.date),
       ...(meta.title ? { title: meta.title } : {}),
     };

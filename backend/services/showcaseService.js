@@ -42,7 +42,7 @@ import Script from "../models/Script.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import ShowcaseVisit from "../models/ShowcaseVisit.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
-import { getYouTubeVideoDetails } from "./apidirectClient.js";
+import { getVideoMetadata } from "./videoMetadata.js";
 import { laneForVideo, SHORT, SHORT_MAX_SECONDS } from "./voiceLanes.js";
 import { ensureProfile } from "./profileService.js";
 import { runVoiceBuild } from "./voiceBuildRunner.js";
@@ -106,9 +106,9 @@ export function shareUrl(slug) {
 /**
  * Validate and price up a list of URLs before anything is written.
  *
- * Runs the cheap metadata lookup (about half a cent each) and the same length
- * gate routes/transcribe.js applies, so a video that would be refused later is
- * refused now, while the admin is still looking at the form.
+ * Runs the metadata lookup (one free YouTube quota unit each) and the same
+ * length gate routes/transcribe.js applies, so a video that would be refused
+ * later is refused now, while the admin is still looking at the form.
  *
  * @returns {{ ok: Array, rejected: Array }}
  */
@@ -136,7 +136,7 @@ export async function inspectUrls(urls = []) {
     try {
       // Takes the canonical watch URL, not the bare id. Same call
       // routes/transcribe.js makes, so the cost and the answer are identical.
-      details = await getYouTubeVideoDetails(parsed.url);
+      details = await getVideoMetadata(parsed.url);
     } catch {
       rejected.push({ url, reason: "Couldn't look that video up. Is it public?" });
       continue;
@@ -148,8 +148,9 @@ export async function inspectUrls(urls = []) {
 
     const secs = Number(details.duration);
     if (!Number.isFinite(secs) || secs <= 0) {
-      // null means UNKNOWN, which apidirect returns for live streams. Treating
-      // it as 0 would slip a stream past a "under three minutes" check.
+      // null means UNKNOWN, which is what a live stream reports: YouTube gives
+      // "P0D" for one in progress. Treating it as 0 would slip a stream past a
+      // "under three minutes" check.
       rejected.push({ url, reason: "Couldn't read that video's length. It may be a live stream." });
       continue;
     }
@@ -234,9 +235,12 @@ export async function createShowcase({ adminId, displayName, urls = [], notes = 
       channel: d.author || "",
       channel_id: d.channel_id || "",
       thumbnail: d.thumbnail || "",
-      description: d.description || "",
+      // Capped to match routes/transcribe.js. apidirect returned an empty
+      // description for most videos so this never mattered; YouTube returns
+      // the real one, which on a video with an affiliate-link wall of text runs
+      // to thousands of characters.
+      description: String(d.description || "").slice(0, 5000),
       views: Number.isFinite(Number(d.views)) ? Number(d.views) : null,
-      category: d.category || "",
       keywords: d.keywords || [],
       published_at: published && !Number.isNaN(published.getTime()) ? published : null,
     }).catch(() => {});

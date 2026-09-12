@@ -23,8 +23,19 @@ import { useState, useEffect, useRef, useCallback } from "react";
  * offered, off by default, at a speed derived from the creator's own measured
  * words-per-second rather than a generic rate, so when it is switched on it is
  * at least starting from their real pace.
+ *
+ * ── THE ALPHABET IS CHOSEN UPSTREAM, AND THIS IS WHY IT MATTERS HERE ─────────
+ * `roman` comes from the shoot pack, which took it from the script card. There
+ * is no control for it on this screen on purpose: a creator who has the phone
+ * propped beside a lens and is about to speak should not be hunting for a
+ * setting, and the choice was already made twice before they got here.
+ *
+ * This is nonetheless the screen the whole Roman feature exists for. Everywhere
+ * else it is a convenience; a script read at delivery speed, at distance, in an
+ * alphabet somebody reads slowly, is the one that produces a wooden take and
+ * gets blamed on the writing.
  */
-export default function Teleprompter({ lines = [], script, onClose }) {
+export default function Teleprompter({ lines = [], roman = false, script, onClose }) {
   const [size, setSize] = useState(() => (window.innerWidth < 700 ? 30 : 40));
   const [playing, setPlaying] = useState(false);
   const [mirror, setMirror] = useState(false);
@@ -161,7 +172,9 @@ export default function Teleprompter({ lines = [], script, onClose }) {
           {lines.map((l) => (
             <div key={l.n} style={{ padding: `${Math.round(size * 0.34)}px 0` }}>
               <span
-                className="indic"
+                // Latin text has no use for the Indic face, and at 40px a
+                // fallback substitution is extremely visible.
+                className={roman ? undefined : "indic"}
                 style={{
                   display: "block",
                   fontSize: size,
@@ -171,7 +184,7 @@ export default function Teleprompter({ lines = [], script, onClose }) {
                   letterSpacing: "-.005em",
                 }}
               >
-                {l.text}
+                {roman ? (l.roman || l.text) : l.text}
               </span>
               {l.cue && (
                 <span

@@ -534,7 +534,12 @@ function ScriptDetail({ script, onClose, compact }) {
   // shape depending on which screen it is being read from.
   const [view, setView] = useState("native");
   const hasEnglish = !!script.english_text;
-  const showing = view === "english" && hasEnglish ? script.english_text : script.text;
+  const hasRoman = !!script.roman_text;
+  const showing =
+    view === "english" && hasEnglish ? script.english_text
+      : view === "roman" && hasRoman ? script.roman_text
+        : script.text;
+  const isLatinView = view === "english" || view === "roman";
 
   // Back to the language they wrote in whenever the open script changes: the
   // choice belongs to the script being read, not to the panel.
@@ -674,9 +679,13 @@ function ScriptDetail({ script, onClose, compact }) {
                 Your script
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                {hasEnglish && (
-                  <ScriptToggle value={view} onChange={setView} nativeLabel={script.language_label} />
-                )}
+                <ScriptToggle
+                  value={view}
+                  onChange={setView}
+                  nativeLabel={script.language_label}
+                  hasRoman={hasRoman}
+                  hasEnglish={hasEnglish}
+                />
                 <button
                   onClick={copy}
                   className="hg-btn-ghost"
@@ -695,7 +704,7 @@ function ScriptDetail({ script, onClose, compact }) {
 
             <div
               key={view}
-              className={view === "english" ? "hg-fade" : "indic hg-fade"}
+              className={isLatinView ? "hg-fade" : "indic hg-fade"}
               style={{
                 padding: compact ? 17 : 22,
                 fontSize: compact ? 15.5 : 16.5,

@@ -175,6 +175,28 @@ const ScriptSchema = new Schema({
   // succeeds, and rendered where the language toggle would have been.
   english_error: { type: String, default: "" },
 
+  // ── The same script, in Roman letters ─────────────────────────────────────
+  // Transliteration, not translation: same words, same language, different
+  // alphabet. See writeRomanScript in services/scriptWriterService.js for why
+  // a creator who speaks Telugu may still read "chesaaru" faster than
+  // "చేశారు", which matters most in front of a lens.
+  //
+  // Written during generation for every non-Latin script and never charged for,
+  // so unlike english_text its absence carries no refund and needs no apology
+  // on screen: there is simply no Roman tab. Empty for an English script, where
+  // there is nothing to transliterate.
+  roman_text: { type: String, default: "" },
+
+  // Whether the transliteration has one line per line of `text`.
+  //
+  // The whole-script view never needs this, it renders one blob. The shoot pack
+  // and the teleprompter do: they bind line N to a timecode computed from the
+  // creator's measured pace, so pairing line 7 of the Roman with line 6 of the
+  // script would put the wrong words against the wrong second. False means the
+  // Roman is good enough to read but not to zip, and those two screens say so
+  // by not offering the option.
+  roman_aligned: { type: Boolean, default: false },
+
   // ── The packaging pack ────────────────────────────────────────────────────
   // Title options live in title_suggestions above; these are the rest of what
   // gets pasted into the upload form.

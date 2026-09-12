@@ -14,7 +14,7 @@ import Source from "../models/Source.js";
 import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
 import { recordScript } from "../services/showcaseService.js";
 import { buildShootPack } from "../services/shootPackService.js";
-import { writeScript, writeEnglishTwin, writePackaging } from "../services/scriptWriterService.js";
+import { writeScript, writeEnglishTwin, writeRomanScript, writePackaging } from "../services/scriptWriterService.js";
 import { buildMaterial } from "../services/sourceMaterial.js";
 import { canonicalCategory, pickFormat, getCategory } from "../services/categories.js";
 import { laneForScript } from "../services/voiceLanes.js";
@@ -755,6 +755,11 @@ router.post("/:id/shoot", authenticateAny, async (req, res) => {
     try {
       built = await buildShootPack({
         text: doc.text,
+        // Passed only when it lines up. An unaligned transliteration still
+        // reads fine as a whole script, but zipping it line by line would put
+        // the wrong words against a timecode and a shot number, so the pack
+        // simply does not offer Roman rather than offering it wrong.
+        romanText: doc.roman_aligned ? doc.roman_text : "",
         voice: voice.toObject ? voice.toObject() : voice,
         seconds: doc.duration_seconds || 60,
       });
@@ -903,6 +908,21 @@ async function runScript(id, userId, subject, order) {
       profile, material, seconds, titles: packaging, category, format, recentScripts,
     });
 
+    // ── The Roman view, before `done` and not after ──────────────────────────
+    // Every other extra is written AFTER the status flips, because each one was
+    // separately bought and a creator should not wait on something they may not
+    // have ordered. This one is nobody's order: it is free, automatic, and one
+    // short mechanical call. Putting it here costs a second or two and means a
+    // creator never sees a finished script whose Roman tab is missing and then
+    // appears, which reads as a bug rather than a feature arriving.
+    //
+    // Returns null for an English script, where there is nothing to do, and on
+    // failure. Both are simply an empty field: no refund, no apology, no tab.
+    const roman = await writeRomanScript({
+      text: out.text,
+      languageLabel: out.language_label,
+    });
+
     await Script.updateOne(
       { _id: id },
       {
@@ -910,6 +930,8 @@ async function runScript(id, userId, subject, order) {
           status: "done",
           text: out.text,
           hook: out.hook,
+          roman_text: roman?.text || "",
+          roman_aligned: !!roman?.aligned,
           title_suggestions: out.title_suggestions,
           language: out.language,
           language_label: out.language_label,
@@ -1101,6 +1123,14 @@ function shape(d) {
     english_text: d.english_text || "",
     english_hook: d.english_hook || "",
     english_error: d.english_error || "",
+
+    // The Roman transliteration. Empty for an English script, and empty for a
+    // script written before this existed, which is the same thing to the
+    // client: no content means no Roman tab. Nothing to apologise for either
+    // way, since it was never charged for.
+    roman_text: d.roman_text || "",
+    roman_aligned: !!d.roman_aligned,
+
     description: d.description || "",
 
     // The shoot pack, when one has been bought. Null is the honest answer for

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import ChannelImport from "./ChannelImport";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
@@ -627,9 +628,36 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
           {/* ── Change the set ─────────────────────────────────────────── */}
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
+            {/* ── THE CHANNEL PICKER, ABOVE THE PASTE BOX ────────────────
+                Above it, because it is the path almost everybody should take:
+                nobody has their own video ids to hand, and five trips to
+                another tab is where people gave up on building a voice.
+
+                The paste box stays underneath rather than being replaced. It
+                is the fallback for the two cases the picker cannot serve: a
+                channel whose handle will not resolve, and a specific older
+                video that is not among the recent uploads we scan.
+
+                Short lane only. The long lane is locked in this build, and
+                the picker's whole filter is "under the short ceiling", so
+                offering it on the long tab would show an empty list.
+
+                Hidden for showcase sessions rather than prompting a sign-up.
+                The server refuses them (routes/channel.js uses
+                authenticateToken), and a control that opens a dialog every
+                time it is touched is worse than one that is not there. */}
+            {!isLong && !isShowcase && (
+              <ChannelImport
+                profileId={activeId}
+                maxSeconds={meta?.shortMax || 180}
+                isPhone={isPhone}
+                onAdded={() => { loadHistory(); onVoiceChange?.(); }}
+              />
+            )}
+
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 9 }}>
               <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>
-                Add a video
+                {isLong || isShowcase ? "Add a video" : "Or paste a link"}
               </span>
               <span style={{ fontSize: 12.5, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
                 {laneSlot

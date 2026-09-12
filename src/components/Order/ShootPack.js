@@ -4,6 +4,7 @@ import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
 import { useCredits } from "../../state/CreditsContext";
 import Teleprompter from "./Teleprompter";
+import ScriptToggle from "./ScriptToggle";
 
 /**
  * The shoot pack: what turns a finished script into something recordable.
@@ -21,7 +22,7 @@ import Teleprompter from "./Teleprompter";
  * a desktop the script and the rail sit side by side, because there the whole
  * thing fits at once and reading order stops mattering.
  */
-export default function ShootPack({ script, onClose, onUpdated }) {
+export default function ShootPack({ script, roman: romanInitial = false, onClose, onUpdated }) {
   const isPhone = useIsMobile(860);
   const { setBalance, refresh: refreshCredits } = useCredits();
 
@@ -31,6 +32,20 @@ export default function ShootPack({ script, onClose, onUpdated }) {
   const [price, setPrice] = useState(null);
   const [done, setDone] = useState({});      // B-roll items ticked off
   const [prompting, setPrompting] = useState(false);
+
+  /**
+   * Reading the lines in Roman letters rather than their own script.
+   *
+   * Seeded from whatever the creator had selected on the script card, because
+   * that choice was a statement about how they read, not about that card. See
+   * the `view` state in ScriptPanel.
+   *
+   * It governs the line list AND the teleprompter, which is why it lives up
+   * here rather than inside either. The prompter is the screen that actually
+   * matters for this: it is read at speed, from a distance, mid-take, and it is
+   * the one place where being handed the slower alphabet costs a retake.
+   */
+  const [roman, setRoman] = useState(!!romanInitial);
 
   const closeRef = useRef(null);
 
@@ -72,6 +87,24 @@ export default function ShootPack({ script, onClose, onUpdated }) {
   }, [script.id, setBalance, refreshCredits, onUpdated]);
 
   const lines = pack?.lines || [];
+
+  /**
+   * Whether a Roman view can be offered here at all.
+   *
+   * Stricter than the script card's test, which only needs `roman_text` to
+   * exist. A pack carries the transliteration split line by line, and the
+   * server sets `has_roman` only when that split produced exactly one Roman
+   * line per script line (see buildShootPack). Anything less and the toggle
+   * stays hidden: a whole-script view that reads a little loosely is fine, but
+   * a prompter showing line 7's words under line 6's timecode and shot number
+   * is a ruined take.
+   *
+   * False for every pack built before Roman existed, which is correct. Those
+   * hold no Roman lines to show.
+   */
+  const canRoman = !!pack?.has_roman;
+  const showRoman = canRoman && roman;
+
   const shots = pack?.shots || [];
   const broll = pack?.broll || [];
   const held = pack?.held || [];
@@ -103,6 +136,17 @@ export default function ShootPack({ script, onClose, onUpdated }) {
             {script.headline || "Your script"}
           </div>
         </div>
+
+        {/* Sits before the prompter button, because it decides what the
+            prompter will show and a control should come before the thing it
+            governs. Renders nothing when this pack has no aligned Roman. */}
+        <ScriptToggle
+          value={showRoman ? "roman" : "native"}
+          onChange={(v) => setRoman(v === "roman")}
+          nativeLabel={script.language_label}
+          hasRoman={canRoman}
+          hasEnglish={false}
+        />
 
         {pack && (
           <button
@@ -163,7 +207,7 @@ export default function ShootPack({ script, onClose, onUpdated }) {
                 <Ready broll={broll} done={done} setDone={setDone} doneCount={doneCount} isPhone />
               )}
 
-              <ScriptLines lines={lines} isPhone={isPhone} />
+              <ScriptLines lines={lines} isPhone={isPhone} roman={showRoman} />
 
               <div style={{ display: "grid", gap: isPhone ? 14 : 18, position: isPhone ? "static" : "sticky", top: 0 }}>
                 {!isPhone && (
@@ -178,7 +222,14 @@ export default function ShootPack({ script, onClose, onUpdated }) {
         </div>
       </div>
 
-      {prompting && <Teleprompter lines={lines} script={script} onClose={() => setPrompting(false)} />}
+      {prompting && (
+        <Teleprompter
+          lines={lines}
+          roman={showRoman}
+          script={script}
+          onClose={() => setPrompting(false)}
+        />
+      )}
     </div>
   );
 }
@@ -251,11 +302,14 @@ function BuildingSkeleton({ isPhone }) {
 
 /* ── The three blocks ─────────────────────────────────────────────────────── */
 
-function ScriptLines({ lines, isPhone }) {
+function ScriptLines({ lines, isPhone, roman = false }) {
   return (
     <section style={panel}>
       <Head title="Script" right={`${lines.length} lines`} />
-      <div>
+      {/* Keyed on the alphabet so switching replaces the list rather than
+          mutating sixty text nodes in place, which is what stops a long script
+          from visibly re-flowing line by line as it swaps. */}
+      <div key={roman ? "roman" : "native"}>
         {lines.map((l) => (
           <div
             key={l.n}
@@ -271,8 +325,10 @@ function ScriptLines({ lines, isPhone }) {
           >
             <span style={mono}>{fmt(l.at)}</span>
             {!isPhone && <span style={{ ...mono, textAlign: "right" }}>{l.n}</span>}
-            <span className="indic" style={{ fontSize: isPhone ? 15.5 : 16, lineHeight: 1.7, color: "var(--ink)" }}>
-              {l.text}
+            {/* `indic` selects the Noto Indic stack, which a Roman line has no
+                use for: it is Latin text and would land in a fallback face. */}
+            <span className={roman ? undefined : "indic"} style={{ fontSize: isPhone ? 15.5 : 16, lineHeight: 1.7, color: "var(--ink)" }}>
+              {roman ? (l.roman || l.text) : l.text}
               {l.cue && (
                 <span
                   style={{

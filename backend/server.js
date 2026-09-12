@@ -15,6 +15,7 @@ import rateLimit from "express-rate-limit";
 import connectToMongo from "./db.js";
 import authRoutes from "./routes/auth.js";
 import transcribeRoutes from "./routes/transcribe.js";
+import channelRoutes from "./routes/channel.js";
 import newsRoutes from "./routes/news.js";
 import scriptRoutes from "./routes/script.js";
 import sourceRoutes from "./routes/source.js";
@@ -117,6 +118,21 @@ app.use(
 // Managing channels: cheap reads and small writes, no model calls except
 // /profiles/:id/analyse, itself bounded by how many videos a profile holds.
 app.use("/profiles", profileRoutes);
+
+// ── Finding a creator's channel and their recent videos ─────────────────────
+// Reads only, and cheap ones: the resolver's whole design is to answer with
+// one-unit exact lookups rather than the 100-unit search. But it is rate
+// limited harder than the other read routes anyway, because a resolver that
+// misses falls through to search.list, and the daily ceiling on THAT is 100
+// calls for the entire product. Twelve a minute is generous for somebody
+// typing their own channel name and nowhere near enough to drain a day's
+// searches by holding down a key.
+app.use(
+  "/channel",
+  rateLimit({ windowMs: 60 * 1000, max: 12, standardHeaders: true, legacyHeaders: false }),
+  channelRoutes
+);
+
 app.use("/stats", statsRoutes);
 
 // ── Outreach showcases ──────────────────────────────────────────────────────
