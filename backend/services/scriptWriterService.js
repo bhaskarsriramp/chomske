@@ -18,7 +18,7 @@
  * to their audience is the worst thing this product could do to them.
  */
 import { GoogleGenAI } from "@google/genai";
-import { metricsBlock, gradeDraft, sentences, hasNativeScript } from "./voiceMetrics.js";
+import { metricsBlock, gradeDraft, sentences, hasNativeScript, nativeShare } from "./voiceMetrics.js";
 import { wordTarget } from "./creditPricing.js";
 import { noEmDash, noEmDashAll, dropDashes, trimTo } from "../utils/prose.js";
 
@@ -1651,51 +1651,62 @@ Return STRICT JSON only:
   "roman": "the full script in Roman letters, same paragraph breaks"
 }`;
 
-  try {
-    const res = await client().models.generateContent({
-      model: MODEL,
-      contents: prompt,
-      config: {
-        // Low, and lower than anything else in this file. Every other call here
-        // is asked to write; this one is asked to spell. Temperature is what
-        // turns a transliteration into a paraphrase.
-        temperature: 0.2,
-        responseMimeType: "application/json",
-        // Matched to the English twin. Worth watching on the longest scripts:
-        // transliterated Indic words tokenise far worse than English ones
-        // ("chesukondi" is several tokens, not one), so an eight minute script
-        // uses noticeably more of this budget than its word count suggests. A
-        // truncated response fails the JSON parse below, returns null, and
-        // costs the creator nothing but the tab, which is the right way for
-        // this to degrade. If the warning below starts appearing on long
-        // scripts, this is the number to raise.
-        maxOutputTokens: 8192,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
+  // Two tries. The one call can time out, come back cut short on a long script,
+  // or come back with words still in the original letters, and any of those used
+  // to cost the script its Roman view for good, and with it the Read in switch.
+  let reason = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await client().models.generateContent({
+        model: MODEL,
+        contents: prompt,
+        config: {
+          // Low, and lower than anything else in this file. Every other call here
+          // is asked to write; this one is asked to spell. Temperature is what
+          // turns a transliteration into a paraphrase.
+          temperature: 0.2,
+          responseMimeType: "application/json",
+          // Transliterated Indic words tokenise far worse than English ones
+          // ("chesukondi" is several tokens, not one), so a long script can run
+          // past the first budget. A reply cut short fails the JSON parse, and
+          // the second try gets twice the room.
+          maxOutputTokens: attempt === 1 ? 8192 : 16384,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      });
 
-    const parsed = JSON.parse(res.text || "{}");
-    const out = noEmDash(parsed.roman);
-    if (!out) return null;
+      const parsed = JSON.parse(res.text || "{}");
+      const out = noEmDash(parsed.roman);
+      if (!out) {
+        reason = "empty reply";
+        continue;
+      }
 
-    // A transliteration that came back still in the original alphabet is a
-    // failed call that happened to return valid JSON, which is worse than an
-    // error: it would show the creator a "Roman" tab holding Telugu.
-    if (hasNativeScript(out)) {
-      console.warn("[script] roman transliteration came back in native script, discarded");
-      return null;
+      // A "Roman" version still largely in the original alphabet is a failed
+      // call that happened to return valid JSON, and would show a Roman tab
+      // holding Telugu. A word or two left behind is not: the rest is Roman,
+      // and discarding all of it over one missed word is what used to lose the
+      // view (the old test was any twelve native letters, one long word).
+      const share = nativeShare(out);
+      if (share > 0.15) {
+        reason = `${Math.round(share * 100)}% still in the original letters`;
+        console.warn(`[script] roman attempt ${attempt}: ${reason}`);
+        continue;
+      }
+
+      const got = sentences(out).length;
+      if (got !== wanted) {
+        console.warn(`[script] roman line count ${got} != ${wanted}; its lines are cut by length where needed`);
+      }
+
+      return { text: out, aligned: got === wanted, usage: readUsage(res) };
+    } catch (err) {
+      reason = err.message;
+      console.error(`[script] roman attempt ${attempt} failed:`, err.message);
     }
-
-    const got = sentences(out).length;
-    if (got !== wanted) {
-      console.warn(`[script] roman line count ${got} != ${wanted}, whole-script view only`);
-    }
-
-    return { text: out, aligned: got === wanted, usage: readUsage(res) };
-  } catch (err) {
-    console.error("[script] roman transliteration failed:", err.message);
-    return null;
   }
+  console.warn(`[script] no Roman version for this script: ${reason}`);
+  return null;
 }
 
 /**

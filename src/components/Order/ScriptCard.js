@@ -74,7 +74,13 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
 
   // A plan saved before its Roman lines could be lined up gets them here, from
   // the script's own Roman version, so the Read in switch is not missing for it.
-  const pack = useMemo(() => withRoman(script.shoot_pack || built, script.roman_text), [script.shoot_pack, built, script.roman_text]);
+  // The Roman version, or the one fetched for a script that was left without it.
+  const [fetchedRoman, setFetchedRoman] = useState(null);
+  const romanText = script.roman_text || fetchedRoman?.text || "";
+
+  // A plan saved before its Roman lines could be lined up gets them here, from
+  // the script's own Roman version, so the Read in switch is not missing for it.
+  const pack = useMemo(() => withRoman(script.shoot_pack || built, romanText), [script.shoot_pack, built, romanText]);
 
   const build = useCallback(async ({ confirm = false } = {}) => {
     setPackStatus("building");
@@ -113,12 +119,30 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
     build();
   }, [layout, pack, script.status, build]);
 
+  // ── A script that lost its Roman version gets it now ──────────────────────
+  // It is written during generation, but that one call can fail, and without it
+  // Read in has nothing to offer on either tab. Asked for once per card; the
+  // server allows one try a day per script.
+  const romanAsked = useRef(false);
+  useEffect(() => {
+    if (romanAsked.current || script.status !== "done" || script.roman_text) return;
+    if ((String(script.text || "").match(/[\u0900-\u0DFF\u0600-\u06FF]/g) || []).length < 12) return;
+    romanAsked.current = true;
+    api.post(`/script/${script.id}/roman`)
+      .then(({ data }) => {
+        if (!data?.roman_text) return;
+        if (live.current) setFetchedRoman({ text: data.roman_text, aligned: !!data.roman_aligned });
+        onUpdated?.(script.id, { roman_text: data.roman_text, roman_aligned: !!data.roman_aligned });
+      })
+      .catch(() => {});
+  }, [script.id, script.status, script.roman_text, script.text, onUpdated]);
+
   // ── What is on screen ─────────────────────────────────────────────────────
   // A plan can only offer Roman if its lines were split in step with the
   // script's (see buildShootPack), which is stricter than the paragraphs' test.
   // Before a plan exists the paragraphs' answer is used, so the toggle does not
   // appear and then vanish while one is being built.
-  const romanOk = layout === "broll" && pack ? !!pack.has_roman : !!script.roman_text;
+  const romanOk = layout === "broll" && pack ? !!pack.has_roman : !!romanText;
   const englishOk = layout === "script" && !!script.english_text;
 
   // The English version is a different document with no line-level match to a
@@ -128,7 +152,7 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
       : alphabet !== "native" && romanOk ? "roman"
         : "native";
 
-  const text = shown === "english" ? script.english_text : shown === "roman" ? script.roman_text : script.text;
+  const text = shown === "english" ? script.english_text : shown === "roman" ? romanText : script.text;
 
   // ── COPY TAKES WHAT THE TAB SHOWS ─────────────────────────────────────────
   // On the B-roll tab that is the plan: every line with its timecode, each shot
@@ -314,7 +338,7 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
         <Teleprompter
           lines={pack.lines || []}
           roman={shown === "roman"}
-          script={{ ...script, shoot_pack: pack }}
+          script={{ ...script, roman_text: romanText, shoot_pack: pack }}
           onClose={() => setPrompting(false)}
         />,
         document.body

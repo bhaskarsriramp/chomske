@@ -81,6 +81,21 @@ export function hasNativeScript(text, minChars = 12) {
   return false;
 }
 
+/**
+ * The share of a text's letters written in a native (non-Latin) alphabet, 0..1.
+ *
+ * For checking a transliteration: one Telugu word left behind in a Roman
+ * version is a small blemish, a reply still half in Telugu is a failure, and
+ * hasNativeScript's fixed count cannot tell the two apart on a long script.
+ */
+export function nativeShare(text) {
+  const s = String(text || "");
+  let native = 0;
+  for (const [, re] of SCRIPTS) native += (s.match(re) || []).length;
+  const latin = (s.match(/[A-Za-z]/g) || []).length;
+  return native + latin ? native / (native + latin) : 0;
+}
+
 /* ── Repairing a script that slipped into a neighbouring alphabet ──────────── */
 
 /**
@@ -887,4 +902,4 @@ export function gradeDraft(text, target, opts = {}) {
   return { ok: drift.length === 0, drift, measured };
 }
 
-export default { measureVoice, metricsBlock, gradeDraft, sentences, words, hasNativeScript };
+export default { measureVoice, metricsBlock, gradeDraft, sentences, words, hasNativeScript, nativeShare };

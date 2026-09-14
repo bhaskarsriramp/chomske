@@ -197,6 +197,11 @@ const ScriptSchema = new Schema({
   // by not offering the option.
   roman_aligned: { type: Boolean, default: false },
 
+  // When the card last asked for a Roman version this script was left without
+  // (POST /script/:id/roman). One try a day, so a script that keeps failing to
+  // transliterate cannot turn every open into a model call.
+  roman_tried_at: { type: Date, default: null },
+
   // ── The packaging pack ────────────────────────────────────────────────────
   // Title options live in title_suggestions above; these are the rest of what
   // gets pasted into the upload form.

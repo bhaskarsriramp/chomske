@@ -7,6 +7,7 @@
  * mode to debug.
  */
 import express from "express";
+import { hasNativeScript } from "../services/voiceMetrics.js";
 import mongoose from "mongoose";
 import NewsItem from "../models/NewsItem.js";
 import Script from "../models/Script.js";
@@ -725,6 +726,50 @@ router.get("/:id", authenticateAny, async (req, res) => {
   const doc = await Script.findOne({ _id: req.params.id, user: req.user.id }).lean();
   if (!doc) return res.status(404).json({ success: false, message: "Not found" });
   return res.json({ success: true, script: shape(doc) });
+});
+
+/**
+ * POST /script/:id/roman: the Roman version, for a script left without one.
+ *
+ * Every script in a native alphabet gets its Roman version during generation,
+ * but that is one model call, and when it fails the script has no "Read in
+ * Roman" switch on either tab. The card asks for it once when it opens such a
+ * script. Free, like the original, and at most one try a day per script.
+ */
+router.post("/:id/roman", authenticateAny, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid id" });
+    }
+    const doc = await Script.findOne({ _id: req.params.id, user: req.user.id })
+      .select("status text roman_text roman_aligned language_label roman_tried_at")
+      .lean();
+    if (!doc) return res.status(404).json({ success: false, message: "Not found" });
+    if (doc.status !== "done" || !doc.text) {
+      return res.status(400).json({ success: false, message: "This script isn't finished yet." });
+    }
+    if (doc.roman_text) {
+      return res.json({ success: true, roman_text: doc.roman_text, roman_aligned: !!doc.roman_aligned });
+    }
+    if (!hasNativeScript(doc.text)) return res.json({ success: true, roman_text: "", roman_aligned: false });
+
+    const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+    const claimed = await Script.findOneAndUpdate(
+      { _id: doc._id, roman_text: "", $or: [{ roman_tried_at: null }, { roman_tried_at: { $lt: dayAgo } }] },
+      { $set: { roman_tried_at: new Date() } },
+      { new: true, projection: { _id: 1 } }
+    );
+    if (!claimed) return res.status(429).json({ success: false, message: "Tried recently. The Roman version will be tried again later." });
+
+    const roman = await writeRomanScript({ text: doc.text, languageLabel: doc.language_label });
+    if (!roman) return res.status(502).json({ success: false, message: "Couldn't write the Roman version just now." });
+
+    await Script.updateOne({ _id: doc._id }, { $set: { roman_text: roman.text, roman_aligned: !!roman.aligned } });
+    return res.json({ success: true, roman_text: roman.text, roman_aligned: !!roman.aligned });
+  } catch (err) {
+    console.error("[script] roman backfill failed:", err.message);
+    return res.status(500).json({ success: false, message: "Something went wrong." });
+  }
 });
 
 /**
