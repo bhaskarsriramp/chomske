@@ -112,7 +112,7 @@ const ALPHABETS = [
  * Falls back to the language label, and then to "Your voice", for a script
  * with no Indic letters in it at all.
  */
-function alphabetName(text, label) {
+export function alphabetName(text, label) {
   const sample = String(text || "").slice(0, 4000);
   let best = null;
   let bestCount = 0;

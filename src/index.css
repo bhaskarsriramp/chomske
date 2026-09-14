@@ -591,3 +591,9 @@ button:hover > .hg-play { transform: scale(1.06); }
   .hg-flip-on { animation: none !important; }
   .hg-d-btn:hover { transform: none; }
 }
+
+/* ── Editor ────────────────────────────────────────────────────────────────
+   Step labels in the editor header give way to their numbers on a phone. */
+@media (max-width: 640px) {
+  .hg-hide-narrow { display: none; }
+}

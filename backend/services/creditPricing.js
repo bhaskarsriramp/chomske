@@ -372,7 +372,36 @@ export function wordTarget(seconds, wordsPerSecond) {
   return { low: Math.round(mid * 0.9), high: Math.round(mid * 1.1), mid, wps };
 }
 
+/* ── THE VIDEO EDITOR ────────────────────────────────────────────────────────
+ *
+ * Two things cost real money, and both scale with minutes of video:
+ *
+ *   matching   listening to the creator's recording (a model call per batch of
+ *              speech) and cutting it to the script. Priced per started minute
+ *              of RECORDING, because that is what is listened to, retakes and
+ *              all.
+ *   export     the render: CPU minutes, proportional to the length of the
+ *              FINISHED video. Priced per started minute of output, charged on
+ *              every export, refunded if it fails.
+ *
+ * Uploading, previewing and editing are free. Those are what a creator spends
+ * their time doing, and a meter running while somebody nudges a trim handle is
+ * a meter that makes them stop editing.
+ */
+export const EDIT_ANALYSE_CREDITS_PER_MIN = parseInt(process.env.EDIT_ANALYSE_CREDITS_PER_MIN || "4", 10);
+export const EDIT_EXPORT_CREDITS_PER_MIN = parseInt(process.env.EDIT_EXPORT_CREDITS_PER_MIN || "8", 10);
+
+/**
+ * @param {"analyse"|"export"} kind
+ * @param {number} seconds   recording length for analyse, output length for export
+ */
+export function editCost(kind, seconds) {
+  const perMin = kind === "export" ? EDIT_EXPORT_CREDITS_PER_MIN : EDIT_ANALYSE_CREDITS_PER_MIN;
+  return perMin * Math.max(1, Math.ceil((Number(seconds) || 0) / 60));
+}
+
 export default {
+  EDIT_ANALYSE_CREDITS_PER_MIN, EDIT_EXPORT_CREDITS_PER_MIN, editCost,
   SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, DURATION_PRESETS,
   ENGLISH_TWIN_RATE, PACKAGING_CREDITS, SHOOT_PACK_CREDITS, SIGNUP_FREE_CREDITS, PACKS,
   MAX_SOURCE_VIDEO_SECONDS, MAX_SOURCE_LINKS, MAX_SOURCE_TEXT_CHARS, MAX_PROMPT_CHARS,

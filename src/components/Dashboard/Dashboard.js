@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
-import { useParams, useNavigate, Navigate } from "react-router-dom";
+import { useState, useCallback, useEffect, lazy, Suspense } from "react";
+import { useParams, useNavigate, useLocation, useSearchParams, Navigate } from "react-router-dom";
 import useIsMobile from "../../hooks/useIsMobile";
 import Sidebar, { MOBILE_HEADER_H } from "../Shell/Sidebar";
 import CreatePage from "../Create/CreatePage";
@@ -8,6 +8,7 @@ import DashboardHome from "./DashboardHome";
 import ProfilePanel from "../Profile/ProfilePanel";
 import SupportPanel from "../Support/SupportPanel";
 import ScriptsPanel from "../Scripts/ScriptsPanel";
+import VideosPanel from "../Edit/VideosPanel";
 import Logo from "../Shell/Logo";
 import CreditsProvider from "../../state/CreditsContext";
 import ProfileProvider, { useProfiles } from "../../state/ProfileContext";
@@ -15,6 +16,10 @@ import VoiceProvider from "../../state/VoiceContext";
 import ShowcaseProvider, { useShowcase } from "../../state/ShowcaseContext";
 import AnalysisPanel from "../Showcase/AnalysisPanel";
 import { CreditsPill } from "../Shell/CreditsCard";
+
+// The editor is its own chunk: the preview player, the timeline and the upload
+// client are the largest screen in the app, and most visits never open it.
+const EditorPage = lazy(() => import("../Edit/EditorPage"));
 
 /**
  * The app shell.
@@ -46,7 +51,9 @@ export const CREATE_TABS = ["discover", "import", "idea"];
 // "analysis" is reachable only in showcase mode, but it lives in the shared
 // list so a stale link or a refresh on it resolves rather than bouncing to
 // Discover. Shell below sends a human who lands there to Discover instead.
-export const TAB_IDS = [...CREATE_TABS, "analysis", "voice", "scripts", "dashboard", "profile", "support"];
+// "edit" is the editor, full screen over the shell, with the project in ?p=.
+// "videos" is its list, My videos.
+export const TAB_IDS = [...CREATE_TABS, "analysis", "voice", "scripts", "videos", "edit", "dashboard", "profile", "support"];
 
 /**
  * All three providers wrap the whole shell rather than individual panels.
@@ -88,6 +95,8 @@ function Shell({ user, onSignOut }) {
   const isNarrow = useIsMobile(900);
   const { tab: tabParam } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   // The URL is the source of truth for which screen is open, so browser back
   // and a page refresh both land where the user actually was.
@@ -144,7 +153,9 @@ function Shell({ user, onSignOut }) {
   // the wrong one should move you rather than render an empty shell: a showcase
   // has no account to show a Dashboard, Profile or Support page for, and a
   // signed-in creator has no showcase to analyse.
-  if (isShowcase && ["dashboard", "profile", "support"].includes(tab)) {
+  // The editor is refused to a showcase too: it stores footage and spends
+  // render minutes, which a demo link is not an account for.
+  if (isShowcase && ["dashboard", "profile", "support", "videos", "edit"].includes(tab)) {
     return <Navigate to="/app/discover" replace />;
   }
   if (!isShowcase && tab === "analysis") {
@@ -253,6 +264,14 @@ function Shell({ user, onSignOut }) {
             </div>
           )}
 
+          {/* Remounted on each visit for the same reason as My scripts: its
+              statuses (matching, exporting) are only worth showing fresh. */}
+          {tab === "videos" && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+              <VideosPanel onGoCreate={() => openTab("discover")} />
+            </div>
+          )}
+
           {/* Remounted on each visit on purpose: it holds no polling work, and a
               dashboard showing numbers cached from an hour ago is worse than one
               that takes a moment to load. */}
@@ -283,6 +302,19 @@ function Shell({ user, onSignOut }) {
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
               <SupportPanel user={user} />
             </div>
+          )}
+
+          {/* Full screen over everything, so the edit gets the whole viewport.
+              Back returns wherever the creator came from: the script they
+              pressed Edit video under, or My videos. A link opened fresh has no
+              "from", so it lands on My videos. */}
+          {tab === "edit" && (
+            <Suspense fallback={null}>
+              <EditorPage
+                projectId={searchParams.get("p")}
+                onExit={() => (location.key !== "default" ? navigate(-1) : openTab("videos"))}
+              />
+            </Suspense>
           )}
         </main>
       </div>

@@ -7,6 +7,7 @@ import Chevron from "../Shell/Chevron";
 import { categoryColor } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
 import ScriptCard from "../Order/ScriptCard";
+import EditVideoCta from "../Edit/EditVideoCta";
 import UploadPackage, { hasPackage } from "../Order/UploadPackage";
 
 /**
@@ -626,6 +627,7 @@ function ScriptDetail({ script, onClose, compact, onUpdated }) {
         {script.status === "done" && (
           <div style={{ marginBottom: 22 }}>
             <ScriptCard script={script} compact={compact} onUpdated={onUpdated} />
+            <EditVideoCta scriptId={script.id} compact={compact} />
           </div>
         )}
 

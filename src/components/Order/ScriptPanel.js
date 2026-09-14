@@ -8,6 +8,7 @@ import VoiceAnalysing from "../Transcribe/VoiceAnalysing";
 import UploadPackage from "./UploadPackage";
 import ScriptCard from "./ScriptCard";
 import VersionDialog from "./VersionDialog";
+import EditVideoCta from "../Edit/EditVideoCta";
 import { timeAgo } from "../News/newsUtils";
 
 /** How a finished script opens: the B-roll, in Roman. See ScriptCard. */
@@ -710,6 +711,9 @@ function Result({ script, compact, versionNumber = 0, versionCount = 0, view, on
         onView={onView}
         onUpdated={onUpdated}
       />
+
+      {/* The next job after reading it: record, then cut it here. */}
+      <EditVideoCta scriptId={script.id} compact={compact} />
 
       <UploadPackage script={script} compact={compact} />
 

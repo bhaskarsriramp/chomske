@@ -1,5 +1,7 @@
 node_modules/
 build/
+# Editor footage in local-storage mode (MEDIA_BUCKET unset). Never commit it.
+backend/.media/
 .env
 .env.local
 .env.*.local

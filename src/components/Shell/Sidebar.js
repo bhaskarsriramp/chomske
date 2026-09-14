@@ -41,6 +41,9 @@ const SECTIONS = [
       { id: "discover", label: "Create", icon: TargetIcon, match: ["discover", "import", "idea"] },
       { id: "voice", label: "My voice", icon: WaveIcon },
       { id: "scripts", label: "My scripts", icon: ScriptIcon },
+      // The editor itself opens from a script; this is where edits are found
+      // again. Lit while one is open, since that is where it lives.
+      { id: "videos", label: "My videos", icon: FilmIcon, match: ["videos", "edit"] },
     ],
   },
   {
@@ -226,6 +229,15 @@ function ScriptIcon() {
       <path d="M6 3.5h8.5L19 8v12.5H6z" />
       <path d="M14 3.5V8h5" />
       <path d="M9 12.5h7M9 16h4.5" />
+    </svg>
+  );
+}
+
+function FilmIcon() {
+  return (
+    <svg {...svg} aria-hidden="true">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <path d="M7.5 4.5v15M16.5 4.5v15M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4" />
     </svg>
   );
 }

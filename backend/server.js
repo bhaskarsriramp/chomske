@@ -24,6 +24,9 @@ import billingRoutes from "./routes/billing.js";
 import profileRoutes from "./routes/profiles.js";
 import adminRoutes from "./routes/admin.js";
 import showcaseRoutes from "./routes/showcase.js";
+import editRoutes from "./routes/edit.js";
+import mediaRoutes from "./routes/media.js";
+import { startEditRunner } from "./services/edit/editRunner.js";
 import VoiceProfile from "./models/VoiceProfile.js";
 import User from "./models/User.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
@@ -66,6 +69,12 @@ app.use(
 
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
+
+// ── Local media storage, ahead of the global ceiling ────────────────────────
+// Upload chunks and <video> range requests arrive by the hundred, and each one
+// carries a signed token for one file, which is the real guard. Only answers
+// when MEDIA_BUCKET is unset; see routes/media.js.
+app.use("/media", mediaRoutes);
 
 // Blunt global ceiling. The real spend control is the per-user daily cap in
 // routes/transcribe.js; this just keeps a loop from hammering the process.
@@ -134,6 +143,17 @@ app.use(
 );
 
 app.use("/stats", statsRoutes);
+
+// ── The video editor ────────────────────────────────────────────────────────
+// The expensive steps (matching and exporting) are queued jobs with a price and
+// a daily cap inside the route; what arrives here is polling, uploads being
+// started, and autosaves of a trim. Its own ceiling sits above what one person
+// editing can reach and below a loop.
+app.use(
+  "/edit",
+  rateLimit({ windowMs: 60 * 1000, max: 90, standardHeaders: true, legacyHeaders: false }),
+  editRoutes
+);
 
 // ── Outreach showcases ──────────────────────────────────────────────────────
 // The admin workbench, and the private share links it produces.
@@ -219,6 +239,9 @@ function assertConfig() {
       console.log(`[server] Lipi API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
       console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);
       startNewsScheduler();
+      // Picks up uploads, matching and exports, including any a restart
+      // interrupted: their leases lapse and they are claimed again.
+      startEditRunner();
       // Load the key pool once at boot. Without this, isApidirectConfigured()
       // stays false until something forces a load, and nothing would, because
       // the duration gate is itself behind that check, so it would silently

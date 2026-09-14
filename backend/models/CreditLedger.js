@@ -40,7 +40,9 @@ const CreditLedgerSchema = new Schema({
     // charged for). Net effect: the wallet was debited and NOTHING was
     // written. Silent, and invisible to reconcile(), which is itself never
     // called. Every paid voice rebuild ever run is missing from the ledger.
-    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase", "voice_analysis"],
+    // "edit" is the video editor: matching a recording and exporting. Added in
+    // the same change that first spends with it, for the reason above.
+    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase", "voice_analysis", "edit"],
     index: true,
   },
 
