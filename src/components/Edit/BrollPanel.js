@@ -1,30 +1,40 @@
 import { useRef, useState } from "react";
-import { Btn, Bar, Icon, Nudge, Section, Segmented, Spinner, fmtTime } from "./ui";
-import { anchorAt, newId } from "./model";
+import { Btn, Bar, Icon, Nudge, Range, Section, Segmented, Spinner, fmtTime } from "./ui";
+import { ASPECTS, anchorAt, newId, fitFor, splitPanes } from "./model";
 
 /**
- * B-roll: the slots the shot list planned, and the files that fill them.
+ * B-roll: photos and clips over the creator's video, and the files they come from.
  *
- * ── THE PLAN ARRIVES FILLED IN, THE FOOTAGE DOES NOT ─────────────────────────
- * Every cutaway the shoot pack named is already a slot on the right line, with
- * what it should show and where to get it. What is left for the creator is the
- * part only they can do: find the screenshot, and drop it in. Slots with nothing
- * in them still show in the preview as a label, so an unfilled plan is visible
- * rather than silently becoming no B-roll at all.
+ * ── THREE WAYS TO SHOW ONE ───────────────────────────────────────────────────
+ *   Full screen   replaces the picture for a moment: stock footage, a product.
+ *   Split screen  takes one part of the frame, the creator keeps the other:
+ *                 an article, a table, a tweet, read out while they talk.
+ *   Overlay       sits on the picture, dragged and resized on the preview:
+ *                 a logo, a price tag, a transparent "VALID TILL" graphic.
+ *
+ * ── A SCRIPT'S PLAN ARRIVES FILLED IN, THE FOOTAGE DOES NOT ───────────────────
+ * For a video cut to a script, every cutaway the shoot pack named is already a
+ * slot on the right line, with what it should show and where to get it. Slots
+ * with nothing in them still show in the preview as a label, so an unfilled plan
+ * is visible rather than silently becoming no B-roll at all.
  */
 export default function BrollPanel({
-  tl, lay, mediaById, media, uploads, checklist = [], time,
+  tl, lay, mediaById, media, uploads, checklist = [], time, waiting = {},
   selectedId, onSelect, onChange, onSeek, onAddFiles, onRetryUpload, onDismissUpload, onRemoveMedia,
-  onAssignWhenReady, config, isNarrow,
+  onAssignWhenReady, onUploadAt, isNarrow,
 }) {
   const [picking, setPicking] = useState(null);
   const slotUpload = useRef(null);
   const libraryUpload = useRef(null);
+  const newUpload = useRef(null);
   const uploadFor = useRef(null);
+  const [W, H] = ASPECTS[tl.aspect] || ASPECTS["9:16"];
+  const across = W > H;
 
   const placed = new Map(lay.broll.map((b) => [b.id, b]));
   const clipsById = new Map(lay.clips.map((c) => [c.id, c]));
   const assets = media.filter((m) => m.kind === "asset" && (m.type === "image" || m.type === "video"));
+  const readyAssets = assets.filter((a) => a.status === "ready");
   const pending = uploads.filter((u) => u.kind === "asset" && !/^audio\//.test(u.file?.type || "") && !(u.mediaId && assets.some((a) => a.id === u.mediaId)));
   const slots = [...(tl.broll || [])].sort((a, b) => (placed.get(a.id)?.start ?? 1e9) - (placed.get(b.id)?.start ?? 1e9));
   const filled = slots.filter((s) => s.media).length;
@@ -34,11 +44,16 @@ export default function BrollPanel({
     if (b) fn(b, d);
   }, key);
 
+  const boxOf = (b) => (b.layout === "split" ? splitPanes(b, W, H).broll : { w: W, h: H });
+
   const assign = (slotId, mediaId) => {
     const m = mediaById.get(mediaId);
     update(slotId, (b) => {
       b.media = mediaId;
       b.media_in = 0;
+      if (!b.label || b.label === "B-roll") b.label = nameOf(m?.filename);
+      const box = boxOf(b);
+      b.fit = fitFor(m, box.w, box.h);
       if (m?.type === "video" && m.duration) b.duration = Math.min(b.duration, m.duration);
     });
     setPicking(null);
@@ -50,17 +65,27 @@ export default function BrollPanel({
     const id = newId("br");
     const remaining = at.clip.end - at.clip.start - at.offset;
     onChange((d) => {
-      d.broll.push({ id, shot: null, label: "B-roll", source: "", clip: at.clip.id, offset: Math.round(at.offset * 10) / 10, duration: Math.max(0.5, Math.min(3, remaining)), media: null, media_in: 0, fit: "contain" });
+      d.broll.push({
+        id, shot: null, label: "B-roll", source: "", clip: at.clip.id, offset: Math.round(at.offset * 10) / 10,
+        duration: Math.max(0.5, Math.min(3, remaining)), media: null, media_in: 0, fit: "contain",
+        layout: "full", side: "top", ratio: 0.5, x: null, y: null, w: null,
+      });
     });
     onSelect(id);
     setPicking(id);
   };
 
-  const moveToPlayhead = (id) => {
-    const at = anchorAt(lay, time);
-    if (!at) return;
-    update(id, (b) => { b.clip = at.clip.id; b.offset = Math.round(at.offset * 10) / 10; });
-  };
+  const setLayout = (s, m, layoutKind) => update(s.id, (b) => {
+    b.layout = layoutKind;
+    if (layoutKind === "pip") {
+      if (b.w === null || b.w === undefined) b.w = 0.6;
+      if (b.x === null || b.x === undefined) b.x = 0.5;
+      if (b.y === null || b.y === undefined) b.y = 0.32;
+    } else {
+      const box = boxOf(b);
+      b.fit = fitFor(m, box.w, box.h);
+    }
+  });
 
   const files = (e, handler) => {
     const list = Array.from(e.target.files || []);
@@ -84,12 +109,21 @@ export default function BrollPanel({
       )}
 
       <Section
-        title={`Slots · ${filled} of ${slots.length} filled`}
-        right={<Btn size="s" icon={<Icon.Plus />} onClick={addAtPlayhead} disabled={!lay.duration}>Add at playhead</Btn>}
+        title={slots.length ? `On your video · ${filled} of ${slots.length} filled` : "On your video"}
+        right={
+          <span style={{ display: "flex", gap: 6 }}>
+            <Btn size="s" kind="primary" icon={<Icon.Upload size={14} />} onClick={() => newUpload.current?.click()} disabled={!lay.duration}>
+              Add at {fmtTime(time, false)}
+            </Btn>
+            {readyAssets.length > 0 && <Btn size="s" onClick={addAtPlayhead} disabled={!lay.duration}>From library</Btn>}
+          </span>
+        }
       >
         {!slots.length && (
           <p style={{ fontSize: 13, color: "var(--ink-mute)", margin: 0, lineHeight: 1.6 }}>
-            No cutaways planned for this script. Move the playhead to where you want one and press Add at playhead.
+            Move the playhead to the moment you talk about something, then add a photo or a clip there.
+            Show it full screen, split the screen with it, or put it on top of your video and drag it into place.
+            {!isNarrow && " You can also click the B-roll row of the timeline."}
           </p>
         )}
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
@@ -99,25 +133,27 @@ export default function BrollPanel({
             const clip = clipsById.get(s.clip);
             const m = s.media ? mediaById.get(s.media) : null;
             const clipLen = clip && clip.start !== null ? clip.end - clip.start : 0;
+            const kind = s.layout || "full";
+            const inFlight = !m && waiting[s.id];
             return (
               <li key={s.id}>
                 <div
-                  onClick={() => { onSelect(s.id); if (pos?.start !== null && pos?.start !== undefined) onSeek(pos.start); }}
+                  onClick={() => { onSelect(s.id); if (pos?.start !== null && pos?.start !== undefined) onSeek(pos.start + 0.01); }}
                   style={{ borderRadius: 12, border: `1px solid ${on ? "var(--ink)" : "var(--line)"}`, background: "var(--card)", cursor: "pointer" }}
                 >
                   <div style={{ display: "flex", gap: 10, padding: "10px 12px", alignItems: "center" }}>
                     <span style={{ width: 48, height: 48, borderRadius: 8, overflow: "hidden", flexShrink: 0, display: "grid", placeItems: "center", background: m ? "#000" : "var(--made-tint)", color: "var(--made)", border: m ? "none" : "1px dashed #CFCBC4" }}>
-                      {m ? <img src={m.thumb_url || m.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Icon.Camera size={18} />}
+                      {m ? <img src={m.thumb_url || m.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : inFlight ? <Spinner size={16} /> : <Icon.Camera size={18} />}
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 650, color: "var(--ink)", lineHeight: 1.35 }}>{s.label || "B-roll"}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 650, color: "var(--ink)", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis" }}>{s.label || "B-roll"}</div>
                       {s.source && <div style={{ fontSize: 12, color: "var(--ink-body)", lineHeight: 1.45 }}>{s.source}</div>}
                       <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 2 }}>
-                        {clip?.line ? `Line ${clip.line}` : "Extra clip"}
-                        {pos?.start !== null && pos?.start !== undefined ? ` · ${fmtTime(pos.start, false)}–${fmtTime(pos.end, false)}` : " · its line is turned off"}
+                        {inFlight ? "Uploading…" : m ? { full: "Full screen", split: "Split screen", pip: "Overlay" }[kind] : clip?.line ? `Line ${clip.line}` : "Empty"}
+                        {pos?.start !== null && pos?.start !== undefined ? ` · ${fmtTime(pos.start, false)}–${fmtTime(pos.end, false)}` : " · its part is turned off"}
                       </div>
                     </div>
-                    {!m && (
+                    {!m && !inFlight && (
                       <Btn size="s" kind={picking === s.id ? "primary" : "ghost"} onClick={(e) => { e.stopPropagation(); onSelect(s.id); setPicking(picking === s.id ? null : s.id); }}>
                         {picking === s.id ? "Pick below" : "Add"}
                       </Btn>
@@ -125,16 +161,80 @@ export default function BrollPanel({
                   </div>
 
                   {on && (
-                    <div onClick={(e) => e.stopPropagation()} style={{ borderTop: "1px solid var(--line)", padding: "10px 12px 12px", display: "grid", gap: 10, cursor: "default" }}>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        <Btn size="s" icon={<Icon.Image />} onClick={() => setPicking(picking === s.id ? null : s.id)}>
-                          {m ? "Change" : "From library"}
-                        </Btn>
-                        <Btn size="s" icon={<Icon.Upload size={14} />} onClick={() => { uploadFor.current = s.id; slotUpload.current?.click(); }}>Upload</Btn>
-                        {m && <Btn size="s" onClick={() => update(s.id, (b) => { b.media = null; b.media_in = 0; })}>Clear</Btn>}
-                        <Btn size="s" onClick={() => moveToPlayhead(s.id)} disabled={!lay.duration}>Move to playhead</Btn>
-                        <Btn size="s" kind="danger" icon={<Icon.Trash />} onClick={() => onChange((d) => { d.broll = d.broll.filter((b) => b.id !== s.id); })}>Delete</Btn>
-                      </div>
+                    <div onClick={(e) => e.stopPropagation()} style={{ borderTop: "1px solid var(--line)", padding: "10px 12px 12px", display: "grid", gap: 12, cursor: "default" }}>
+                      {m && (
+                        <div>
+                          <div style={label}>Show it</div>
+                          <div role="group" aria-label="How to show it" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 6 }}>
+                            {[
+                              ["full", "Full screen", Icon.Full, "Replaces your video for a moment"],
+                              ["split", "Split screen", Icon.Split, "Shares the screen with you"],
+                              ["pip", "Overlay", Icon.Overlay, "Sits on your video. Drag and resize it on the preview"],
+                            ].map(([v, text, LayoutIcon, title]) => {
+                              const active = kind === v;
+                              return (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  aria-pressed={active}
+                                  title={title}
+                                  onClick={() => setLayout(s, m, v)}
+                                  style={{
+                                    display: "grid", justifyItems: "center", gap: 4, padding: "8px 4px", borderRadius: 10, cursor: "pointer",
+                                    border: `1.5px solid ${active ? "var(--ink)" : "var(--line)"}`, background: active ? "var(--made-tint)" : "var(--card)",
+                                    color: active ? "var(--ink)" : "var(--ink-body)", fontFamily: "inherit", fontSize: 12, fontWeight: 600,
+                                  }}
+                                >
+                                  <span style={across ? { transform: "rotate(-90deg)" } : undefined}><LayoutIcon size={22} /></span>
+                                  {text}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {m && kind === "split" && (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <Segmented
+                            size="s"
+                            label="Which part"
+                            value={s.side === "bottom" ? "bottom" : "top"}
+                            onChange={(v) => update(s.id, (b) => { b.side = v; })}
+                            options={[
+                              { value: "top", label: across ? "B-roll left, you right" : "B-roll on top, you below" },
+                              { value: "bottom", label: across ? "You left, B-roll right" : "You on top, B-roll below" },
+                            ]}
+                          />
+                          <SliderRow label="B-roll takes" value={s.ratio ?? 0.5} min={0.3} max={0.7} step={0.05} onChange={(v) => update(s.id, (b) => { b.ratio = v; }, `ratio:${s.id}`)} />
+                        </div>
+                      )}
+
+                      {m && kind === "pip" && (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <SliderRow label="Size" value={s.w ?? 0.6} min={0.15} max={1} step={0.05} onChange={(v) => update(s.id, (b) => { b.w = v; }, `w:${s.id}`)} />
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <span style={{ flex: "1 1 180px", fontSize: 12.5, color: "var(--ink-mute)", lineHeight: 1.5 }}>
+                              Drag it on the video to move it. Pull its yellow corner to resize.
+                            </span>
+                            <Btn size="s" onClick={() => update(s.id, (b) => { b.x = 0.5; b.y = 0.5; })}>Centre it</Btn>
+                          </div>
+                        </div>
+                      )}
+
+                      {m && kind !== "pip" && (
+                        <Segmented
+                          size="s"
+                          label="Fit"
+                          value={s.fit}
+                          onChange={(v) => update(s.id, (b) => { b.fit = v; })}
+                          options={[
+                            { value: "contain", label: "Show all of it", title: "The whole picture, over a blurred copy. Best for screenshots and tables." },
+                            { value: "cover", label: "Fill the space", title: "Cropped to fill. Best for footage." },
+                          ]}
+                        />
+                      )}
+
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px", alignItems: "center" }}>
                         <Nudge label="Starts" value={s.offset} step={0.5} min={0} max={Math.max(0, clipLen - 0.3)} format={(v) => `+${v.toFixed(1)}s`} onChange={(v) => update(s.id, (b) => { b.offset = v; }, `off:${s.id}`)} />
                         <Nudge label="Lasts" value={s.duration} step={0.5} min={0.5} max={m?.type === "video" ? Math.max(0.5, (m.duration || 0) - (s.media_in || 0)) : 60} format={(v) => `${v.toFixed(1)}s`} onChange={(v) => update(s.id, (b) => { b.duration = v; }, `dur:${s.id}`)} />
@@ -142,18 +242,16 @@ export default function BrollPanel({
                           <Nudge label="From" value={s.media_in || 0} step={0.5} min={0} max={Math.max(0, (m.duration || 0) - 0.5)} onChange={(v) => update(s.id, (b) => { b.media_in = v; }, `min:${s.id}`)} />
                         )}
                       </div>
-                      {m && (
-                        <Segmented
-                          size="s"
-                          label="Fit"
-                          value={s.fit}
-                          onChange={(v) => update(s.id, (b) => { b.fit = v; })}
-                          options={[
-                            { value: "contain", label: "Show all of it", title: "The whole image, over a blurred copy. Best for screenshots." },
-                            { value: "cover", label: "Fill the frame", title: "Cropped to fill. Best for footage." },
-                          ]}
-                        />
-                      )}
+
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        <Btn size="s" icon={<Icon.Image />} onClick={() => setPicking(picking === s.id ? null : s.id)}>
+                          {m ? "Change" : "From library"}
+                        </Btn>
+                        <Btn size="s" icon={<Icon.Upload size={14} />} onClick={() => { uploadFor.current = s.id; slotUpload.current?.click(); }}>Upload</Btn>
+                        {m && <Btn size="s" onClick={() => update(s.id, (b) => { b.media = null; b.media_in = 0; })}>Clear</Btn>}
+                        <Btn size="s" onClick={() => { const at = anchorAt(lay, time); if (at) update(s.id, (b) => { b.clip = at.clip.id; b.offset = Math.round(at.offset * 10) / 10; }); }} disabled={!lay.duration}>Move to playhead</Btn>
+                        <Btn size="s" kind="danger" icon={<Icon.Trash />} onClick={() => onChange((d) => { d.broll = d.broll.filter((b) => b.id !== s.id); })}>Delete</Btn>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -169,13 +267,13 @@ export default function BrollPanel({
       >
         {picking && (
           <div style={{ fontSize: 12.5, color: "var(--ink)", background: "var(--made-tint)", border: "1px solid var(--made-line)", borderRadius: 9, padding: "7px 10px", marginBottom: 8 }}>
-            Tap an image or clip to put it in the slot.{" "}
+            Tap an image or clip to use it.{" "}
             <button type="button" onClick={() => setPicking(null)} style={{ border: "none", background: "none", padding: 0, font: "inherit", fontWeight: 600, textDecoration: "underline", cursor: "pointer" }}>Cancel</button>
           </div>
         )}
         {!assets.length && !pending.length && (
           <p style={{ fontSize: 13, color: "var(--ink-mute)", margin: 0, lineHeight: 1.6 }}>
-            Screenshots, logos, product shots and clips you upload appear here. JPG, PNG, WebP, MP4 or MOV.
+            Screenshots, logos, product shots and clips you upload appear here. JPG, PNG (transparent ones too), WebP, MP4 or MOV.
           </p>
         )}
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${isNarrow ? 3 : 4}, minmax(0,1fr))`, gap: 8 }}>
@@ -230,11 +328,12 @@ export default function BrollPanel({
         </div>
       </Section>
 
-      <input ref={libraryUpload} type="file" multiple accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.m4v,.webm" style={{ display: "none" }} onChange={(e) => files(e, (list) => onAddFiles(list, "asset"))} />
+      <input ref={libraryUpload} type="file" multiple accept={IMAGE_OR_VIDEO} style={{ display: "none" }} onChange={(e) => files(e, (list) => onAddFiles(list, "asset"))} />
+      <input ref={newUpload} type="file" accept={IMAGE_OR_VIDEO} style={{ display: "none" }} onChange={(e) => files(e, (list) => onUploadAt(time, list))} />
       <input
         ref={slotUpload}
         type="file"
-        accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.m4v,.webm"
+        accept={IMAGE_OR_VIDEO}
         style={{ display: "none" }}
         onChange={(e) => files(e, (list) => {
           const slot = uploadFor.current;
@@ -244,6 +343,24 @@ export default function BrollPanel({
     </div>
   );
 }
+
+export const IMAGE_OR_VIDEO = ".jpg,.jpeg,.png,.webp,.mp4,.mov,.m4v,.webm";
+
+export const nameOf = (filename) => String(filename || "B-roll").replace(/\.[a-z0-9]{2,5}$/i, "").slice(0, 120) || "B-roll";
+
+function SliderRow({ label: text, value, min, max, step, onChange }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ fontSize: 12, color: "var(--ink-mute)", width: 78, flexShrink: 0 }}>{text}</span>
+      <div style={{ flex: 1 }}>
+        <Range label={text} value={value} min={min} max={max} step={step} onChange={onChange} />
+      </div>
+      <span style={{ width: 40, textAlign: "right", fontSize: 12.5, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{Math.round(value * 100)}%</span>
+    </div>
+  );
+}
+
+const label = { fontSize: 12, color: "var(--ink-mute)", marginBottom: 6 };
 
 const tile = {
   position: "relative", aspectRatio: "1 / 1", borderRadius: 9, overflow: "hidden",

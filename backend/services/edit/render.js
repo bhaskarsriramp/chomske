@@ -15,6 +15,16 @@
  * hundred lines. Three passes cost a little disk and scale to the eight-minute
  * scripts this product writes.
  *
+ * ── B-ROLL, THREE WAYS ───────────────────────────────────────────────────────
+ *   full   the cutaway replaces the picture
+ *   split  the cutaway takes one half (or share) and the creator the other
+ *   pip    the cutaway sits on the picture at a size and place the creator chose
+ * Every cutaway is its own input, seeked to just the stretch it covers. A split
+ * reads the joined creator track a SECOND time the same way, seeked to the same
+ * stretch, for its pane. Splitting the main stream inside the graph would look
+ * simpler and is not: the branch waiting for a cutaway at 1:00 would queue a
+ * minute of full-size frames in memory while the other branch caught up.
+ *
  * ── CAPTIONS ARE ASS, RENDERED BY LIBASS ─────────────────────────────────────
  * drawtext does not shape complex scripts in most builds: Telugu and Devanagari
  * come out as disconnected letters. libass shapes with HarfBuzz, falls back
@@ -27,7 +37,9 @@ import fsp from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import { ffmpeg } from "../media/ffmpeg.js";
-import { ASPECTS, layout, captionCues } from "./timeline.js";
+import {
+  ASPECTS, layout, captionCues, captionPlacement, textPlacement, pipPlacement, splitPanes,
+} from "./timeline.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const FONTS_DIR = path.resolve(process.env.EDIT_FONTS_DIR || path.join(HERE, "..", "..", "assets", "fonts"));
@@ -47,7 +59,7 @@ const SCRIPT_FONTS = [
 ];
 const LATIN_FONT = ["Noto Sans", "NotoSans-Bold.ttf"];
 
-/** The output frame for an aspect, or the first clip's own shape for "source". */
+/** The output frame for an aspect. */
 export function frameSize(tl) {
   return ASPECTS[tl.aspect] || ASPECTS["9:16"];
 }
@@ -112,27 +124,30 @@ function richText(text) {
  * Colours are ASS's &HAABBGGRR, where 00 alpha is opaque. Sizes are fractions
  * of the frame's short side, so a 9:16 and a 16:9 export look like the same
  * design rather than one of them shouting.
+ *
+ * ── PLACED, NOT ALIGNED ──────────────────────────────────────────────────────
+ * Every line is centred on a point with \an5\pos, and wraps inside the event's
+ * own left and right margins. That is what lets a caption be dragged anywhere:
+ * the point is where it was dropped, and the margins are the wrap width the
+ * preview used (timeline.js captionPlacement), so both break lines alike.
  */
 export function buildAss(tl, { width, height }) {
   const cap = tl.captions || {};
-  const short = Math.min(width, height);
-  const sizeMul = { s: 0.8, m: 1, l: 1.25 };
   const cues = captionCues(tl);
   const texts = tl.texts || [];
 
   const sample = [...cues.map((c) => c.text), ...texts.map((t) => t.text)].join(" ");
-  const font = { family: LATIN_FONT[0] };
+  const family = LATIN_FONT[0];
 
-  const capSize = Math.round(short * (cap.style === "clean" ? 0.062 : 0.075) * (sizeMul[cap.size] || 1));
-  const capMarginV = cap.position === "middle" ? 0 : Math.round(height * (height > width ? 0.2 : 0.09));
-  const capAlign = cap.position === "middle" ? 5 : 2;
-
+  const cp = captionPlacement(tl, width, height);
+  const capSize = cp.size;
   const capStyle = {
     bold: `&H00FFFFFF,&H000000FF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,${Math.round(capSize * 0.09)},0`,
     clean: `&H00FFFFFF,&H000000FF,&H40000000,&H80000000,-1,0,0,0,100,100,0,0,1,${Math.round(capSize * 0.04)},${Math.round(capSize * 0.05)}`,
     box: `&H00FFFFFF,&H000000FF,&H59000000,&H59000000,-1,0,0,0,100,100,0,0,3,${Math.round(capSize * 0.22)},0`,
   }[cap.style] || "";
 
+  const edge = Math.round(width * 0.08);
   const lines = [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -143,27 +158,26 @@ export function buildAss(tl, { width, height }) {
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Cap,${font.family},${capSize},${capStyle},${capAlign},${Math.round(width * 0.08)},${Math.round(width * 0.08)},${capMarginV},1`,
+    `Style: Cap,${family},${capSize},${capStyle},5,${edge},${edge},0,1`,
   ];
 
-  const textSize = { s: 0.05, m: 0.064, l: 0.085 };
-  for (const pos of ["top", "middle", "bottom"]) {
-    for (const size of ["s", "m", "l"]) {
-      const px = Math.round(short * textSize[size]);
-      const align = pos === "top" ? 8 : pos === "middle" ? 5 : 2;
-      const marginV = pos === "middle" ? 0 : Math.round(height * (height > width ? 0.12 : 0.07));
-      lines.push(
-        `Style: Text_${pos}_${size},${font.family},${px},&H00FFFFFF,&H000000FF,&H1A000000,&H1A000000,-1,0,0,0,100,100,0,0,3,${Math.round(px * 0.3)},0,${align},${Math.round(width * 0.07)},${Math.round(width * 0.07)},${marginV},1`
-      );
-    }
+  for (const size of ["s", "m", "l"]) {
+    const px = textPlacement({ size }, width, height).size;
+    lines.push(
+      `Style: Text_${size},${family},${px},&H00FFFFFF,&H000000FF,&H1A000000,&H1A000000,-1,0,0,0,100,100,0,0,3,${Math.round(px * 0.3)},0,5,${edge},${edge},0,1`
+    );
   }
+
+  // An event margin of 0 means "use the style's", so the smallest is 1.
+  const margins = (p) => `${Math.max(1, Math.round(p.left))},${Math.max(1, Math.round(width - p.left - p.boxW))}`;
 
   lines.push("", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
   for (const c of cues) {
-    lines.push(`Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,,0,0,0,,${richText(c.text)}`);
+    lines.push(`Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,,${margins(cp)},0,,{\\an5\\pos(${cp.cx},${cp.cy})}${richText(c.text)}`);
   }
   for (const t of texts) {
-    lines.push(`Dialogue: 1,${assTime(t.start)},${assTime(t.start + t.duration)},Text_${t.position}_${t.size},,0,0,0,,${richText(t.text)}`);
+    const tp = textPlacement(t, width, height);
+    lines.push(`Dialogue: 1,${assTime(t.start)},${assTime(t.start + t.duration)},Text_${t.size || "m"},,${margins(tp)},0,,{\\an5\\pos(${tp.cx},${tp.cy})}${richText(t.text)}`);
   }
 
   return { ass: lines.join("\n") + "\n", fonts: fontsFor(sample), count: cues.length + texts.length };
@@ -172,11 +186,27 @@ export function buildAss(tl, { width, height }) {
 const cover = (w, h) => `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1`;
 
 /**
+ * A cutaway fitted to a w×h box, ending in `out`. Cover crops it to fill;
+ * contain shows all of it over a blurred, darkened copy of itself. The picture
+ * keeps an alpha plane, so a transparent PNG (a price tag, a logo, a "VALID TILL"
+ * graphic) shows the video through it instead of black.
+ */
+function fitChain(input, w, h, fit, out, shift) {
+  if (fit === "cover") return [`[${input}]${cover(w, h)},fps=${FPS},format=yuva420p,${shift}[${out}]`];
+  return [
+    `[${input}]split[${out}f][${out}b]`,
+    `[${out}b]${cover(w, h)},boxblur=${Math.max(2, Math.min(24, Math.floor(Math.min(w, h) / 8)))}:2,eq=brightness=-0.06,format=yuv420p[${out}bb]`,
+    `[${out}f]scale=${w}:${h}:force_original_aspect_ratio=decrease,setsar=1,format=yuva420p[${out}ff]`,
+    `[${out}bb][${out}ff]overlay=(W-w)/2:(H-h)/2,fps=${FPS},format=yuv420p,${shift}[${out}]`,
+  ];
+}
+
+/**
  * Render.
  *
  * @param {object}   args
  * @param {object}   args.timeline   sanitized
- * @param {Map}      args.mediaById  id -> media row (type, duration, has_audio)
+ * @param {Map}      args.mediaById  id -> media row (type, duration, has_audio, width, height)
  * @param {Function} args.pathOf     async (mediaId) => local path of the ORIGINAL
  * @param {string}   args.workDir    scratch directory, owned by the caller
  * @param {Function} [args.onProgress]  (0..1, stage)
@@ -187,7 +217,7 @@ export async function renderTimeline({ timeline, mediaById, pathOf, workDir, onP
   const lay = layout(timeline);
   const clips = lay.clips.filter((c) => c.start !== null);
   if (!clips.length) {
-    throw Object.assign(new Error("empty timeline"), { userMessage: "There is nothing in this edit to export. Turn on at least one line." });
+    throw Object.assign(new Error("empty timeline"), { userMessage: "There is nothing in this edit to export. Turn on at least one part of your video." });
   }
   const total = lay.duration;
 
@@ -216,7 +246,7 @@ export async function renderTimeline({ timeline, mediaById, pathOf, workDir, onP
     );
     await ffmpeg(args, {
       duration: d,
-      onProgress: (p) => onProgress(0.6 * ((done + p * d) / total), "Cutting your lines"),
+      onProgress: (p) => onProgress(0.6 * ((done + p * d) / total), "Cutting your video"),
     });
     done += d;
     segs.push(out);
@@ -235,29 +265,43 @@ export async function renderTimeline({ timeline, mediaById, pathOf, workDir, onP
   let vLabel = "0:v";
   let n = 1;
 
-  const broll = lay.broll.filter((b) => b.start !== null && b.media && b.end - b.start > 0.05);
+  const broll = lay.broll.filter((b) => b.start !== null && b.media && mediaById.get(b.media) && b.end - b.start > 0.05);
   for (let i = 0; i < broll.length; i++) {
     const b = broll[i];
     const m = mediaById.get(b.media);
     const src = await pathOf(b.media);
     const d = b.end - b.start;
+    const S = b.start.toFixed(3);
+    const on = `enable='between(t,${S},${b.end.toFixed(3)})'`;
+    const shift = `setpts=PTS-STARTPTS+${S}/TB`;
+
     if (m.type === "image") inputs.push("-loop", "1", "-framerate", String(FPS), "-t", String(d), "-i", src);
     else inputs.push("-ss", String(b.media_in || 0), "-t", String(d), "-i", src);
+    const cut = n++;
 
-    const shift = `setpts=PTS-STARTPTS+${b.start.toFixed(3)}/TB`;
-    if (b.fit === "cover") {
-      graph.push(`[${n}:v]${cover(W, H)},fps=${FPS},format=yuv420p,${shift}[b${i}]`);
+    if (b.layout === "pip") {
+      const g = pipPlacement(b, m, W, H);
+      graph.push(
+        `[${cut}:v]scale=${g.pw}:${g.ph},setsar=1,fps=${FPS},format=yuva420p,${shift}[b${i}]`,
+        `[${vLabel}][b${i}]overlay=${g.left}:${g.top}:eof_action=pass:${on}[v${i}]`
+      );
+    } else if (b.layout === "split") {
+      const P = splitPanes(b, W, H);
+      inputs.push("-ss", S, "-t", String(d), "-i", "base.mp4");
+      const self = n++;
+      graph.push(
+        ...fitChain(`${cut}:v`, P.broll.w, P.broll.h, b.fit, `b${i}`, shift),
+        `[${self}:v]crop=${P.crop.w}:${P.crop.h}:${P.crop.x}:${P.crop.y},setsar=1,${shift}[c${i}]`,
+        `[${vLabel}][b${i}]overlay=${P.broll.x}:${P.broll.y}:eof_action=pass:${on}[vb${i}]`,
+        `[vb${i}][c${i}]overlay=${P.creator.x}:${P.creator.y}:eof_action=pass:${on}[v${i}]`
+      );
     } else {
       graph.push(
-        `[${n}:v]split[bf${i}][bb${i}]`,
-        `[bb${i}]${cover(W, H)},boxblur=24:2,eq=brightness=-0.06[bbb${i}]`,
-        `[bf${i}]scale=${W}:${H}:force_original_aspect_ratio=decrease,setsar=1[bff${i}]`,
-        `[bbb${i}][bff${i}]overlay=(W-w)/2:(H-h)/2,fps=${FPS},format=yuv420p,${shift}[b${i}]`
+        ...fitChain(`${cut}:v`, W, H, b.fit, `b${i}`, shift),
+        `[${vLabel}][b${i}]overlay=0:0:eof_action=pass:${on}[v${i}]`
       );
     }
-    graph.push(`[${vLabel}][b${i}]overlay=0:0:eof_action=pass:enable='between(t,${b.start.toFixed(3)},${b.end.toFixed(3)})'[v${i}]`);
     vLabel = `v${i}`;
-    n++;
   }
 
   const { ass, fonts, count } = buildAss(timeline, { width: W, height: H });

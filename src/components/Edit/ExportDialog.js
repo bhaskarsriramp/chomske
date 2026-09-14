@@ -19,7 +19,7 @@ import { Btn, Bar, Icon, Notice, Section, Segmented, fmtBytes, fmtTime } from ".
  * Empty B-roll slots export as the creator talking, which may be fine, and is
  * worth one line before paying rather than after watching the result.
  */
-export default function ExportDialog({ project, tl, lay, price, priceNow, onFlush, onAspect, onData, onClose }) {
+export default function ExportDialog({ project, tl, lay, price, languages = [], nativeLabel = "", priceNow, onFlush, onAspect, onData, onClose }) {
   const isPhone = useIsMobile(600);
   const { balance, setBalance, openBuy, canBuy } = useCredits();
   const [shown, setShown] = useState(price);
@@ -45,6 +45,11 @@ export default function ExportDialog({ project, tl, lay, price, priceNow, onFlus
   const slots = lay.broll.filter((b) => b.start !== null).length;
   const tooExpensive = typeof balance === "number" && shown > balance;
   const cap = tl.captions || {};
+  const captionWords = cap.mode === "off"
+    ? "off"
+    : cap.mode === "tr"
+    ? `${languages.find((l) => l.code === cap.lang)?.label || cap.lang} (translated), ${cap.style}`
+    : `${cap.mode === "roman" ? "Roman" : nativeLabel || "original letters"}, ${cap.style}`;
 
   async function go() {
     setBusy(true);
@@ -130,10 +135,10 @@ export default function ExportDialog({ project, tl, lay, price, priceNow, onFlus
         <Section title="In this export">
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6, fontSize: 13.5, color: "var(--ink-body)" }}>
             <li>Length <strong style={{ color: "var(--ink)" }}>{fmtTime(lay.duration, false)}</strong>, 1080p MP4</li>
-            <li>Captions: <strong style={{ color: "var(--ink)" }}>{cap.mode === "off" ? "off" : `${cap.mode === "roman" ? "Roman" : "original letters"}, ${cap.style}`}</strong></li>
+            <li>Captions: <strong style={{ color: "var(--ink)" }}>{captionWords}</strong></li>
             <li>
-              B-roll: <strong style={{ color: "var(--ink)" }}>{slots - emptySlots} of {slots}</strong> slots filled
-              {emptySlots > 0 && <span style={{ color: "#8A5A0F" }}> · empty slots show you talking</span>}
+              B-roll: <strong style={{ color: "var(--ink)" }}>{slots ? `${slots - emptySlots} of ${slots} filled` : "none"}</strong>
+              {emptySlots > 0 && <span style={{ color: "#8A5A0F" }}> · empty ones show you talking</span>}
             </li>
             <li>Music: <strong style={{ color: "var(--ink)" }}>{(tl.audio || []).length ? `${tl.audio.length} track${tl.audio.length === 1 ? "" : "s"}` : "none"}</strong>
               {(tl.texts || []).length > 0 && <> · Text: <strong style={{ color: "var(--ink)" }}>{tl.texts.length}</strong></>}

@@ -41,9 +41,10 @@ const SECTIONS = [
       { id: "discover", label: "Create", icon: TargetIcon, match: ["discover", "import", "idea"] },
       { id: "voice", label: "My voice", icon: WaveIcon },
       { id: "scripts", label: "My scripts", icon: ScriptIcon },
-      // The editor itself opens from a script; this is where edits are found
-      // again. Lit while one is open, since that is where it lives.
-      { id: "videos", label: "My videos", icon: FilmIcon, match: ["videos", "edit"] },
+      // Edits of any video: started here with New project, or from a script's
+      // Edit video button, and found again here either way. Lit while one is
+      // open, since that is where it lives.
+      { id: "videos", label: "Edit videos", icon: FilmIcon, match: ["videos", "edit"] },
     ],
   },
   {

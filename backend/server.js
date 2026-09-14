@@ -67,6 +67,9 @@ app.use(
   })
 );
 
+// An edit carries its captions and their translations, which for a twenty-minute
+// video in three languages is past the 1 MB every other route is held to.
+app.use("/edit", express.json({ limit: "8mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 

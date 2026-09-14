@@ -2,14 +2,17 @@
  * projectService.js: the editor's shared vocabulary.
  *
  * Limits, which files are accepted, where a project's files live, how a script
- * becomes lines, and what the browser is told about a project. Used by the
- * routes and by the job runner, which must agree on all of it.
+ * becomes lines, what captioning and translating cost, and what the browser is
+ * told about a project. Used by the routes and by the job runner, which must
+ * agree on all of it.
  */
 import { sentences } from "../voiceMetrics.js";
 import { readUrl, KEY_ROOT } from "../media/storage.js";
 import { publishUserEvent } from "../newsEvents.js";
-import { editCost, EDIT_ANALYSE_CREDITS_PER_MIN, EDIT_EXPORT_CREDITS_PER_MIN } from "../creditPricing.js";
-import { layout } from "./timeline.js";
+import {
+  editCost, EDIT_ANALYSE_CREDITS_PER_MIN, EDIT_EXPORT_CREDITS_PER_MIN, EDIT_TRANSLATE_CREDITS_PER_MIN,
+} from "../creditPricing.js";
+import { layout, placedSegments } from "./timeline.js";
 
 const MB = 1024 * 1024;
 const int = (v, d) => {
@@ -24,9 +27,13 @@ export const EDIT_LIMITS = {
   maxRecordingSeconds: int(process.env.EDIT_MAX_RECORDING_SECONDS, 1200),
   maxAssetSeconds: int(process.env.EDIT_MAX_ASSET_SECONDS, 900),
   maxMedia: int(process.env.EDIT_MAX_MEDIA, 60),
+  // Live (unexpired) projects per creator. Each can hold gigabytes for a week;
+  // this is the ceiling on what one account can park in the bucket.
+  maxProjects: int(process.env.EDIT_MAX_PROJECTS, 50),
   retentionDays: int(process.env.EDIT_RETENTION_DAYS, 7),
   dailyAnalyses: int(process.env.EDIT_DAILY_ANALYSES, 25),
   dailyExports: int(process.env.EDIT_DAILY_EXPORTS, 25),
+  dailyTranslations: int(process.env.EDIT_DAILY_TRANSLATIONS, 40),
 };
 
 /** Written against CreditLedger's reason for every editor charge and refund. */
@@ -71,6 +78,41 @@ export const mediaKey = (p, mediaId, folder, ext) => `${projectPrefix(p)}/${fold
 
 /** Every touch of a project keeps its files for another retention period. */
 export const bumpExpiry = () => new Date(Date.now() + EDIT_LIMITS.retentionDays * 86400000);
+
+/** "script" for a recording cut to a script, "free" for a video uploaded on its own. */
+export const modeOf = (p) => (p?.mode === "free" ? "free" : "script");
+
+/** The frame a first edit starts in: the shape of the first recording. */
+export const aspectOf = (m) => (m && m.height > m.width ? "9:16" : m && m.width > m.height ? "16:9" : "1:1");
+
+/** A project's ready recordings, in the order they play. */
+export const readyRecordings = (p) =>
+  (p?.media || []).filter((m) => m.kind === "recording" && m.status === "ready").sort((a, b) => a.order - b.order);
+
+/** Ready recordings of a free project that have no captions written yet. */
+export function untranscribed(p) {
+  const done = new Set(p?.analysis?.transcribed || []);
+  return readyRecordings(p).filter((m) => !done.has(m.id));
+}
+
+/**
+ * What translating an edit's captions into `lang` covers and costs: the
+ * segments the edit actually plays that have words and are not yet in that
+ * language. A take that was never used is not charged for.
+ */
+export function translationQuote(tl, lang) {
+  const seen = new Set();
+  const ids = [];
+  let seconds = 0;
+  for (const { seg } of tl ? placedSegments(tl) : []) {
+    if (seen.has(seg.id)) continue;
+    seen.add(seg.id);
+    if (!(seg.text || seg.roman) || seg.tr?.[lang]) continue;
+    ids.push(seg.id);
+    seconds += Math.max(0, seg.end - seg.start);
+  }
+  return { ids, seconds, cost: ids.length ? editCost("translate", seconds) : 0 };
+}
 
 /**
  * The script as numbered lines.
@@ -130,6 +172,8 @@ async function stableUrl(key, opts) {
  */
 export async function shapeProject(doc, { baseUrl, withTimeline = true } = {}) {
   const p = doc?.toObject ? doc.toObject() : doc;
+  const mode = modeOf(p);
+  const transcribed = new Set(p.analysis?.transcribed || []);
 
   const media = await Promise.all(
     (p.media || []).map(async (m) => {
@@ -146,6 +190,7 @@ export async function shapeProject(doc, { baseUrl, withTimeline = true } = {}) {
         width: m.width,
         height: m.height,
         has_audio: m.has_audio,
+        captioned: m.kind === "recording" && transcribed.has(m.id),
         error: m.error,
         created_at: m.created_at,
         proxy_url: ready && m.proxy_key
@@ -157,14 +202,17 @@ export async function shapeProject(doc, { baseUrl, withTimeline = true } = {}) {
     })
   );
 
-  const recordingSeconds = media
-    .filter((m) => m.kind === "recording" && m.status === "ready")
-    .reduce((n, m) => n + (Number(m.duration) || 0), 0);
+  // What the next analysis would cover: every recording for a script (matching
+  // starts over), only the uncaptioned ones for a free project.
+  const pending = mode === "free" ? untranscribed(p).filter((m) => m.has_audio) : readyRecordings(p);
+  const pendingSeconds = pending.reduce((n, m) => n + (Number(m.duration) || 0), 0);
   const duration = p.timeline ? layout(p.timeline).duration : 0;
+  const t = p.translation;
 
   return {
     id: String(p._id),
-    script: String(p.script),
+    mode,
+    script: p.script ? String(p.script) : null,
     headline: p.headline,
     language_label: p.language_label,
     status: p.status,
@@ -181,6 +229,12 @@ export async function shapeProject(doc, { baseUrl, withTimeline = true } = {}) {
       stats: p.analysis?.stats || null,
       finished_at: p.analysis?.finished_at || null,
     },
+    translation: t && t.status !== "applied"
+      ? {
+          id: t.id, status: t.status, lang: t.lang, error: t.error || "", count: (t.ids || []).length,
+          items: t.status === "done" && withTimeline ? t.items || {} : undefined,
+        }
+      : null,
     renders: (p.renders || []).map((r) => ({
       id: r.id, status: r.status, stage: r.stage, progress: r.progress, error: r.error,
       aspect: r.aspect, size: r.size, duration: r.duration, charged: r.charged,
@@ -189,11 +243,12 @@ export async function shapeProject(doc, { baseUrl, withTimeline = true } = {}) {
     // Priced here, from the saved state, never in the browser. See the note at
     // the top of ScriptOrder.js on why a price has one source.
     pricing: {
-      analyse: recordingSeconds > 0 ? editCost("analyse", recordingSeconds) : 0,
-      analyse_seconds: recordingSeconds,
+      analyse: pendingSeconds > 0 ? editCost("analyse", pendingSeconds) : 0,
+      analyse_seconds: pendingSeconds,
       export: duration > 0 ? editCost("export", duration) : 0,
       analyse_per_min: EDIT_ANALYSE_CREDITS_PER_MIN,
       export_per_min: EDIT_EXPORT_CREDITS_PER_MIN,
+      translate_per_min: EDIT_TRANSLATE_CREDITS_PER_MIN,
     },
     expires_at: p.expires_at,
     purged: !!p.purged,
@@ -203,6 +258,6 @@ export async function shapeProject(doc, { baseUrl, withTimeline = true } = {}) {
 }
 
 export default {
-  EDIT_LIMITS, LEDGER_REASON, ACCEPT, classify, projectPrefix, mediaKey, bumpExpiry,
-  scriptLines, publishProgress, shapeProject,
+  EDIT_LIMITS, LEDGER_REASON, ACCEPT, classify, projectPrefix, mediaKey, bumpExpiry, modeOf, aspectOf,
+  readyRecordings, untranscribed, translationQuote, scriptLines, publishProgress, shapeProject,
 };

@@ -246,4 +246,10 @@ export const Icon = {
   Close: ({ size = 16 }) => <svg {...svg(size)}><path d="M6 6l12 12M18 6L6 18" /></svg>,
   Download: ({ size = 16 }) => <svg {...svg(size)}><path d="M12 4v12M7 11l5 5 5-5M4 20h16" /></svg>,
   Wave: ({ size = 15 }) => <svg {...svg(size)}><path d="M4 11v2M8 7.5v9M12 4.5v15M16 8.5v7M20 11v2" /></svg>,
+  Scissors: ({ size = 15 }) => <svg {...svg(size)}><circle cx="6" cy="6.5" r="2.5" /><circle cx="6" cy="17.5" r="2.5" /><path d="M8.2 7.8L20 17M8.2 16.2L20 7" /></svg>,
+  Pencil: ({ size = 14 }) => <svg {...svg(size)}><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></svg>,
+  Globe: ({ size = 15 }) => <svg {...svg(size)}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.6 3 2.6 15 0 18M12 3c-2.6 3-2.6 15 0 18" /></svg>,
+  Full: ({ size = 15 }) => <svg {...svg(size)}><rect x="6" y="3" width="12" height="18" rx="2" fill="currentColor" fillOpacity=".25" /></svg>,
+  Split: ({ size = 15 }) => <svg {...svg(size)}><rect x="6" y="3" width="12" height="18" rx="2" /><path d="M6 12h12" /><rect x="6" y="3" width="12" height="9" rx="2" fill="currentColor" fillOpacity=".25" stroke="none" /></svg>,
+  Overlay: ({ size = 15 }) => <svg {...svg(size)}><rect x="6" y="3" width="12" height="18" rx="2" /><rect x="8.5" y="6" width="7" height="5" rx="1" fill="currentColor" fillOpacity=".35" /></svg>,
 };

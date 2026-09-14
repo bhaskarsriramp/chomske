@@ -10,11 +10,11 @@ import Workspace from "./Workspace";
 import { Btn, Icon, Spinner } from "./ui";
 
 /**
- * The editor: one video being cut from one script.
+ * The editor: one video being edited, cut to a script or uploaded on its own.
  *
  * ── THREE SCREENS, CHOSEN BY THE PROJECT, NOT BY A WIZARD ────────────────────
- *   setup       upload the recording, see what it will be matched against
- *   processing  the matching is running
+ *   setup       upload the video, see what happens next
+ *   processing  the matching, or the captioning, is running
  *   workspace   there is an edit
  * Which one shows is read off the project on every load. A creator who closes
  * the tab mid-match and comes back tomorrow lands on the right screen without
@@ -80,6 +80,7 @@ export default function EditorPage({ projectId, onExit }) {
   const project = data?.project;
   const working = !!project && (
     project.status === "analysing" ||
+    project.translation?.status === "running" ||
     project.media.some((m) => m.status === "uploaded" || m.status === "processing") ||
     project.renders.some((r) => r.status === "queued" || r.status === "rendering")
   );
@@ -102,10 +103,10 @@ export default function EditorPage({ projectId, onExit }) {
     setUploads((list) => list.map((u) => (u.key === key ? { ...u, ...fields } : u)));
   }, []);
 
-  const addFiles = useCallback(async (files, kind, { onMedia } = {}) => {
+  const addFiles = useCallback(async (files, kind, opts = {}) => {
     const items = Array.from(files || []).map((file) => ({
       key: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      file, name: file.name, size: file.size, kind,
+      file, name: file.name, size: file.size, kind, opts,
       mediaId: null, progress: 0, status: "starting", error: "",
     }));
     if (!items.length) return;
@@ -120,9 +121,9 @@ export default function EditorPage({ projectId, onExit }) {
         try {
           const started = await startUpload(projectId, { filename: it.file.name, mime: it.file.type, size: it.file.size, kind });
           patchUpload(it.key, { mediaId: started.media_id, status: "uploading" });
-          // A file uploaded into a particular B-roll slot or as music is placed
-          // there once it is ready (Workspace.js), not left in the library.
-          onMedia?.(started.media_id);
+          // A file uploaded into a particular place (a B-roll moment, the music)
+          // is put there once it is ready (Workspace.js), not left in the library.
+          it.opts?.onMedia?.(started.media_id);
           await uploadFile(it.file, started.upload, { onProgress: (p) => patchUpload(it.key, { progress: p }) });
           patchUpload(it.key, { status: "finishing", progress: 1 });
           const d = await completeUpload(projectId, started.media_id);
@@ -142,7 +143,7 @@ export default function EditorPage({ projectId, onExit }) {
     const it = uploads.find((u) => u.key === key);
     if (!it) return;
     setUploads((list) => list.filter((u) => u.key !== key));
-    addFiles([it.file], it.kind);
+    addFiles([it.file], it.kind, it.opts);
   }, [uploads, addFiles]);
 
   const dismissUpload = useCallback((key) => setUploads((list) => list.filter((u) => u.key !== key)), []);
@@ -162,7 +163,7 @@ export default function EditorPage({ projectId, onExit }) {
         <div style={{ fontSize: 16, fontWeight: 650, color: "var(--ink)", marginBottom: 6 }}>
           {projectId ? "This video couldn't be opened" : "No video selected"}
         </div>
-        <p style={{ fontSize: 13.5, color: "var(--ink-mute)", margin: "0 0 16px" }}>{loadError || "Open one from My videos or from a script."}</p>
+        <p style={{ fontSize: 13.5, color: "var(--ink-mute)", margin: "0 0 16px" }}>{loadError || "Open one from Edit videos or from a script."}</p>
         <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
           {projectId && <Btn onClick={load}>Try again</Btn>}
           <Btn kind="primary" onClick={onExit}>Back</Btn>
@@ -180,15 +181,19 @@ export default function EditorPage({ projectId, onExit }) {
     );
   }
 
+  const free = project.mode === "free";
+
   if (project.purged) {
     return shell(
       <>
-        <Header title={project.headline} onExit={onExit} />
+        <Header title={project.headline} onExit={onExit} mode={project.mode} />
         <Centered>
           <div style={{ fontSize: 16, fontWeight: 650, color: "var(--ink)", marginBottom: 6 }}>These files have expired</div>
           <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 0 16px", maxWidth: 420 }}>
-            Footage is kept for {config?.limits?.retention_days || 7} days after a video was last touched. Open the
-            script again and start a new edit to upload the recording again.
+            Footage is kept for {config?.limits?.retention_days || 7} days after a video was last touched.{" "}
+            {free
+              ? "Start a new project from Edit videos and upload the video again."
+              : "Open the script again and start a new edit to upload the recording again."}
           </p>
           <Btn kind="primary" onClick={onExit}>Back</Btn>
         </Centered>
@@ -201,7 +206,7 @@ export default function EditorPage({ projectId, onExit }) {
   if (project.status === "analysing") {
     return shell(
       <>
-        <Header title={project.headline} onExit={onExit} step={2} />
+        <Header title={project.headline} onExit={onExit} step={2} mode={project.mode} />
         <Processing project={project} />
       </>
     );
@@ -228,7 +233,7 @@ export default function EditorPage({ projectId, onExit }) {
 
   return shell(
     <>
-      <Header title={project.headline} onExit={onExit} step={1} />
+      <Header title={project.headline} onExit={onExit} step={1} mode={project.mode} />
       <SetupStep
         data={data}
         config={config}
@@ -255,8 +260,8 @@ function Centered({ children }) {
 }
 
 /** The bar for the two screens before there is an edit. The workspace has its own. */
-export function Header({ title, onExit, step = 0, right = null }) {
-  const steps = ["Upload", "Match", "Edit"];
+export function Header({ title, onExit, step = 0, right = null, mode = "script" }) {
+  const steps = mode === "free" ? ["Upload", "Captions", "Edit"] : ["Upload", "Match", "Edit"];
   return (
     <header
       style={{

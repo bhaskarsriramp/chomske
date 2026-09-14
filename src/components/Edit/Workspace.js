@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { errorMessage } from "../../api";
 import { alphabetName } from "../Order/ScriptToggle";
-import { saveTimeline, removeMedia } from "./editApi";
-import { layout, clone, newId } from "./model";
+import { saveTimeline, removeMedia, renameProject, ackTranslation } from "./editApi";
+import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, anchorAt, splitClipAt, fitFor, splitPanes } from "./model";
 import Preview from "./Preview";
 import ClipList from "./ClipList";
-import BrollPanel from "./BrollPanel";
+import CutsPanel from "./CutsPanel";
+import BrollPanel, { IMAGE_OR_VIDEO, nameOf } from "./BrollPanel";
 import CaptionsPanel from "./CaptionsPanel";
 import AudioPanel from "./AudioPanel";
 import TextPanel from "./TextPanel";
@@ -13,13 +14,24 @@ import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
 import { Btn, Icon, Notice, Range, Segmented, fmtTime } from "./ui";
 
-const TABS = [
-  ["script", "Script", Icon.Script],
-  ["broll", "B-roll", Icon.Camera],
-  ["captions", "Captions", Icon.Captions],
-  ["audio", "Music", Icon.Music],
-  ["text", "Text", Icon.Text],
-];
+// A video cut to a script opens on its lines. A video uploaded on its own opens
+// on its captions, which are the reason most people upload one.
+const TABS = {
+  script: [
+    ["script", "Script", Icon.Script],
+    ["broll", "B-roll", Icon.Camera],
+    ["captions", "Captions", Icon.Captions],
+    ["audio", "Music", Icon.Music],
+    ["text", "Text", Icon.Text],
+  ],
+  free: [
+    ["captions", "Captions", Icon.Captions],
+    ["video", "Video", Icon.Film],
+    ["broll", "B-roll", Icon.Camera],
+    ["audio", "Music", Icon.Music],
+    ["text", "Text", Icon.Text],
+  ],
+};
 
 /**
  * Step three: the edit.
@@ -34,17 +46,23 @@ const TABS = [
  * Each change pushes the previous timeline. Repeated changes to the same control
  * (twelve taps of a trim button, a drag) share a merge key and collapse into
  * one step, so undo takes back the trim, not the last tenth of a second of it.
+ *
+ * ── WORK THE SERVER FINISHES LANDS AS AN EDIT ────────────────────────────────
+ * A caption translation runs on the server while editing carries on. Its result
+ * waits on the project, not in the timeline, and is taken in here as one change
+ * like any other: saved with the rest, and undoable.
  */
 export default function Workspace({ data, config, isNarrow, uploads, onAddFiles, onRetryUpload, onDismissUpload, onData, onReload, onExit, onRecordings }) {
   const { project, script } = data;
+  const mode = project.mode === "free" ? "free" : "script";
 
-  const [tl, setTl] = useState(project.timeline);
-  const tlRef = useRef(project.timeline);
+  const [tl, setTl] = useState(() => withSegments(project.timeline));
+  const tlRef = useRef(tl);
   const pastRef = useRef([]);
   const futureRef = useRef([]);
   const merge = useRef({ key: null, at: 0 });
 
-  const [tab, setTab] = useState("script");
+  const [tab, setTab] = useState(mode === "free" ? "captions" : "script");
   const [selection, setSelection] = useState({ kind: null, id: null });
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -56,19 +74,33 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState("");
   const [showRoman, setShowRoman] = useState(true);
+  const [title, setTitle] = useState(project.headline || "");
+  const [renaming, setRenaming] = useState(false);
+  const [errorSeen, setErrorSeen] = useState("");
+  const [waiting, setWaiting] = useState({});
 
   const revRef = useRef(project.timeline_rev);
   const dirtyRef = useRef(false);
   const savingRef = useRef(null);
   const costRef = useRef(project.pricing?.export || 0);
+  const timeRef = useRef(0);
+  timeRef.current = time;
 
   const mediaById = useMemo(() => new Map(project.media.map((m) => [m.id, m])), [project.media]);
   const lay = useMemo(() => layout(tl), [tl]);
-  const hasRoman = useMemo(() => tl.clips.some((c) => c.roman || c.said_roman), [tl.clips]);
-  const nativeLabel = useMemo(
-    () => alphabetName((script?.lines || []).map((l) => l.text).join(" "), script?.language_label).label,
-    [script]
+  const languages = config?.caption_languages || [];
+  const readyAssets = useMemo(
+    () => project.media.filter((m) => m.kind === "asset" && m.status === "ready" && (m.type === "image" || m.type === "video")),
+    [project.media]
   );
+  const hasRoman = useMemo(() => tl.clips.some((c) => c.roman) || segmentsOf(tl).some((s) => s.roman && s.roman !== s.text), [tl]);
+  const nativeLabel = useMemo(() => {
+    const sample = mode === "free"
+      ? segmentsOf(tl).slice(0, 60).map((s) => s.text).join(" ")
+      : (script?.lines || []).map((l) => l.text).join(" ");
+    const label = alphabetName(sample, mode === "free" ? project.language_label : script?.language_label).label;
+    return label === "Your voice" ? "Original" : label;
+  }, [mode, tl, script, project.language_label]);
 
   const apply = useCallback((next) => {
     tlRef.current = next;
@@ -170,14 +202,28 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
   useEffect(() => {
     if (project.timeline_rev > revRef.current && !dirtyRef.current && !savingRef.current) {
       revRef.current = project.timeline_rev;
-      tlRef.current = project.timeline;
+      const next = withSegments(project.timeline);
+      tlRef.current = next;
       pastRef.current = [];
       futureRef.current = [];
-      setTl(project.timeline);
+      setTl(next);
       costRef.current = project.pricing?.export || 0;
       setExportCost(costRef.current);
     }
   }, [project.timeline_rev, project.timeline, project.pricing]);
+
+  // A finished translation, taken into the edit once, then released on the server.
+  const takenRef = useRef(null);
+  useEffect(() => {
+    const t = project.translation;
+    if (!t || t.status !== "done" || !t.items || takenRef.current === t.id) return;
+    takenRef.current = t.id;
+    change((d) => {
+      d.segments = segmentsOf(d).map((s) => (t.items[s.id] ? { ...s, tr: { ...(s.tr || {}), [t.lang]: t.items[s.id] } } : s));
+      d.captions = { ...d.captions, mode: "tr", lang: t.lang };
+    });
+    ackTranslation(project.id, t.id).catch(() => {});
+  }, [project.translation, project.id, change]);
 
   const keepMine = () => {
     if (save.rev) revRef.current = save.rev;
@@ -191,26 +237,40 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     await onReload();
   };
 
-  // ── Files uploaded into a slot land in it once they are ready ─────────────
+  // ── Files uploaded into a place land in it once they are ready ────────────
   const pendingRef = useRef([]);
-  const assignWhenReady = useCallback((p) => { pendingRef.current.push(p); }, []);
+  const assignWhenReady = useCallback((p) => {
+    pendingRef.current.push(p);
+    if (p.slot) setWaiting((w) => ({ ...w, [p.slot]: true }));
+  }, []);
   useEffect(() => {
     if (!pendingRef.current.length) return;
     const keep = [];
+    const settled = [];
     for (const p of pendingRef.current) {
       const m = mediaById.get(p.media);
       if (!m || ["uploading", "uploaded", "processing"].includes(m.status)) {
         keep.push(p);
         continue;
       }
+      if (p.slot) settled.push(p.slot);
       if (m.status !== "ready") continue;
       if (p.type === "broll") {
         change((d) => {
           const b = d.broll.find((x) => x.id === p.slot);
-          if (!b) return;
+          if (!b || b.media) return;
+          const [W, H] = ASPECTS[d.aspect] || ASPECTS["9:16"];
+          const box = b.layout === "split" ? splitPanes(b, W, H).broll : { w: W, h: H };
           b.media = m.id;
           b.media_in = 0;
-          if (m.type === "video" && m.duration) b.duration = Math.min(b.duration, m.duration);
+          b.fit = fitFor(m, box.w, box.h);
+          if (!b.label || b.label === "B-roll") b.label = nameOf(m.filename);
+          if (m.type === "video" && m.duration) {
+            const L = layout(d);
+            const pos = L.broll.find((x) => x.id === b.id);
+            const room = pos && pos.start !== null ? L.duration - pos.start : m.duration;
+            b.duration = p.grow ? Math.max(0.5, Math.round(Math.min(5, m.duration, room) * 10) / 10) : Math.min(b.duration, m.duration);
+          }
         });
       } else if (p.type === "audio") {
         change((d) => {
@@ -223,6 +283,13 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       }
     }
     pendingRef.current = keep;
+    if (settled.length) {
+      setWaiting((w) => {
+        const next = { ...w };
+        for (const id of settled) delete next[id];
+        return next;
+      });
+    }
   }, [mediaById, change]);
 
   const removeAsset = useCallback(async (id) => {
@@ -271,8 +338,70 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     }
   }, [lay, playing, seekTo]);
 
-  const timeRef = useRef(0);
-  timeRef.current = time;
+  // Something pressed on the preview itself.
+  const pick = useCallback((kind, id) => {
+    if (kind === "captions") {
+      setTab("captions");
+      return;
+    }
+    setSelection({ kind, id });
+    setTab(kind === "text" ? "text" : "broll");
+  }, []);
+
+  // ── B-roll at a moment ────────────────────────────────────────────────────
+  const addBrollAt = useCallback((t, mediaId = null, label = "") => {
+    const cur = tlRef.current;
+    const L = layout(cur);
+    if (!L.duration) return null;
+    const at = anchorAt(L, Math.min(Math.max(0, t), L.duration - 0.05));
+    if (!at) return null;
+    const m = mediaId ? mediaById.get(mediaId) : null;
+    const [W, H] = ASPECTS[cur.aspect] || ASPECTS["9:16"];
+    const start = at.clip.start + at.offset;
+    const room = Math.max(0.5, L.duration - start);
+    const want = m?.type === "video" ? Math.min(5, m.duration || 5) : 3;
+    const id = newId("br");
+    change((d) => {
+      d.broll = [...(d.broll || []), {
+        id, shot: null, label: m ? nameOf(m.filename) : label || "B-roll", source: "",
+        clip: at.clip.id, offset: Math.round(at.offset * 100) / 100,
+        duration: Math.max(0.5, Math.round(Math.min(want, room) * 10) / 10),
+        media: m ? m.id : null, media_in: 0, fit: m ? fitFor(m, W, H) : "contain",
+        layout: "full", side: "top", ratio: 0.5, x: null, y: null, w: null,
+      }];
+    });
+    setSelection({ kind: "broll", id });
+    setTab("broll");
+    seekTo(start + 0.01);
+    return id;
+  }, [change, mediaById, seekTo]);
+
+  const uploadBrollAt = useCallback((t, files) => {
+    const file = files?.[0];
+    if (!file) return;
+    const id = addBrollAt(t, null, nameOf(file.name));
+    if (!id) return;
+    onAddFiles([file], "asset", { onMedia: (mediaId) => assignWhenReady({ type: "broll", slot: id, media: mediaId, grow: true }) });
+  }, [addBrollAt, onAddFiles, assignWhenReady]);
+
+  const brollInput = useRef(null);
+  const brollAt = useRef(0);
+  const pickBrollFile = useCallback((t) => {
+    brollAt.current = t;
+    brollInput.current?.click();
+  }, []);
+
+  // ── Cutting a video uploaded on its own ───────────────────────────────────
+  const splitAtPlayhead = useCallback(() => {
+    if (!splitClipAt(clone(tlRef.current), timeRef.current)) {
+      setNotice("Move the playhead inside a part, a little away from its ends, to split it there.");
+      return;
+    }
+    let made = null;
+    change((d) => { made = splitClipAt(d, timeRef.current); });
+    if (made) setSelection({ kind: "clip", id: made });
+  }, [change]);
+
   useEffect(() => {
     const onKey = (e) => {
       const tag = String(e.target?.tagName || "").toLowerCase();
@@ -288,6 +417,9 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       } else if (e.key === " " && !mod) {
         e.preventDefault();
         togglePlay();
+      } else if (!mod && mode === "free" && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        splitAtPlayhead();
       } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         if (tag === "button" && e.target.getAttribute("role") === "tab") return;
         e.preventDefault();
@@ -297,7 +429,22 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, togglePlay, seekTo, lay.duration, exporting]);
+  }, [undo, redo, togglePlay, seekTo, lay.duration, exporting, mode, splitAtPlayhead]);
+
+  // ── The name ──────────────────────────────────────────────────────────────
+  async function commitName(value) {
+    setRenaming(false);
+    const name = String(value || "").replace(/\s+/g, " ").trim();
+    if (!name || name === title) return;
+    const before = title;
+    setTitle(name);
+    try {
+      await renameProject(project.id, name);
+    } catch (err) {
+      setTitle(before);
+      setNotice(errorMessage(err));
+    }
+  }
 
   // ── Panels ────────────────────────────────────────────────────────────────
   const sel = (kind) => (selection.kind === kind ? selection.id : null);
@@ -328,6 +475,17 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         />
       </>
     ),
+    video: (
+      <CutsPanel
+        {...common}
+        time={time}
+        selectedId={sel("clip")}
+        onSelect={(id) => select("clip", id)}
+        onPlayRange={playRange}
+        onSplit={splitAtPlayhead}
+        onRecordings={async () => { await flush(); onRecordings(); }}
+      />
+    ),
     broll: (
       <BrollPanel
         {...common}
@@ -335,6 +493,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         uploads={uploads}
         checklist={script?.checklist || []}
         time={time}
+        waiting={waiting}
         selectedId={sel("broll")}
         onSelect={(id) => select("broll", id)}
         onSeek={seekTo}
@@ -343,11 +502,28 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         onDismissUpload={onDismissUpload}
         onRemoveMedia={removeAsset}
         onAssignWhenReady={assignWhenReady}
-        config={config}
+        onUploadAt={uploadBrollAt}
         isNarrow={isNarrow}
       />
     ),
-    captions: <CaptionsPanel tl={tl} onChange={change} nativeLabel={nativeLabel} hasRoman={hasRoman} />,
+    captions: (
+      <CaptionsPanel
+        tl={tl}
+        lay={lay}
+        mode={mode}
+        project={project}
+        languages={languages}
+        nativeLabel={nativeLabel}
+        hasRoman={hasRoman}
+        time={time}
+        playing={playing}
+        onChange={change}
+        onSeek={seekTo}
+        onFlush={flush}
+        onData={onData}
+        onReload={onReload}
+      />
+    ),
     audio: (
       <AudioPanel
         tl={tl}
@@ -387,6 +563,10 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       stopAt={stopAt}
       audition={audition}
       onAuditionEnd={() => setAudition(null)}
+      tab={tab}
+      selection={selection}
+      onChange={change}
+      onPick={pick}
     />
   );
 
@@ -403,9 +583,35 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     <header style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: isNarrow ? "8px 10px" : "9px 14px", borderBottom: "1px solid var(--line)", background: "var(--card)", minHeight: 54 }}>
       <Btn kind="quiet" size="s" aria-label="Back" icon={<Icon.Back />} onClick={async () => { await flush(); onExit(); }} style={{ padding: "6px 8px" }} />
       <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: isNarrow ? 13.5 : 14.5, fontWeight: 650, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {project.headline || "Untitled"}
-        </div>
+        {renaming ? (
+          <input
+            autoFocus
+            defaultValue={title}
+            maxLength={120}
+            aria-label="Video name"
+            onBlur={(e) => commitName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                e.currentTarget.value = title;
+                e.currentTarget.blur();
+              }
+            }}
+            style={{ width: "100%", fontSize: isNarrow ? 13.5 : 14.5, fontWeight: 650, color: "var(--ink)", padding: "3px 6px", borderRadius: 7, border: "1px solid var(--line)", outline: "none", fontFamily: "inherit" }}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setRenaming(true)}
+            title="Rename"
+            style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: "100%", border: "none", background: "none", padding: 0, cursor: "text", fontFamily: "inherit", textAlign: "left" }}
+          >
+            <span style={{ fontSize: isNarrow ? 13.5 : 14.5, fontWeight: 650, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {title || "Untitled"}
+            </span>
+            <span style={{ color: "var(--ink-mute)", flexShrink: 0 }}><Icon.Pencil size={12} /></span>
+          </button>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: save.state === "error" || save.state === "conflict" ? "var(--bad)" : "var(--ink-mute)" }}>
           {save.state === "saved" && <Icon.Check size={11} />}
           {saveLabel} · {fmtTime(lay.duration, false)}
@@ -447,6 +653,11 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
           <Notice tone="bad" action={<Btn size="s" onClick={flush}>Retry now</Btn>}>{save.message}</Notice>
         </div>
       )}
+      {project.error && project.status === "ready" && project.error !== errorSeen && (
+        <div style={{ padding: "8px 12px 0" }}>
+          <Notice tone="warn" action={<Btn size="s" onClick={() => setErrorSeen(project.error)}>OK</Btn>}>{project.error}</Notice>
+        </div>
+      )}
       {notice && (
         <div style={{ padding: "8px 12px 0" }}>
           <Notice tone="bad" action={<Btn size="s" kind="quiet" onClick={() => setNotice("")} aria-label="Dismiss" icon={<Icon.Close size={13} />} />}>{notice}</Notice>
@@ -457,7 +668,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
 
   const tabs = (
     <div role="tablist" aria-label="Edit" className="hg-scroll" style={{ display: "flex", gap: 2, overflowX: "auto", overflowY: "hidden", padding: "0 8px", borderBottom: "1px solid var(--line)", background: "var(--card)", flexShrink: 0 }}>
-      {TABS.map(([id, label, TabIcon]) => {
+      {TABS[mode].map(([id, label, TabIcon]) => {
         const on = tab === id;
         return (
           <button
@@ -498,11 +709,27 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       tl={tl}
       lay={lay}
       price={exportCost}
+      languages={languages}
+      nativeLabel={nativeLabel}
       onFlush={flush}
       priceNow={() => costRef.current}
       onAspect={(v) => change((d) => { d.aspect = v; })}
       onData={onData}
       onClose={() => setExporting(false)}
+    />
+  );
+
+  const brollFile = (
+    <input
+      ref={brollInput}
+      type="file"
+      accept={IMAGE_OR_VIDEO}
+      style={{ display: "none" }}
+      onChange={(e) => {
+        const list = Array.from(e.target.files || []);
+        e.target.value = "";
+        if (list.length) uploadBrollAt(brollAt.current, list);
+      }}
     />
   );
 
@@ -516,6 +743,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         {tabs}
         <div className="hg-scroll" style={{ flex: 1, minHeight: 0, padding: "12px 14px 28px" }}>{panel}</div>
         {dialog}
+        {brollFile}
       </>
     );
   }
@@ -538,19 +766,26 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
             tl={tl}
             lay={lay}
             mediaById={mediaById}
+            mode={mode}
             time={time}
             playing={playing}
             selection={selection}
+            assets={readyAssets}
+            waiting={waiting}
             onSelect={(kind, id) => {
               select(kind, id);
-              setTab({ clip: "script", broll: "broll", text: "text", audio: "audio" }[kind] || tab);
+              setTab({ clip: mode === "free" ? "video" : "script", broll: "broll", text: "text", audio: "audio" }[kind] || tab);
             }}
             onSeek={seekTo}
             onChange={change}
+            onSplit={splitAtPlayhead}
+            onAddBrollAt={addBrollAt}
+            onUploadBrollAt={pickBrollFile}
           />
         </div>
       </div>
       {dialog}
+      {brollFile}
     </>
   );
 }

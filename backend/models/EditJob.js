@@ -20,9 +20,10 @@ const EditJobSchema = new Schema({
 
   //   prepare  one uploaded file: probe, preview copy, speech track, thumbnail
   //   analyse  the whole project: listen, match, build the first edit
-  //   render   one export
-  type: { type: String, enum: ["prepare", "analyse", "render"], required: true },
-  ref:  { type: String, default: "" },   // media id or render id
+  //   render     one export
+  //   translate  one caption translation
+  type: { type: String, enum: ["prepare", "analyse", "render", "translate"], required: true },
+  ref:  { type: String, default: "" },   // media id, render id or translation id
 
   status:      { type: String, enum: ["queued", "running", "done", "failed"], default: "queued" },
   attempts:    { type: Number, default: 0 },

@@ -2,7 +2,12 @@ import mongoose from "mongoose";
 const { Schema } = mongoose;
 
 /**
- * EditProject: one video being cut from one script.
+ * EditProject: one video being edited.
+ *
+ * Two kinds, fixed when the project is made:
+ *   script  a recording cut to one of the creator's scripts (`script` is set)
+ *   free    any video, uploaded on its own from Edit videos, captioned from
+ *           whatever was said
  *
  * ── WHAT LIVES HERE AND WHAT DOES NOT ────────────────────────────────────────
  * The footage does not. It lives in storage (services/media/storage.js) under
@@ -67,15 +72,17 @@ const RenderSchema = new Schema(
 const EditProjectSchema = new Schema({
   user:    { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
   profile: { type: Schema.Types.ObjectId, ref: "Profile", default: null },
-  script:  { type: Schema.Types.ObjectId, ref: "Script", required: true, index: true },
+  script:  { type: Schema.Types.ObjectId, ref: "Script", default: null, index: true },
+  mode:    { type: String, enum: ["script", "free"], default: "script" },
 
   // Copied for the list screen, so it does not need the script to render a row.
+  // For a free project it is the name the creator gave it, and renameable.
   headline:       { type: String, default: "" },
   language_label: { type: String, default: "" },
 
   // The matching, which is the one long step a project goes through.
   //   draft      uploading, nothing matched yet
-  //   analysing  listening and matching (see stage/progress)
+  //   analysing  listening and matching, or writing captions (see stage/progress)
   //   ready      there is an edit
   //   failed     analysis failed; `error` says why and the charge was refunded
   status:   { type: String, enum: ["draft", "analysing", "ready", "failed"], default: "draft" },
@@ -91,6 +98,11 @@ const EditProjectSchema = new Schema({
     started_at:  { type: Date, default: null },
     finished_at: { type: Date, default: null },
     stats:       { type: Schema.Types.Mixed, default: null },
+    // Free projects caption recordings as they arrive: `targets` are the ones
+    // the running job is writing captions for, `transcribed` every one that has
+    // been, so a recording is never charged for twice.
+    targets:     { type: [String], default: [] },
+    transcribed: { type: [String], default: [] },
     usage:       { type: Schema.Types.Mixed, default: null },
   },
 
@@ -101,6 +113,14 @@ const EditProjectSchema = new Schema({
   duration:     { type: Number, default: 0 },
 
   renders: { type: [RenderSchema], default: [] },
+
+  // The caption translation in flight, or its result waiting for the editor to
+  // take it into the edit. Kept OUT of the timeline on purpose: the creator
+  // keeps editing while it runs, and a job that wrote the timeline would turn
+  // every one of those edits into a save conflict. Shape:
+  //   { id, status: running|done|failed|applied, lang, ids, charged, error,
+  //     items: { [segment id]: text }, started_at, finished_at }
+  translation: { type: Schema.Types.Mixed, default: null },
 
   expires_at: { type: Date, required: true, index: true },
   purged:     { type: Boolean, default: false },

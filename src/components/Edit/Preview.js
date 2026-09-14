@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
-import { ASPECTS, layout, captionCues, activeClipIndex, hasIndic } from "./model";
+import {
+  ASPECTS, layout, captionCues, activeClipIndex, hasIndic, captionPlacement, textPlacement, pipPlacement, splitPanes,
+} from "./model";
 import { Icon } from "./ui";
 
 /**
@@ -15,17 +17,27 @@ import { Icon } from "./ui";
  * timer, so a stalled network pauses the playhead instead of letting it run
  * ahead of the picture.
  *
- * Overlays are decided per frame from the same layout() the server renders with
- * (model.js). They are HTML, not burnt in, so they are close to the export and
- * not identical to it: sizes and positions follow the same fractions of the
- * frame; the exact glyph shapes are the browser's.
+ * Overlays are decided per frame from the same layout() and placement functions
+ * the server renders with (model.js). They are HTML, not burnt in, so they are
+ * close to the export and not identical to it: sizes, positions and wrap widths
+ * follow the same pixels of the frame; the exact glyph shapes are the browser's.
+ *
+ * ── THE FRAME IS ALSO A CONTROL ──────────────────────────────────────────────
+ * Captions, text and overlay B-roll are dragged where they should sit, and an
+ * overlay is resized by its corner, right on the picture, because "a bit higher"
+ * is judged by eye and not by a number. A drag is one undo step. A split screen
+ * is drawn by moving the recording itself (transform + clip-path), so the
+ * element keeps playing instead of being remounted into a smaller box.
  *
  * ── AUDITION ─────────────────────────────────────────────────────────────────
  * Hearing an alternate take, or a stretch of speech that matched no line, plays
  * that range of the recording directly, outside the timeline, with the overlays
  * hidden so it is obvious this is not the edit.
  */
-export default function Preview({ tl, mediaById, playing, onPlayingChange, seek, onTime, stopAt = null, audition = null, onAuditionEnd }) {
+export default function Preview({
+  tl, mediaById, playing, onPlayingChange, seek, onTime, stopAt = null, audition = null, onAuditionEnd,
+  tab = null, selection = { kind: null, id: null }, onChange, onPick,
+}) {
   const outer = useRef(null);
   const box = useBox(outer);
   const [W, H] = ASPECTS[tl.aspect] || ASPECTS["9:16"];
@@ -48,7 +60,7 @@ export default function Preview({ tl, mediaById, playing, onPlayingChange, seek,
 
   const videos = useRef({});
   const audios = useRef({});
-  const brollVideo = useRef(null);
+  const brollVideos = useRef({});
   const tRef = useRef(0);
   const idxRef = useRef(-1);
   const lastReport = useRef(0);
@@ -56,25 +68,25 @@ export default function Preview({ tl, mediaById, playing, onPlayingChange, seek,
   live.current = { lay, clips, cues, tl, mediaById, stopAt, onTime, onPlayingChange, playing, onAuditionEnd };
 
   const [activeMedia, setActiveMedia] = useState(null);
-  const [overlay, setOverlay] = useState({ broll: null, cue: null, texts: [] });
+  const [overlay, setOverlay] = useState({ key: "", brolls: [], cue: null, texts: [] });
+  const [guide, setGuide] = useState(false);
 
   /** Everything that depends only on output time: overlays, B-roll video, music. */
   const paint = useCallback((t) => {
     const { lay: L, cues: C, tl: T, mediaById: M, playing: P } = live.current;
-    let b = null;
-    for (const x of L.broll) if (x.start !== null && t >= x.start && t < x.end) b = x;
+    const brolls = L.broll.filter((x) => x.start !== null && t >= x.start && t < x.end);
     const cue = C.find((c) => t >= c.start && t < c.end) || null;
     const texts = (T.texts || []).filter((x) => t >= x.start && t < x.start + x.duration);
-    setOverlay((o) =>
-      o.broll?.id === b?.id && o.broll?.media === b?.media && o.broll?.fit === b?.fit &&
-      o.cue?.start === cue?.start && o.cue?.text === cue?.text &&
-      o.texts.length === texts.length && o.texts.every((x, i) => x === texts[i])
-        ? o
-        : { broll: b, cue, texts }
-    );
+    const key = [
+      brolls.map((b) => [b.id, b.media, b.fit, b.layout, b.side, b.ratio, b.x, b.y, b.w, b.label].join(":")).join("|"),
+      cue ? `${cue.start}:${cue.text}` : "",
+      texts.map((x) => [x.id, x.text, x.position, x.size, x.x, x.y].join(":")).join("|"),
+    ].join("#");
+    setOverlay((o) => (o.key === key ? o : { key, brolls, cue, texts }));
 
-    const bv = brollVideo.current;
-    if (bv && b?.media && M.get(b.media)?.type === "video") {
+    for (const b of brolls) {
+      const bv = brollVideos.current[b.id];
+      if (!bv || M.get(b.media)?.type !== "video") continue;
       const target = (b.media_in || 0) + (t - b.start);
       if (Math.abs(bv.currentTime - target) > (P ? 0.35 : 0.05)) bv.currentTime = target;
       if (P && bv.paused) bv.play().catch(() => {});
@@ -130,9 +142,10 @@ export default function Preview({ tl, mediaById, playing, onPlayingChange, seek,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seek?.n]);
 
-  // A trim under a paused playhead shows its new frame at once.
+  // A trim or a drag under a paused playhead shows its new frame at once.
   useEffect(() => {
     if (!live.current.playing && !audition) place(tRef.current);
+    else paint(tRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tl]);
 
@@ -146,7 +159,7 @@ export default function Preview({ tl, mediaById, playing, onPlayingChange, seek,
   const pauseAll = useCallback(() => {
     Object.values(videos.current).forEach((v) => v && !v.paused && v.pause());
     Object.values(audios.current).forEach((a) => a && !a.paused && a.pause());
-    if (brollVideo.current && !brollVideo.current.paused) brollVideo.current.pause();
+    Object.values(brollVideos.current).forEach((v) => v && !v.paused && v.pause());
   }, []);
 
   // ── Playing the edit ────────────────────────────────────────────────────
@@ -260,15 +273,76 @@ export default function Preview({ tl, mediaById, playing, onPlayingChange, seek,
   }, [audition]);
 
   const scale = fw > 0 ? fw / W : 0;
-  const short = Math.min(W, H);
   const cap = tl.captions || {};
-  const capPx = short * (cap.style === "clean" ? 0.062 : 0.075) * ({ s: 0.8, m: 1, l: 1.25 }[cap.size] || 1) * scale;
-  const brollMedia = overlay.broll?.media ? mediaById.get(overlay.broll.media) : null;
+  const cp = captionPlacement(tl, W, H);
+  const editable = !!onChange && !audition && scale > 0;
+
+  // The last split on screen decides where the recording sits.
+  const split = [...overlay.brolls].reverse().find((b) => b.layout === "split" && b.media && mediaById.get(b.media));
+  const panes = split ? splitPanes(split, W, H) : null;
+  const recordingStyle = panes && !audition
+    ? panes.across
+      ? {
+          transform: `translateX(${((panes.creator.x - panes.crop.x) / W) * 100}%)`,
+          clipPath: `inset(0 ${(1 - (panes.crop.x + panes.crop.w) / W) * 100}% 0 ${(panes.crop.x / W) * 100}%)`,
+        }
+      : {
+          transform: `translateY(${((panes.creator.y - panes.crop.y) / H) * 100}%)`,
+          clipPath: `inset(${(panes.crop.y / H) * 100}% 0 ${(1 - (panes.crop.y + panes.crop.h) / H) * 100}% 0)`,
+        }
+    : null;
+
+  const emptySlot = overlay.brolls.find((b) => !b.media || !mediaById.get(b.media));
+  const showCaptionGuide = editable && tab === "captions" && cap.mode !== "off" && !overlay.cue && !playing;
 
   const toggle = () => {
     if (audition) live.current.onAuditionEnd?.();
     else onPlayingChange(!playing);
   };
+
+  const snapX = (x) => {
+    const near = Math.abs(x - 0.5) < 0.025;
+    setGuide(near);
+    return near ? 0.5 : x;
+  };
+  const r3 = (n) => Math.round(n * 1000) / 1000;
+
+  // Every drag handler gets where the thing was when the press began, never
+  // where it is now: the movement is measured from the press, and applying it
+  // to the current place would count it again on every re-render of the drag.
+  const moveCaption = (origin, dx, dy, key) =>
+    onChange((d) => {
+      const p = captionPlacement({ ...d, captions: { ...d.captions, x: snapX(origin.x + dx), y: origin.y + dy } }, W, H);
+      d.captions = { ...d.captions, x: r3(p.x), y: r3(p.y) };
+    }, key);
+
+  const moveText = (id) => (origin, dx, dy, key) =>
+    onChange((d) => {
+      const t = (d.texts || []).find((x) => x.id === id);
+      if (!t) return;
+      const p = textPlacement({ ...t, x: snapX(origin.x + dx), y: origin.y + dy }, W, H);
+      t.x = r3(p.x);
+      t.y = r3(p.y);
+    }, key);
+
+  const moveOverlay = (id, media) => (origin, dx, dy, key) =>
+    onChange((d) => {
+      const b = (d.broll || []).find((x) => x.id === id);
+      if (!b) return;
+      const p = pipPlacement({ ...b, x: snapX(origin.x + dx), y: origin.y + dy }, media, W, H);
+      b.x = r3(p.x);
+      b.y = r3(p.y);
+    }, key);
+
+  const resizeOverlay = (id, media) => (origin, dx, dy, key) =>
+    onChange((d) => {
+      const b = (d.broll || []).find((x) => x.id === id);
+      if (!b) return;
+      const p = pipPlacement({ ...b, w: Math.max(0.15, Math.min(1, origin.w + dx * 2)) }, media, W, H);
+      b.w = r3(p.w);
+      b.x = r3(p.x);
+      b.y = r3(p.y);
+    }, key);
 
   return (
     <div ref={outer} style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, display: "grid", placeItems: "center" }}>
@@ -289,24 +363,124 @@ export default function Preview({ tl, mediaById, playing, onPlayingChange, seek,
             src={mediaById.get(id).proxy_url}
             playsInline
             preload="auto"
-            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: id === activeMedia ? 1 : 0 }}
+            style={{
+              position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover",
+              opacity: id === activeMedia ? 1 : 0, ...(recordingStyle || {}),
+            }}
           />
         ))}
 
-        {!audition && brollMedia && <Broll media={brollMedia} slot={overlay.broll} videoRef={brollVideo} />}
+        {!audition && scale > 0 && overlay.brolls.map((b) => {
+          const media = b.media ? mediaById.get(b.media) : null;
+          if (!media) return null;
+          if (b.layout === "pip") {
+            const g = pipPlacement(b, media, W, H);
+            const selected = selection.kind === "broll" && selection.id === b.id;
+            const body = <BrollMedia media={media} fit="cover" id={b.id} refs={brollVideos} />;
+            if (!editable) {
+              return <div key={b.id} style={{ position: "absolute", left: g.left * scale, top: g.top * scale, width: g.pw * scale, height: g.ph * scale }}>{body}</div>;
+            }
+            return (
+              <Movable
+                key={b.id}
+                label="Overlay: drag to move, pull the corner to resize"
+                style={{ left: g.left * scale, top: g.top * scale, width: g.pw * scale, height: g.ph * scale }}
+                frame={{ fw, fh }}
+                selected={selected}
+                onPress={() => onPick?.("broll", b.id)}
+                origin={{ x: g.x, y: g.y, w: g.w }}
+                onMove={moveOverlay(b.id, media)}
+                onResize={resizeOverlay(b.id, media)}
+                onEnd={() => setGuide(false)}
+              >
+                {body}
+              </Movable>
+            );
+          }
+          const rect = b.layout === "split" ? splitPanes(b, W, H).broll : { x: 0, y: 0, w: W, h: H };
+          return (
+            <div key={b.id} style={{ position: "absolute", left: rect.x * scale, top: rect.y * scale, width: rect.w * scale, height: rect.h * scale, overflow: "hidden", background: "#000" }}>
+              {b.fit !== "cover" && (media.type === "image" ? media.image_url : media.thumb_url) && (
+                <img
+                  src={media.type === "image" ? media.image_url : media.thumb_url}
+                  alt=""
+                  style={{ position: "absolute", inset: "-8%", width: "116%", height: "116%", objectFit: "cover", filter: "blur(18px) brightness(.92)" }}
+                />
+              )}
+              <BrollMedia media={media} fit={b.fit === "cover" ? "cover" : "contain"} id={b.id} refs={brollVideos} />
+            </div>
+          );
+        })}
 
-        {!audition && !brollMedia && overlay.broll && (
+        {!audition && emptySlot && (
           <span style={chip(scale)}>
             <Icon.Camera size={Math.max(11, 30 * scale)} />
-            B-roll here: {overlay.broll.label || "add a clip or image"}
+            B-roll here: {emptySlot.label || "add a clip or image"}
           </span>
         )}
 
-        {!audition && overlay.cue && capPx > 0 && (
-          <Caption text={overlay.cue.text} cap={cap} px={capPx} portrait={H > W} />
+        {!audition && overlay.cue && cp.size > 0 && scale > 0 && (
+          editable ? (
+            <Movable
+              label="Captions: drag to place them anywhere"
+              style={{ left: cp.left * scale, width: cp.boxW * scale, top: cp.cy * scale, transform: "translateY(-50%)" }}
+              frame={{ fw, fh }}
+              hint={tab === "captions"}
+              onPress={() => onPick?.("captions")}
+              origin={{ x: cp.x, y: cp.y }}
+              onMove={moveCaption}
+              onEnd={() => setGuide(false)}
+            >
+              <Caption text={overlay.cue.text} cap={cap} px={cp.size * scale} />
+            </Movable>
+          ) : (
+            <div style={{ position: "absolute", left: cp.left * scale, width: cp.boxW * scale, top: cp.cy * scale, transform: "translateY(-50%)", pointerEvents: "none" }}>
+              <Caption text={overlay.cue.text} cap={cap} px={cp.size * scale} />
+            </div>
+          )
         )}
 
-        {!audition && scale > 0 && overlay.texts.map((t) => <TextOverlay key={t.id} item={t} scale={scale} W={W} H={H} />)}
+        {showCaptionGuide && (
+          <Movable
+            label="Captions: drag to place them anywhere"
+            style={{ left: cp.left * scale, width: cp.boxW * scale, top: cp.cy * scale, transform: "translateY(-50%)" }}
+            frame={{ fw, fh }}
+            hint
+            origin={{ x: cp.x, y: cp.y }}
+            onMove={moveCaption}
+            onEnd={() => setGuide(false)}
+          >
+            <div style={{ textAlign: "center", opacity: 0.85 }}>
+              <Caption text="Your captions show here" cap={cap} px={cp.size * scale} />
+            </div>
+          </Movable>
+        )}
+
+        {!audition && scale > 0 && overlay.texts.map((t) => {
+          const tp = textPlacement(t, W, H);
+          const body = <TextBody item={t} px={tp.size * scale} />;
+          const style = { left: tp.left * scale, width: tp.boxW * scale, top: tp.cy * scale, transform: "translateY(-50%)" };
+          return editable ? (
+            <Movable
+              key={t.id}
+              label="Text: drag to move"
+              style={style}
+              frame={{ fw, fh }}
+              hint={tab === "text"}
+              selected={selection.kind === "text" && selection.id === t.id}
+              onPress={() => onPick?.("text", t.id)}
+              origin={{ x: tp.x, y: tp.y }}
+              onMove={moveText(t.id)}
+              onEnd={() => setGuide(false)}
+            >
+              {body}
+            </Movable>
+          ) : (
+            <div key={t.id} style={{ position: "absolute", pointerEvents: "none", ...style }}>{body}</div>
+          );
+        })}
+
+        {guide && <span aria-hidden="true" style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: 1, background: "rgba(255,214,0,.9)", pointerEvents: "none" }} />}
 
         {audition && (
           <span style={{ ...chip(scale), background: "rgba(255,255,255,.92)", color: "#111" }}>
@@ -316,7 +490,7 @@ export default function Preview({ tl, mediaById, playing, onPlayingChange, seek,
 
         {!clips.length && !audition && (
           <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#bbb", fontSize: 13, padding: 20, textAlign: "center" }}>
-            Every line is turned off. Turn one on to see the edit.
+            Everything is turned off. Turn a part on to see the edit.
           </div>
         )}
 
@@ -367,6 +541,86 @@ function useBox(ref) {
   return size;
 }
 
+/**
+ * Something on the frame that can be dragged, and optionally resized from its
+ * corner. Movement is reported as a fraction of the frame since the press,
+ * together with `origin` as it was at the press, so the caller applies it to
+ * where the thing was when the drag began; every pointer move of one drag
+ * shares one undo step.
+ */
+function Movable({ style, frame, origin, onPress, onMove, onResize, onEnd, selected = false, hint = false, label, children }) {
+  const drag = useRef(null);
+  const [hover, setHover] = useState(false);
+
+  const down = (mode) => (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    drag.current = { mode, x0: e.clientX, y0: e.clientY, origin: { ...origin }, moved: false, key: `drag:${mode}:${e.timeStamp}` };
+    onPress?.();
+  };
+  const move = (e) => {
+    const d = drag.current;
+    if (!d || !frame.fw || !frame.fh) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 3) return;
+    d.moved = true;
+    const dx = (e.clientX - d.x0) / frame.fw;
+    const dy = (e.clientY - d.y0) / frame.fh;
+    if (d.mode === "resize") onResize?.(d.origin, dx, dy, d.key);
+    else onMove?.(d.origin, dx, dy, d.key);
+  };
+  const up = () => {
+    if (drag.current) onEnd?.();
+    drag.current = null;
+  };
+
+  const outline = selected ? "2px solid #FFD600" : hint || hover ? "1.5px dashed rgba(255,255,255,.85)" : "none";
+  return (
+    <div
+      title={label}
+      onPointerDown={down("move")}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
+      onClick={(e) => e.stopPropagation()}
+      style={{ position: "absolute", cursor: "move", touchAction: "none", userSelect: "none", outline, outlineOffset: 2, borderRadius: 4, ...style }}
+    >
+      {children}
+      {onResize && selected && (
+        <span
+          role="presentation"
+          onPointerDown={down("resize")}
+          style={{
+            position: "absolute", right: -9, bottom: -9, width: 18, height: 18, borderRadius: "50%",
+            background: "#FFD600", border: "2px solid #111", cursor: "nwse-resize", touchAction: "none",
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function BrollMedia({ media, fit, id, refs }) {
+  const style = { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: fit, pointerEvents: "none" };
+  if (media.type === "image") return <img src={media.image_url} alt="" draggable={false} style={style} />;
+  return (
+    <video
+      ref={(el) => {
+        if (el) refs.current[id] = el;
+        else delete refs.current[id];
+      }}
+      src={media.proxy_url}
+      muted
+      playsInline
+      preload="auto"
+      style={style}
+    />
+  );
+}
+
 const chip = (scale) => ({
   position: "absolute", left: "4%", top: "3%", maxWidth: "92%",
   display: "inline-flex", alignItems: "center", gap: 6,
@@ -376,31 +630,8 @@ const chip = (scale) => ({
   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", pointerEvents: "none",
 });
 
-function Broll({ media, slot, videoRef }) {
-  const contain = slot.fit !== "cover";
-  const fill = { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: contain ? "contain" : "cover" };
-  const bg = media.type === "image" ? media.image_url : media.thumb_url;
-  return (
-    <div style={{ position: "absolute", inset: 0, background: "#000", overflow: "hidden" }}>
-      {contain && bg && (
-        <img
-          src={bg}
-          alt=""
-          style={{ position: "absolute", inset: "-8%", width: "116%", height: "116%", objectFit: "cover", filter: "blur(18px) brightness(.92)" }}
-        />
-      )}
-      {media.type === "image"
-        ? <img src={media.image_url} alt="" style={fill} />
-        : <video ref={videoRef} src={media.proxy_url} muted playsInline preload="auto" style={fill} />}
-    </div>
-  );
-}
-
-function Caption({ text, cap, px, portrait }) {
+function Caption({ text, cap, px }) {
   const o = Math.max(1, px * 0.07);
-  const pos = cap.position === "middle"
-    ? { top: "50%", transform: "translateY(-50%)" }
-    : { bottom: portrait ? "20%" : "9%" };
   const look = cap.style === "box"
     ? { background: "rgba(0,0,0,.65)", padding: `${px * 0.1}px ${px * 0.22}px`, borderRadius: px * 0.14, boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }
     : cap.style === "clean"
@@ -413,25 +644,17 @@ function Caption({ text, cap, px, portrait }) {
         ].join(","),
       };
   return (
-    <div style={{ position: "absolute", left: "8%", right: "8%", textAlign: "center", pointerEvents: "none", ...pos }}>
-      <span
-        className={hasIndic(text) ? "indic" : undefined}
-        style={{ color: "#fff", fontWeight: 800, fontSize: px, lineHeight: 1.3, ...look }}
-      >
+    <div style={{ textAlign: "center", lineHeight: 1.3 }}>
+      <span className={hasIndic(text) ? "indic" : undefined} style={{ color: "#fff", fontWeight: 800, fontSize: px, lineHeight: 1.3, ...look }}>
         {text}
       </span>
     </div>
   );
 }
 
-function TextOverlay({ item, scale, W, H }) {
-  const px = Math.min(W, H) * ({ s: 0.05, m: 0.064, l: 0.085 }[item.size] || 0.064) * scale;
-  const edge = H > W ? "12%" : "7%";
-  const pos = item.position === "middle"
-    ? { top: "50%", transform: "translateY(-50%)" }
-    : item.position === "bottom" ? { bottom: edge } : { top: edge };
+function TextBody({ item, px }) {
   return (
-    <div style={{ position: "absolute", left: "7%", right: "7%", textAlign: "center", pointerEvents: "none", ...pos }}>
+    <div style={{ textAlign: "center" }}>
       <span
         className={hasIndic(item.text) ? "indic" : undefined}
         style={{

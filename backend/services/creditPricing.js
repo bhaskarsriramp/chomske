@@ -390,18 +390,22 @@ export function wordTarget(seconds, wordsPerSecond) {
  */
 export const EDIT_ANALYSE_CREDITS_PER_MIN = parseInt(process.env.EDIT_ANALYSE_CREDITS_PER_MIN || "4", 10);
 export const EDIT_EXPORT_CREDITS_PER_MIN = parseInt(process.env.EDIT_EXPORT_CREDITS_PER_MIN || "8", 10);
+// Translating captions is a text call on words already transcribed, a small
+// fraction of listening to the recording, and priced like it.
+export const EDIT_TRANSLATE_CREDITS_PER_MIN = parseInt(process.env.EDIT_TRANSLATE_CREDITS_PER_MIN || "1", 10);
 
 /**
- * @param {"analyse"|"export"} kind
- * @param {number} seconds   recording length for analyse, output length for export
+ * @param {"analyse"|"export"|"translate"} kind
+ * @param {number} seconds   recording length for analyse, output length for export,
+ *                           speech being translated for translate
  */
 export function editCost(kind, seconds) {
-  const perMin = kind === "export" ? EDIT_EXPORT_CREDITS_PER_MIN : EDIT_ANALYSE_CREDITS_PER_MIN;
+  const perMin = kind === "export" ? EDIT_EXPORT_CREDITS_PER_MIN : kind === "translate" ? EDIT_TRANSLATE_CREDITS_PER_MIN : EDIT_ANALYSE_CREDITS_PER_MIN;
   return perMin * Math.max(1, Math.ceil((Number(seconds) || 0) / 60));
 }
 
 export default {
-  EDIT_ANALYSE_CREDITS_PER_MIN, EDIT_EXPORT_CREDITS_PER_MIN, editCost,
+  EDIT_ANALYSE_CREDITS_PER_MIN, EDIT_EXPORT_CREDITS_PER_MIN, EDIT_TRANSLATE_CREDITS_PER_MIN, editCost,
   SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, DURATION_PRESETS,
   ENGLISH_TWIN_RATE, PACKAGING_CREDITS, SHOOT_PACK_CREDITS, SIGNUP_FREE_CREDITS, PACKS,
   MAX_SOURCE_VIDEO_SECONDS, MAX_SOURCE_LINKS, MAX_SOURCE_TEXT_CHARS, MAX_PROMPT_CHARS,

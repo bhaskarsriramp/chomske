@@ -1,28 +1,35 @@
 import { useState, useRef } from "react";
 import { errorMessage } from "../../api";
 import { useCredits } from "../../state/CreditsContext";
-import { startAnalysis, removeMedia, reorderRecordings } from "./editApi";
+import { startAnalysis, removeMedia, reorderRecordings, openFreeEdit } from "./editApi";
 import { Btn, Bar, Icon, Notice, Spinner, fmtBytes, fmtTime } from "./ui";
 import { hasIndic } from "./model";
 
 /**
- * Step one: the recording goes in.
+ * Step one: the video goes in.
  *
- * ── WHAT THE CREATOR NEEDS TO HEAR BEFORE UPLOADING ──────────────────────────
+ * ── WHAT THE CREATOR NEEDS TO HEAR BEFORE UPLOADING A SCRIPT RECORDING ───────
  * That mistakes are fine. The most likely reason somebody does not use this is
  * that they think they have to deliver the script perfectly, in order, in one
  * take, and so they edit elsewhere the way they always have. The copy says the
  * opposite in the first sentence: pause, redo a line, say it twice, we keep the
  * last good one.
  *
- * ── SEVERAL FILES ARE ONE RECORDING ──────────────────────────────────────────
- * Phones split long recordings and creators record in parts. Every file here is
- * matched as one continuous take in the order shown, which the arrows change.
+ * ── A VIDEO ON ITS OWN ───────────────────────────────────────────────────────
+ * Has no script to match, so the ask is captions: written from whatever is said,
+ * in whatever language. Skipping them is a real choice (music, silent footage, a
+ * creator who only wants B-roll), so it sits beside the paid button rather than
+ * behind it, and captions can still be written later from the Captions tab.
+ *
+ * ── SEVERAL FILES ARE ONE VIDEO ──────────────────────────────────────────────
+ * Phones split long recordings and creators record in parts. Every file here
+ * plays as one continuous video in the order shown, which the arrows change.
  */
 export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles, onRetryUpload, onDismissUpload, onData, onReload, hasEdit, onBackToEdit }) {
   const { project, script } = data;
+  const free = project.mode === "free";
   const { balance, setBalance, openBuy, canBuy } = useCredits();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [drag, setDrag] = useState(false);
   const input = useRef(null);
@@ -35,15 +42,17 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
   const preparing = recordings.some((r) => r.status === "uploaded" || r.status === "processing") || local.some((u) => u.status !== "failed");
   const cost = project.pricing?.analyse || 0;
   const tooExpensive = typeof balance === "number" && cost > balance;
-  const canMatch = ready.length > 0 && !preparing && !busy && cost > 0 && !tooExpensive;
+  const canAnalyse = ready.length > 0 && !preparing && !busy && cost > 0 && !tooExpensive;
+  const canOpen = ready.length > 0 && !preparing && !busy;
 
-  async function match() {
-    setBusy(true);
+  async function analyse() {
+    setBusy("analyse");
     setError("");
     try {
       const d = await startAnalysis(project.id, cost);
       if (typeof d.balance === "number") setBalance(d.balance);
       onData(d);
+      onBackToEdit();
     } catch (err) {
       const body = err?.response?.data;
       if (body?.insufficient_credits) setBalance(body.balance);
@@ -52,7 +61,22 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
         if (body?.price_changed || body?.preparing) onReload();
       }
     } finally {
-      setBusy(false);
+      setBusy("");
+    }
+  }
+
+  // A free project into the editor as it is: the videos whole, new ones on the end.
+  async function openEdit() {
+    setBusy("open");
+    setError("");
+    try {
+      onData(await openFreeEdit(project.id));
+      onBackToEdit();
+    } catch (err) {
+      setError(errorMessage(err));
+      if (err?.response?.data?.preparing) onReload();
+    } finally {
+      setBusy("");
     }
   }
 
@@ -79,22 +103,36 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
 
   const lines = script?.lines || [];
   const minutes = Math.max(1, Math.ceil((project.pricing?.analyse_seconds || 0) / 60));
+  const perMin = project.pricing?.analyse_per_min || "";
+  const noSound = free && ready.length > 0 && !preparing && cost <= 0;
 
-  const label = busy
+  const primaryLabel = busy === "analyse"
     ? "Starting…"
     : preparing
     ? "Preparing your video…"
     : !ready.length
-    ? "Upload your recording first"
+    ? free ? "Upload your video first" : "Upload your recording first"
+    : free && noSound
+    ? hasEdit ? "Captions are written" : "No sound to caption"
     : tooExpensive
     ? "Not enough credits"
+    : free
+    ? `${hasEdit ? "Write captions for new videos" : "Write captions"} · ${cost} credits`
     : `Match to my script · ${cost} credits`;
+
+  const summary = free
+    ? ready.length
+      ? `${ready.length} video${ready.length === 1 ? "" : "s"}, ${fmtTime(recordings.filter((r) => r.status === "ready").reduce((n, r) => n + (r.duration || 0), 0), false)} in all.${cost > 0 ? ` Captions are ${perMin} credits per started minute (${minutes} min), refunded if they fail.` : ""} Editing is free.`
+      : "Captions are charged per minute of video, refunded if they fail. Uploading and editing are free."
+    : ready.length
+    ? `${ready.length} recording${ready.length === 1 ? "" : "s"}, ${fmtTime(project.pricing?.analyse_seconds || 0, false)} in all. ${perMin} credits per started minute (${minutes} min). Refunded if matching fails.`
+    : "Matching is charged per minute of recording, and refunded if it fails.";
 
   return (
     <div className="hg-scroll" style={{ flex: 1, minHeight: 0 }}>
       <div
         style={{
-          maxWidth: 1080, margin: "0 auto", padding: isNarrow ? "18px 16px 120px" : "28px 24px 120px",
+          maxWidth: 1080, margin: "0 auto", padding: isNarrow ? "18px 16px 140px" : "28px 24px 120px",
           display: "grid", gap: isNarrow ? 18 : 28,
           gridTemplateColumns: isNarrow ? "minmax(0,1fr)" : "minmax(0,1.25fr) minmax(0,1fr)",
           alignItems: "start",
@@ -102,18 +140,25 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
       >
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: isNarrow ? 21 : 25, fontWeight: 750, letterSpacing: "-.025em", color: "var(--ink)", margin: "0 0 8px" }}>
-            Upload your recording
+            {free ? "Upload your video" : "Upload your recording"}
           </h1>
           <p style={{ fontSize: 14.5, lineHeight: 1.65, color: "var(--ink-body)", margin: "0 0 18px" }}>
-            Read the script to camera, in one go or in parts. Pause between lines, redo any line
-            you stumble on, say it twice if you like: we find every line and keep your last good take.
+            {free
+              ? "Any video where you talk. We write captions from what you say, in whatever language you speak, timed to your voice. Then translate them, cut the video, add B-roll, music and text, and export."
+              : "Read the script to camera, in one go or in parts. Pause between lines, redo any line you stumble on, say it twice if you like: we find every line and keep your last good take."}
           </p>
 
           {hasEdit && (
             <div style={{ marginBottom: 14 }}>
-              <Notice tone="warn" action={<Btn size="s" onClick={onBackToEdit}>Back to my edit</Btn>}>
-                Matching again replaces your current edit: trims, B-roll, music and text.
-              </Notice>
+              {free ? (
+                <Notice tone="info" action={<Btn size="s" onClick={openEdit} disabled={!canOpen}>Back to my edit</Btn>}>
+                  Your edit is kept. Videos you add here go on the end of it.
+                </Notice>
+              ) : (
+                <Notice tone="warn" action={<Btn size="s" onClick={onBackToEdit}>Back to my edit</Btn>}>
+                  Matching again replaces your current edit: trims, B-roll, music and text.
+                </Notice>
+              )}
             </div>
           )}
           {project.status === "failed" && project.error && (
@@ -135,11 +180,11 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
               <Icon.Upload size={22} />
             </span>
             <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 4 }}>
-              {isNarrow ? "Choose your recording" : "Drop your recording here"}
+              {isNarrow ? (free ? "Choose your video" : "Choose your recording") : free ? "Drop your video here" : "Drop your recording here"}
             </div>
             <div style={{ fontSize: 12.5, color: "var(--ink-mute)", marginBottom: 14 }}>
               MP4 or MOV, up to {config?.limits?.max_upload_mb ? `${Math.round(config.limits.max_upload_mb / 102.4) / 10} GB` : "2 GB"} a file.
-              {" "}Several files are matched in the order below.
+              {" "}{free ? "Several files play one after another, in the order below." : "Several files are matched in the order below."}
             </div>
             <Btn kind="primary" onClick={() => input.current?.click()} icon={<Icon.Upload size={16} />}>Choose video</Btn>
             <input
@@ -161,6 +206,7 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
                 <RecordingRow
                   key={m.id}
                   media={m}
+                  free={free}
                   index={i}
                   count={recordings.length}
                   upload={local.find((u) => u.mediaId === m.id)}
@@ -174,30 +220,62 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
         </div>
 
         <aside style={{ minWidth: 0 }}>
-          <details open={!isNarrow} style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
-            <summary style={{ cursor: "pointer", padding: "12px 14px", fontSize: 13, fontWeight: 650, color: "var(--ink)", listStyle: "none", display: "flex", justifyContent: "space-between" }}>
-              <span>What you're reading</span>
-              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ink-mute)" }}>{lines.length} lines</span>
-            </summary>
-            <ol style={{ margin: 0, padding: "0 14px 12px", listStyle: "none", maxHeight: isNarrow ? 320 : 460, overflowY: "auto" }} className="hg-scroll">
-              {lines.map((l) => {
-                const text = l.roman || l.text;
-                return (
-                  <li key={l.n} style={{ display: "grid", gridTemplateColumns: "24px minmax(0,1fr)", gap: 8, padding: "8px 0", borderTop: "1px solid var(--line)" }}>
-                    <span style={{ fontSize: 11.5, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums", paddingTop: 2 }}>{l.n}</span>
-                    <span className={hasIndic(text) ? "indic" : undefined} style={{ fontSize: 13.5, lineHeight: 1.55, color: "var(--ink-body)" }}>{text}</span>
+          {free ? (
+            <div style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 12, padding: "12px 14px" }}>
+              <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)", marginBottom: 8 }}>What you can do with it</div>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
+                {[
+                  [Icon.Captions, "Captions in your language", "Every word you say, on screen while you say it. Fix any word by typing."],
+                  [Icon.Globe, "Translate the captions", "Telugu and English speech, captioned in English only, or Hindi, or Tamil. Same timing."],
+                  [Icon.Split, "B-roll three ways", "Full screen, split screen with you in the other half, or an overlay you drag and resize."],
+                  [Icon.Scissors, "Cut, music, text", "Split and remove parts, add music under your voice, put a price on screen."],
+                ].map(([ItemIcon, head, body]) => (
+                  <li key={head} style={{ display: "grid", gridTemplateColumns: "28px minmax(0,1fr)", gap: 8 }}>
+                    <span style={{ width: 28, height: 28, borderRadius: 8, display: "grid", placeItems: "center", background: "var(--made-tint)", color: "var(--made)" }}><ItemIcon size={15} /></span>
+                    <span>
+                      <span style={{ display: "block", fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{head}</span>
+                      <span style={{ display: "block", fontSize: 12.5, lineHeight: 1.5, color: "var(--ink-body)" }}>{body}</span>
+                    </span>
                   </li>
-                );
-              })}
-            </ol>
-          </details>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <details open={!isNarrow} style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+              <summary style={{ cursor: "pointer", padding: "12px 14px", fontSize: 13, fontWeight: 650, color: "var(--ink)", listStyle: "none", display: "flex", justifyContent: "space-between" }}>
+                <span>What you're reading</span>
+                <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ink-mute)" }}>{lines.length} lines</span>
+              </summary>
+              <ol style={{ margin: 0, padding: "0 14px 12px", listStyle: "none", maxHeight: isNarrow ? 320 : 460, overflowY: "auto" }} className="hg-scroll">
+                {lines.map((l) => {
+                  const text = l.roman || l.text;
+                  return (
+                    <li key={l.n} style={{ display: "grid", gridTemplateColumns: "24px minmax(0,1fr)", gap: 8, padding: "8px 0", borderTop: "1px solid var(--line)" }}>
+                      <span style={{ fontSize: 11.5, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums", paddingTop: 2 }}>{l.n}</span>
+                      <span className={hasIndic(text) ? "indic" : undefined} style={{ fontSize: 13.5, lineHeight: 1.55, color: "var(--ink-body)" }}>{text}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </details>
+          )}
 
           <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 12, background: "var(--made-tint)", border: "1px solid var(--made-line)" }}>
-            <div style={{ fontSize: 12.5, fontWeight: 650, color: "var(--ink)", marginBottom: 6 }}>For the cleanest cut</div>
+            <div style={{ fontSize: 12.5, fontWeight: 650, color: "var(--ink)", marginBottom: 6 }}>{free ? "For the best captions" : "For the cleanest cut"}</div>
             <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.65, color: "var(--ink-body)" }}>
-              <li>Take a breath between lines. The pauses are where we cut.</li>
-              <li>Messed up? Stop, and say the whole line again.</li>
-              <li>Quiet room, phone close. Background music makes lines harder to find.</li>
+              {free ? (
+                <>
+                  <li>Quiet room, phone close to you.</li>
+                  <li>Loud background music makes words harder to catch. Add music here afterwards instead.</li>
+                  <li>Names and brands come out best said clearly once.</li>
+                </>
+              ) : (
+                <>
+                  <li>Take a breath between lines. The pauses are where we cut.</li>
+                  <li>Messed up? Stop, and say the whole line again.</li>
+                  <li>Quiet room, phone close. Background music makes lines harder to find.</li>
+                </>
+              )}
             </ul>
           </div>
         </aside>
@@ -212,19 +290,22 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
         }}
       >
         <div style={{ maxWidth: 1080, margin: "0 auto", display: "flex", alignItems: "center", gap: "8px 14px", flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 240px", minWidth: 0, fontSize: 12.5, lineHeight: 1.5, color: "var(--ink-mute)" }}>
-            {ready.length
-              ? `${ready.length} recording${ready.length === 1 ? "" : "s"}, ${fmtTime(project.pricing?.analyse_seconds || 0, false)} in all. ${project.pricing?.analyse_per_min || ""} credits per started minute (${minutes} min). Refunded if matching fails.`
-              : "Matching is charged per minute of recording, and refunded if it fails."}
-          </div>
-          <div style={{ display: "flex", gap: 8, flex: isNarrow ? "1 1 100%" : "0 0 auto" }}>
-            {tooExpensive && canBuy && ready.length > 0 && !preparing && (
+          <div style={{ flex: "1 1 240px", minWidth: 0, fontSize: 12.5, lineHeight: 1.5, color: "var(--ink-mute)" }}>{summary}</div>
+          <div style={{ display: "flex", gap: 8, flex: isNarrow ? "1 1 100%" : "0 0 auto", flexWrap: "wrap" }}>
+            {tooExpensive && canBuy && ready.length > 0 && !preparing && cost > 0 && (
               <Btn size="l" onClick={openBuy} style={{ flex: isNarrow ? 1 : undefined }}>Buy credits</Btn>
             )}
-            <Btn kind="primary" size="l" disabled={!canMatch} onClick={match} style={{ flex: isNarrow ? 1 : undefined }}>
-              {preparing && !busy && <Spinner size={14} />}
-              {label}
-            </Btn>
+            {free && (
+              <Btn size="l" kind={noSound ? "primary" : "ghost"} disabled={!canOpen} onClick={openEdit} style={{ flex: isNarrow ? 1 : undefined }}>
+                {busy === "open" ? "Opening…" : hasEdit ? "Back to my edit" : noSound ? "Start editing" : "Skip captions"}
+              </Btn>
+            )}
+            {!(free && noSound) && (
+              <Btn kind="primary" size="l" disabled={!canAnalyse} onClick={analyse} style={{ flex: isNarrow ? 1 : undefined }}>
+                {preparing && !busy && <Spinner size={14} />}
+                {primaryLabel}
+              </Btn>
+            )}
           </div>
         </div>
       </div>
@@ -267,7 +348,7 @@ function UploadRow({ upload, onRetry, onDismiss }) {
   );
 }
 
-function RecordingRow({ media, index, count, upload, onRemove, onUp, onDown }) {
+function RecordingRow({ media, free, index, count, upload, onRemove, onUp, onDown }) {
   const s = media.status;
   const status = upload && upload.status !== "failed"
     ? upload.status === "finishing" ? "Upload done, preparing…" : `Uploading ${Math.round(upload.progress * 100)}%`
@@ -277,7 +358,7 @@ function RecordingRow({ media, index, count, upload, onRemove, onUp, onDown }) {
     ? "Preparing a preview…"
     : s === "failed"
     ? media.error || "We couldn't read this file."
-    : `Ready · ${fmtTime(media.duration, false)} · ${fmtBytes(media.size)}`;
+    : `Ready · ${fmtTime(media.duration, false)} · ${fmtBytes(media.size)}${free ? media.captioned ? " · captions written" : media.has_audio ? "" : " · no sound" : ""}`;
 
   return (
     <li style={rowStyle}>
@@ -302,7 +383,7 @@ function RecordingRow({ media, index, count, upload, onRemove, onUp, onDown }) {
           </>
         )}
         {s !== "processing" && s !== "uploaded" && !(upload && upload.status !== "failed") && (
-          <Btn size="s" kind="quiet" aria-label="Remove recording" onClick={onRemove} icon={<Icon.Trash />} style={{ padding: 6 }} />
+          <Btn size="s" kind="quiet" aria-label="Remove video" onClick={onRemove} icon={<Icon.Trash />} style={{ padding: 6 }} />
         )}
       </span>
     </li>

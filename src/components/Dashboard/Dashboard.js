@@ -52,7 +52,7 @@ export const CREATE_TABS = ["discover", "import", "idea"];
 // list so a stale link or a refresh on it resolves rather than bouncing to
 // Discover. Shell below sends a human who lands there to Discover instead.
 // "edit" is the editor, full screen over the shell, with the project in ?p=.
-// "videos" is its list, My videos.
+// "videos" is its list, Edit videos, where a project for any video starts too.
 export const TAB_IDS = [...CREATE_TABS, "analysis", "voice", "scripts", "videos", "edit", "dashboard", "profile", "support"];
 
 /**
@@ -306,8 +306,8 @@ function Shell({ user, onSignOut }) {
 
           {/* Full screen over everything, so the edit gets the whole viewport.
               Back returns wherever the creator came from: the script they
-              pressed Edit video under, or My videos. A link opened fresh has no
-              "from", so it lands on My videos. */}
+              pressed Edit video under, or Edit videos. A link opened fresh has no
+              "from", so it lands on Edit videos. */}
           {tab === "edit" && (
             <Suspense fallback={null}>
               <EditorPage

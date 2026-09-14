@@ -2,7 +2,7 @@
  * editSelfTest.js: prove this server can cut a video, before a creator finds out it cannot.
  *
  *   node scripts/editSelfTest.js          run, clean up on success
- *   node scripts/editSelfTest.js --keep   keep the output video and frames to look at
+ *   node scripts/editSelfTest.js --keep   keep the output videos and frames to look at
  *
  * No database, no model, no bucket. It builds a recording whose "speech" is tone
  * bursts separated by silence, in the pattern a real take has: line 1, line 2,
@@ -10,6 +10,10 @@
  * real pipeline over it: pause detection, the matching (with transcripts written
  * here in place of the model's), the first edit, and a full export with Telugu
  * captions, a B-roll image, a text overlay and music.
+ *
+ * A second export exercises what a creator does by hand: captions translated and
+ * dragged off-centre, a split screen each way round, and a transparent graphic
+ * laid over the picture.
  *
  * What it catches, in the order it has gone wrong elsewhere: an ffmpeg build
  * without libass or HarfBuzz, missing caption fonts, a silence threshold that
@@ -21,7 +25,10 @@ import path from "path";
 import fsp from "fs/promises";
 import { ffmpeg, probe, detectSpeech, extractSpeechAudio, FFMPEG_PATH, runProcess } from "../services/media/ffmpeg.js";
 import { alignRecording } from "../services/edit/align.js";
-import { buildInitialTimeline, layout, sanitizeTimeline } from "../services/edit/timeline.js";
+import {
+  buildInitialTimeline, buildFreeTimeline, mergeFreeTimeline, segmentsFromPieces, segmentsOf, layout,
+  captionCues, sanitizeTimeline,
+} from "../services/edit/timeline.js";
 import { renderTimeline, FONTS_DIR } from "../services/edit/render.js";
 
 const keep = process.argv.includes("--keep");
@@ -49,8 +56,11 @@ const LINES = [
   { n: 4, text: "మరిన్ని videos కోసం subscribe చేసుకోండి.", roman: "Marinnee videos kosam subscribe chesukondi." },
 ];
 
+const frame = (video, at, name) => ffmpeg(["-ss", String(at), "-i", video, "-frames:v", "1", "-vf", "scale=540:-2", path.join(dir, name)]);
+
 async function main() {
   await fsp.mkdir(path.join(dir, "render"), { recursive: true });
+  await fsp.mkdir(path.join(dir, "render2"), { recursive: true });
   console.log(`ffmpeg: ${FFMPEG_PATH}`);
   console.log(`work:   ${dir}\n`);
 
@@ -62,7 +72,7 @@ async function main() {
     check(await fsp.stat(path.join(FONTS_DIR, f)).then(() => true, () => false), `font ${f}`);
   }
 
-  // ── A recording, an image, some music ─────────────────────────────────────
+  // ── A recording, an image, a transparent graphic, some music ──────────────
   const rec = path.join(dir, "recording.mp4");
   const gate = BURSTS.map((b) => `between(t,${b.start},${b.end})`).join("+");
   await ffmpeg([
@@ -72,6 +82,12 @@ async function main() {
   ]);
   const img = path.join(dir, "broll.png");
   await ffmpeg(["-f", "lavfi", "-i", "testsrc=size=1280x720:rate=1", "-frames:v", "1", img]);
+  const badge = path.join(dir, "badge.png");
+  await ffmpeg([
+    "-f", "lavfi", "-i", "color=c=black@0.0:s=600x300,format=rgba",
+    "-vf", "drawbox=x=40:y=60:w=520:h=180:color=yellow@1:t=fill:replace=1,drawbox=x=0:y=0:w=600:h=20:color=red@1:t=fill:replace=1",
+    "-frames:v", "1", badge,
+  ]);
   const music = path.join(dir, "music.mp3");
   await ffmpeg(["-f", "lavfi", "-i", "sine=frequency=330:duration=20", "-c:a", "libmp3lame", "-b:a", "96k", music]);
 
@@ -106,8 +122,14 @@ async function main() {
     ],
     aspect: "9:16",
     hasRoman: true,
+    pieces,
   });
   check(tl.broll.length === 1 && tl.broll[0].clip === tl.clips[2].id, "one B-roll slot, on line 3 (the on-camera shot needs none)");
+  check(tl.segments.length === BURSTS.length, `every stretch of speech is a caption segment (${tl.segments.length})`);
+
+  const derived = segmentsOf({ clips: tl.clips, unused: tl.unused });
+  const derivedAgain = segmentsOf({ clips: tl.clips, unused: tl.unused });
+  check(derived.length >= 5 && derived.every((s, i) => s.id === derivedAgain[i].id), `an older edit derives its caption segments with stable ids (${derived.length})`);
 
   tl.broll[0].media = "img1";
   tl.captions.mode = "native";
@@ -116,15 +138,26 @@ async function main() {
 
   const mediaById = new Map([
     ["rec1", { id: "rec1", type: "video", duration: info.duration, has_audio: true, width: 540, height: 960 }],
-    ["img1", { id: "img1", type: "image", duration: 0 }],
+    ["img1", { id: "img1", type: "image", duration: 0, width: 1280, height: 720 }],
+    ["badge", { id: "badge", type: "image", duration: 0, width: 600, height: 300 }],
     ["mus1", { id: "mus1", type: "audio", duration: 20, has_audio: true }],
   ]);
   const clean = sanitizeTimeline(tl, mediaById);
   const lay = layout(clean);
   check(clean.audio.length === 1 && clean.audio[0].duration <= 20, "sanitize clamps the music to the length of the file");
+  check(clean.segments.length === BURSTS.length, "sanitize keeps the caption segments");
+
+  const cues = captionCues(clean);
+  const firstLine = lay.clips[0];
+  check(cues.length > 8 && cues.every((c) => c.end > c.start) && cues[0].start >= firstLine.start - 0.001, `captions follow what was said (${cues.length} cues)`);
+
+  const trimmed = JSON.parse(JSON.stringify(clean));
+  trimmed.clips[0].in = Math.round((trimmed.clips[0].in + 0.9) * 1000) / 1000;
+  const trimmedCues = captionCues(trimmed);
+  check(!trimmedCues.some((c) => c.text.startsWith("Flipkart")) && trimmedCues.length < cues.length, "trimming the start of a line takes its first words' caption with it");
 
   // ── Export ────────────────────────────────────────────────────────────────
-  const paths = { rec1: rec, img1: img, mus1: music };
+  const paths = { rec1: rec, img1: img, mus1: music, badge };
   const started = Date.now();
   let lastStage = "";
   const out = await renderTimeline({
@@ -145,14 +178,50 @@ async function main() {
   check(outInfo.has_audio, "export has sound");
   console.log(`        rendered in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 
-  const brollAt = (lay.broll[0].start + lay.broll[0].end) / 2;
-  const captionAt = (lay.clips[0].start + lay.clips[0].end) / 2;
   const finalVideo = path.join(dir, "export.mp4");
   await fsp.copyFile(out.output, finalVideo);
-  await ffmpeg(["-ss", String(brollAt), "-i", finalVideo, "-frames:v", "1", "-vf", "scale=540:-2", path.join(dir, "frame_broll.png")]);
-  await ffmpeg(["-ss", String(captionAt), "-i", finalVideo, "-frames:v", "1", "-vf", "scale=540:-2", path.join(dir, "frame_caption.png")]);
-  console.log(`\n  frames: ${path.join(dir, "frame_caption.png")}`);
-  console.log(`          ${path.join(dir, "frame_broll.png")}`);
+  await frame(finalVideo, (lay.broll[0].start + lay.broll[0].end) / 2, "frame_broll.png");
+  await frame(finalVideo, (lay.clips[0].start + lay.clips[0].end) / 2, "frame_caption.png");
+
+  // ── By hand: translated captions dragged aside, splits, an overlay ────────
+  const byHand = sanitizeTimeline({
+    ...clean,
+    captions: { ...clean.captions, mode: "tr", lang: "en", x: 0.3, y: 0.42 },
+    segments: clean.segments.map((s) => ({ ...s, tr: { en: `EN ${s.roman}` } })),
+    broll: [
+      { id: "b1", clip: lay.clips[0].id, offset: 0, duration: 1.6, media: "img1", layout: "split", side: "top", fit: "cover", ratio: 0.5 },
+      { id: "b2", clip: lay.clips[2].id, offset: 0.2, duration: 1.4, media: "badge", layout: "pip", x: 0.5, y: 0.72, w: 0.6 },
+      { id: "b3", clip: lay.clips[3].id, offset: 0, duration: 1.2, media: "img1", layout: "split", side: "bottom", fit: "contain", ratio: 0.42 },
+    ],
+    texts: [{ id: "tx1", text: "Dragged", start: 0.2, duration: 8, position: "top", size: "m", x: 0.72, y: 0.08 }],
+    audio: [],
+  }, mediaById);
+  check(byHand.captions.mode === "tr" && byHand.captions.lang === "en" && byHand.captions.x === 0.3, "sanitize keeps translated, dragged captions");
+  check(byHand.broll.map((b) => b.layout).join() === "split,pip,split" && byHand.broll[1].w === 0.6, "sanitize keeps B-roll layouts");
+  check(captionCues(byHand).every((c) => c.text.startsWith("EN") || !/^[A-Z]{2} /.test(c.text)) && captionCues(byHand)[0].text.startsWith("EN"), "translated captions show the translation");
+
+  const layHand = layout(byHand);
+  const out2 = await renderTimeline({ timeline: byHand, mediaById, pathOf: async (id) => paths[id], workDir: path.join(dir, "render2") });
+  const out2Info = await probe(out2.output);
+  check(Math.abs(out2Info.duration - layHand.duration) < 0.25, `hand-edited export runs ${out2Info.duration.toFixed(2)}s against ${layHand.duration.toFixed(2)}s`);
+  const handVideo = path.join(dir, "export_by_hand.mp4");
+  await fsp.copyFile(out2.output, handVideo);
+  const mid = (b) => (b.start + b.end) / 2;
+  await frame(handVideo, mid(layHand.broll[0]), "frame_split_top.png");
+  await frame(handVideo, mid(layHand.broll[1]), "frame_overlay.png");
+  await frame(handVideo, mid(layHand.broll[2]), "frame_split_bottom.png");
+
+  // ── A video with no script ────────────────────────────────────────────────
+  const free = buildFreeTimeline({ recordings: [{ id: "rec1", duration: info.duration }], segments: segmentsFromPieces(pieces), aspect: "9:16" });
+  check(free.clips.length === 1 && Math.abs(layout(free).duration - info.duration) < 0.01, "a video on its own starts as one whole clip");
+  check(captionCues(free).length > 12, `and is captioned from everything said in it (${captionCues(free).length} cues)`);
+  const added = mergeFreeTimeline(free, { recordings: [{ id: "rec1", duration: info.duration }, { id: "rec2", duration: 5 }] });
+  check(added.clips.length === 2 && added.clips[1].media === "rec2", "a second upload joins the end of the edit");
+  const cutOut = mergeFreeTimeline({ ...added, clips: added.clips.slice(0, 1) }, { recordings: [{ id: "rec1", duration: info.duration }, { id: "rec2", duration: 5 }] });
+  check(cutOut.clips.length === 1, "a video the creator cut out does not come back on the next merge");
+
+  console.log(`\n  frames: ${dir}`);
+  for (const f of ["frame_caption", "frame_broll", "frame_split_top", "frame_overlay", "frame_split_bottom"]) console.log(`          ${f}.png`);
 }
 
 main()

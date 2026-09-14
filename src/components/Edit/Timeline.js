@@ -1,28 +1,40 @@
-import { useEffect, useRef, useState } from "react";
-import { layout, anchorAt } from "./model";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { layout, anchorAt, placedSegments } from "./model";
 import { Btn, Icon, fmtTime } from "./ui";
 
 /**
  * The timeline, for a mouse.
  *
- * Four tracks: the lines, B-roll, text and music. Drag a line's edges to trim
- * it, drag B-roll, text or music to move it and their right edge to change how
- * long they last. Click empty track to move the playhead.
+ * Four tracks: the video (script lines, or the parts of a video uploaded on its
+ * own), B-roll, text and music. Drag a clip's edges to trim it, drag B-roll,
+ * text or music to move it and their right edge to change how long they last.
+ * Click empty track to move the playhead.
  *
- * Trims ripple, because that is what the edit is: the lines play one after
- * another with nothing between them, so shortening line 3 pulls line 4 in.
- * B-roll rides with the line it was dropped on.
+ * Clicking the empty B-roll row also offers to put something there: upload a
+ * photo or clip, or pick one already uploaded. That is the moment a creator
+ * decides it: they hear themselves say "this table" and click under it.
  *
- * Desktop only. On a phone the same edits are the buttons in the Script, B-roll,
- * Text and Music panels; a 12-pixel drag handle is not a touch control.
+ * Trims ripple, because that is what the edit is: the clips play one after
+ * another with nothing between them, so shortening one pulls the next in.
+ * B-roll rides with the clip it was dropped on.
+ *
+ * Desktop only. On a phone the same edits are the buttons in the panels; a
+ * 12-pixel drag handle is not a touch control.
  */
 const ROW = 36;
 const LABEL = 64;
+const POPOVER_W = 264;
 const snap = (v) => Math.round(v * 20) / 20;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-export default function Timeline({ tl, lay, mediaById, time, playing, selection, onSelect, onSeek, onChange }) {
+export default function Timeline({
+  tl, lay, mediaById, mode = "script", time, playing, selection, assets = [], waiting = {},
+  onSelect, onSeek, onChange, onSplit, onAddBrollAt, onUploadBrollAt,
+}) {
+  const free = mode === "free";
   const [pps, setPps] = useState(36);
+  const [adding, setAdding] = useState(null);
+  const root = useRef(null);
   const scroller = useRef(null);
   const drag = useRef(null);
 
@@ -32,6 +44,15 @@ export default function Timeline({ tl, lay, mediaById, time, playing, selection,
   const texts = tl.texts || [];
   const audio = tl.audio || [];
 
+  const words = useMemo(() => {
+    if (!free) return new Map();
+    const out = new Map();
+    for (const { seg, clip } of placedSegments(tl, lay)) {
+      if (!out.has(clip.id)) out.set(clip.id, seg.text || seg.roman || "");
+    }
+    return out;
+  }, [free, tl, lay]);
+
   // Keep the playhead in view while playing.
   useEffect(() => {
     const el = scroller.current;
@@ -39,6 +60,23 @@ export default function Timeline({ tl, lay, mediaById, time, playing, selection,
     const x = LABEL + time * pps;
     if (x < el.scrollLeft + LABEL || x > el.scrollLeft + el.clientWidth - 40) el.scrollLeft = x - LABEL - 40;
   }, [time, pps, playing]);
+
+  // The add menu closes on a press anywhere else, Escape, or scrolling away.
+  useEffect(() => {
+    if (!adding) return undefined;
+    const away = (e) => { if (!e.target.closest?.("[data-broll-add]")) setAdding(null); };
+    const key = (e) => { if (e.key === "Escape") setAdding(null); };
+    const el = scroller.current;
+    const scrolled = () => setAdding(null);
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", key);
+    el?.addEventListener("scroll", scrolled);
+    return () => {
+      window.removeEventListener("pointerdown", away, true);
+      window.removeEventListener("keydown", key);
+      el?.removeEventListener("scroll", scrolled);
+    };
+  }, [adding]);
 
   const start = (e, info) => {
     e.stopPropagation();
@@ -93,6 +131,19 @@ export default function Timeline({ tl, lay, mediaById, time, playing, selection,
     onSeek(clamp(x / pps, 0, lay.duration));
   };
 
+  const openAdd = (e) => {
+    if (!lay.duration || !root.current) return;
+    const track = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - track.left - LABEL;
+    if (x < 0) return;
+    const box = root.current.getBoundingClientRect();
+    setAdding({
+      t: clamp(x / pps, 0, Math.max(0, lay.duration - 0.05)),
+      left: clamp(e.clientX - box.left, POPOVER_W / 2 + 8, box.width - POPOVER_W / 2 - 8),
+      top: track.top - box.top,
+    });
+  };
+
   const isSel = (kind, id) => selection.kind === kind && selection.id === id;
 
   const block = ({ key, left, w, label, kind, id, selectKind, color, handles, orig, sub }) => (
@@ -111,7 +162,7 @@ export default function Timeline({ tl, lay, mediaById, time, playing, selection,
     >
       {handles.left && <Handle side="left" onPointerDown={(e) => start(e, { kind: handles.left, id, select: selectKind, orig })} />}
       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
-      {sub && <span style={{ marginLeft: 6, fontWeight: 500, color: "var(--ink-mute)" }}>{sub}</span>}
+      {sub && <span style={{ marginLeft: 6, fontWeight: 500, color: "var(--ink-mute)", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</span>}
       {handles.right && <Handle side="right" onPointerDown={(e) => start(e, { kind: handles.right, id, select: selectKind, orig })} />}
     </div>
   );
@@ -120,12 +171,19 @@ export default function Timeline({ tl, lay, mediaById, time, playing, selection,
   const every = pps >= 80 ? 1 : pps >= 30 ? 5 : pps >= 12 ? 10 : 30;
   for (let s = 0; s <= lay.duration + 0.001; s += every) ticks.push(s);
 
+  const layoutWord = (b) => (b.layout === "split" ? "Split · " : b.layout === "pip" ? "Overlay · " : "");
+
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderBottom: "1px solid var(--line)" }}>
+    <div ref={root} style={{ position: "relative", display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderBottom: "1px solid var(--line)", minWidth: 0 }}>
         <span style={{ fontSize: 11.5, fontWeight: 650, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink-mute)" }}>Timeline</span>
-        <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>Drag a line's edges to trim it. Drag B-roll, text and music to move them.</span>
-        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontSize: 12, color: "var(--ink-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+          Drag edges to trim. Click the B-roll row to add a photo or clip there.
+        </span>
+        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+          {free && (
+            <Btn size="s" icon={<Icon.Scissors size={13} />} onClick={onSplit} title="Split the part under the playhead (S)" style={{ padding: "4px 10px", minHeight: 28 }}>Split</Btn>
+          )}
           <Btn size="s" kind="quiet" aria-label="Zoom out" onClick={() => setPps((p) => Math.max(8, Math.round(p / 1.5)))} style={{ padding: "4px 9px", minHeight: 28 }}>−</Btn>
           <Btn size="s" kind="quiet" aria-label="Zoom in" onClick={() => setPps((p) => Math.min(240, Math.round(p * 1.5)))} style={{ padding: "4px 9px", minHeight: 28 }}>+</Btn>
         </span>
@@ -148,22 +206,23 @@ export default function Timeline({ tl, lay, mediaById, time, playing, selection,
             ))}
           </div>
 
-          <Track label="Lines" icon={<Icon.Script size={12} />}>
-            {clips.map((c) =>
+          <Track label={free ? "Video" : "Lines"} icon={free ? <Icon.Film size={12} /> : <Icon.Script size={12} />}>
+            {clips.map((c, i) =>
               block({
                 key: c.id, id: c.id, selectKind: "clip", left: LABEL + c.start * pps, w: (c.end - c.start) * pps,
-                label: c.line ? `${c.line}` : "+", sub: (c.roman || c.said_roman || c.text || "").slice(0, 40),
-                color: c.line ? "#E7E2DA" : "#EFE6D2",
+                label: free ? `${i + 1}` : c.line ? `${c.line}` : "+",
+                sub: free ? (words.get(c.id) || "").slice(0, 40) : (c.roman || c.said_roman || c.text || "").slice(0, 40),
+                color: free || c.line ? "#E7E2DA" : "#EFE6D2",
                 handles: { left: "clip-in", right: "clip-out" }, orig: { in: c.in, out: c.out },
               })
             )}
           </Track>
 
-          <Track label="B-roll" icon={<Icon.Camera size={12} />}>
+          <Track label="B-roll" icon={<Icon.Camera size={12} />} onPointerDown={openAdd} hint>
             {broll.map((b) =>
               block({
                 key: b.id, id: b.id, selectKind: "broll", left: LABEL + b.start * pps, w: (b.end - b.start) * pps,
-                label: b.media ? b.label || "B-roll" : `Empty: ${b.label || "B-roll"}`,
+                label: b.media ? `${layoutWord(b)}${b.label || "B-roll"}` : waiting[b.id] ? "Uploading…" : `Empty: ${b.label || "B-roll"}`,
                 color: b.media ? "#D9E6EF" : "repeating-linear-gradient(45deg,#F2F1EE,#F2F1EE 6px,#E8E6E1 6px,#E8E6E1 12px)",
                 handles: { move: "broll-move", right: "broll-len" }, orig: { start: b.start, duration: b.duration },
               })
@@ -196,13 +255,66 @@ export default function Timeline({ tl, lay, mediaById, time, playing, selection,
           />
         </div>
       </div>
+
+      {adding && (
+        <div
+          data-broll-add
+          role="dialog"
+          aria-label="Add B-roll"
+          className="hg-fade"
+          style={{
+            position: "absolute", left: adding.left, top: adding.top - 8, transform: "translate(-50%, -100%)", zIndex: 30,
+            width: POPOVER_W, background: "var(--card)", border: "1px solid var(--line)", borderRadius: 12,
+            boxShadow: "0 18px 44px -18px rgba(15,15,15,.45)", padding: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>B-roll at {fmtTime(adding.t)}</span>
+            <Btn size="s" kind="quiet" aria-label="Close" icon={<Icon.Close size={13} />} onClick={() => setAdding(null)} style={{ padding: 4, minHeight: 0 }} />
+          </div>
+          <Btn
+            kind="primary"
+            size="s"
+            icon={<Icon.Upload size={14} />}
+            style={{ width: "100%" }}
+            onClick={() => { const t = adding.t; setAdding(null); onUploadBrollAt(t); }}
+          >
+            Upload a photo or clip
+          </Btn>
+          {assets.length > 0 && (
+            <>
+              <div style={{ fontSize: 12, color: "var(--ink-mute)", margin: "10px 0 6px" }}>Or use one you uploaded</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 6, maxHeight: 132, overflowY: "auto" }} className="hg-scroll">
+                {assets.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    title={a.filename}
+                    onClick={() => { const t = adding.t; setAdding(null); onAddBrollAt(t, a.id); }}
+                    style={{ position: "relative", aspectRatio: "1 / 1", borderRadius: 7, overflow: "hidden", border: "1px solid var(--line)", padding: 0, cursor: "pointer", background: "#ECEAE6" }}
+                  >
+                    {(a.thumb_url || a.image_url) && <img src={a.thumb_url || a.image_url} alt={a.filename} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                    {a.type === "video" && (
+                      <span style={{ position: "absolute", left: 3, bottom: 3, color: "#fff", background: "rgba(0,0,0,.6)", borderRadius: 4, padding: "0 3px", fontSize: 9.5 }}>{fmtTime(a.duration, false)}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function Track({ label, icon, children }) {
+function Track({ label, icon, children, onPointerDown, hint = false }) {
   return (
-    <div style={{ position: "relative", height: ROW, borderBottom: "1px solid var(--line)" }}>
+    <div
+      onPointerDown={onPointerDown}
+      title={hint ? "Click to add a photo or clip here" : undefined}
+      style={{ position: "relative", height: ROW, borderBottom: "1px solid var(--line)", cursor: hint ? "copy" : undefined }}
+    >
       <span
         style={{
           position: "sticky", left: 0, zIndex: 2, width: LABEL, height: "100%",

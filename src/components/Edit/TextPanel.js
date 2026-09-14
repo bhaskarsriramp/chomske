@@ -5,7 +5,8 @@ import { hasIndic, newId } from "./model";
 /**
  * Text on screen: a price, a date, a "link in bio". Placed at the playhead,
  * because the moment a creator decides a number needs to be on screen is the
- * moment they hear themselves say it.
+ * moment they hear themselves say it. Top, middle or bottom to start with, and
+ * anywhere at all by dragging it on the preview.
  */
 export default function TextPanel({ tl, lay, time, selectedId, onSelect, onChange, onSeek }) {
   const inputs = useRef({});
@@ -19,7 +20,7 @@ export default function TextPanel({ tl, lay, time, selectedId, onSelect, onChang
     const id = newId("tx");
     const start = Math.min(Math.max(0, time), Math.max(0, lay.duration - 0.5));
     onChange((d) => {
-      d.texts = [...(d.texts || []), { id, text: "", start: Math.round(start * 10) / 10, duration: 3, position: "top", size: "m" }];
+      d.texts = [...(d.texts || []), { id, text: "", start: Math.round(start * 10) / 10, duration: 3, position: "top", size: "m", x: null, y: null }];
     });
     onSelect(id);
   };
@@ -35,16 +36,17 @@ export default function TextPanel({ tl, lay, time, selectedId, onSelect, onChang
     <Section title={`Text on screen · ${texts.length}`} right={<Btn size="s" icon={<Icon.Plus />} onClick={add} disabled={!lay.duration}>Add at {fmtTime(time)}</Btn>}>
       {!texts.length && (
         <p style={{ fontSize: 13, color: "var(--ink-mute)", margin: 0, lineHeight: 1.6 }}>
-          Move the playhead to where you say a price, a date or a name, and add it as text.
+          Move the playhead to where you say a price, a date or a name, and add it as text. Drag it on the video to place it.
         </p>
       )}
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
         {texts.map((t) => {
           const on = t.id === selectedId;
+          const custom = t.x !== null && t.x !== undefined;
           return (
             <li
               key={t.id}
-              onClick={() => { onSelect(t.id); onSeek(t.start); }}
+              onClick={() => { onSelect(t.id); onSeek(t.start + 0.01); }}
               style={{ borderRadius: 12, border: `1px solid ${on ? "var(--ink)" : "var(--line)"}`, background: "var(--card)", padding: "10px 12px", display: "grid", gap: 10, cursor: "pointer" }}
             >
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -69,9 +71,12 @@ export default function TextPanel({ tl, lay, time, selectedId, onSelect, onChang
                     <Nudge label="Lasts" value={t.duration} step={0.5} min={0.5} max={60} format={(v) => `${v.toFixed(1)}s`} onChange={(v) => update(t.id, (x) => { x.duration = v; }, `du:${t.id}`)} />
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    <Segmented size="s" label="Position" value={t.position} onChange={(v) => update(t.id, (x) => { x.position = v; })} options={[{ value: "top", label: "Top" }, { value: "middle", label: "Middle" }, { value: "bottom", label: "Bottom" }]} />
+                    <Segmented size="s" label="Position" value={custom ? "custom" : t.position} onChange={(v) => update(t.id, (x) => { x.position = v; x.x = null; x.y = null; })} options={[{ value: "top", label: "Top" }, { value: "middle", label: "Middle" }, { value: "bottom", label: "Bottom" }]} />
                     <Segmented size="s" label="Size" value={t.size} onChange={(v) => update(t.id, (x) => { x.size = v; })} options={[{ value: "s", label: "S" }, { value: "m", label: "M" }, { value: "l", label: "L" }]} />
                     <Btn size="s" onClick={() => update(t.id, (x) => { x.start = Math.round(time * 10) / 10; })}>Start at playhead</Btn>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--ink-mute)" }}>
+                    {custom ? "Placed by hand on the video." : "Or drag it on the video to put it anywhere."}
                   </div>
                 </div>
               )}
