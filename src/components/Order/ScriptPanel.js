@@ -5,9 +5,8 @@ import { useCredits } from "../../state/CreditsContext";
 import { useProfiles } from "../../state/ProfileContext";
 import { useVoice } from "../../state/VoiceContext";
 import VoiceAnalysing from "../Transcribe/VoiceAnalysing";
-import ScriptToggle, { EnglishNote } from "./ScriptToggle";
 import UploadPackage from "./UploadPackage";
-import ShootPack from "./ShootPack";
+import ScriptCard from "./ScriptCard";
 import { timeAgo } from "../News/newsUtils";
 
 /**
@@ -58,7 +57,6 @@ export default function ScriptPanel({
   const [script, setScript] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
 
   // ── WHAT IS ALREADY ON FILE FOR THIS SUBJECT ────────────────────────────
   // Starts true, before any lookup has been made, and that default is the
@@ -75,28 +73,10 @@ export default function ScriptPanel({
   // instead of to an empty panel.
   const [reorder, setReorder] = useState(false);
 
-  // The shoot pack overlay. Not a route: it belongs to one script, and giving
-  // it a URL would mean a link that resolves to nothing the moment the panel
-  // behind it is showing a different story.
-  const [shoot, setShoot] = useState(false);
-
-  /**
-   * Which version of the script is being read: native, roman or english.
-   *
-   * ── WHY IT LIVES UP HERE AND NOT IN THE CARD ──────────────────────────────
-   * It used to be local to Result, which was right while it only chose between
-   * a script and its English twin: two things you read at a desk, on one card.
-   *
-   * Roman changes that, because Roman is not a different document, it is the
-   * same document in the alphabet this creator reads fastest. Somebody who
-   * switched the card to Roman did not express a preference about the card;
-   * they told us how they read. Making them say it a second time in the shoot
-   * pack, and a third time in the teleprompter, at the exact moment they are
-   * setting up a camera, is the worst possible place to ask.
-   *
-   * So the choice is made once and carried into the overlay.
-   */
-  const [view, setView] = useState("native");
+  // Which tab and which letters the finished script is read in used to live up
+  // here, to be carried into a full-screen shoot pack overlay. The overlay is
+  // gone: the B-roll plan is now a tab on the card, and the card owns both
+  // choices (Order/ScriptCard.js), including what the teleprompter shows.
 
   // The balance lives in one place for the whole app (see CreditsContext). It
   // is shown in the sidebar and the mobile header at the same time as here, and
@@ -132,7 +112,6 @@ export default function ScriptPanel({
     clearInterval(pollRef.current);
     setScript(null);
     setError("");
-    setCopied(false);
     setBusy(false);
     setReorder(false);
     setLookingUp(true);
@@ -238,7 +217,6 @@ export default function ScriptPanel({
   async function generate(force = false, order = null) {
     if (busy) return;
     setError("");
-    setCopied(false);
     setReorder(false);
     setBusy(true);
     try {
@@ -296,19 +274,6 @@ export default function ScriptPanel({
       }
       setError(errorMessage(err));
     }
-  }
-
-  /**
-   * @param {string} [text]  the version currently on screen. Defaults to the
-   *   script itself, so a caller with nothing to choose between still works.
-   */
-  function copyScript(text) {
-    const body = text || script?.text;
-    if (!body) return;
-    navigator.clipboard.writeText(body).then(
-      () => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
-      () => setError("Couldn't copy. Select the text and copy it manually.")
-    );
   }
 
   const hasVoice = !!voice?.profile;
@@ -447,30 +412,10 @@ export default function ScriptPanel({
         <Result
           script={script}
           compact={compact}
-          copied={copied}
-          onCopy={copyScript}
-          busy={busy}
-          view={view}
-          onView={setView}
           onWriteAnother={() => setReorder(true)}
-          onOpenShoot={() => setShoot(true)}
-        />
-      )}
-
-      {/* Full-screen over the app rather than a panel below it. A shoot pack is
-          read while setting up a camera, not while browsing, and the shot list
-          has to be the only thing on the screen for that to work. */}
-      {shoot && script?.status === "done" && (
-        <ShootPack
-          script={script}
-          // Opens in whatever the creator was already reading. `english` is
-          // deliberately collapsed to native here: the shoot pack's timecodes,
-          // cues and shot list are all bound to the lines of the script that
-          // was actually written, and the twin is a different set of sentences
-          // with no line-level correspondence to them.
-          roman={view === "roman"}
-          onClose={() => setShoot(false)}
-          onUpdated={(next) => setScript((s) => ({ ...s, ...next }))}
+          // Matched on id: a plan that lands after the creator has clicked on
+          // to another story must not be written onto the script now showing.
+          onUpdated={(id, next) => setScript((s) => (s && s.id === id ? { ...s, ...next } : s))}
         />
       )}
     </section>
@@ -562,133 +507,27 @@ function Writing({ note }) {
   );
 }
 
-function Result({ script, compact, copied, onCopy, view, onView, onWriteAnother, onOpenShoot }) {
-  // A script can arrive without its twin and gain it a moment later (the extras
-  // are written after the script is marked done, see backend routes/script.js),
-  // so this is read on every render rather than captured once.
-  //
-  // The Roman version is not like that: it is written BEFORE the status flips,
-  // so it is either there when the card first paints or it is never coming.
-  const hasEnglish = !!script.english_text;
-  const hasRoman = !!script.roman_text;
-
-  // Falls back to the native text rather than to an empty card if `view` ever
-  // names a version this script does not have, which is what happens for the
-  // half-second after a regenerate replaces a script that had a twin with one
-  // that does not.
-  const showing =
-    view === "english" && hasEnglish ? script.english_text
-      : view === "roman" && hasRoman ? script.roman_text
-        : script.text;
-
-  // Only the native script wants the Noto Indic stack. Roman and English are
-  // both Latin text, and the Indic face would render them in a fallback for no
-  // reason. Roman keeps the native line height, though: it is the same
-  // sentences at the same length, read at the same pace, and the looser English
-  // leading would make it look like a different document.
-  const isLatinView = view === "english" || view === "roman";
+function Result({ script, compact, onWriteAnother, onUpdated }) {
+  // What the card header always said: the language, the length, and the honest
+  // note about a voice learned from one video. The card decides where it fits.
+  const meta = [
+    script.language_label || "Your voice",
+    script.duration_seconds ? fmtDuration(script.duration_seconds) : "",
+    script.voice_confidence === "thin" ? "learned from one video" : "",
+  ].filter(Boolean).join(" · ");
 
   return (
     <div className="hg-rise">
-      <div
-        style={{
-          background: "var(--card)", border: "1px solid var(--line)",
-          borderRadius: "var(--radius)", overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            gap: 10, flexWrap: "wrap", padding: "11px 15px",
-            // The one card in the app that is the finished thing. A faint wash
-            // of the "you made this" hue marks it as the payoff without turning
-            // the script itself into a coloured box.
-            borderBottom: "1px solid var(--made-line)", background: "var(--made-tint)",
-          }}
-        >
-          <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>
-            {script.language_label || "Your voice"}
-            {script.duration_seconds ? ` · ${fmtDuration(script.duration_seconds)}` : ""}
-            {script.voice_confidence === "thin" && " · learned from one video"}
-          </span>
-          {/* Copy only. Rewrite used to sit here and it was a button that charged
-              full price for a second attempt at something the creator had
-              already paid for, one click away from the thing they actually
-              wanted. Ordering another script is still possible from the panel
-              above, where the price is on the button. */}
-          {/* ── THE ACTION ROW ──────────────────────────────────────────────
-              Wraps rather than scrolls, and the two buttons keep the same
-              order at every width, so the one a creator reaches for does not
-              move between their phone and their desk.
-
-              B-roll sits to the LEFT of Copy deliberately. Copy is what you
-              press when you are finished with this screen; B-roll is what you
-              press when you are not, and the thing that continues the job
-              should come before the thing that ends it. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <ScriptToggle
-              value={view}
-              onChange={onView}
-              nativeLabel={script.language_label}
-              hasRoman={hasRoman}
-              hasEnglish={hasEnglish}
-            />
-            {/* Renders nothing at all when the script has neither, so the
-                conditional that used to live here moved inside the component:
-                there are two independent reasons to draw it now, and deciding
-                that at the call site meant every call site repeating it. */}
-            <button
-              onClick={onOpenShoot}
-              className="hg-btn-ghost"
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-                border: `1px solid ${script.shoot_pack ? "var(--made-line)" : "var(--line)"}`,
-                background: script.shoot_pack ? "var(--made-tint)" : "var(--card)",
-                color: "var(--ink-body)", cursor: "pointer", whiteSpace: "nowrap",
-              }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M3 7h13v10H3zM16 10l5-3v10l-5-3" />
-              </svg>
-              B-roll
-            </button>
-            <button
-              onClick={() => onCopy(showing)}
-              className="hg-btn-ghost"
-              style={{
-                fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-                border: "1px solid var(--line)", background: "var(--card)",
-                color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {copied ? "Copied" : "Copy script"}
-            </button>
-          </div>
-        </div>
-
-        {script.english_error && <EnglishNote message={script.english_error} />}
-
-        {/* `indic` only on the script in their own language, see isLatinView
-            above. Keyed on the view so the switch is a real swap rather than a
-            mutation of one node, which is what lets the fade read as a change
-            of content. */}
-        <div
-          key={view}
-          className={isLatinView ? "hg-fade" : "indic hg-fade"}
-          style={{
-            padding: compact ? 17 : 22,
-            fontSize: compact ? 15.5 : 16.5,
-            color: "var(--ink)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            lineHeight: view === "english" ? 1.75 : undefined,
-          }}
-        >
-          {showing}
-        </div>
-      </div>
+      {/* Keyed on the script, so "Write another version" opens on the B-roll
+          plan in English letters again rather than wherever the last one was
+          left, and never shows the last script's plan under the new one. */}
+      <ScriptCard
+        key={script.id}
+        script={script}
+        compact={compact}
+        meta={meta}
+        onUpdated={onUpdated}
+      />
 
       <UploadPackage script={script} compact={compact} />
 

@@ -6,7 +6,7 @@ import { timeAgo, sourceLabel } from "../News/newsUtils";
 import Chevron from "../Shell/Chevron";
 import { categoryColor } from "../../theme";
 import { useProfiles } from "../../state/ProfileContext";
-import ScriptToggle, { EnglishNote } from "../Order/ScriptToggle";
+import ScriptCard from "../Order/ScriptCard";
 import UploadPackage, { hasPackage } from "../Order/UploadPackage";
 
 /**
@@ -77,6 +77,12 @@ export default function ScriptsPanel({ onGoTopics }) {
     if (openId && scripts.some((s) => s.id === openId)) return;
     setOpenId(scripts[0].id);
   }, [scripts, isNarrow, openId]);
+
+  // A B-roll plan built while reading an older script is kept on its row, so
+  // opening that script again shows the plan instead of building it again.
+  const patchScript = useCallback((id, next) => {
+    setScripts((list) => list.map((s) => (s.id === id ? { ...s, ...next } : s)));
+  }, []);
 
   const selected = scripts.find((s) => s.id === openId) || null;
   const gut = isPhone ? 16 : 26;
@@ -191,7 +197,7 @@ export default function ScriptsPanel({ onGoTopics }) {
           {!loadedOnce ? (
             <div style={{ padding: 30 }}><DetailSkeleton /></div>
           ) : selected ? (
-            <ScriptDetail key={selected.id} script={selected} />
+            <ScriptDetail key={selected.id} script={selected} onUpdated={patchScript} />
           ) : (
             <div style={{ flex: 1, display: "grid", placeItems: "center", padding: 40 }}>
               <p style={{ fontSize: 13.5, color: "var(--ink-mute)", margin: 0 }}>
@@ -213,7 +219,7 @@ export default function ScriptsPanel({ onGoTopics }) {
             background: "var(--card)", display: "flex", flexDirection: "column",
           }}
         >
-          <ScriptDetail key={selected.id} script={selected} onClose={() => setOpenId(null)} compact />
+          <ScriptDetail key={selected.id} script={selected} onClose={() => setOpenId(null)} onUpdated={patchScript} compact />
         </div>
       )}
     </div>
@@ -522,36 +528,8 @@ function StatusMark({ status }) {
 
 /* ── Detail ────────────────────────────────────────────────────────────── */
 
-function ScriptDetail({ script, onClose, compact }) {
-  const [copied, setCopied] = useState(false);
+function ScriptDetail({ script, onClose, compact, onUpdated }) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
-
-  // ── THE ENGLISH TWIN WAS NOT RENDERED HERE AT ALL ─────────────────────────
-  // The API has always returned `english_text` and this screen never read it,
-  // so the one place a creator goes to find a script they wrote yesterday was
-  // the one place the English version they paid for did not exist. Same control
-  // as the Create screen (Order/ScriptToggle.js), so a script does not change
-  // shape depending on which screen it is being read from.
-  const [view, setView] = useState("native");
-  const hasEnglish = !!script.english_text;
-  const hasRoman = !!script.roman_text;
-  const showing =
-    view === "english" && hasEnglish ? script.english_text
-      : view === "roman" && hasRoman ? script.roman_text
-        : script.text;
-  const isLatinView = view === "english" || view === "roman";
-
-  // Back to the language they wrote in whenever the open script changes: the
-  // choice belongs to the script being read, not to the panel.
-  useEffect(() => { setView("native"); }, [script.id]);
-
-  function copy() {
-    if (!showing) return;
-    navigator.clipboard.writeText(showing).then(
-      () => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
-      () => {}
-    );
-  }
 
   return (
     <>
@@ -639,83 +617,15 @@ function ScriptDetail({ script, onClose, compact }) {
           </div>
         )}
 
+        {/* ── The same card the Create screen shows ─────────────────────────
+            B-roll plan first, English letters first, copy on the card itself.
+            A script should not change shape depending on which screen it is
+            read from, and the copy button stays beside what it copies because
+            a header one is scrolled away by the time a long script is read.
+            Keyed on the script by the parent, so each opens fresh. */}
         {script.status === "done" && (
-          <div
-            style={{
-              background: "var(--card)", border: "1px solid var(--made-line)",
-              borderRadius: "var(--radius)", overflow: "hidden", marginBottom: 22,
-            }}
-          >
-            {/* ── The copy button belongs HERE, not only in the page header ──
-                The header's one sits at the top of a scrolling pane, so on any
-                script longer than a screen it is gone by the time a creator has
-                finished reading and decided they want the text. This is the bar
-                attached to the script itself, which is where the hand already
-                is. Same control as the Create flow's Result card, deliberately,
-                a script should not gain and lose its copy button depending on
-                which screen it is being read from.
-
-                It drives the SAME copy() and `copied` as the header button, so
-                the two never disagree about whether the text is on the
-                clipboard. */}
-            <div
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                gap: 10, flexWrap: "wrap",
-                // Tighter vertically than the label alone needed, so a control
-                // sized for fingers does not make this bar taller than the one
-                // on the Create screen.
-                padding: "6px 8px 6px 15px",
-                borderBottom: "1px solid var(--made-line)",
-                background: "var(--made-tint)",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 11, fontWeight: 700, letterSpacing: "0.12em",
-                  textTransform: "uppercase", color: "var(--ink-mute)",
-                }}
-              >
-                Your script
-              </span>
-              <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                <ScriptToggle
-                  value={view}
-                  onChange={setView}
-                  nativeLabel={script.language_label}
-                  hasRoman={hasRoman}
-                  hasEnglish={hasEnglish}
-                />
-                <button
-                  onClick={copy}
-                  className="hg-btn-ghost"
-                  style={{
-                    fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-                    border: "1px solid var(--line)", background: "var(--card)",
-                    color: copied ? "var(--ok)" : "var(--ink-body)", cursor: "pointer",
-                    flexShrink: 0,
-                  }}
-                >
-                  {copied ? "Copied" : "Copy script"}
-                </button>
-              </span>
-            </div>
-            {script.english_error && <EnglishNote message={script.english_error} />}
-
-            <div
-              key={view}
-              className={isLatinView ? "hg-fade" : "indic hg-fade"}
-              style={{
-                padding: compact ? 17 : 22,
-                fontSize: compact ? 15.5 : 16.5,
-                color: "var(--ink)",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                lineHeight: view === "english" ? 1.75 : undefined,
-              }}
-            >
-              {showing}
-            </div>
+          <div style={{ marginBottom: 22 }}>
+            <ScriptCard script={script} compact={compact} onUpdated={onUpdated} />
           </div>
         )}
 

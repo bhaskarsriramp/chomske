@@ -1,80 +1,138 @@
+import { useMemo, useId } from "react";
+
 /**
- * Which version of this script you are reading.
+ * Which letters this script is read in.
  *
  * ── WHY A TOGGLE AND NOT TWO CARDS ───────────────────────────────────────────
  * The English twin used to be a second card stacked under the first, on the
  * reasoning that they paid for two scripts so both should be visible at once.
  * In practice they are the SAME script twice, several hundred words each, and
  * stacking them meant scrolling a full screen of Telugu to reach the English of
- * the thing you had just read, with the title ideas and the sources pushed a
- * page and a half down. Nobody reads both at once; they read one and copy it.
+ * the thing you had just read. Nobody reads both at once; they read one and
+ * copy it. So it is one card with states.
  *
- * So it is one card with states, and the control sits next to Copy, because the
- * choice and the action are the same decision: this is the version I want.
+ * ── THE LABELS SAY WHAT A CREATOR SEES, NOT WHAT A LINGUIST CALLS IT ─────────
+ * The pills used to read "Telugu · Roman". "Roman" is the correct word for a
+ * transliteration and means nothing to most of the people using this: nobody
+ * thinks of WhatsApp Telugu as "Roman". What they know is whether a line is in
+ * English letters or in Telugu ones, so that is what the pills now say, and the
+ * native pill names its alphabet in that alphabet (తెలుగు, हिन्दी, தமிழ்),
+ * which is both the label and a sample of what pressing it shows.
  *
- * ── THERE ARE NOW THREE, AND TWO OF THEM ARE EASILY CONFUSED ─────────────────
- * Roman is the same script transliterated: same words, same language, English
- * letters. English is a different language for a different audience. Read
- * aloud, Roman and native produce identical audio; English does not.
+ * English letters comes FIRST because it is the default: it is the version most
+ * creators read fastest, and the one the card opens on.
  *
- * Which is why the native pill lost its hyphenated half. The label used to read
- * "Telugu-English", describing the code-mixing honestly, and that was fine
- * beside a single "English" option. With three pills it put "Telugu-English"
- * next to "Roman" next to "English" and invited exactly the wrong reading, that
- * one of them is more English than another. "Telugu · Roman · English" says the
- * true thing: one language, two alphabets, and a translation.
+ * The English twin, when a script has one, is a different document rather than
+ * a different alphabet, so it is labelled as a version: "English version".
  *
  * Each pill renders only when there is something behind it, and the group
- * renders not at all when the script has neither a Roman nor an English
- * version. A switch that does nothing is worse than no switch.
+ * renders not at all when there is only one thing to show. A switch that does
+ * nothing is worse than no switch.
  */
-export default function ScriptToggle({ value, onChange, nativeLabel, hasRoman = false, hasEnglish = false }) {
+export default function ScriptToggle({
+  value, onChange, nativeLabel, nativeText = "", hasRoman = false, hasEnglish = false, compact = false,
+}) {
+  const native = useMemo(() => alphabetName(nativeText, nativeLabel), [nativeText, nativeLabel]);
+  const labelId = useId();
+
   if (!hasRoman && !hasEnglish) return null;
 
   return (
-    <div
-      role="group"
-      aria-label="Script version"
-      style={{
-        display: "inline-flex", padding: 2, borderRadius: 9, flexShrink: 0,
-        background: "var(--paper)", border: "1px solid var(--line)",
-      }}
-    >
-      <Option
-        on={value === "native"}
-        onClick={() => onChange("native")}
-        label={shortLanguage(nativeLabel)}
-      />
-      {hasRoman && (
-        <Option
-          on={value === "roman"}
-          onClick={() => onChange("roman")}
-          label="Roman"
-          title="The same script in English letters"
-        />
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      {/* Dropped on a narrow card, where the pills have to fit beside Copy;
+          "English letters" beside "తెలుగు" explains itself without it. */}
+      {!compact && (
+        <span id={labelId} style={{ fontSize: 12, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
+          Read in
+        </span>
       )}
-      {hasEnglish && (
+      <div
+        role="group"
+        aria-label={compact ? "Read in" : undefined}
+        aria-labelledby={compact ? undefined : labelId}
+        style={{
+          display: "inline-flex", padding: 2, borderRadius: 9, flexShrink: 0,
+          background: "var(--paper)", border: "1px solid var(--line)",
+        }}
+      >
+        {hasRoman && (
+          <Option
+            on={value === "roman"}
+            onClick={() => onChange("roman")}
+            label="English letters"
+            title="The same script, written in English letters"
+          />
+        )}
         <Option
-          on={value === "english"}
-          onClick={() => onChange("english")}
-          label="English"
-          title="The same story written in English"
+          on={value === "native"}
+          onClick={() => onChange("native")}
+          label={native.label}
+          indic={native.indic}
+          title={native.indic ? "The same script, in its own letters" : undefined}
         />
-      )}
+        {hasEnglish && (
+          <Option
+            on={value === "english"}
+            onClick={() => onChange("english")}
+            label="English version"
+            title="The same story, written in English"
+          />
+        )}
+      </div>
     </div>
   );
+}
+
+/**
+ * Each Indic block, and what its own speakers call it, in its own letters.
+ *
+ * Devanagari is last because Marathi and Nepali share it with Hindi and are
+ * told apart by the language label rather than the letters; same for Assamese,
+ * which shares Bengali's.
+ */
+const ALPHABETS = [
+  { re: /[ఀ-౿]/g, name: "తెలుగు" },
+  { re: /[஀-௿]/g, name: "தமிழ்" },
+  { re: /[ಀ-೿]/g, name: "ಕನ್ನಡ" },
+  { re: /[ഀ-ൿ]/g, name: "മലയാളം" },
+  { re: /[ঀ-৿]/g, name: "বাংলা", byLabel: [[/assam/i, "অসমীয়া"]] },
+  { re: /[઀-૿]/g, name: "ગુજરાતી" },
+  { re: /[਀-੿]/g, name: "ਪੰਜਾਬੀ" },
+  { re: /[଀-୿]/g, name: "ଓଡ଼ିଆ" },
+  { re: /[؀-ۿ]/g, name: "اردو" },
+  { re: /[ऀ-ॿ]/g, name: "हिन्दी", byLabel: [[/marathi/i, "मराठी"], [/nepali/i, "नेपाली"]] },
+];
+
+/**
+ * The native pill's label: read off the script's own text, because the
+ * language label is written by the analyser and says "Hinglish (Telugu-English)"
+ * for a script whose letters are Telugu. The alphabet with the most characters
+ * wins, so a stray symbol from another block cannot relabel a whole script.
+ *
+ * Falls back to the language label, and then to "Your voice", for a script
+ * with no Indic letters in it at all.
+ */
+function alphabetName(text, label) {
+  const sample = String(text || "").slice(0, 4000);
+  let best = null;
+  let bestCount = 0;
+  for (const a of ALPHABETS) {
+    const count = (sample.match(a.re) || []).length;
+    if (count > bestCount) { best = a; bestCount = count; }
+  }
+  if (best) {
+    const override = (best.byLabel || []).find(([re]) => re.test(String(label || "")));
+    return { label: override ? override[1] : best.name, indic: true };
+  }
+  return { label: shortLanguage(label), indic: false };
 }
 
 /**
  * "Telugu-English (Tenglish)" to "Telugu".
  *
  * Drops the parenthetical, which never fitted a pill, and then the second half
- * of the pair, which is the part that misreads beside a Roman and an English
- * option. Splits on both the hyphen and the slash because the label is written
- * by the analyser and has arrived in both shapes.
- *
- * Falls back to "Your voice" for a script written before the language label
- * existed, which is the honest description of what that tab holds.
+ * of the pair. Splits on both the hyphen and the slash because the label is
+ * written by the analyser and has arrived in both shapes.
  */
 function shortLanguage(label) {
   const clean = String(label || "").replace(/\s*\(.*?\)\s*/g, "").trim();
@@ -89,13 +147,11 @@ function shortLanguage(label) {
  * A twin that cannot be written is refunded, and for a while that was the
  * entire response: the credits came back and nobody was told. From the
  * creator's side that is indistinguishable from being charged for nothing,
- * because the balance moves and no screen ever explains it. They ticked a box,
- * they were billed for it, and they are owed the sentence.
+ * because the balance moves and no screen ever explains it.
  *
  * There is deliberately no equivalent for a missing Roman version. It is free
  * and automatic, so a failed one costs the creator nothing and owes them no
- * explanation: the tab is simply not there, which is also what a script in
- * English looks like, where there is nothing to transliterate.
+ * explanation: the pill is simply not there.
  *
  * Amber rather than red: nothing is broken and the script they came for is
  * sitting directly underneath. This is an outcome, not a failure state.
@@ -116,17 +172,19 @@ export function EnglishNote({ message }) {
   );
 }
 
-function Option({ on, onClick, label, title }) {
+function Option({ on, onClick, label, title, indic = false }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={on}
       title={title}
+      className={indic ? "indic" : undefined}
       style={{
-        fontSize: 11.5, fontWeight: 600, fontFamily: "inherit",
+        fontSize: 12, fontWeight: 600,
+        ...(indic ? {} : { fontFamily: "inherit" }),
         padding: "5px 11px", borderRadius: 7, border: "none", cursor: "pointer",
-        whiteSpace: "nowrap",
+        whiteSpace: "nowrap", lineHeight: 1.35,
         background: on ? "var(--card)" : "transparent",
         color: on ? "var(--ink)" : "var(--ink-mute)",
         boxShadow: on ? "0 1px 2px rgba(0,0,0,.07)" : "none",

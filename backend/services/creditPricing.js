@@ -85,13 +85,19 @@ export const PACKAGING_CREDITS = 15;
  * (show_me_phrases, demo_only_phrases) and the timecodes are arithmetic over a
  * measured speaking pace, not inference.
  *
- * Bought AFTER, from the script itself, rather than ticked before it is
- * written. A creator cannot tell whether they want a shot list for a script
- * they have not read, and asking them to decide up front means most of them
- * either pay for something they never open or discover the feature exists only
- * after they have finished recording.
+ * ── NOW INCLUDED WITH EVERY SCRIPT, SO THE DEFAULT IS ZERO ──────────────────
+ * It used to be bought after, from the finished script, on the reasoning that
+ * nobody can tell whether they want a shot list for a script they have not
+ * read. The script card now OPENS on the B-roll plan: it is the first thing a
+ * creator sees, and the point is that it arrives unasked, which it cannot do
+ * with a price on it. So runScript builds it before the script is marked done
+ * and it costs nothing on top of the script.
+ *
+ * Still an env var, for scripts written before that change. If this is ever
+ * set above zero, the client's automatic build is refused with the price rather
+ * than charged (see POST /script/:id/shoot), and only an explicit click spends.
  */
-export const SHOOT_PACK_CREDITS = parseInt(process.env.SHOOT_PACK_CREDITS || "15", 10);
+export const SHOOT_PACK_CREDITS = parseInt(process.env.SHOOT_PACK_CREDITS || "0", 10);
 
 /* ── WHAT THE SCRIPT IS WRITTEN FROM ────────────────────────────────────────
  *

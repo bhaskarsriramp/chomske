@@ -718,12 +718,22 @@ router.get("/:id", authenticateAny, async (req, res) => {
  * a request timeout it moves to the async shape; today that would be
  * engineering for a problem nobody has.
  *
- * ── CHARGED ONCE, EVER ──────────────────────────────────────────────────────
+ * ── CHARGED ONCE, EVER, AND BY DEFAULT NOT AT ALL ───────────────────────────
  * The script it describes is immutable, so the pack is too. A cached pack is
  * returned free on every later open, and the spend happens strictly after the
  * build succeeds: charging first and refunding on failure is the pattern used
  * for the script itself, and it is the wrong one here because the work is
  * short enough to simply do first and bill for after.
+ *
+ * New scripts arrive with their pack already built (runScript). This route is
+ * what the card calls for a script that has none: one written before packs
+ * were included, or one whose included build failed.
+ *
+ * ── `auto` NEVER SPENDS ─────────────────────────────────────────────────────
+ * The card opens on the B-roll plan and asks for it with `auto: true` without
+ * anybody pressing anything. If SHOOT_PACK_CREDITS is ever set above zero, that
+ * request is refused with the price BEFORE the model is called, and only a
+ * request from an explicit click can build and bill.
  */
 router.post("/:id/shoot", authenticateAny, async (req, res) => {
   try {
@@ -741,6 +751,15 @@ router.post("/:id/shoot", authenticateAny, async (req, res) => {
     // Already bought. Free, every time, forever.
     if (doc.shoot_pack) {
       return res.json({ success: true, cached: true, shoot_pack: doc.shoot_pack, charged: 0 });
+    }
+
+    if (req.body?.auto && SHOOT_PACK_CREDITS > 0) {
+      return res.status(402).json({
+        success: false,
+        needs_confirm: true,
+        needed: SHOOT_PACK_CREDITS,
+        message: `A B-roll plan costs ${SHOOT_PACK_CREDITS} credits.`,
+      });
     }
 
     const voice = await voiceFor(req.user.id, doc.profile);
@@ -770,7 +789,7 @@ router.post("/:id/shoot", authenticateAny, async (req, res) => {
       ).catch(() => {});
       return res.status(502).json({
         success: false,
-        message: err.userMessage || "Couldn't build the shoot pack. Please try again.",
+        message: err.userMessage || "Couldn't plan the B-roll for this one. Please try again.",
       });
     }
 
@@ -792,7 +811,7 @@ router.post("/:id/shoot", authenticateAny, async (req, res) => {
           insufficient_credits: true,
           needed: SHOOT_PACK_CREDITS,
           balance: err.balance ?? (await getBalance(req.user.id).catch(() => 0)),
-          message: `A shoot pack costs ${SHOOT_PACK_CREDITS} credits.`,
+          message: `A B-roll plan costs ${SHOOT_PACK_CREDITS} credits.`,
         });
       }
       throw err;
@@ -923,6 +942,18 @@ async function runScript(id, userId, subject, order) {
       languageLabel: out.language_label,
     });
 
+    // ── The B-roll plan, also before `done` ──────────────────────────────────
+    // The script card opens on it, so it has to be there when the card first
+    // paints: a plan that lands a few seconds after the script would replace
+    // what the creator has started reading. Same reasoning as the Roman view
+    // above, and like it, nobody's order and nobody's charge.
+    //
+    // It can never cost the script. A failure or a hang leaves the field empty,
+    // and the card builds the plan on open instead (POST /:id/shoot).
+    const shootPack = await buildIncludedShootPack({
+      id, userId, profileId, seconds, text: out.text, roman,
+    });
+
     await Script.updateOne(
       { _id: id },
       {
@@ -932,6 +963,9 @@ async function runScript(id, userId, subject, order) {
           hook: out.hook,
           roman_text: roman?.text || "",
           roman_aligned: !!roman?.aligned,
+          shoot_pack: shootPack,
+          shoot_pack_at: shootPack ? new Date() : null,
+          shoot_pack_error: "",
           title_suggestions: out.title_suggestions,
           language: out.language,
           language_label: out.language_label,
@@ -1064,6 +1098,43 @@ async function runScript(id, userId, subject, order) {
   }
 }
 
+/** Longest the included B-roll plan may hold a finished, paid-for script back. */
+const INCLUDED_PACK_TIMEOUT_MS = 45000;
+
+/**
+ * The B-roll plan that ships with every script. Never throws.
+ *
+ * Built from the channel's whole voice document, exactly as POST /:id/shoot
+ * does, rather than from the lane-scoped profile the script was written with:
+ * the cues and the speaking pace live on the document.
+ */
+async function buildIncludedShootPack({ id, userId, profileId, seconds, text, roman }) {
+  let timer;
+  try {
+    const voice = profileId ? await voiceFor(userId, profileId) : null;
+    if (!voice?.built_at) return null;
+
+    const built = await Promise.race([
+      buildShootPack({
+        text,
+        // Aligned only, for the reason given in POST /:id/shoot.
+        romanText: roman?.aligned ? roman.text : "",
+        voice: voice.toObject ? voice.toObject() : voice,
+        seconds,
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timed out")), INCLUDED_PACK_TIMEOUT_MS);
+      }),
+    ]);
+    return built?.pack || null;
+  } catch (err) {
+    console.warn(`[script] ${id} shoot pack not included, the card will build it on open: ${err.message}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** "https://www.reuters.com/x/y" -> "reuters.com". Empty for anything unparseable. */
 function hostOf(url) {
   try {
@@ -1133,9 +1204,9 @@ function shape(d) {
 
     description: d.description || "",
 
-    // The shoot pack, when one has been bought. Null is the honest answer for
-    // a script nobody has asked to shoot yet, and it is what the B-roll button
-    // reads to decide between "open" and "build".
+    // The shoot pack (the card's "B-roll plan"). Built with every script now;
+    // null only for a script written before that, or one whose included build
+    // failed, and that is what tells the card to build it on open.
     shoot_pack: d.shoot_pack || null,
     shoot_pack_error: d.shoot_pack_error || "",
     hashtags: d.hashtags || [],

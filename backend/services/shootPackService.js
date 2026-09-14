@@ -221,7 +221,7 @@ export async function buildShootPack({ text, romanText = "", voice, seconds = 60
   } catch (err) {
     console.error("[shoot] generation failed:", err.message);
     throw Object.assign(new Error("shoot pack failed"), {
-      userMessage: "Couldn't build the shoot pack. Please try again.",
+      userMessage: "Couldn't plan the B-roll for this one. Please try again.",
     });
   }
 

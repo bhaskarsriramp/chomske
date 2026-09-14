@@ -291,10 +291,10 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
           publish in, and it doubled the width of a decision that should be one
           checkbox.
 
-          The shoot pack took its place, and deliberately NOT here. It is
-          bought from the finished script (see the B-roll button on the result)
-          because nobody can tell whether they want a shot list for a script
-          they have not read yet. */}
+          The B-roll plan is deliberately NOT a checkbox here either. It comes
+          with every script, and the finished card opens on it (see
+          ScriptCard.js), because nobody can tell whether they want a shot list
+          for a script they have not read, and a surprise cannot be pre-ordered. */}
       <div style={{ marginBottom: 14 }}>
         <Label>Add</Label>
         <div style={{ display: "grid", gap: 7 }}>

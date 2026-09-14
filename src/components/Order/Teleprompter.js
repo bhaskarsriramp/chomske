@@ -25,10 +25,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
  * at least starting from their real pace.
  *
  * ── THE ALPHABET IS CHOSEN UPSTREAM, AND THIS IS WHY IT MATTERS HERE ─────────
- * `roman` comes from the shoot pack, which took it from the script card. There
- * is no control for it on this screen on purpose: a creator who has the phone
- * propped beside a lens and is about to speak should not be hunting for a
- * setting, and the choice was already made twice before they got here.
+ * `roman` comes from the script card's "Read in" switch, which opens on English
+ * letters. There is no control for it on this screen on purpose: a creator who
+ * has the phone propped beside a lens and is about to speak should not be
+ * hunting for a setting, and the choice was already made before they got here.
  *
  * This is nonetheless the screen the whole Roman feature exists for. Everywhere
  * else it is a convenience; a script read at delivery speed, at distance, in an
