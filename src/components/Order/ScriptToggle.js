@@ -11,16 +11,16 @@ import { useMemo, useId } from "react";
  * the thing you had just read. Nobody reads both at once; they read one and
  * copy it. So it is one card with states.
  *
- * ── THE LABELS SAY WHAT A CREATOR SEES, NOT WHAT A LINGUIST CALLS IT ─────────
- * The pills used to read "Telugu · Roman". "Roman" is the correct word for a
- * transliteration and means nothing to most of the people using this: nobody
- * thinks of WhatsApp Telugu as "Roman". What they know is whether a line is in
- * English letters or in Telugu ones, so that is what the pills now say, and the
- * native pill names its alphabet in that alphabet (తెలుగు, हिन्दी, தமிழ்),
- * which is both the label and a sample of what pressing it shows.
+ * ── ROMAN, AND THE ALPHABET NAMED IN ITS OWN LETTERS ─────────────────────────
+ * "Roman" is the word creators here already use for Hindi or Telugu typed in
+ * English letters ("Roman Hindi"), so the transliteration keeps it. It briefly
+ * read "English letters", which was longer and no clearer to the people who
+ * actually use this. The native pill names its alphabet in that alphabet
+ * (తెలుగు, हिन्दी, தமிழ்), which is both the label and a sample of what
+ * pressing it shows.
  *
- * English letters comes FIRST because it is the default: it is the version most
- * creators read fastest, and the one the card opens on.
+ * Roman comes FIRST because it is the default: it is the version most creators
+ * read fastest, and the one the card opens on.
  *
  * The English twin, when a script has one, is a different document rather than
  * a different alphabet, so it is labelled as a version: "English version".
@@ -40,7 +40,7 @@ export default function ScriptToggle({
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
       {/* Dropped on a narrow card, where the pills have to fit beside Copy;
-          "English letters" beside "తెలుగు" explains itself without it. */}
+          "Roman" beside "తెలుగు" explains itself without it. */}
       {!compact && (
         <span id={labelId} style={{ fontSize: 12, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
           Read in
@@ -59,7 +59,7 @@ export default function ScriptToggle({
           <Option
             on={value === "roman"}
             onClick={() => onChange("roman")}
-            label="English letters"
+            label="Roman"
             title="The same script, written in English letters"
           />
         )}

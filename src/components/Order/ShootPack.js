@@ -2,7 +2,7 @@ import { useState } from "react";
 import Skeleton from "../Shell/Skeleton";
 
 /**
- * The B-roll plan: the script, line by line, with each cutaway sitting under
+ * The B-roll view: the script, line by line, with each cutaway sitting under
  * the line that calls for it. Rendered inside the script card (ScriptCard.js).
  *
  * ── WHY IT IS THE FIRST THING A FINISHED SCRIPT SHOWS ────────────────────────
@@ -19,9 +19,11 @@ import Skeleton from "../Shell/Skeleton";
  * the hard part anyway. A shot now sits directly under its line, so where it
  * belongs is where it is, and the layout needs no breakpoint to survive a phone.
  *
- * ── THE ORDER IS STILL THE ORDER OF THE JOB ──────────────────────────────────
- * Have ready comes first. It is the only part that has to be done before the
- * camera rolls, and under a sixty-line script it would be read after.
+ * ── THE SCRIPT FIRST, THEN WHAT TO HAVE READY ────────────────────────────────
+ * The checklist used to lead, on the reasoning that it is the part done before
+ * recording. On the card it pushed the script, which is what a creator opened
+ * this to read, below a box of logos and screenshots. So it follows the lines:
+ * read the plan, then gather what it names. The held-back phrases stay last.
  *
  * @param {"building"|"failed"|"priced"|"idle"} status  only read while `pack`
  *   is null: what the card is doing about the missing plan.
@@ -49,20 +51,14 @@ export default function ShootPack({
   const broll = pack.broll || [];
   const held = pack.held || [];
 
-  const shotsByLine = new Map();
-  for (const s of shots) shotsByLine.set(s.line, [...(shotsByLine.get(s.line) || []), s]);
-
+  const byLine = shotsByLine(shots);
   const timeCol = narrow ? 40 : 48;
 
   return (
     <div className="hg-fade" style={{ padding: pad }}>
-      <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 0 14px" }}>
-        {shots.length
-          ? `Your script, shot by shot, timed to how fast you speak. ${shots.length} shot${shots.length === 1 ? "" : "s"} over ${fmt(pack.total_seconds)}.`
-          : "Your script, timed to how fast you speak. No cutaways: this one is straight to camera."}
+      <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 0 10px" }}>
+        {summary(pack)}
       </p>
-
-      {broll.length > 0 && <Ready broll={broll} done={done} setDone={setDone} />}
 
       {/* Keyed on the alphabet so switching replaces the list rather than
           mutating sixty text nodes in place, which is what stops a long script
@@ -88,17 +84,72 @@ export default function ShootPack({
                 className={roman ? undefined : "indic"}
                 style={{ fontSize: narrow ? 15.5 : 16, lineHeight: 1.65, color: "var(--ink)", wordBreak: "break-word" }}
               >
-                {roman ? (l.roman || l.text) : l.text}
+                {lineText(l, roman)}
               </div>
-              {(shotsByLine.get(l.n) || []).map((s) => <Shot key={s.n} shot={s} />)}
+              {(byLine.get(l.n) || []).map((s) => <Shot key={s.n} shot={s} />)}
             </div>
           </li>
         ))}
       </ol>
 
+      {broll.length > 0 && <Ready broll={broll} done={done} setDone={setDone} />}
+
       {held.length > 0 && <Held held={held} />}
     </div>
   );
+}
+
+/**
+ * The plan as text, for the clipboard, in the same order as the screen.
+ *
+ * What a creator pastes this into is a notes app, a WhatsApp message to their
+ * editor or a Google Doc, none of which keep any formatting. So it is laid out
+ * with nothing but line breaks and indentation, and every shot carries its own
+ * timecode, because in a message the editor reads it is no longer sitting under
+ * a timecoded line.
+ */
+export function packAsText(pack, { roman = false } = {}) {
+  const lines = pack?.lines || [];
+  const broll = pack?.broll || [];
+  const byLine = shotsByLine(pack?.shots || []);
+
+  const out = [`B-roll · ${summaryCounts(pack)}`, ""];
+
+  for (const l of lines) {
+    out.push(`[${fmt(l.at)}] ${lineText(l, roman)}`);
+    for (const s of byLine.get(l.n) || []) {
+      out.push(`    ↳ Shot ${s.n} (${fmt(s.from)}–${fmt(s.to)}): ${s.what}${s.source ? ` · ${s.source}` : ""}`);
+    }
+    out.push("");
+  }
+
+  if (broll.length) {
+    out.push("HAVE THESE READY BEFORE YOU RECORD");
+    for (const b of broll) out.push(`- ${b.item}${b.note ? ` (${b.note})` : ""}`);
+  }
+
+  return out.join("\n").trim();
+}
+
+function shotsByLine(shots) {
+  const map = new Map();
+  for (const s of shots) map.set(s.line, [...(map.get(s.line) || []), s]);
+  return map;
+}
+
+function lineText(l, roman) {
+  return roman ? (l.roman || l.text) : l.text;
+}
+
+function summaryCounts(pack) {
+  const n = (pack?.shots || []).length;
+  return `${n} shot${n === 1 ? "" : "s"} over ${fmt(pack?.total_seconds)}`;
+}
+
+function summary(pack) {
+  return (pack?.shots || []).length
+    ? `Your script, shot by shot, timed to how fast you speak. ${summaryCounts(pack)}.`
+    : "Your script, timed to how fast you speak. No cutaways: this one is straight to camera.";
 }
 
 /* ── The pieces of a plan ─────────────────────────────────────────────────── */
@@ -140,7 +191,7 @@ function Ready({ broll, done, setDone }) {
     <section
       style={{
         border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden",
-        background: "var(--card)", marginBottom: 12,
+        background: "var(--card)", marginTop: 14,
       }}
     >
       <div
@@ -209,7 +260,7 @@ function Held({ held }) {
   return (
     <section
       style={{
-        marginTop: 16, padding: "12px 14px", borderRadius: 10,
+        marginTop: 14, padding: "12px 14px", borderRadius: 10,
         border: "1px solid var(--warn-line, #EFD9A8)", background: "var(--warn-tint, #FDF5E7)",
       }}
     >
@@ -266,7 +317,7 @@ function Building({ pad, narrow }) {
 
 /**
  * Only reachable when SHOOT_PACK_CREDITS is set above zero, for a script that
- * was written without its plan. The price is on the button, as everywhere else.
+ * was written without its B-roll. The price is on the button, as everywhere else.
  */
 function Offer({ pad, price, error, onConfirm, onReadScript }) {
   return (
@@ -276,11 +327,11 @@ function Offer({ pad, price, error, onConfirm, onReadScript }) {
       </div>
       <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)", margin: "0 0 14px" }}>
         We time every line to the pace you speak at, find the places you already
-        point at something on screen, and list the footage to have ready first.
+        point at something on screen, and list the footage to have ready.
       </p>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
         <button onClick={onConfirm} className="hg-btn-primary" style={primaryBtn}>
-          Plan the B-roll{price ? ` · ${price} credits` : ""}
+          Get the B-roll{price ? ` · ${price} credits` : ""}
         </button>
         <TextButton onClick={onReadScript}>Read the full script</TextButton>
       </div>
@@ -297,7 +348,7 @@ function Failed({ pad, error, onRetry, onReadScript }) {
   return (
     <div style={{ padding: pad }}>
       <div style={{ fontSize: 14.5, fontWeight: 600, color: "var(--ink)", marginBottom: 5 }}>
-        The B-roll plan didn't come through
+        The B-roll didn't come through
       </div>
       <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)", margin: "0 0 12px" }}>
         {error || "Something went wrong."} Your script itself is fine.

@@ -680,13 +680,30 @@ router.get("/existing", authenticateAny, async (req, res) => {
     // nothing to hand back; `processing` is included on purpose, so a creator
     // who navigates away mid-write and comes back finds it still being written
     // rather than an order button that would charge them for a second copy.
-    const existing = await Script.findOne({
+    //
+    // ── EVERY VERSION, NOT ONLY THE NEWEST ─────────────────────────────────
+    // "Write another version" is a paid order, and the one before it was paid
+    // for too. Returning only the newest made the older one reachable from My
+    // scripts alone, so the panel lists them all, light, oldest first so v1 is
+    // the first one written. The newest comes back in full because it is the
+    // one on screen; the rest are fetched by id when picked.
+    const rows = await Script.find({
       user: userId, ...key, profile: channel._id, status: { $ne: "failed" },
     })
       .sort({ created_at: -1 })
+      .limit(MAX_VERSIONS)
+      .select("_id status duration_seconds created_at")
       .lean();
 
-    return res.json({ success: true, script: existing ? shape(existing) : null });
+    const existing = rows.length ? await Script.findById(rows[0]._id).lean() : null;
+    const versions = rows.reverse().map((r) => ({
+      id: String(r._id),
+      status: r.status,
+      duration_seconds: r.duration_seconds || 60,
+      created_at: r.created_at,
+    }));
+
+    return res.json({ success: true, script: existing ? shape(existing) : null, versions });
   } catch (err) {
     console.error("[script] GET /existing failed:", err);
     // Soft-fails to "nothing on file". The worst case of a wrong answer here is
@@ -696,7 +713,10 @@ router.get("/existing", authenticateAny, async (req, res) => {
   }
 });
 
-/** GET /script/:id, poll target. */
+/** How many versions of one subject GET /existing lists, newest kept. */
+const MAX_VERSIONS = 30;
+
+/** GET /script/:id, poll target, and how an older version is opened. */
 router.get("/:id", authenticateAny, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: "Invalid id" });

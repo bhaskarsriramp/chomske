@@ -78,7 +78,7 @@ export default function ScriptsPanel({ onGoTopics }) {
     setOpenId(scripts[0].id);
   }, [scripts, isNarrow, openId]);
 
-  // A B-roll plan built while reading an older script is kept on its row, so
+  // A B-roll built while reading an older script is kept on its row, so
   // opening that script again shows the plan instead of building it again.
   const patchScript = useCallback((id, next) => {
     setScripts((list) => list.map((s) => (s.id === id ? { ...s, ...next } : s)));
@@ -618,7 +618,7 @@ function ScriptDetail({ script, onClose, compact, onUpdated }) {
         )}
 
         {/* ── The same card the Create screen shows ─────────────────────────
-            B-roll plan first, English letters first, copy on the card itself.
+            B-roll first, Roman first, copy on the card itself.
             A script should not change shape depending on which screen it is
             read from, and the copy button stays beside what it copies because
             a header one is scrolled away by the time a long script is read.

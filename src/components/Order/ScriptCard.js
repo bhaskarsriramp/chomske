@@ -4,14 +4,14 @@ import api, { errorMessage } from "../../api";
 import { useCredits } from "../../state/CreditsContext";
 import useElementWidth from "../../hooks/useElementWidth";
 import ScriptToggle, { EnglishNote } from "./ScriptToggle";
-import ShootPack from "./ShootPack";
+import ShootPack, { packAsText } from "./ShootPack";
 import Teleprompter from "./Teleprompter";
 
 /** Below this the card stacks its controls and drops their longer labels. */
 const NARROW_PX = 560;
 
 const TABS = [
-  { id: "broll", label: "B-roll plan", icon: "M3 7h13v10H3zM16 10l5-3v10l-5-3" },
+  { id: "broll", label: "B-roll", icon: "M3 7h13v10H3zM16 10l5-3v10l-5-3" },
   { id: "script", label: "Full script", icon: "M4 6h16M4 11h16M4 16h10" },
 ];
 
@@ -25,31 +25,40 @@ const TABS = [
  * and one row of pills mixing "Hinglish · Roman · B-roll" asked them both at
  * once. So:
  *
- *   tabs     B-roll plan | Full script. What the card is showing.
- *   Read in  English letters | తెలుగు. The alphabet, for whichever tab is open,
- *            and for the teleprompter.
+ *   tabs     B-roll | Full script. What the card is showing.
+ *   Read in  Roman | తెలుగు. The alphabet, for whichever tab is open, and for
+ *            the teleprompter.
  *
- * ── IT OPENS ON THE B-ROLL PLAN, IN ENGLISH LETTERS ──────────────────────────
- * Deliberately, every time, rather than remembering the last choice. The plan
- * is what makes a creator stop and read: it is their script already broken
- * into shots, timed to how they talk, which is the case for the product made
- * by the product. English letters because that is what most creators read
- * fastest. Both are one tap from the paragraphs in their own letters.
+ * ── IT OPENS ON THE B-ROLL, IN ROMAN ─────────────────────────────────────────
+ * The B-roll is what makes a creator stop and read: it is their script already
+ * broken into shots, timed to how they talk, which is the case for the product
+ * made by the product. Roman because that is what most creators read fastest.
+ * Both are one tap from the paragraphs in their own letters.
  *
- * Parents key this on the script id, so a new version opens that way again.
+ * Both choices can be held by the parent (`view` and `onView`). ScriptPanel
+ * does, so flipping between v1 and v2 keeps the tab and the letters a creator
+ * was comparing them in. Left out, the card holds them itself.
  *
  * ── A PLAN IS ALMOST ALWAYS ALREADY HERE ─────────────────────────────────────
  * runScript builds it before the script is marked done. For a script written
  * before that, or one whose included build failed, the card asks for it when
  * the B-roll tab is shown, with `auto` so that request can never spend.
+ *
+ * Parents key this on the script id, so that request and its result belong to
+ * exactly one script.
  */
-export default function ScriptCard({ script, compact = false, meta = null, onUpdated }) {
+export default function ScriptCard({ script, compact = false, meta = null, onUpdated, view = null, onView = null }) {
   const [boxRef, width] = useElementWidth();
   const narrow = width ? width < NARROW_PX : compact;
   const uid = useId();
 
-  const [layout, setLayout] = useState("broll");
-  const [alphabet, setAlphabet] = useState("roman");
+  const [ownView, setOwnView] = useState({ layout: "broll", alphabet: "roman" });
+  const current = view || ownView;
+  const setView = onView || setOwnView;
+  const { layout, alphabet } = current;
+  const setLayout = (next) => setView({ ...current, layout: next });
+  const setAlphabet = (next) => setView({ ...current, alphabet: next });
+
   const [copied, setCopied] = useState(null);   // null | "ok" | "failed"
   const [prompting, setPrompting] = useState(false);
 
@@ -103,15 +112,15 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
   }, [layout, pack, script.status, build]);
 
   // ── What is on screen ─────────────────────────────────────────────────────
-  // A plan can only offer English letters if its lines were split in step with
-  // the script's (see buildShootPack), which is stricter than the paragraphs'
-  // test. Before a plan exists the paragraphs' answer is used, so the toggle
-  // does not appear and then vanish while one is being built.
+  // A plan can only offer Roman if its lines were split in step with the
+  // script's (see buildShootPack), which is stricter than the paragraphs' test.
+  // Before a plan exists the paragraphs' answer is used, so the toggle does not
+  // appear and then vanish while one is being built.
   const romanOk = layout === "broll" && pack ? !!pack.has_roman : !!script.roman_text;
   const englishOk = layout === "script" && !!script.english_text;
 
   // The English version is a different document with no line-level match to a
-  // plan, so on the plan tab it falls back to English letters, the nearest thing.
+  // plan, so on the B-roll tab it falls back to Roman, the nearest thing.
   const shown =
     alphabet === "english" && englishOk ? "english"
       : alphabet !== "native" && romanOk ? "roman"
@@ -119,9 +128,18 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
 
   const text = shown === "english" ? script.english_text : shown === "roman" ? script.roman_text : script.text;
 
+  // ── COPY TAKES WHAT THE TAB SHOWS ─────────────────────────────────────────
+  // On the B-roll tab that is the plan: every line with its timecode, each shot
+  // under its line, and the have-ready list, which is what an editor needs from
+  // a WhatsApp message. On Full script it is the paragraphs, ready to read or
+  // paste into a prompter app. In the letters on screen either way. The label
+  // says which, so nobody pastes a shot list where they expected a script.
+  const copyingPlan = layout === "broll" && !!pack;
+  const copyText = copyingPlan ? packAsText(pack, { roman: shown === "roman" }) : text;
+
   function copy() {
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(
+    if (!copyText) return;
+    navigator.clipboard.writeText(copyText).then(
       () => { setCopied("ok"); setTimeout(() => live.current && setCopied(null), 2000); },
       () => { setCopied("failed"); setTimeout(() => live.current && setCopied(null), 3000); }
     );
@@ -171,7 +189,7 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
                 // they are and each is a thumb-sized target.
                 flex: narrow ? "1 1 0" : "0 0 auto",
                 display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7,
-                padding: narrow ? "12px 8px 10px" : "13px 12px 11px",
+                padding: narrow ? "12px 8px 10px" : "13px 14px 11px",
                 // Reset first, then the one edge that stays.
                 border: "none", borderBottom: `2px solid ${on ? "var(--ink)" : "transparent"}`,
                 marginBottom: -1, background: "none", cursor: "pointer",
@@ -235,12 +253,18 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
           <button
             onClick={copy}
             className="hg-btn-ghost"
+            title={copyingPlan ? "Copies every line with its timecode, the shots and the have-ready list" : "Copies the script as paragraphs"}
             style={{
               ...ghostBtn,
               color: copied === "ok" ? "var(--ok)" : copied === "failed" ? "var(--bad)" : "var(--ink-body)",
             }}
           >
-            {copied === "ok" ? "Copied" : copied === "failed" ? "Couldn't copy" : narrow ? "Copy" : "Copy script"}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {copied === "ok"
+                ? <path d="M4 12.5l5.5 5.5L20 6.5" />
+                : <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></>}
+            </svg>
+            {copied === "ok" ? "Copied" : copied === "failed" ? "Couldn't copy" : copyingPlan ? "Copy B-roll" : "Copy script"}
           </button>
         </span>
       </div>

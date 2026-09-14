@@ -51,11 +51,16 @@ const QUOTE_RETRY_MS = 900;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null, cta = "Write this in my voice", onGoVoice }) {
+export default function ScriptOrder({
+  busy, onGenerate, compact, sourceId = null, cta = "Write this in my voice", onGoVoice,
+  // Where the slider starts. Another version of a 3 minute script is most
+  // likely wanted at 3 minutes, not dragged back up from a Short.
+  initialSeconds = 60,
+}) {
   const { balance, setBalance, openBuy, canBuy, rules } = useCredits();
   const { voice } = useVoice();
 
-  const [seconds, setSeconds] = useState(60);
+  const [seconds, setSeconds] = useState(() => Number(initialSeconds) || 60);
   const [packaging, setPackaging] = useState(false);
 
   // The bounds are the server's, not ours. It clamps to them anyway, and a
@@ -291,7 +296,7 @@ export default function ScriptOrder({ busy, onGenerate, compact, sourceId = null
           publish in, and it doubled the width of a decision that should be one
           checkbox.
 
-          The B-roll plan is deliberately NOT a checkbox here either. It comes
+          The B-roll is deliberately NOT a checkbox here either. It comes
           with every script, and the finished card opens on it (see
           ScriptCard.js), because nobody can tell whether they want a shot list
           for a script they have not read, and a surprise cannot be pre-ordered. */}

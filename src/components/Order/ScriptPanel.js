@@ -7,7 +7,16 @@ import { useVoice } from "../../state/VoiceContext";
 import VoiceAnalysing from "../Transcribe/VoiceAnalysing";
 import UploadPackage from "./UploadPackage";
 import ScriptCard from "./ScriptCard";
+import VersionDialog from "./VersionDialog";
 import { timeAgo } from "../News/newsUtils";
+
+/** How a finished script opens: the B-roll, in Roman. See ScriptCard. */
+const DEFAULT_VIEW = { layout: "broll", alphabet: "roman" };
+
+/** The row a version is listed by, from a full script. */
+function lightVersion(s) {
+  return { id: s.id, status: s.status, duration_seconds: s.duration_seconds, created_at: s.created_at };
+}
 
 /**
  * Turn whatever is selected into a script in the creator's own voice.
@@ -67,16 +76,42 @@ export default function ScriptPanel({
   // different states.
   const [lookingUp, setLookingUp] = useState(true);
 
-  // They have seen the script on file and want a different one anyway, at a
-  // different length or simply another go. A flag rather than clearing
-  // `script`, so backing out of that order returns them to the finished work
-  // instead of to an empty panel.
-  const [reorder, setReorder] = useState(false);
+  // ── VERSIONS ────────────────────────────────────────────────────────────
+  // Every script on file for this subject, oldest first, as light rows (see
+  // lightVersion). `script` is whichever one is on screen, which is not always
+  // the newest: a creator can be reading v1 while v2 is still being written.
+  // Each one was paid for, so each stays one tap away instead of being replaced
+  // by the next.
+  const [versions, setVersions] = useState([]);
+  const [switching, setSwitching] = useState(null);   // id being fetched
+  const switchRef = useRef(null);
+  // Full scripts already read this visit, so flipping between two versions to
+  // compare them does not refetch either one.
+  const cacheRef = useRef(new Map());
 
-  // Which tab and which letters the finished script is read in used to live up
-  // here, to be carried into a full-screen shoot pack overlay. The overlay is
-  // gone: the B-roll plan is now a tab on the card, and the card owns both
-  // choices (Order/ScriptCard.js), including what the teleprompter shows.
+  const upsertVersion = useCallback((s) => {
+    if (!s?.id) return;
+    setVersions((vs) => {
+      // Refunded and gone from the server's list, so gone from this one too.
+      if (s.status === "failed") return vs.filter((v) => v.id !== s.id);
+      const i = vs.findIndex((v) => v.id === s.id);
+      if (i === -1) return [...vs, lightVersion(s)];
+      const next = vs.slice();
+      next[i] = lightVersion(s);
+      return next;
+    });
+  }, []);
+
+  // They have read what is on file and want another one anyway. A dialog over
+  // the script, where it used to swap the script out for the order form: the
+  // thing being decided about should stay on the screen while it is decided.
+  const [ordering, setOrdering] = useState(false);
+  const closeOrdering = useCallback(() => setOrdering(false), []);
+
+  // The tab and the letters, held here rather than in the card so a switch
+  // between versions keeps them: comparing v1 with v2 means reading both the
+  // same way. A newly ordered version resets them, being its own first look.
+  const [view, setView] = useState(DEFAULT_VIEW);
 
   // The balance lives in one place for the whole app (see CreditsContext). It
   // is shown in the sidebar and the mobile header at the same time as here, and
@@ -95,6 +130,13 @@ export default function ScriptPanel({
   const { progress: voiceProgress } = useVoice();
 
   const pollRef = useRef(null);
+  // Which script the poll is watching. Not always the one on screen, and
+  // cleared on a subject change so a tick already in flight lands nowhere.
+  const pollIdRef = useRef(null);
+
+  useEffect(() => {
+    if (script?.id) cacheRef.current.set(script.id, script);
+  }, [script]);
 
   // A script belongs to one subject. Switching stories, or preparing new
   // material, must clear the last result and stop its poll, or the previous
@@ -110,10 +152,16 @@ export default function ScriptPanel({
   const subjectKey = `${storyId || ""}|${(storyIds || []).join(",")}|${sourceId || ""}`;
   useEffect(() => {
     clearInterval(pollRef.current);
+    pollIdRef.current = null;
+    switchRef.current = null;
+    cacheRef.current = new Map();
     setScript(null);
+    setVersions([]);
+    setSwitching(null);
     setError("");
     setBusy(false);
-    setReorder(false);
+    setOrdering(false);
+    setView(DEFAULT_VIEW);
     setLookingUp(true);
   }, [subjectKey]);
 
@@ -121,10 +169,18 @@ export default function ScriptPanel({
 
   const startPolling = useCallback((id) => {
     clearInterval(pollRef.current);
+    pollIdRef.current = id;
     pollRef.current = setInterval(async () => {
       try {
         const { data } = await api.get(`/script/${id}`);
-        setScript(data.script);
+        // A tick that lands after the creator moved to another story belongs
+        // to nothing on this screen.
+        if (pollIdRef.current !== id) return;
+        cacheRef.current.set(id, data.script);
+        upsertVersion(data.script);
+        // Only replaces the version on screen. The creator may have gone back
+        // to read v1 while this one is written, and must not be yanked off it.
+        setScript((s) => (s && s.id === id ? data.script : s));
         // ── WHY `done` IS NOT WHERE THIS STOPS ────────────────────────────
         // The script is marked done as soon as the script is written, and the
         // English twin and the packaging are produced after that. Stopping on
@@ -135,6 +191,7 @@ export default function ScriptPanel({
         // cleared whether the extras succeed, fail or are refunded.
         if (data.script.status !== "processing" && !data.script.extras_pending) {
           clearInterval(pollRef.current);
+          pollIdRef.current = null;
           setBusy(false);
           // The first run builds the voice profile as a side effect, refresh the
           // header so it stops saying "no voice yet".
@@ -145,12 +202,14 @@ export default function ScriptPanel({
           refreshCredits();
         }
       } catch (err) {
+        if (pollIdRef.current !== id) return;
         clearInterval(pollRef.current);
+        pollIdRef.current = null;
         setBusy(false);
         setError(errorMessage(err, "Lost track of that script. Try again."));
       }
     }, 2500);
-  }, [onVoiceChange, refreshCredits]);
+  }, [onVoiceChange, refreshCredits, upsertVersion]);
 
   /**
    * ── ASK BEFORE OFFERING TO SELL ─────────────────────────────────────────
@@ -183,6 +242,12 @@ export default function ScriptPanel({
         // Arrowing down the feed opens a lookup per story; only the one they
         // are still looking at may write to this panel.
         if (cancelled) return;
+        // Falls back to the one script when talking to a server that predates
+        // the versions list, so the panel never shows less than it used to.
+        setVersions(
+          Array.isArray(data.versions) ? data.versions
+            : data.script ? [lightVersion(data.script)] : []
+        );
         if (data.script) {
           setScript(data.script);
           // Still being written, most likely because they navigated away
@@ -213,11 +278,13 @@ export default function ScriptPanel({
    * `english` is deliberately never sent any more. The server still knows how
    * to write the twin, and legacy scripts that have one still render it, but
    * nothing here asks for a new one. See the note in ScriptOrder.
+   *
+   * @returns {Promise<"started"|"insufficient"|"error"|"busy">} so the version
+   *   dialog knows whether to close or to stay open over its buy button.
    */
   async function generate(force = false, order = null) {
-    if (busy) return;
+    if (busy) return "busy";
     setError("");
-    setReorder(false);
     setBusy(true);
     try {
       // The voice is sent explicitly rather than left to the server's default.
@@ -248,33 +315,75 @@ export default function ScriptPanel({
 
       const { data } = await api.post("/script", body);
       setScript(data.script);
+      upsertVersion(data.script);
+      if (!data.cached) setView(DEFAULT_VIEW);
       if (typeof data.balance === "number") setBalance(data.balance);
       if (data.script.status === "processing" || data.script.extras_pending) startPolling(data.script.id);
       else { setBusy(false); onVoiceChange?.(); refreshCredits(); }
+      return "started";
     } catch (err) {
       setBusy(false);
       if (err?.response?.data?.needs_transcript) {
         setError("");
         setScript({ status: "needs_voice" });
-        return;
+        return "error";
       }
       // Not an error worth a red box: they simply need to top up, and
       // ScriptOrder already shows the balance and the buy button. Surfacing it
       // twice reads as something having gone wrong.
       if (err?.response?.data?.insufficient_credits) {
         setBalance(err.response.data.balance);
-        return;
+        return "insufficient";
       }
       // Sources are a cache and they expire (backend models/Source.js). On a
       // tab left open for a month this is the expected outcome, not a fault,
       // and the fix is one the creator can do in five seconds.
       if (err?.response?.data?.source_expired) {
         setError("That material has expired. Paste it again and we'll re-read it.");
-        return;
+        return "error";
       }
       setError(errorMessage(err));
+      return "error";
     }
   }
+
+  /**
+   * Put another version on screen.
+   *
+   * Instant for one already read this visit. A cached copy of a version still
+   * being written is only trusted when it is the one the poll keeps current;
+   * otherwise it is fetched, since a stale "processing" copy would show a
+   * spinner over a script that has since finished.
+   */
+  async function showVersion(id) {
+    if (!id || script?.id === id) return;
+    const cached = cacheRef.current.get(id);
+    const settled = cached && cached.status !== "processing" && !cached.extras_pending;
+    if (cached && (settled || pollIdRef.current === id)) {
+      switchRef.current = null;
+      setSwitching(null);
+      setScript(cached);
+      return;
+    }
+    switchRef.current = id;
+    setSwitching(id);
+    try {
+      const { data } = await api.get(`/script/${id}`);
+      if (switchRef.current !== id) return;
+      setScript(data.script);
+      upsertVersion(data.script);
+    } catch (err) {
+      if (switchRef.current === id) setError(errorMessage(err, "Couldn't open that version. Try again."));
+    } finally {
+      if (switchRef.current === id) {
+        switchRef.current = null;
+        setSwitching(null);
+      }
+    }
+  }
+
+  // Where the one on screen sits in the list, for "v2" and "Version 2 of 3".
+  const versionNumber = script?.id ? versions.findIndex((v) => v.id === script.id) + 1 : 0;
 
   const hasVoice = !!voice?.profile;
   const buildingVoice = !!voice?.building;
@@ -286,14 +395,26 @@ export default function ScriptPanel({
           language chip went with it, the order panel below already says which
           voice is writing, and the finished script's own header repeats the
           language. Three copies of one fact is noise, not reassurance. */}
-      <h3
+      {/* The versions sit on the heading's row, where they label everything
+          under them, and wrap beneath it when a phone has no room beside. */}
+      <div
         style={{
-          fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
-          textTransform: "uppercase", color: "var(--ink-mute)", margin: "0 0 13px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: "8px 12px", flexWrap: "wrap", margin: "0 0 13px",
         }}
       >
-        {heading}
-      </h3>
+        <h3
+          style={{
+            fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
+            textTransform: "uppercase", color: "var(--ink-mute)", margin: 0,
+          }}
+        >
+          {heading}
+        </h3>
+        {versions.length > 1 && (
+          <Versions versions={versions} current={script?.id} switching={switching} onPick={showVersion} />
+        )}
+      </div>
 
       {error && (
         <div
@@ -328,47 +449,20 @@ export default function ScriptPanel({
           screen that is about to discover the work is already done. */}
       {!buildingVoice && lookingUp && !script && <LookingUp />}
 
-      {/* `reorder` is the second door into this: they have read what is on file
-          and want another one anyway. */}
-      {!buildingVoice && !lookingUp && (!script || reorder) &&
+      {/* The first order only. Another version is ordered from the dialog. */}
+      {!buildingVoice && !lookingUp && !script &&
         (hasVoice || voice?.transcripts_available > 0) && (
         <div>
-          {reorder && (
-            <div
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                gap: 12, flexWrap: "wrap", marginBottom: 12,
-              }}
-            >
-              <span style={{ fontSize: 13, color: "var(--ink-mute)", lineHeight: 1.55 }}>
-                You've written this one already. This orders a second version.
-              </span>
-              <button
-                type="button"
-                onClick={() => setReorder(false)}
-                className="hg-btn-ghost"
-                style={{
-                  fontSize: 12.5, fontWeight: 600, padding: "6px 12px", borderRadius: 9,
-                  border: "1px solid var(--line)", background: "var(--card)",
-                  color: "var(--ink-body)", cursor: "pointer", flexShrink: 0,
-                }}
-              >
-                Back to it
-              </button>
-            </div>
-          )}
           <ScriptOrder
             busy={busy}
-            // The force flag IS the re-order flag. Without it the server finds
-            // the script already on file and hands the same one back, so the
-            // creator presses a button that promises a new version and watches
-            // nothing change. With it, on the first order, every double-click
-            // would be a second charge, which is what the cache is there to
-            // prevent. Both are correct in exactly one of the two states.
-            onGenerate={(order) => generate(reorder, order)}
+            // Not forced. With nothing on file there is nothing to force past,
+            // and forcing here would make every double-click a second charge,
+            // which is what the server's cache exists to prevent. The version
+            // dialog forces, because there a new script is the whole point.
+            onGenerate={(order) => generate(false, order)}
             compact={compact}
             sourceId={sourceId}
-            cta={reorder ? "Write another version" : cta}
+            cta={cta}
             onGoVoice={onGoVoice || onGoTranscribe}
           />
           {!hasVoice && (
@@ -408,14 +502,39 @@ export default function ScriptPanel({
         </div>
       )}
 
-      {script?.status === "done" && !reorder && (
+      {script?.status === "done" && (
         <Result
           script={script}
           compact={compact}
-          onWriteAnother={() => setReorder(true)}
+          versionNumber={versionNumber}
+          versionCount={versions.length}
+          view={view}
+          onView={setView}
+          onWriteAnother={() => setOrdering(true)}
           // Matched on id: a plan that lands after the creator has clicked on
-          // to another story must not be written onto the script now showing.
+          // to another story or version must not be written onto the one now
+          // showing.
           onUpdated={(id, next) => setScript((s) => (s && s.id === id ? { ...s, ...next } : s))}
+        />
+      )}
+
+      {ordering && (
+        <VersionDialog
+          versionNumber={versions.length + 1}
+          busy={busy}
+          sourceId={sourceId}
+          initialSeconds={script?.duration_seconds}
+          onClose={closeOrdering}
+          onGoVoice={onGoVoice || onGoTranscribe}
+          onGenerate={async (order) => {
+            // Forced: without it the server finds the script on file and hands
+            // the same one back, and the creator watches nothing change.
+            const outcome = await generate(true, order);
+            // Short of credits stays open. ScriptOrder has just been handed the
+            // real balance and now shows the buy button, in the dialog, where
+            // the creator already is.
+            if (outcome !== "insufficient") setOrdering(false);
+          }}
         />
       )}
     </section>
@@ -428,6 +547,67 @@ export default function ScriptPanel({
 function fmtDuration(seconds) {
   const s = Number(seconds) || 0;
   return s >= 120 ? `${Math.round(s / 60)} min` : `${s}s`;
+}
+
+/**
+ * v1, v2, v3: every version of this script on file, oldest first.
+ *
+ * Numbered by the order they were written, which is the only numbering a
+ * creator can reason about ("the second one I asked for"), and carrying the
+ * length because the usual reason for another version is a different one. A
+ * version still being written is listed at once, spinning, so the order they
+ * just paid for is visibly in the list before it is finished.
+ */
+function Versions({ versions, current, switching, onPick }) {
+  return (
+    <div
+      role="group"
+      aria-label="Versions"
+      style={{
+        display: "inline-flex", flexWrap: "wrap", gap: 2, padding: 2, maxWidth: "100%",
+        borderRadius: 9, background: "var(--paper)", border: "1px solid var(--line)",
+      }}
+    >
+      {versions.map((v, i) => {
+        const on = v.id === current;
+        const writing = v.status === "processing";
+        const length = fmtDuration(v.duration_seconds);
+        return (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => onPick(v.id)}
+            aria-pressed={on}
+            aria-label={`Version ${i + 1}, ${length}${writing ? ", being written" : ""}`}
+            title={writing ? `Version ${i + 1} · being written` : `Version ${i + 1} · written ${timeAgo(v.created_at)}`}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              fontSize: 12, fontWeight: 650, fontFamily: "inherit",
+              padding: "5px 10px", borderRadius: 7, border: "none", cursor: "pointer",
+              whiteSpace: "nowrap",
+              background: on ? "var(--card)" : "transparent",
+              color: on ? "var(--ink)" : "var(--ink-mute)",
+              boxShadow: on ? "0 1px 2px rgba(0,0,0,.07)" : "none",
+              opacity: switching === v.id ? 0.55 : 1,
+            }}
+          >
+            v{i + 1}
+            <span style={{ fontWeight: 500, color: "var(--ink-mute)" }}>{length}</span>
+            {writing && (
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 9, height: 9, borderRadius: "50%", flexShrink: 0,
+                  border: "1.5px solid var(--line)", borderTopColor: "var(--made)",
+                  animation: "hg-spin .8s linear infinite",
+                }}
+              />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function NeedsVoice({ onGoTranscribe }) {
@@ -507,7 +687,7 @@ function Writing({ note }) {
   );
 }
 
-function Result({ script, compact, onWriteAnother, onUpdated }) {
+function Result({ script, compact, versionNumber = 0, versionCount = 0, view, onView, onWriteAnother, onUpdated }) {
   // What the card header always said: the language, the length, and the honest
   // note about a voice learned from one video. The card decides where it fits.
   const meta = [
@@ -518,14 +698,16 @@ function Result({ script, compact, onWriteAnother, onUpdated }) {
 
   return (
     <div className="hg-rise">
-      {/* Keyed on the script, so "Write another version" opens on the B-roll
-          plan in English letters again rather than wherever the last one was
-          left, and never shows the last script's plan under the new one. */}
+      {/* Keyed on the script, so a B-roll being built for one version can
+          never land on another. The tab and the letters are held by the panel
+          instead, and survive the switch. */}
       <ScriptCard
         key={script.id}
         script={script}
         compact={compact}
         meta={meta}
+        view={view}
+        onView={onView}
         onUpdated={onUpdated}
       />
 
@@ -550,7 +732,10 @@ function Result({ script, compact, onWriteAnother, onUpdated }) {
           sentence rather than a control. */}
       {onWriteAnother && (
         <p style={{ fontSize: 12, color: "var(--ink-mute)", margin: "8px 0 0", lineHeight: 1.6 }}>
-          Written {timeAgo(script.created_at)}
+          {versionCount > 1 && versionNumber > 0
+            ? `Version ${versionNumber} of ${versionCount}, written `
+            : "Written "}
+          {timeAgo(script.created_at)}
           {script.duration_seconds ? `, ${fmtDuration(script.duration_seconds)}` : ""}.{" "}
           <button
             type="button"
