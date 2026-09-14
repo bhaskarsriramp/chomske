@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import api, { errorMessage } from "../../api";
+import ChannelPicker from "../Transcribe/ChannelPicker";
 
 /**
  * The showcase workbench.
@@ -94,6 +95,30 @@ export default function AdminPanel() {
 
   const urlList = urls.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
 
+  /**
+   * The picker's selection, poured into the form below it.
+   *
+   * ── IT FILLS THE FORM, IT DOES NOT SKIP IT ───────────────────────────────
+   * The obvious shortcut is to create the showcase straight from the picker.
+   * Deliberately not done. The Check step is free, runs the same length gate
+   * and duplicate test the creation path runs, and is the only place an admin
+   * sees what we could actually read BEFORE a single video is paid for. Writing
+   * the URLs into the box preserves that, and keeps one creation path instead
+   * of two that will drift.
+   *
+   * The name is only ever a SUGGESTION: it is written when the field is empty,
+   * and an admin who has already typed something keeps it. A channel title is
+   * usually the right thing to call a creator and occasionally is not, and
+   * silently overwriting what somebody typed is how a careful tool loses trust.
+   */
+  function fromChannel(channel, videos) {
+    setUrls(videos.map((v) => v.url).join("\n"));
+    setName((n) => n.trim() || channel?.title || "");
+    setNotes((n) => n.trim() || [channel?.handle, channel?.channel_id].filter(Boolean).join(" · "));
+    // The pasted set changed, so any previous check no longer describes it.
+    setChecked(null);
+  }
+
   async function inspect() {
     setBusy("inspect");
     setError("");
@@ -158,6 +183,38 @@ export default function AdminPanel() {
       {/* ── Create ─────────────────────────────────────────────────────────── */}
       <section style={{ ...card, marginBottom: 34 }}>
         <h2 style={h2}>New showcase</h2>
+
+        {/* ── FIND THE CHANNEL, DON'T HUNT FOR URLS ──────────────────────────
+            The same picker My voice uses (Transcribe/ChannelPicker.js), against
+            the admin endpoints. It fills in both fields below: the creator name
+            from the channel title, and the URL list from whatever was ticked.
+
+            Above the fields rather than replacing them, because the two cases
+            it cannot serve are both real for outreach: a channel whose handle
+            will not resolve, and a specific older video that is not among the
+            recent uploads we scan. Typing URLs by hand still works and still
+            goes through the same Check step. */}
+        <ChannelPicker
+          base="/admin/channel"
+          maxSeconds={180}
+          onConfirm={fromChannel}
+          copy={{
+            title: "Find the creator's channel",
+            findBlurb: "Their @handle, channel link, or channel name. Fills in the name and URLs below.",
+            confirmBlurb: "Check this is the creator you meant.",
+            pickBlurb: (n, mins) => `Pick up to ${n} videos under ${mins} minutes.`,
+            confirmPrimary: "Use this channel",
+            reject: "Not this one",
+            submit: (n) => `Use ${n} ${n === 1 ? "video" : "videos"}`,
+            submitting: () => "Filling in…",
+            // Across every showcase, not just this one. The failure it prevents
+            // is quiet: building a second showcase for a creator who already
+            // has one, spending five more video reads, and sending a second
+            // link while the first is still live.
+            taken: "Already used in a showcase",
+            placeholder: "@prasadtechintelugu",
+          }}
+        />
 
         <label style={label}>Creator name</label>
         <input

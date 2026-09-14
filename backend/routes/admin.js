@@ -25,6 +25,9 @@ import {
   createShowcase, startShowcaseBuild, inspectUrls, shareUrl, newSlug,
   SHOWCASE_CREDITS, SHOWCASE_MAX_VIDEOS,
 } from "../services/showcaseService.js";
+import { resolveChannel, recentEligible, OFFER_COUNT } from "../services/youtubeChannelService.js";
+import { isYouTubeDataConfigured } from "../services/youtubeDataClient.js";
+import { SHORT_MAX_SECONDS } from "../services/voiceLanes.js";
 
 const router = express.Router();
 
@@ -209,6 +212,122 @@ router.post("/showcases/inspect", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("[admin] inspect failed:", err);
     return res.status(500).json({ success: false, message: "Couldn't check those links." });
+  }
+});
+
+/**
+ * GET /admin/channel/resolve?q=…
+ *
+ * The same ladder of one-unit lookups the creator-facing route uses, behind the
+ * admin gate instead. Two endpoints rather than one shared one because the
+ * QUESTION is different even though the lookup is identical: a creator is
+ * naming their own channel and the server can scope everything to their profile
+ * and their slots, while an admin is naming somebody else's and there is no
+ * profile in existence yet to count against.
+ *
+ * Nothing is duplicated that matters. Both handlers are a dozen lines over
+ * services/youtubeChannelService.js, which is where the resolver actually lives.
+ */
+router.get("/channel/resolve", requireAdmin, async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (!q) return res.status(400).json({ success: false, message: "Type a channel name, @handle or link." });
+  if (q.length > 200) return res.status(400).json({ success: false, message: "That is too long." });
+  if (!isYouTubeDataConfigured()) {
+    return res.status(503).json({ success: false, message: "Channel lookup is unavailable. Paste URLs instead." });
+  }
+
+  try {
+    const { match, candidates, searched, units } = await resolveChannel(q);
+    console.log(
+      `[admin] resolve "${q}" -> ${match ? match.handle || match.channel_id : `${candidates.length} candidates`} ` +
+      `· ${units} units${searched ? " · SEARCHED" : ""}`
+    );
+    if (!match && !candidates.length) {
+      return res.json({
+        success: true, match: null, candidates: [],
+        message: "No channel found. Try the @handle, or a link to the channel or one of its videos.",
+      });
+    }
+    return res.json({ success: true, match, candidates });
+  } catch (err) {
+    console.warn(`[admin] resolve failed for "${q}": ${err.message}`);
+    return res.status(err?.keyExhausted ? 503 : 502).json({
+      success: false,
+      message: err?.keyExhausted
+        ? "Channel lookup is paused right now. Paste URLs instead."
+        : "Couldn't search for that channel.",
+    });
+  }
+});
+
+/**
+ * GET /admin/channel/videos?channel_id=…
+ *
+ * A channel's recent videos short enough for a showcase.
+ *
+ * ── THE CEILING IS THE SHORT LANE'S, NOT A SHOWCASE SETTING ──────────────────
+ * SHORT_MAX_SECONDS, the same constant inspectUrls tests through
+ * laneForVideo(). A showcase is deliberately short-form only: the long lane
+ * needs three long videos of its own and teaches something an outreach page
+ * does not need, so offering a five minute video here would produce a pick the
+ * very next step refuses.
+ *
+ * ── AND WHY ALREADY-USED VIDEOS ARE FLAGGED ──────────────────────────────────
+ * Across EVERY showcase, not just one. Outreach happens over weeks from a list,
+ * and the failure this prevents is quiet: an admin builds a second showcase for
+ * a creator who already has one, spends five more video reads, and sends a
+ * second link while the first is still live. The flag makes that visible at the
+ * moment of choosing rather than in the list afterwards.
+ */
+router.get("/channel/videos", requireAdmin, async (req, res) => {
+  const channelId = String(req.query.channel_id || "").trim();
+  if (!/^UC[\w-]{22}$/.test(channelId)) {
+    return res.status(400).json({ success: false, message: "That isn't a channel id." });
+  }
+  if (!isYouTubeDataConfigured()) {
+    return res.status(503).json({ success: false, message: "Channel lookup is unavailable. Paste URLs instead." });
+  }
+
+  try {
+    const { videos, scanned, total, units } = await recentEligible(channelId, {
+      maxSeconds: SHORT_MAX_SECONDS,
+      want: OFFER_COUNT,
+    });
+
+    // Only showcase rows. A video sitting in a real creator's own voice profile
+    // is none of this screen's business and must not be flagged as taken.
+    const showcaseIds = await User.find({ kind: "showcase" }).select("_id").lean();
+    const used = new Set(
+      (await Transcript.find({
+        user: { $in: showcaseIds.map((u) => u._id) },
+        video_id: { $in: videos.map((v) => v.video_id) },
+      }).select("video_id").lean()).map((t) => String(t.video_id))
+    );
+
+    console.log(
+      `[admin] videos ${channelId} -> ${videos.length} eligible of ${scanned} scanned ` +
+      `(${total} uploads) · ${units} units · ${used.size} already in a showcase`
+    );
+
+    return res.json({
+      success: true,
+      channel_id: channelId,
+      videos: videos.map((v) => ({ ...v, already_added: used.has(v.video_id) })),
+      scanned,
+      total_uploads: total,
+      max_seconds: SHORT_MAX_SECONDS,
+      // A showcase is always new, so the whole allowance is free. Shaped like
+      // the creator route's reply so one picker component reads both.
+      slots: { used: 0, max: SHOWCASE_MAX_VIDEOS, left: SHOWCASE_MAX_VIDEOS },
+    });
+  } catch (err) {
+    console.warn(`[admin] videos failed for ${channelId}: ${err.message}`);
+    return res.status(err?.keyExhausted ? 503 : 502).json({
+      success: false,
+      message: err?.keyExhausted
+        ? "Can't read that channel right now. Paste URLs instead."
+        : "Couldn't read that channel's videos.",
+    });
   }
 });
 

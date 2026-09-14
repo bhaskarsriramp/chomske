@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import ChannelImport from "./ChannelImport";
+import ChannelPicker from "./ChannelPicker";
 import api, { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import Skeleton from "../Shell/Skeleton";
@@ -70,10 +70,37 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
     refresh: refreshProfiles, loading: profilesLoading,
   } = useProfiles();
 
-  const [url, setUrl] = useState("");
   const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [history, setHistory] = useState([]);
+
+  /**
+   * Videos ticked in the picker but not yet added.
+   *
+   * ── WHY THIS LIVES HERE AND NOT IN THE PICKER ─────────────────────────────
+   * There used to be two buttons: "Add 5 videos" in the picker, then "Analyse
+   * my voice" underneath. Two presses for one intention, and the first of them
+   * produced no visible result a creator cared about, because adding is free
+   * and silent and the thing they came to do is the analysis.
+   *
+   * So the picker no longer submits anything. It reports what is ticked, and
+   * Analyse my voice does both: adds the selection, then builds. Which means
+   * the selection has to be readable by the button, and the button is here.
+   */
+  const [selected, setSelected] = useState([]);
+
+  /** True while the selection is being posted, before the build starts. */
+  const [adding, setAdding] = useState(false);
+
+  /**
+   * Bumped to remount the picker after a successful add.
+   *
+   * A key change rather than a reset method passed back up. The picker holds
+   * six pieces of state across three steps, and "throw it away and start
+   * again" is exactly what remounting means, where a reset function is six
+   * assignments that will fall out of step with the next piece of state added
+   * to it.
+   */
+  const [pickerKey, setPickerKey] = useState(0);
   const [meta, setMeta] = useState(null);      // slots, ready_count, mixed_languages
 
   // ── The voice, and the build, come from above ─────────────────────────────
@@ -184,29 +211,45 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
     return () => clearInterval(t);
   }, [analysing, loadHistory]);
 
-  async function handleSubmit(e) {
-    e?.preventDefault();
-    if (isShowcase) return openSignUp("voice");
-    if (submitting) return;
-    setError("");
+  /**
+   * Add the ticked videos, one POST each, in series.
+   *
+   * ── WHY IT USES THE ORDINARY ENDPOINT, ONCE PER VIDEO ─────────────────────
+   * POST /transcribe carries seven guards: the lane test, the per-lane slot
+   * ceiling, the per-account daily cap, the duplicate index, the live-stream
+   * refusal, the length gate and the profile scoping. A batch endpoint would
+   * have reimplemented all seven and got one subtly wrong, so the picker is a
+   * better way to fill in the same form rather than a second road in.
+   *
+   * Serial rather than parallel because five concurrent posts race the slot
+   * count: two could both read "one slot left" and both take it.
+   *
+   * @returns {Promise<boolean>} whether everything landed.
+   */
+  async function addSelected() {
+    if (!selected.length) return true;
 
-    const value = url.trim();
-    if (!value) return setError("Paste a YouTube link first.");
-
-    setSubmitting(true);
-    try {
-      // The profile is named explicitly. Letting the server pick would mean a
-      // video landing in whichever channel it considers default, and paying to
-      // transcribe it into the wrong one.
-      await api.post("/transcribe", { url: value, profile: activeId || undefined });
-      setUrl("");
-      loadHistory();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSubmitting(false);
-      loadHistory();
+    const messages = [];
+    for (const v of selected) {
+      try {
+        // The profile is named explicitly. Letting the server pick would mean a
+        // video landing in whichever channel it considers default, and paying
+        // to transcribe it into the wrong one.
+        await api.post("/transcribe", { url: v.url, profile: activeId || undefined });
+      } catch (err) {
+        messages.push(errorMessage(err));
+      }
     }
+
+    await loadHistory();
+
+    if (messages.length) {
+      // Deduplicated: five videos refused for the same reason is one fact, and
+      // five copies of the same sentence reads as five different problems.
+      setError([...new Set(messages)].join(" "));
+      return false;
+    }
+    return true;
   }
 
   async function doDelete() {
@@ -227,15 +270,32 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   }
 
   /**
-   * Start a build.
+   * Add whatever is ticked, then start a build.
    *
-   * One line, because the waiting is not this screen's job any more: the store
-   * kicks it off, follows it over the socket, polls underneath that as a floor,
-   * and holds the result whether or not this panel is still on screen.
+   * The waiting is not this screen's job: the store kicks the build off,
+   * follows it over the socket, polls underneath that as a floor, and holds the
+   * result whether or not this panel is still on screen.
+   *
+   * The adding IS this screen's job, and it happens first. If any of it fails
+   * the build does not start: a voice built from three of the five videos
+   * somebody chose is worse than no voice, because it is wrong in a way they
+   * cannot see and would not think to check.
    */
-  function analyseVoice() {
+  async function analyseVoice() {
     if (isShowcase) return openSignUp("voice");
     setError("");
+
+    if (selected.length) {
+      setAdding(true);
+      const ok = await addSelected();
+      setAdding(false);
+      if (!ok) return;
+      // Landed. Clear the picker so the same five are not sitting ticked
+      // underneath a build that has already consumed them.
+      setSelected([]);
+      setPickerKey((k) => k + 1);
+    }
+
     analyse(lane);
   }
 
@@ -281,7 +341,17 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   const minVideos = isLong ? (laneSlot?.min_videos || 3) : 1;
   const shortReady = !!voice?.lanes?.short?.ready;
   const laneLocked = isLong && !shortReady;
-  const canAnalyse = readyCount >= minVideos && !laneLocked;
+
+  /**
+   * What the next analysis would actually read: what is already on file, plus
+   * whatever is ticked in the picker but not yet added.
+   *
+   * Counting only the added rows is what made the old two-press flow necessary.
+   * Including the selection is what lets one button mean "use these".
+   */
+  const pendingCount = selected.length;
+  const wouldRead = readyCount + pendingCount;
+  const canAnalyse = wouldRead >= minVideos && !laneLocked;
 
   const built = isLong ? (voice?.profile?.long || null) : (voice?.profile || null);
   // Behind if the analysis never saw the current set: either the server says
@@ -298,7 +368,10 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
   // the action is only live when the answer could actually differ: nothing has
   // been built yet, or the set has moved since it was. Everything else is a
   // button that looks like it does something and does not.
-  const analyseBlocked = !canAnalyse || (!!built && !stale);
+  // A fresh selection always unblocks it. "Already built from these videos" is
+  // only true while the set has not moved, and five ticked videos are the set
+  // moving, even though they are not on file yet.
+  const analyseBlocked = !canAnalyse || (!!built && !stale && pendingCount === 0);
 
   // ── WHAT THE NEXT ANALYSIS COSTS ──────────────────────────────────────────
   // Priced by the server and served with the voice (GET /script/voice), so this
@@ -326,9 +399,9 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
     ? isLong
       ? `Add ${Math.max(0, minVideos - readyCount)} more long video${minVideos - readyCount === 1 ? "" : "s"}, over ${durationWords(meta?.longMin || 180)} each. One long video shows us one episode's running order; ${minVideos} is where we can tell a habit from a one-off.`
       : built
-        ? "The videos this voice was built from are gone. Add one below and this turns on."
-        : "Add one of your videos below first. That is what your voice is learned from."
-    : `This voice is already built from these ${readyCount} video${readyCount === 1 ? "" : "s"}. Add another below, or delete one, and this turns on.`;
+        ? "The videos this voice was built from are gone. Select one above and this turns on."
+        : "Select up to 5 of your videos above. That is what your voice is learned from."
+    : `This voice is already built from these ${readyCount} video${readyCount === 1 ? "" : "s"}. Select different ones above, or delete one, and this turns on.`;
 
   const summaryLine = laneLocked
     ? "Locked until your short-form voice is built."
@@ -341,7 +414,12 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
       ? "Reading the video you added. You can analyse as soon as it is ready."
       : isLong
         ? `Add ${Math.max(0, minVideos - readyCount)} more long video${minVideos - readyCount === 1 ? "" : "s"}, then analyse.`
-        : "Add a video below, then analyse."
+        : "Select up to 5 videos above, then analyse."
+    // The pending case comes before `stale`, because a creator who has just
+    // ticked five videos is owed a sentence about those five and not about
+    // whatever is currently on file.
+    : pendingCount > 0
+    ? `${pendingCount} video${pendingCount === 1 ? "" : "s"} selected${readyCount ? `, ${readyCount} already added` : ""}. Analysing reads ${wouldRead === 1 ? "it" : `all ${wouldRead}`} in one pass.`
     : stale
     ? `Your videos changed since this was built. Analyse again to use all ${readyCount} of them.`
     : built
@@ -356,14 +434,27 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
   return (
     <div className="hg-scroll" style={{ flex: 1, minHeight: 0, width: "100%" }}>
-      <div style={{ maxWidth: 880, margin: "0 auto", padding: `${isPhone ? 18 : 28}px ${gut}px ${isPhone ? 40 : 60}px` }}>
+      {/* ── FULL WIDTH, FROM THE LEFT ───────────────────────────────────────
+          This was `maxWidth: 880, margin: "0 auto"`, which is the right shape
+          for a column of prose and the wrong one for this screen. The picker
+          lays out four video cards to a row, and centring the page inside 880px
+          on a 1920px monitor threw away the width those cards need while
+          leaving several hundred empty pixels down each side.
+
+          So the page starts at the left edge with a 12px gutter and takes
+          whatever width there is. The intro prose keeps a measure of its own
+          below, because a sentence running 1600px wide is unreadable, but the
+          grid is free to use the room. */}
+      <div style={{ padding: `${isPhone ? 18 : 24}px ${isPhone ? gut : 12}px ${isPhone ? 40 : 60}px` }}>
         {/* No profile picker: these videos teach the account's one voice.
             See state/ProfileContext.js. */}
         <h1 style={{ fontSize: isPhone ? 21 : 25, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 5px" }}>
           My voice
         </h1>
 
-        <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 16px", lineHeight: 1.6 }}>
+        {/* The one element that keeps a measure. Everything below is a card or
+            a grid and wants the full width; a paragraph does not. */}
+        <p style={{ fontSize: isPhone ? 14 : 14.5, color: "var(--ink-body)", margin: "0 0 16px", lineHeight: 1.6, maxWidth: 820 }}>
           {isLong
             // Both bounds, not just the lower one. A creator reading "over 3
             // minutes each" reasonably reaches for their best long video, and
@@ -496,15 +587,53 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
           </div>
         )}
 
-        {/* ── One card, because it is one job ───────────────────────────
-            This was two numbered steps: the videos, then the voice. Splitting
-            them made the page look like two features sharing a screen, when
-            what a creator has here is a single thing with a single state. The
-            voice IS the videos, read; separating them put the button in one
-            box and the reason it is or is not available in another.
+        {/* ── CHOOSE THE VIDEOS, THEN ANALYSE ───────────────────────────
+            The picker is FIRST and the voice card second, which is the order
+            the job is actually done in.
 
-            So: the state and its one action on top, the way to change the set
-            underneath it, and the detail folded away until asked for. */}
+            It was the other way round: the voice card on top with its Analyse
+            button, and the way to add videos folded underneath it. That put
+            the action above the only thing that could enable it, so the first
+            thing a new creator saw was a greyed-out button and a sentence
+            telling them to look further down the page.
+
+            Now the page reads top to bottom as one sentence: pick your videos,
+            then press the button under them.
+
+            Short lane only, and hidden for showcase sessions. The long lane is
+            locked in this build and the picker filters to the short ceiling, so
+            it would render an empty grid. Showcase sessions are refused by the
+            server (routes/channel.js uses authenticateToken), and a control
+            that opens a sign-up dialog on every touch is worse than absent. */}
+        {!isLong && !isShowcase && (
+          <ChannelPicker
+            key={pickerKey}
+            base="/channel"
+            params={activeId ? { profile: activeId } : {}}
+            maxSeconds={meta?.shortMax || 180}
+            isPhone={isPhone}
+            showSubmit={false}
+            onSelectionChange={setSelected}
+            copy={{
+              title: "Add from your channel",
+              findBlurb: "Your @handle, channel link, or channel name. We'll show your recent videos to pick from.",
+              confirmBlurb: "Check this is your channel.",
+              pickBlurb: (n, mins) =>
+                `Select up to ${n} videos for voice analysis, under ${mins} minutes each. Then press Analyse my voice below.`,
+              confirmPrimary: "Yes, this is me",
+              reject: "Not me",
+              taken: "Already in this voice",
+              placeholder: "@yourchannel",
+            }}
+          />
+        )}
+
+        {/* ── One card, because it is one job ───────────────────────────
+            The state and its one action, over the set it will read.
+
+            The voice IS the videos, read, so the button and the list it
+            consumes stay in one box: separating them put the action in one
+            place and the reason it is or is not available in another. */}
         <div
           style={{
             padding: isPhone ? 16 : 20, borderRadius: "var(--radius)",
@@ -573,12 +702,15 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                 a pointer and a click, and both say why. */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
               <button
-                onClick={() => { if (tooExpensive) return; analyseBlocked ? setHint(true) : analyseVoice(); }}
+                onClick={() => {
+                  if (tooExpensive || adding) return;
+                  analyseBlocked ? setHint(true) : analyseVoice();
+                }}
                 onMouseEnter={() => analyseBlocked && setHint(true)}
                 onMouseLeave={() => setHint(false)}
                 onFocus={() => analyseBlocked && setHint(true)}
                 onBlur={() => setHint(false)}
-                aria-disabled={analyseBlocked || tooExpensive}
+                aria-disabled={analyseBlocked || tooExpensive || adding}
                 aria-describedby={analyseBlocked ? "hg-analyse-hint" : undefined}
                 className={analyseBlocked || tooExpensive ? undefined : "hg-btn-primary"}
                 style={{
@@ -590,9 +722,15 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
                   fontFamily: "inherit",
                 }}
               >
-                {tooExpensive
-                  ? "Not enough credits"
-                  : `${built ? "Analyse again" : "Analyse my voice"}${cost > 0 ? ` · ${cost} credits` : ""}`}
+                {/* `adding` is the second or two between the press and the
+                    build starting, while the selection is posted one video at
+                    a time. Short, but not instant, and a button that looks
+                    inert for two seconds after a click gets clicked again. */}
+                {adding
+                  ? `Adding ${pendingCount} video${pendingCount === 1 ? "" : "s"}…`
+                  : tooExpensive
+                    ? "Not enough credits"
+                    : `${built ? "Analyse again" : "Analyse my voice"}${cost > 0 ? ` · ${cost} credits` : ""}`}
               </button>
 
               {tooExpensive && canBuy && (
@@ -628,36 +766,9 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
 
           {/* ── Change the set ─────────────────────────────────────────── */}
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
-            {/* ── THE CHANNEL PICKER, ABOVE THE PASTE BOX ────────────────
-                Above it, because it is the path almost everybody should take:
-                nobody has their own video ids to hand, and five trips to
-                another tab is where people gave up on building a voice.
-
-                The paste box stays underneath rather than being replaced. It
-                is the fallback for the two cases the picker cannot serve: a
-                channel whose handle will not resolve, and a specific older
-                video that is not among the recent uploads we scan.
-
-                Short lane only. The long lane is locked in this build, and
-                the picker's whole filter is "under the short ceiling", so
-                offering it on the long tab would show an empty list.
-
-                Hidden for showcase sessions rather than prompting a sign-up.
-                The server refuses them (routes/channel.js uses
-                authenticateToken), and a control that opens a dialog every
-                time it is touched is worse than one that is not there. */}
-            {!isLong && !isShowcase && (
-              <ChannelImport
-                profileId={activeId}
-                maxSeconds={meta?.shortMax || 180}
-                isPhone={isPhone}
-                onAdded={() => { loadHistory(); onVoiceChange?.(); }}
-              />
-            )}
-
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 9 }}>
               <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>
-                {isLong || isShowcase ? "Add a video" : "Or paste a link"}
+                {isLong ? "Long videos on file" : "Videos on file"}
               </span>
               <span style={{ fontSize: 12.5, color: "var(--ink-mute)", whiteSpace: "nowrap" }}>
                 {laneSlot
@@ -666,38 +777,9 @@ export default function TranscribePanel({ onVoiceChange, onGoProfiles, onGoTopic
               </span>
             </div>
 
-            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: isPhone ? "column" : "row", gap: 9 }}>
-              <input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://www.youtube.com/shorts/…"
-                aria-label="YouTube video URL"
-                disabled={submitting || full}
-                style={{
-                  flex: 1, minWidth: 0, fontSize: 14.5, padding: "12px 14px",
-                  border: "1px solid var(--line)", borderRadius: 11,
-                  background: full ? "#F2F2F2" : "var(--card)",
-                  color: "var(--ink)", outline: "none",
-                }}
-              />
-              <button
-                type="submit"
-                className="hg-btn-primary"
-                disabled={submitting || full}
-                style={{
-                  fontSize: 14.5, fontWeight: 600, padding: "12px 20px", borderRadius: 11,
-                  border: "none", background: "var(--primary)", color: "#fff",
-                  cursor: submitting || full ? "default" : "pointer",
-                  opacity: submitting || full ? 0.55 : 1, whiteSpace: "nowrap",
-                }}
-              >
-                {submitting ? "Adding…" : "Add video"}
-              </button>
-            </form>
-
             {full && (
               <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: "9px 0 0", lineHeight: 1.55 }}>
-                All {laneSlot?.max || 5} {isLong ? "long-form" : "short-form"} slots used. Delete one below to add another.
+                All {laneSlot?.max || 5} {isLong ? "long-form" : "short-form"} slots used. Delete one below to select another.
               </p>
             )}
 

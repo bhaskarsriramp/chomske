@@ -54,8 +54,15 @@ import {
 } from "./youtubeDataClient.js";
 import { parseYouTubeUrl } from "../utils/youtube.js";
 
-/** How many eligible videos to offer. Ten to choose five from. */
-export const OFFER_COUNT = parseInt(process.env.CHANNEL_OFFER_COUNT || "10", 10);
+/**
+ * How many eligible videos to offer. Twelve to choose five from.
+ *
+ * Twelve rather than ten because the picker lays them out four to a row on a
+ * desktop, and twelve fills three complete rows where ten leaves a ragged half
+ * row at the bottom. A grid that ends mid-row reads as "the list was cut off"
+ * rather than "that is all of them".
+ */
+export const OFFER_COUNT = parseInt(process.env.CHANNEL_OFFER_COUNT || "12", 10);
 
 /**
  * How deep to dig for those ten, in pages of fifty.
