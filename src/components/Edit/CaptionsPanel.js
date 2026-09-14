@@ -2,18 +2,43 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorMessage } from "../../api";
 import { useCredits } from "../../state/CreditsContext";
 import { startAnalysis, startTranslation, translationQuote, ackTranslation } from "./editApi";
-import { captionCues, captionText, placedSegments, segmentsOf, hasIndic } from "./model";
+import {
+  ASPECTS, captionCues, captionText, captionLook, captionPresetY, placedSegments, segmentsOf, sentencePieces,
+  splitIntoSentences, splitSegmentAt, hasIndic,
+} from "./model";
 import { Btn, Icon, Notice, Section, Segmented, Spinner, fmtTime } from "./ui";
 
 const INDIC = /[ऀ-෿]/;
+const HEX = /^#[0-9a-f]{6}$/i;
+
+// Bright enough to read over any shot, with the outline or box behind them.
+// Black is left to the picker: black text under a black outline disappears.
+const COLORS = [
+  ["#FFFFFF", "White"], ["#FFD400", "Yellow"], ["#7CFF4F", "Green"], ["#33E1FF", "Blue"],
+  ["#FF5CC8", "Pink"], ["#FF8A1F", "Orange"], ["#FF3B30", "Red"],
+];
+
+const LOOK_CARDS = [
+  ["bold", "Bold", { fontWeight: 800, textShadow: "1.5px 0 #000,-1.5px 0 #000,0 1.5px #000,0 -1.5px #000" }],
+  ["clean", "Clean", { fontWeight: 700, textShadow: "0 1px 5px rgba(0,0,0,.8)" }],
+  ["box", "Box", { fontWeight: 700, background: "rgba(0,0,0,.7)", padding: "2px 6px", borderRadius: 4 }],
+];
 
 /**
  * Captions: from what was said, in the letters or language the creator picks,
- * placed anywhere, with every word correctable.
+ * styled and placed for all of them or one section at a time, with every word
+ * correctable.
  *
  * Most Shorts are watched on mute, so captions are on by default and follow what
  * was SAID rather than a script: a caption reading a sentence nobody spoke is
  * the fastest way to look auto-generated.
+ *
+ * ── ALL OF THEM, OR ONE ──────────────────────────────────────────────────────
+ * Every caption starts with the same look. "One caption" narrows the look,
+ * size, colour and position controls, and a drag on the video, to the selected
+ * section, which is how a creator lifts one caption above a product shot or
+ * turns the price yellow. A section styled on its own keeps what it was given
+ * when the rest change, and can be matched to them again.
  *
  * ── TRANSLATION KEEPS THE TIMING ─────────────────────────────────────────────
  * A translation is written per stretch of speech (services/edit/translateCaptions.js),
@@ -23,6 +48,7 @@ const INDIC = /[ऀ-෿]/;
  */
 export default function CaptionsPanel({
   tl, lay, mode, project, languages = [], nativeLabel, hasRoman, time, playing,
+  selectedId = null, scope = "all", onScope, onSelectCaption,
   onChange, onSeek, onFlush, onData, onReload,
 }) {
   const cap = tl.captions || {};
@@ -32,6 +58,7 @@ export default function CaptionsPanel({
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [dismissed, setDismissed] = useState(null);
+  const [W, H] = ASPECTS[tl.aspect] || ASPECTS["9:16"];
 
   const set = useCallback((fields, key) => onChange((d) => { d.captions = { ...d.captions, ...fields }; }, key), [onChange]);
 
@@ -83,7 +110,7 @@ export default function CaptionsPanel({
   }
 
   // ── Translating ───────────────────────────────────────────────────────────
-  const [lang, setLang] = useState(() => (/^\s*english\s*$/.test(project.language_label || "") ? "hi" : "en"));
+  const [lang, setLang] = useState(() => (/^\s*english\s*$/i.test(project.language_label || "") ? "hi" : "en"));
   const t = project.translation;
   const running = t?.status === "running";
   const langLabel = (code) => languages.find((l) => l.code === code)?.label || code;
@@ -150,7 +177,7 @@ export default function CaptionsPanel({
     ackTranslation(project.id, t?.id).catch(() => {});
   }
 
-  // ── The words ─────────────────────────────────────────────────────────────
+  // ── The sections ──────────────────────────────────────────────────────────
   const bySegments = cap.mode !== "off" && (cap.mode === "tr" || cap.source !== "script");
   const field = cap.mode === "roman" ? "roman" : cap.mode === "tr" ? `tr:${cap.lang}` : "text";
   const cues = useMemo(() => captionCues(tl), [tl]);
@@ -163,6 +190,12 @@ export default function CaptionsPanel({
     if (!focused) rows.current[activeSeg]?.scrollIntoView?.({ block: "nearest" });
   }, [activeSeg, playing]);
 
+  useEffect(() => {
+    if (selectedId && !playing && document.activeElement?.tagName !== "TEXTAREA") {
+      rows.current[selectedId]?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    }
+  }, [selectedId, playing]);
+
   const editWords = useCallback((id, value) => {
     onChange((d) => {
       if (!Array.isArray(d.segments)) d.segments = segmentsOf(d);
@@ -173,6 +206,55 @@ export default function CaptionsPanel({
     }, `words:${id}:${field}`);
   }, [onChange, field]);
 
+  const selected = useMemo(() => placed.find((p) => p.seg.id === selectedId) || null, [placed, selectedId]);
+  const one = bySegments && scope === "one" && !!selected;
+  const current = captionLook(tl, one ? selected.seg : null);
+  const customCount = useMemo(() => placed.filter((p) => p.seg.custom).length, [placed]);
+  const canSentences = useMemo(() => placed.some((p) => sentencePieces(p.seg)), [placed]);
+
+  // Look, size, colour and position go to every caption, or to the one picked.
+  const apply = (fields, key) => {
+    if (!one) {
+      set(fields, key);
+      return;
+    }
+    const id = selected.seg.id;
+    onChange((d) => {
+      if (!Array.isArray(d.segments)) d.segments = segmentsOf(d);
+      const s = d.segments.find((x) => x.id === id);
+      if (s) s.custom = { ...(s.custom || {}), ...fields };
+    }, key);
+  };
+
+  const matchOthers = (id) => onChange((d) => {
+    const s = (d.segments || []).find((x) => x.id === id);
+    if (s) delete s.custom;
+  });
+
+  const chooseScope = (v) => {
+    if (v === "one" && !selected) {
+      const id = activeSeg || placed[0]?.seg.id;
+      if (id) onSelectCaption(id);
+    }
+    onScope(v);
+  };
+
+  const presetOf = (x, y) => (Math.abs(x - 0.5) < 0.001 ? ["top", "middle", "bottom"].find((p) => Math.abs(captionPresetY(p, W, H) - y) < 0.002) : null);
+  const byHand = current.x !== null && current.x !== undefined;
+  const positionValue = byHand ? presetOf(current.x, current.y) || "custom" : cap.position;
+  const choosePosition = (v) => (one
+    ? apply({ x: 0.5, y: Math.round(captionPresetY(v, W, H) * 1000) / 1000 })
+    : set({ position: v, x: null, y: null }));
+
+  const splitSrc = selected && time > selected.start + 0.3 && time < selected.end - 0.3
+    ? selected.clip.in + (time - selected.clip.start)
+    : null;
+  const splitSelected = () => {
+    let ids = null;
+    onChange((d) => { ids = splitSegmentAt(d, selected.seg.id, splitSrc); });
+    if (ids) onSelectCaption(ids[1]);
+  };
+
   const value = cap.mode === "tr" ? `tr:${cap.lang}` : cap.mode;
   const modeOptions = [
     { value: "off", label: "Off" },
@@ -180,9 +262,10 @@ export default function CaptionsPanel({
     ...(hasRoman ? [{ value: "roman", label: "Roman" }] : []),
     ...translated.map((l) => ({ value: `tr:${l.code}`, label: l.label })),
   ];
-  const custom = cap.x !== null && cap.x !== undefined;
 
   const empty = !allSegments.length && (free || !tl.clips.some((c) => c.text || c.roman));
+  const currentColor = HEX.test(String(current.color || "")) ? String(current.color).toUpperCase() : "#FFFFFF";
+  const colorKnown = COLORS.some(([hex]) => hex === currentColor);
 
   return (
     <div>
@@ -231,9 +314,7 @@ export default function CaptionsPanel({
 
           {allSegments.length > 0 && languages.length > 0 && (
             <Section title="Translate captions">
-              <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", margin: "0 0 8px" }}>
-                Same timing, another language. Your voice stays as it is; only the captions change.
-              </p>
+              <p style={hint}>Same timing, another language. Your voice stays as it is; only the captions change.</p>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <select
                   aria-label="Translate into"
@@ -292,24 +373,45 @@ export default function CaptionsPanel({
 
           {cap.mode !== "off" && (
             <>
+              {bySegments && placed.length > 0 && (
+                <Section title="Change the style of">
+                  <Segmented
+                    full
+                    label="Change the style of"
+                    value={scope}
+                    onChange={chooseScope}
+                    options={[
+                      { value: "all", label: "All captions", title: "Every caption, except ones styled on their own" },
+                      { value: "one", label: "One caption", title: "Only the caption you pick" },
+                    ]}
+                  />
+                  <p style={{ ...hint, margin: "8px 0 0" }}>
+                    {scope === "one"
+                      ? selected
+                        ? <>Only the caption at <strong style={{ color: "var(--ink)" }}>{fmtTime(selected.start)}</strong> changes. Pick another in the list, on the timeline, or tap it on the video.</>
+                        : "Pick a caption in the list below, on the timeline, or tap it on the video."
+                      : `Changes apply to every caption${customCount ? `, except ${customCount} styled on ${customCount === 1 ? "its" : "their"} own` : ""}.`}
+                  </p>
+                  {one && selected.seg.custom && (
+                    <Btn size="s" onClick={() => matchOthers(selected.seg.id)} style={{ marginTop: 8 }}>Match the other captions again</Btn>
+                  )}
+                </Section>
+              )}
+
               <Section title="Look">
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8 }}>
-                  {[
-                    ["bold", "Bold", { color: "#fff", fontWeight: 800, textShadow: "1.5px 0 #000,-1.5px 0 #000,0 1.5px #000,0 -1.5px #000" }],
-                    ["clean", "Clean", { color: "#fff", fontWeight: 700, textShadow: "0 1px 5px rgba(0,0,0,.8)" }],
-                    ["box", "Box", { color: "#fff", fontWeight: 700, background: "rgba(0,0,0,.7)", padding: "2px 6px", borderRadius: 4 }],
-                  ].map(([v, label, look]) => {
-                    const on = cap.style === v;
+                  {LOOK_CARDS.map(([v, label, look]) => {
+                    const on = current.style === v;
                     return (
                       <button
                         key={v}
                         type="button"
                         aria-pressed={on}
-                        onClick={() => set({ style: v })}
+                        onClick={() => apply({ style: v })}
                         style={{ border: `1.5px solid ${on ? "var(--ink)" : "var(--line)"}`, borderRadius: 10, padding: 0, overflow: "hidden", cursor: "pointer", background: "var(--card)", fontFamily: "inherit" }}
                       >
                         <span style={{ display: "grid", placeItems: "center", height: 54, background: "linear-gradient(135deg,#6B7F95,#C9A27A)" }}>
-                          <span style={{ fontSize: 14, ...look }}>Sale leak</span>
+                          <span style={{ fontSize: 14, color: currentColor, ...look }}>Sale leak</span>
                         </span>
                         <span style={{ display: "block", padding: "6px 0", fontSize: 12, fontWeight: 600, color: on ? "var(--ink)" : "var(--ink-mute)" }}>{label}</span>
                       </button>
@@ -318,31 +420,85 @@ export default function CaptionsPanel({
                 </div>
               </Section>
 
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 18 }}>
+              <Section title="Color">
+                <div role="group" aria-label="Caption color" style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                  {COLORS.map(([hex, name]) => {
+                    const on = currentColor === hex;
+                    return (
+                      <button
+                        key={hex}
+                        type="button"
+                        aria-label={name}
+                        aria-pressed={on}
+                        title={name}
+                        onClick={() => apply({ color: hex })}
+                        style={{
+                          width: 30, height: 30, borderRadius: "50%", padding: 0, cursor: "pointer", background: hex,
+                          border: "1px solid rgba(0,0,0,.2)", boxShadow: on ? "0 0 0 2px var(--paper), 0 0 0 4px var(--ink)" : "none",
+                        }}
+                      />
+                    );
+                  })}
+                  <label
+                    title="Any color"
+                    style={{
+                      position: "relative", width: 30, height: 30, borderRadius: "50%", overflow: "hidden", cursor: "pointer",
+                      border: "1px solid rgba(0,0,0,.2)", background: "conic-gradient(#f33,#fd0,#6f4,#3df,#55f,#f5c,#f33)",
+                      boxShadow: colorKnown ? "none" : "0 0 0 2px var(--paper), 0 0 0 4px var(--ink)",
+                    }}
+                  >
+                    <input
+                      type="color"
+                      aria-label="Any color"
+                      value={currentColor.toLowerCase()}
+                      onChange={(e) => apply({ color: e.target.value.toUpperCase() }, `color:${one ? selected.seg.id : "all"}`)}
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", border: "none", padding: 0 }}
+                    />
+                  </label>
+                </div>
+              </Section>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0 18px" }}>
                 <Section title="Size" style={{ marginBottom: 10 }}>
-                  <Segmented label="Caption size" value={cap.size} onChange={(v) => set({ size: v })} options={[{ value: "s", label: "S" }, { value: "m", label: "M" }, { value: "l", label: "L" }]} />
+                  <Segmented label="Caption size" value={current.size} onChange={(v) => apply({ size: v })} options={[{ value: "s", label: "S" }, { value: "m", label: "M" }, { value: "l", label: "L" }, { value: "xl", label: "XL" }]} />
                 </Section>
                 <Section title="Position" style={{ marginBottom: 10 }}>
                   <Segmented
                     label="Caption position"
-                    value={custom ? "custom" : cap.position}
-                    onChange={(v) => set({ position: v, x: null, y: null })}
+                    value={positionValue}
+                    onChange={choosePosition}
                     options={[{ value: "top", label: "Top" }, { value: "middle", label: "Middle" }, { value: "bottom", label: "Bottom" }]}
                   />
                 </Section>
               </div>
               <p style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--ink-mute)", margin: "0 0 18px", lineHeight: 1.5 }}>
                 <Icon.Pencil size={13} />
-                {custom ? "Placed by hand. Drag the captions on the video to move them again." : "Or drag the captions on the video to put them anywhere."}
+                {one
+                  ? byHand ? "Placed by hand. Drag it on the video to move it again." : "Or drag this caption on the video to put it anywhere."
+                  : byHand ? "Placed by hand. Drag the captions on the video to move them again." : "Or drag the captions on the video to put them anywhere."}
               </p>
             </>
           )}
 
           {bySegments && placed.length > 0 && (
-            <Section title={`Caption text · ${placed.length}`}>
-              <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", margin: "0 0 8px" }}>
-                Tap a time to jump there. Type to fix a name or a word{cap.mode === "tr" ? ` in ${langLabel(cap.lang)}` : ""}.
+            <Section
+              title={`Caption sections · ${placed.length}`}
+              right={canSentences ? <Btn size="s" icon={<Icon.Scissors size={13} />} onClick={() => onChange((d) => { splitIntoSentences(d); })}>Split into sentences</Btn> : null}
+            >
+              <p style={hint}>
+                Each section shows while you say it. Tap one to pick it, tap its time to jump there, type to fix a word{cap.mode === "tr" ? ` in ${langLabel(cap.lang)}` : ""}.
               </p>
+              {selected && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 10px", borderRadius: 10, background: "var(--made-tint)", border: "1px solid var(--made-line)", marginBottom: 8 }}>
+                  <span style={{ flex: "1 1 150px", fontSize: 12.5, color: "var(--ink-body)" }}>
+                    Picked: <strong style={{ color: "var(--ink)" }}>{fmtTime(selected.start)}–{fmtTime(selected.end)}</strong>
+                  </span>
+                  <Btn size="s" icon={<Icon.Scissors size={13} />} disabled={splitSrc === null} onClick={splitSelected} title="Move the playhead inside this caption to split it there">
+                    Split at {fmtTime(time)}
+                  </Btn>
+                  {scope !== "one" && <Btn size="s" onClick={() => onScope("one")}>Style just this one</Btn>}
+                </div>
+              )}
               <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}>
                 {placed.map(({ seg, start }) => (
                   <CaptionRow
@@ -351,9 +507,12 @@ export default function CaptionsPanel({
                     start={start}
                     value={captionText(seg, cap)}
                     active={seg.id === activeSeg}
+                    selected={seg.id === selectedId}
+                    swatch={seg.custom ? seg.custom.color || "#FFFFFF" : null}
                     onEdit={editWords}
                     onSeek={onSeek}
-                    rowRef={(el) => { rows.current[seg.id] = el; }}
+                    onSelect={onSelectCaption}
+                    rows={rows}
                   />
                 ))}
               </ol>
@@ -365,25 +524,40 @@ export default function CaptionsPanel({
   );
 }
 
-const CaptionRow = memo(function CaptionRow({ id, start, value, active, onEdit, onSeek, rowRef }) {
+const hint = { fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", margin: "0 0 8px" };
+
+const CaptionRow = memo(function CaptionRow({ id, start, value, active, selected, swatch, onEdit, onSeek, onSelect, rows }) {
   const indic = hasIndic(value);
   return (
     <li
-      ref={rowRef}
+      ref={(el) => { rows.current[id] = el; }}
+      data-caption={id}
+      aria-current={selected ? "true" : undefined}
+      onClick={(e) => {
+        const tag = e.target.tagName;
+        if (tag !== "TEXTAREA" && tag !== "BUTTON") onSelect(id);
+      }}
       style={{
-        display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 8, alignItems: "start",
-        padding: "6px 8px", borderRadius: 10, border: `1px solid ${active ? "var(--ink)" : "var(--line)"}`,
+        display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 8, alignItems: "start", cursor: "pointer",
+        padding: "6px 8px", borderRadius: 10,
+        border: `1px solid ${selected ? "var(--ink)" : active ? "var(--made-line)" : "var(--line)"}`,
+        boxShadow: selected ? "0 0 0 1px var(--ink)" : "none",
         background: active ? "var(--made-tint)" : "var(--card)",
       }}
     >
-      <button
-        type="button"
-        onClick={() => onSeek(start + 0.01)}
-        aria-label={`Play from ${fmtTime(start)}`}
-        style={{ border: "none", background: "none", padding: "5px 2px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 650, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}
-      >
-        {fmtTime(start)}
-      </button>
+      <span style={{ display: "grid", justifyItems: "start", gap: 3 }}>
+        <button
+          type="button"
+          onClick={() => onSeek(start + 0.01)}
+          aria-label={`Play from ${fmtTime(start)}`}
+          style={{ border: "none", background: "none", padding: "5px 2px 0", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 650, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}
+        >
+          {fmtTime(start)}
+        </button>
+        {swatch && (
+          <span title="Styled on its own" style={{ marginLeft: 3, width: 12, height: 12, borderRadius: 3, background: swatch, border: "1px solid rgba(0,0,0,.35)" }} />
+        )}
+      </span>
       <textarea
         value={value}
         rows={Math.max(1, Math.ceil(value.length / 42))}
@@ -396,7 +570,7 @@ const CaptionRow = memo(function CaptionRow({ id, start, value, active, onEdit, 
           background: "transparent", color: "var(--ink)", fontSize: 13.5, lineHeight: 1.5, outline: "none",
           ...(indic ? {} : { fontFamily: "inherit" }),
         }}
-        onFocus={(e) => { e.target.style.borderColor = "var(--line)"; e.target.style.background = "var(--card)"; }}
+        onFocus={(e) => { onSelect(id); e.target.style.borderColor = "var(--line)"; e.target.style.background = "var(--card)"; }}
         onBlur={(e) => { e.target.style.borderColor = "transparent"; e.target.style.background = "transparent"; }}
       />
     </li>

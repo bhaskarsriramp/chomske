@@ -137,6 +137,77 @@ function shotsByLine(shots) {
   return map;
 }
 
+const WORD_PUNCT = /[.,!?;:"\u201C\u201D'\u2019()[\]{}\u2013\u2026\u0964\u0965-]/g;
+const wordsIn = (t) => String(t || "").replace(WORD_PUNCT, " ").split(/\s+/).filter(Boolean).length;
+const lettersIn = (t) => String(t || "").replace(WORD_PUNCT, "").replace(/\s+/g, "").length;
+
+/**
+ * A transliteration cut (a copy of backend/services/shootPackService.js's) into the script's lines by length.
+ *
+ * For when the two split into different numbers of sentences: a full stop the
+ * transliteration gained or lost would shift every line after it if they were
+ * paired by position. The words themselves still line up, so each cut goes
+ * where the letters of the native lines so far put it (letters, not words:
+ * "చైనాలో" is one word and "China lo" two), moved onto a full stop in the
+ * Roman text when there is one within three words. Null when the word counts
+ * differ by more than a third, where no cut can be trusted.
+ */
+export function alignRomanLines(nativeLines, romanText) {
+  const tokens = String(romanText || "").split(/\s+/).filter(Boolean);
+  const nativeWords = nativeLines.reduce((n, t) => n + wordsIn(t), 0);
+  const romanWords = tokens.filter((t) => wordsIn(t) > 0).length;
+  if (!nativeLines.length || !nativeWords || !romanWords || tokens.length < nativeLines.length) return null;
+  if (Math.abs(romanWords - nativeWords) / nativeWords > 0.35) return null;
+
+  const weight = nativeLines.map(lettersIn);
+  const total = weight.reduce((a, b) => a + b, 0);
+  const cum = [0];
+  for (const t of tokens) cum.push(cum[cum.length - 1] + lettersIn(t));
+  const romanTotal = cum[cum.length - 1];
+  if (!total || !romanTotal) return null;
+
+  const ends = /[.?!\u0964\u0965\u2026]["'\u201D\u2019)]*$/;
+  const out = [];
+  let from = 0;
+  let seen = 0;
+  for (let i = 0; i < nativeLines.length; i++) {
+    if (i === nativeLines.length - 1) {
+      out.push(tokens.slice(from).join(" "));
+      break;
+    }
+    seen += weight[i];
+    const target = (seen / total) * romanTotal;
+    const lo = from + 1;
+    const hi = tokens.length - (nativeLines.length - 1 - i);
+    let best = lo;
+    for (let k = lo; k <= hi; k++) if (Math.abs(cum[k] - target) < Math.abs(cum[best] - target)) best = k;
+    let cut = best;
+    for (let d = 0; d <= 3; d++) {
+      const hit = [best - d, best + d].find((k) => k >= lo && k <= hi && ends.test(tokens[k - 1]));
+      if (hit !== undefined) {
+        cut = hit;
+        break;
+      }
+    }
+    out.push(tokens.slice(from, cut).join(" "));
+    from = cut;
+  }
+  return out.length === nativeLines.length && out.every(Boolean) ? out : null;
+}
+
+/**
+ * The plan with Roman lines, for a plan saved before an unaligned transliteration
+ * could be lined up: cut from the script's own Roman version by length. The
+ * plan comes back unchanged when it already has Roman, or none can be trusted.
+ */
+export function withRoman(pack, romanText) {
+  if (!pack || pack.has_roman || !romanText) return pack;
+  const lines = pack.lines || [];
+  const roman = alignRomanLines(lines.map((l) => l.text), romanText);
+  if (!roman) return pack;
+  return { ...pack, has_roman: true, lines: lines.map((l, i) => ({ ...l, roman: roman[i] })) };
+}
+
 function lineText(l, roman) {
   return roman ? (l.roman || l.text) : l.text;
 }

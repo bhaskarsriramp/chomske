@@ -7,6 +7,7 @@
  * agree on all of it.
  */
 import { sentences } from "../voiceMetrics.js";
+import { alignRomanLines } from "../shootPackService.js";
 import { readUrl, KEY_ROOT } from "../media/storage.js";
 import { publishUserEvent } from "../newsEvents.js";
 import {
@@ -123,13 +124,19 @@ export function translationQuote(tl, lang) {
  */
 export function scriptLines(script) {
   const pack = script?.shoot_pack;
+  const romanFor = (texts) => {
+    if (!script?.roman_text) return [];
+    const roman = sentences(script.roman_text);
+    return roman.length === texts.length ? roman : alignRomanLines(texts, script.roman_text) || [];
+  };
   if (Array.isArray(pack?.lines) && pack.lines.length) {
-    return pack.lines.map((l) => ({ n: Number(l.n), text: String(l.text || ""), roman: String(l.roman || "") }));
+    // A plan built before its Roman could be lined up gets it from the script.
+    const fallback = pack.has_roman ? [] : romanFor(pack.lines.map((l) => String(l.text || "")));
+    return pack.lines.map((l, i) => ({ n: Number(l.n), text: String(l.text || ""), roman: String(l.roman || fallback[i] || "") }));
   }
   const native = sentences(script?.text || "");
-  const roman = script?.roman_aligned ? sentences(script?.roman_text || "") : [];
-  const aligned = roman.length === native.length;
-  return native.map((t, i) => ({ n: i + 1, text: t, roman: aligned ? roman[i] : "" }));
+  const roman = romanFor(native);
+  return native.map((t, i) => ({ n: i + 1, text: t, roman: roman[i] || "" }));
 }
 
 /** Tell the owner's open tabs something changed. The browser re-reads the project. */

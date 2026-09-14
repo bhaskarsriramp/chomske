@@ -19,7 +19,7 @@ import { ASPECTS, anchorAt, newId, fitFor, splitPanes } from "./model";
  * is visible rather than silently becoming no B-roll at all.
  */
 export default function BrollPanel({
-  tl, lay, mediaById, media, uploads, checklist = [], time, waiting = {},
+  tl, lay, mediaById, media, uploads, checklist = [], time, waiting = {}, term = "B-roll",
   selectedId, onSelect, onChange, onSeek, onAddFiles, onRetryUpload, onDismissUpload, onRemoveMedia,
   onAssignWhenReady, onUploadAt, isNarrow,
 }) {
@@ -51,7 +51,7 @@ export default function BrollPanel({
     update(slotId, (b) => {
       b.media = mediaId;
       b.media_in = 0;
-      if (!b.label || b.label === "B-roll") b.label = nameOf(m?.filename);
+      if (!b.label || b.label === "B-roll" || b.label === "Media") b.label = nameOf(m?.filename);
       const box = boxOf(b);
       b.fit = fitFor(m, box.w, box.h);
       if (m?.type === "video" && m.duration) b.duration = Math.min(b.duration, m.duration);
@@ -66,7 +66,7 @@ export default function BrollPanel({
     const remaining = at.clip.end - at.clip.start - at.offset;
     onChange((d) => {
       d.broll.push({
-        id, shot: null, label: "B-roll", source: "", clip: at.clip.id, offset: Math.round(at.offset * 10) / 10,
+        id, shot: null, label: term, source: "", clip: at.clip.id, offset: Math.round(at.offset * 10) / 10,
         duration: Math.max(0.5, Math.min(3, remaining)), media: null, media_in: 0, fit: "contain",
         layout: "full", side: "top", ratio: 0.5, x: null, y: null, w: null,
       });
@@ -113,7 +113,7 @@ export default function BrollPanel({
         right={
           <span style={{ display: "flex", gap: 6 }}>
             <Btn size="s" kind="primary" icon={<Icon.Upload size={14} />} onClick={() => newUpload.current?.click()} disabled={!lay.duration}>
-              Add at {fmtTime(time, false)}
+              {term === "Media" ? "Add media" : "Add"} at {fmtTime(time, false)}
             </Btn>
             {readyAssets.length > 0 && <Btn size="s" onClick={addAtPlayhead} disabled={!lay.duration}>From library</Btn>}
           </span>
@@ -123,7 +123,7 @@ export default function BrollPanel({
           <p style={{ fontSize: 13, color: "var(--ink-mute)", margin: 0, lineHeight: 1.6 }}>
             Move the playhead to the moment you talk about something, then add a photo or a clip there.
             Show it full screen, split the screen with it, or put it on top of your video and drag it into place.
-            {!isNarrow && " You can also click the B-roll row of the timeline."}
+            {!isNarrow && ` You can also click the ${term} row of the timeline.`}
           </p>
         )}
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
@@ -146,7 +146,7 @@ export default function BrollPanel({
                       {m ? <img src={m.thumb_url || m.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : inFlight ? <Spinner size={16} /> : <Icon.Camera size={18} />}
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 650, color: "var(--ink)", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis" }}>{s.label || "B-roll"}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 650, color: "var(--ink)", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis" }}>{s.label || term}</div>
                       {s.source && <div style={{ fontSize: 12, color: "var(--ink-body)", lineHeight: 1.45 }}>{s.source}</div>}
                       <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 2 }}>
                         {inFlight ? "Uploading…" : m ? { full: "Full screen", split: "Split screen", pip: "Overlay" }[kind] : clip?.line ? `Line ${clip.line}` : "Empty"}
@@ -202,11 +202,11 @@ export default function BrollPanel({
                             value={s.side === "bottom" ? "bottom" : "top"}
                             onChange={(v) => update(s.id, (b) => { b.side = v; })}
                             options={[
-                              { value: "top", label: across ? "B-roll left, you right" : "B-roll on top, you below" },
-                              { value: "bottom", label: across ? "You left, B-roll right" : "You on top, B-roll below" },
+                              { value: "top", label: across ? `${term} left, you right` : `${term} on top, you below` },
+                              { value: "bottom", label: across ? `You left, ${term.toLowerCase()} right` : `You on top, ${term.toLowerCase()} below` },
                             ]}
                           />
-                          <SliderRow label="B-roll takes" value={s.ratio ?? 0.5} min={0.3} max={0.7} step={0.05} onChange={(v) => update(s.id, (b) => { b.ratio = v; }, `ratio:${s.id}`)} />
+                          <SliderRow label={`${term} takes`} value={s.ratio ?? 0.5} min={0.3} max={0.7} step={0.05} onChange={(v) => update(s.id, (b) => { b.ratio = v; }, `ratio:${s.id}`)} />
                         </div>
                       )}
 

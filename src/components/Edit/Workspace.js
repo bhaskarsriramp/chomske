@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { errorMessage } from "../../api";
 import { alphabetName } from "../Order/ScriptToggle";
 import { saveTimeline, removeMedia, renameProject, ackTranslation } from "./editApi";
-import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, anchorAt, splitClipAt, fitFor, splitPanes } from "./model";
+import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, placedSegments, anchorAt, splitClipAt, fitFor, splitPanes } from "./model";
 import Preview from "./Preview";
 import ClipList from "./ClipList";
 import CutsPanel from "./CutsPanel";
@@ -27,7 +27,7 @@ const TABS = {
   free: [
     ["captions", "Captions", Icon.Captions],
     ["video", "Video", Icon.Film],
-    ["broll", "B-roll", Icon.Camera],
+    ["broll", "Media", Icon.Image],
     ["audio", "Music", Icon.Music],
     ["text", "Text", Icon.Text],
   ],
@@ -55,6 +55,9 @@ const TABS = {
 export default function Workspace({ data, config, isNarrow, uploads, onAddFiles, onRetryUpload, onDismissUpload, onData, onReload, onExit, onRecordings }) {
   const { project, script } = data;
   const mode = project.mode === "free" ? "free" : "script";
+  // "B-roll" is a script's word, planned in its shot list. A video edited on its
+  // own just has photos and clips added to it.
+  const term = mode === "free" ? "Media" : "B-roll";
 
   const [tl, setTl] = useState(() => withSegments(project.timeline));
   const tlRef = useRef(tl);
@@ -78,6 +81,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
   const [renaming, setRenaming] = useState(false);
   const [errorSeen, setErrorSeen] = useState("");
   const [waiting, setWaiting] = useState({});
+  const [captionScope, setCaptionScope] = useState("all");
 
   const revRef = useRef(project.timeline_rev);
   const dirtyRef = useRef(false);
@@ -264,7 +268,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
           b.media = m.id;
           b.media_in = 0;
           b.fit = fitFor(m, box.w, box.h);
-          if (!b.label || b.label === "B-roll") b.label = nameOf(m.filename);
+          if (!b.label || b.label === "B-roll" || b.label === "Media") b.label = nameOf(m.filename);
           if (m.type === "video" && m.duration) {
             const L = layout(d);
             const pos = L.broll.find((x) => x.id === b.id);
@@ -335,13 +339,19 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     if (kind === "clip") {
       const c = lay.clips.find((x) => x.id === id);
       if (c && c.start !== null && !playing) seekTo(c.start);
+    } else if (kind === "caption") {
+      const p = placedSegments(tlRef.current).find((x) => x.seg.id === id);
+      if (p && !playing) seekTo(p.start + 0.01);
     }
   }, [lay, playing, seekTo]);
 
+  const selectCaption = useCallback((id) => select("caption", id), [select]);
+
   // Something pressed on the preview itself.
   const pick = useCallback((kind, id) => {
-    if (kind === "captions") {
+    if (kind === "caption") {
       setTab("captions");
+      if (id) setSelection({ kind: "caption", id });
       return;
     }
     setSelection({ kind, id });
@@ -363,7 +373,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     const id = newId("br");
     change((d) => {
       d.broll = [...(d.broll || []), {
-        id, shot: null, label: m ? nameOf(m.filename) : label || "B-roll", source: "",
+        id, shot: null, label: m ? nameOf(m.filename) : label || term, source: "",
         clip: at.clip.id, offset: Math.round(at.offset * 100) / 100,
         duration: Math.max(0.5, Math.round(Math.min(want, room) * 10) / 10),
         media: m ? m.id : null, media_in: 0, fit: m ? fitFor(m, W, H) : "contain",
@@ -374,7 +384,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     setTab("broll");
     seekTo(start + 0.01);
     return id;
-  }, [change, mediaById, seekTo]);
+  }, [change, mediaById, seekTo, term]);
 
   const uploadBrollAt = useCallback((t, files) => {
     const file = files?.[0];
@@ -504,6 +514,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         onAssignWhenReady={assignWhenReady}
         onUploadAt={uploadBrollAt}
         isNarrow={isNarrow}
+        term={term}
       />
     ),
     captions: (
@@ -522,6 +533,10 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         onFlush={flush}
         onData={onData}
         onReload={onReload}
+        selectedId={sel("caption")}
+        scope={captionScope}
+        onScope={setCaptionScope}
+        onSelectCaption={selectCaption}
       />
     ),
     audio: (
@@ -567,6 +582,8 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       selection={selection}
       onChange={change}
       onPick={pick}
+      captionScope={captionScope}
+      term={term}
     />
   );
 
@@ -711,6 +728,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       price={exportCost}
       languages={languages}
       nativeLabel={nativeLabel}
+      term={term}
       onFlush={flush}
       priceNow={() => costRef.current}
       onAspect={(v) => change((d) => { d.aspect = v; })}
@@ -771,10 +789,11 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
             playing={playing}
             selection={selection}
             assets={readyAssets}
+            term={term}
             waiting={waiting}
             onSelect={(kind, id) => {
               select(kind, id);
-              setTab({ clip: mode === "free" ? "video" : "script", broll: "broll", text: "text", audio: "audio" }[kind] || tab);
+              setTab({ clip: mode === "free" ? "video" : "script", broll: "broll", text: "text", audio: "audio", caption: "captions" }[kind] || tab);
             }}
             onSeek={seekTo}
             onChange={change}

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  ASPECTS, layout, captionCues, activeClipIndex, hasIndic, captionPlacement, textPlacement, pipPlacement, splitPanes,
+  ASPECTS, layout, captionCues, activeClipIndex, hasIndic, captionPlacement, captionLook, segmentsOf, textPlacement, pipPlacement,
+  splitPanes,
 } from "./model";
 import { Icon } from "./ui";
 
@@ -36,7 +37,7 @@ import { Icon } from "./ui";
  */
 export default function Preview({
   tl, mediaById, playing, onPlayingChange, seek, onTime, stopAt = null, audition = null, onAuditionEnd,
-  tab = null, selection = { kind: null, id: null }, onChange, onPick,
+  tab = null, selection = { kind: null, id: null }, onChange, onPick, captionScope = "all", term = "B-roll",
 }) {
   const outer = useRef(null);
   const box = useBox(outer);
@@ -52,6 +53,7 @@ export default function Preview({
   const lay = useMemo(() => layout(tl), [tl]);
   const clips = useMemo(() => lay.clips.filter((c) => c.start !== null), [lay]);
   const cues = useMemo(() => captionCues(tl), [tl]);
+  const segById = useMemo(() => new Map(segmentsOf(tl).map((s) => [s.id, s])), [tl]);
   const recordingIds = useMemo(() => {
     const ids = new Set(clips.map((c) => c.media));
     if (audition?.media) ids.add(audition.media);
@@ -79,7 +81,7 @@ export default function Preview({
     const texts = (T.texts || []).filter((x) => t >= x.start && t < x.start + x.duration);
     const key = [
       brolls.map((b) => [b.id, b.media, b.fit, b.layout, b.side, b.ratio, b.x, b.y, b.w, b.label].join(":")).join("|"),
-      cue ? `${cue.start}:${cue.text}` : "",
+      cue ? `${cue.start}:${cue.text}:${cue.seg}` : "",
       texts.map((x) => [x.id, x.text, x.position, x.size, x.x, x.y].join(":")).join("|"),
     ].join("#");
     setOverlay((o) => (o.key === key ? o : { key, brolls, cue, texts }));
@@ -310,9 +312,21 @@ export default function Preview({
   // Every drag handler gets where the thing was when the press began, never
   // where it is now: the movement is measured from the press, and applying it
   // to the current place would count it again on every re-render of the drag.
+  // A caption drag moves every caption, or, with "One caption" chosen, only the
+  // section that was pressed (origin.seg), which then keeps its own place.
   const moveCaption = (origin, dx, dy, key) =>
     onChange((d) => {
-      const p = captionPlacement({ ...d, captions: { ...d.captions, x: snapX(origin.x + dx), y: origin.y + dy } }, W, H);
+      const x = snapX(origin.x + dx);
+      const y = origin.y + dy;
+      if (origin.seg) {
+        if (!Array.isArray(d.segments)) d.segments = segmentsOf(d);
+        const s = d.segments.find((z) => z.id === origin.seg);
+        if (!s) return;
+        const p = captionPlacement(d, W, H, { ...s, custom: { ...(s.custom || {}), x, y } });
+        s.custom = { ...(s.custom || {}), x: r3(p.x), y: r3(p.y) };
+        return;
+      }
+      const p = captionPlacement({ ...d, captions: { ...d.captions, x, y } }, W, H);
       d.captions = { ...d.captions, x: r3(p.x), y: r3(p.y) };
     }, key);
 
@@ -415,30 +429,34 @@ export default function Preview({
         {!audition && emptySlot && (
           <span style={chip(scale)}>
             <Icon.Camera size={Math.max(11, 30 * scale)} />
-            B-roll here: {emptySlot.label || "add a clip or image"}
+            {term} here: {emptySlot.label || "add a photo or clip"}
           </span>
         )}
 
-        {!audition && overlay.cue && cp.size > 0 && scale > 0 && (
-          editable ? (
+        {!audition && overlay.cue && scale > 0 && (() => {
+          const seg = overlay.cue.seg ? segById.get(overlay.cue.seg) : null;
+          const look = captionLook(tl, seg);
+          const p = captionPlacement(tl, W, H, seg);
+          const style = { left: p.left * scale, width: p.boxW * scale, top: p.cy * scale, transform: "translateY(-50%)" };
+          const body = <Caption text={overlay.cue.text} look={look} px={p.size * scale} />;
+          if (!editable) return <div style={{ position: "absolute", pointerEvents: "none", ...style }}>{body}</div>;
+          const one = captionScope === "one" && !!seg;
+          return (
             <Movable
-              label="Captions: drag to place them anywhere"
-              style={{ left: cp.left * scale, width: cp.boxW * scale, top: cp.cy * scale, transform: "translateY(-50%)" }}
+              label={one ? "Captions: drag to place this one" : "Captions: drag to place them anywhere"}
+              style={style}
               frame={{ fw, fh }}
               hint={tab === "captions"}
-              onPress={() => onPick?.("captions")}
-              origin={{ x: cp.x, y: cp.y }}
+              selected={!!seg && selection.kind === "caption" && selection.id === seg.id}
+              onPress={() => onPick?.("caption", seg?.id || null)}
+              origin={{ x: p.x, y: p.y, seg: one ? seg.id : null }}
               onMove={moveCaption}
               onEnd={() => setGuide(false)}
             >
-              <Caption text={overlay.cue.text} cap={cap} px={cp.size * scale} />
+              {body}
             </Movable>
-          ) : (
-            <div style={{ position: "absolute", left: cp.left * scale, width: cp.boxW * scale, top: cp.cy * scale, transform: "translateY(-50%)", pointerEvents: "none" }}>
-              <Caption text={overlay.cue.text} cap={cap} px={cp.size * scale} />
-            </div>
-          )
-        )}
+          );
+        })()}
 
         {showCaptionGuide && (
           <Movable
@@ -451,7 +469,7 @@ export default function Preview({
             onEnd={() => setGuide(false)}
           >
             <div style={{ textAlign: "center", opacity: 0.85 }}>
-              <Caption text="Your captions show here" cap={cap} px={cp.size * scale} />
+              <Caption text="Your captions show here" look={captionLook(tl)} px={cp.size * scale} />
             </div>
           </Movable>
         )}
@@ -630,11 +648,12 @@ const chip = (scale) => ({
   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", pointerEvents: "none",
 });
 
-function Caption({ text, cap, px }) {
+function Caption({ text, look, px }) {
   const o = Math.max(1, px * 0.07);
-  const look = cap.style === "box"
+  const style = look?.style || "bold";
+  const deco = style === "box"
     ? { background: "rgba(0,0,0,.65)", padding: `${px * 0.1}px ${px * 0.22}px`, borderRadius: px * 0.14, boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }
-    : cap.style === "clean"
+    : style === "clean"
     ? { textShadow: `0 ${px * 0.05}px ${px * 0.18}px rgba(0,0,0,.75)` }
     : {
         textShadow: [
@@ -645,7 +664,7 @@ function Caption({ text, cap, px }) {
       };
   return (
     <div style={{ textAlign: "center", lineHeight: 1.3 }}>
-      <span className={hasIndic(text) ? "indic" : undefined} style={{ color: "#fff", fontWeight: 800, fontSize: px, lineHeight: 1.3, ...look }}>
+      <span className={hasIndic(text) ? "indic" : undefined} style={{ color: look?.color || "#fff", fontWeight: 800, fontSize: px, lineHeight: 1.3, ...deco }}>
         {text}
       </span>
     </div>

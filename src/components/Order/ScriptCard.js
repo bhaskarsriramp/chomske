@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useCallback, useId } from "react";
+import { useState, useEffect, useRef, useCallback, useId, useMemo } from "react";
 import { createPortal } from "react-dom";
 import api, { errorMessage } from "../../api";
 import { useCredits } from "../../state/CreditsContext";
 import useElementWidth from "../../hooks/useElementWidth";
 import ScriptToggle, { EnglishNote } from "./ScriptToggle";
-import ShootPack, { packAsText } from "./ShootPack";
+import ShootPack, { packAsText, withRoman } from "./ShootPack";
 import Teleprompter from "./Teleprompter";
 
 /** Below this the card stacks its controls and drops their longer labels. */
@@ -72,7 +72,9 @@ export default function ScriptCard({ script, compact = false, meta = null, onUpd
 
   const { setBalance, refresh: refreshCredits } = useCredits();
 
-  const pack = script.shoot_pack || built;
+  // A plan saved before its Roman lines could be lined up gets them here, from
+  // the script's own Roman version, so the Read in switch is not missing for it.
+  const pack = useMemo(() => withRoman(script.shoot_pack || built, script.roman_text), [script.shoot_pack, built, script.roman_text]);
 
   const build = useCallback(async ({ confirm = false } = {}) => {
     setPackStatus("building");

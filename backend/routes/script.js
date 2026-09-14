@@ -794,11 +794,10 @@ router.post("/:id/shoot", authenticateAny, async (req, res) => {
     try {
       built = await buildShootPack({
         text: doc.text,
-        // Passed only when it lines up. An unaligned transliteration still
-        // reads fine as a whole script, but zipping it line by line would put
-        // the wrong words against a timecode and a shot number, so the pack
-        // simply does not offer Roman rather than offering it wrong.
-        romanText: doc.roman_aligned ? doc.roman_text : "",
+        // Passed whether or not its sentences line up: buildShootPack cuts an
+        // unaligned one into lines by length, and leaves Roman out only
+        // when even that cannot be trusted.
+        romanText: doc.roman_text || "",
         voice: voice.toObject ? voice.toObject() : voice,
         seconds: doc.duration_seconds || 60,
       });
@@ -1137,8 +1136,8 @@ async function buildIncludedShootPack({ id, userId, profileId, seconds, text, ro
     const built = await Promise.race([
       buildShootPack({
         text,
-        // Aligned only, for the reason given in POST /:id/shoot.
-        romanText: roman?.aligned ? roman.text : "",
+        // Aligned or not, for the reason given in POST /:id/shoot.
+        romanText: roman?.text || "",
         voice: voice.toObject ? voice.toObject() : voice,
         seconds,
       }),

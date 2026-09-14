@@ -26,7 +26,8 @@
  *   clips    [{ id, line, text, roman, media, in, out, enabled, missing,
  *              take_id, said, said_roman, takes: [{ id, media, in, out, score,
  *              said, said_roman }] }]
- *   segments [{ id, media, start, end, text, roman, tr: { [lang]: text } }]
+ *   segments [{ id, media, start, end, text, roman, tr: { [lang]: text },
+ *              custom: { style, size, color, x, y } }]  a section styled on its own
  *   sources  [media id]  recordings already given clips (videos uploaded on their own)
  *   broll    [{ id, shot, label, source, clip, offset, duration, media, media_in,
  *              fit: "contain" | "cover",
@@ -39,7 +40,7 @@
  *              size: "s"|"m"|"l", x, y }]
  *   captions { mode: "roman"|"native"|"tr"|"off", lang, source: "said"|"script",
  *              style: "bold"|"clean"|"box", position: "top"|"middle"|"bottom",
- *              size: "s"|"m"|"l", x, y }
+ *              size: "s"|"m"|"l"|"xl", color: "#RRGGBB"|null, x, y }
  *   unused   [{ id, media, in, out, said, said_roman }]  speech that matched no line
  *   aspect   "9:16" | "16:9" | "1:1" | "4:5"
  *   voice_volume  0..2
@@ -75,15 +76,15 @@ const frac = (v) => (isSet(v) ? Math.round(clamp(v, 0, 1) * 1000) / 1000 : null)
 const A_ROLL = /\b(on[- ]camera|a-?roll|talking head|to camera|face ?cam|selfie|presenter)\b/i;
 
 export const defaultCaptions = (mode = "native") => ({
-  mode, lang: "", source: "said", style: "bold", position: "bottom", size: "m", x: null, y: null,
+  mode, lang: "", source: "said", style: "bold", position: "bottom", size: "m", color: null, x: null, y: null,
 });
 
-/** Transcribed stretches of speech, as caption segments. */
+/** Transcribed stretches of speech, as caption segments, a sentence each. */
 export function segmentsFromPieces(pieces) {
-  return (pieces || [])
-    .filter((p) => (p.text || p.roman) && Number(p.end) > Number(p.start))
-    .slice(0, LIMITS.segments)
-    .map((p) => ({
+  const out = [];
+  for (const p of pieces || []) {
+    if (!(p.text || p.roman) || !(Number(p.end) > Number(p.start))) continue;
+    const seg = {
       id: newId("sg"),
       media: p.media,
       start: r3(p.start),
@@ -91,7 +92,13 @@ export function segmentsFromPieces(pieces) {
       text: str(p.text || p.roman, 1000),
       roman: str(p.roman || p.text, 1000),
       tr: {},
-    }));
+    };
+    const sentences = sentencePieces(seg);
+    if (sentences) for (const s of sentences) out.push({ ...s, id: newId("sg") });
+    else out.push(seg);
+    if (out.length >= LIMITS.segments) break;
+  }
+  return out.slice(0, LIMITS.segments);
 }
 
 /**
@@ -352,13 +359,124 @@ export function captionCues(tl, { maxWords, maxChars } = {}) {
   return cues;
 }
 
+/* ── Sentences ─────────────────────────────────────────────────────────────
+   A stretch of speech with no pause in it can hold three sentences, and a
+   caption section that long is too coarse to place or style on its own. So a
+   stretch is split at its sentence ends, with the time shared out by length:
+   the same proportion the caption cues already use, so no word moves. */
+
+/** "One. Two? Three." as ["One.", "Two?", "Three."]. The danda counts. */
+export function splitSentences(text) {
+  const out = [];
+  let cur = "";
+  for (const token of String(text || "").split(/(\s+)/)) {
+    cur += token;
+    if (/[.?!\u0964\u0965]$/.test(token)) {
+      out.push(cur.trim());
+      cur = "";
+    }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(Boolean);
+}
+
+/** Words shared into parts by weight, each word going where its middle falls. */
+function divide(text, weights) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const total = weights.reduce((n, w) => n + w, 0) || 1;
+  const chars = words.reduce((n, w) => n + w.length + 1, 0) || 1;
+  const out = weights.map(() => []);
+  let at = 0;
+  for (const w of words) {
+    const mid = (at + (w.length + 1) / 2) / chars;
+    let k = 0;
+    let acc = weights[0] / total;
+    while (k < weights.length - 1 && mid >= acc) {
+      k++;
+      acc += weights[k] / total;
+    }
+    out[k].push(w);
+    at += w.length + 1;
+  }
+  return out.map((ws) => ws.join(" "));
+}
+
+/**
+ * A segment holding several sentences, as one segment per sentence (keeping
+ * the original's id, for the caller to replace), or null. A sentence too short
+ * to read on its own joins its neighbour.
+ */
+export function sentencePieces(seg, minSeconds = 0.7) {
+  const parts = splitSentences(seg?.text);
+  if (parts.length < 2 || !(seg.end > seg.start)) return null;
+  const dur = seg.end - seg.start;
+  const total = parts.reduce((n, p) => n + p.length, 0) || 1;
+  const groups = [];
+  parts.forEach((p, i) => {
+    const d = (dur * p.length) / total;
+    const last = groups[groups.length - 1];
+    if (last && (d < minSeconds || last.d < minSeconds)) {
+      last.to = i;
+      last.d += d;
+      last.len += p.length;
+    } else {
+      groups.push({ from: i, to: i, d, len: p.length });
+    }
+  });
+  if (groups.length < 2) return null;
+  const weights = groups.map((g) => g.len);
+  const alike = (other) => {
+    const ps = splitSentences(other);
+    return ps.length === parts.length ? groups.map((g) => ps.slice(g.from, g.to + 1).join(" ")) : divide(other, weights);
+  };
+  const roman = alike(seg.roman);
+  const tr = Object.entries(seg.tr || {}).map(([k, v]) => [k, alike(v)]);
+  let at = seg.start;
+  return groups.map((g, i) => {
+    const end = i === groups.length - 1 ? seg.end : at + (dur * g.len) / total;
+    const piece = {
+      ...seg,
+      start: Math.round(at * 1000) / 1000,
+      end: Math.round(end * 1000) / 1000,
+      text: parts.slice(g.from, g.to + 1).join(" "),
+      roman: roman[i],
+      tr: Object.fromEntries(tr.map(([k, v]) => [k, v[i]])),
+    };
+    at = end;
+    return piece;
+  });
+}
+
+/**
+ * How one caption looks: the captions' own settings, with whatever that
+ * section was given on its own (seg.custom) on top.
+ */
+export function captionLook(tl, seg = null) {
+  const cap = tl?.captions || {};
+  const c = seg?.custom || {};
+  return {
+    style: c.style || cap.style || "bold",
+    size: c.size || cap.size || "m",
+    color: c.color || cap.color || "#FFFFFF",
+    position: cap.position,
+    x: isSet(c.x) ? Number(c.x) : cap.x,
+    y: isSet(c.y) ? Number(c.y) : cap.y,
+  };
+}
+
+/** Where a position preset puts the middle of the captions, as a fraction of the height. */
+export function captionPresetY(position, W, H) {
+  const portrait = H > W;
+  return position === "middle" ? 0.5 : position === "top" ? (portrait ? 0.2 : 0.14) : portrait ? 0.77 : 0.86;
+}
+
 /* ── Where things sit on the frame ─────────────────────────────────────────
    Shared with the preview (model.js), in output pixels. Captions and text are
    anchored at their centre, with a wrap width that narrows as they are dragged
    towards an edge, so they never run off the frame in the export or the
    preview. */
 
-const SIZE_MUL = { s: 0.8, m: 1, l: 1.25 };
+const SIZE_MUL = { s: 0.8, m: 1, l: 1.25, xl: 1.55 };
 const TEXT_SIZE = { s: 0.05, m: 0.064, l: 0.085 };
 
 function placeBox(x, y, fx, fy, W, H, maxFrac) {
@@ -372,12 +490,11 @@ function placeBox(x, y, fx, fy, W, H, maxFrac) {
   return { cx, cy, boxW, left: cx - boxW / 2, x: cx / W, y: cy / H };
 }
 
-export function captionPlacement(tl, W, H) {
-  const cap = tl?.captions || {};
-  const portrait = H > W;
-  const fy = cap.position === "middle" ? 0.5 : cap.position === "top" ? (portrait ? 0.2 : 0.14) : portrait ? 0.77 : 0.86;
-  const size = Math.round(Math.min(W, H) * (cap.style === "clean" ? 0.062 : 0.075) * (SIZE_MUL[cap.size] || 1));
-  return { ...placeBox(cap.x, cap.y, 0.5, fy, W, H, 0.84), size };
+/** A caption's box and font size; `seg` for one section's own look and place. */
+export function captionPlacement(tl, W, H, seg = null) {
+  const look = captionLook(tl, seg);
+  const size = Math.round(Math.min(W, H) * (look.style === "clean" ? 0.062 : 0.075) * (SIZE_MUL[look.size] || 1));
+  return { ...placeBox(look.x, look.y, 0.5, captionPresetY(look.position, W, H), W, H, 0.84), size };
 }
 
 export function textPlacement(t, W, H) {
@@ -430,6 +547,20 @@ export function splitPanes(b, W, H) {
     creator: { x: 0, y: first ? bh : 0, w: W, h: ch },
     crop: { x: 0, y: Math.round((H - ch) / 2), w: W, h: ch },
   };
+}
+
+const COLOR = /^#[0-9a-f]{6}$/i;
+
+/** One section's own look, with only the fields it really sets. */
+function cleanCustom(c) {
+  if (!c || typeof c !== "object") return null;
+  const out = {};
+  if (["bold", "clean", "box"].includes(c.style)) out.style = c.style;
+  if (["s", "m", "l", "xl"].includes(c.size)) out.size = c.size;
+  if (COLOR.test(String(c.color || ""))) out.color = c.color.toUpperCase();
+  if (isSet(c.x)) out.x = frac(c.x);
+  if (isSet(c.y)) out.y = frac(c.y);
+  return Object.keys(out).length ? out : null;
 }
 
 /**
@@ -568,7 +699,8 @@ export function sanitizeTimeline(input, mediaById) {
       source: cap.source === "script" ? "script" : "said",
       style: ["bold", "clean", "box"].includes(cap.style) ? cap.style : "bold",
       position: ["top", "middle"].includes(cap.position) ? cap.position : "bottom",
-      size: ["s", "m", "l"].includes(cap.size) ? cap.size : "m",
+      size: ["s", "m", "l", "xl"].includes(cap.size) ? cap.size : "m",
+      color: COLOR.test(String(cap.color || "")) ? cap.color.toUpperCase() : null,
       x: frac(cap.x),
       y: frac(cap.y),
     },
@@ -593,7 +725,8 @@ export function sanitizeTimeline(input, mediaById) {
       for (const [k, v] of Object.entries(s.tr && typeof s.tr === "object" ? s.tr : {})) {
         if (LANGUAGE_CODES.has(k) && typeof v === "string") tr[k] = str(v, 1000);
       }
-      out.segments.push({ id, media: m.id, start, end, text: str(s.text, 1000), roman: str(s.roman, 1000), tr });
+      const custom = cleanCustom(s.custom);
+      out.segments.push({ id, media: m.id, start, end, text: str(s.text, 1000), roman: str(s.roman, 1000), tr, ...(custom ? { custom } : {}) });
     }
   }
   if (Array.isArray(input.sources)) {
@@ -605,5 +738,5 @@ export function sanitizeTimeline(input, mediaById) {
 export default {
   ASPECTS, newId, defaultCaptions, segmentsFromPieces, buildInitialTimeline, buildFreeTimeline, mergeFreeTimeline,
   layout, segmentsOf, placedSegments, captionText, captionCues, captionPlacement, textPlacement, pipPlacement,
-  splitPanes, sanitizeTimeline,
+  splitPanes, sanitizeTimeline, splitSentences, sentencePieces, captionLook, captionPresetY,
 };

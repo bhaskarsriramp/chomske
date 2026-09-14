@@ -131,6 +131,12 @@ async function main() {
   const derivedAgain = segmentsOf({ clips: tl.clips, unused: tl.unused });
   check(derived.length >= 5 && derived.every((s, i) => s.id === derivedAgain[i].id), `an older edit derives its caption segments with stable ids (${derived.length})`);
 
+  const twoSentences = segmentsFromPieces([{ media: "rec1", start: 1, end: 5, text: "The sale starts on October 9. Bank offers come too.", roman: "The sale starts on October 9. Bank offers come too." }]);
+  check(
+    twoSentences.length === 2 && twoSentences[0].end === twoSentences[1].start && twoSentences[1].end === 5 && Math.abs(twoSentences[0].end - (1 + (4 * 29) / 50)) < 0.05 && twoSentences[1].text === "Bank offers come too.",
+    `a stretch holding two sentences becomes two caption sections, timed by length (${twoSentences.map((s) => `${s.start}-${s.end}`).join(", ")})`
+  );
+
   tl.broll[0].media = "img1";
   tl.captions.mode = "native";
   tl.texts.push({ id: "tx1", text: "Sale starts Oct 9", start: 0.3, duration: 2.2, position: "top", size: "m" });
@@ -186,8 +192,8 @@ async function main() {
   // ── By hand: translated captions dragged aside, splits, an overlay ────────
   const byHand = sanitizeTimeline({
     ...clean,
-    captions: { ...clean.captions, mode: "tr", lang: "en", x: 0.3, y: 0.42 },
-    segments: clean.segments.map((s) => ({ ...s, tr: { en: `EN ${s.roman}` } })),
+    captions: { ...clean.captions, mode: "tr", lang: "en", x: 0.3, y: 0.42, color: "#33E1FF" },
+    segments: clean.segments.map((s, i) => ({ ...s, tr: { en: `EN ${s.roman}` }, ...(i === 0 ? { custom: { color: "#FFD400", size: "xl", style: "box", x: 0.5, y: 0.2 } } : {}) })),
     broll: [
       { id: "b1", clip: lay.clips[0].id, offset: 0, duration: 1.6, media: "img1", layout: "split", side: "top", fit: "cover", ratio: 0.5 },
       { id: "b2", clip: lay.clips[2].id, offset: 0.2, duration: 1.4, media: "badge", layout: "pip", x: 0.5, y: 0.72, w: 0.6 },
@@ -198,6 +204,7 @@ async function main() {
   }, mediaById);
   check(byHand.captions.mode === "tr" && byHand.captions.lang === "en" && byHand.captions.x === 0.3, "sanitize keeps translated, dragged captions");
   check(byHand.broll.map((b) => b.layout).join() === "split,pip,split" && byHand.broll[1].w === 0.6, "sanitize keeps B-roll layouts");
+  check(byHand.captions.color === "#33E1FF" && byHand.segments[0].custom?.size === "xl" && !byHand.segments[1].custom, "sanitize keeps the captions' colour and one section's own look");
   check(captionCues(byHand).every((c) => c.text.startsWith("EN") || !/^[A-Z]{2} /.test(c.text)) && captionCues(byHand)[0].text.startsWith("EN"), "translated captions show the translation");
 
   const layHand = layout(byHand);

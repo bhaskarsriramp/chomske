@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { layout, anchorAt, placedSegments } from "./model";
+import { layout, anchorAt, placedSegments, captionText } from "./model";
 import { Btn, Icon, fmtTime } from "./ui";
 
 /**
@@ -28,7 +28,7 @@ const snap = (v) => Math.round(v * 20) / 20;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 export default function Timeline({
-  tl, lay, mediaById, mode = "script", time, playing, selection, assets = [], waiting = {},
+  tl, lay, mediaById, mode = "script", term = "B-roll", time, playing, selection, assets = [], waiting = {},
   onSelect, onSeek, onChange, onSplit, onAddBrollAt, onUploadBrollAt,
 }) {
   const free = mode === "free";
@@ -43,6 +43,18 @@ export default function Timeline({
   const broll = lay.broll.filter((b) => b.start !== null);
   const texts = tl.texts || [];
   const audio = tl.audio || [];
+
+  // One block per caption section, where it plays. A section a cut runs through
+  // shows once on each side of the cut.
+  const captionBlocks = useMemo(() => {
+    const seen = new Set();
+    return placedSegments(tl, lay).filter((p) => {
+      const key = `${p.seg.id}:${p.clip.id}`;
+      if (seen.has(key) || !(p.seg.text || p.seg.roman)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [tl, lay]);
 
   const words = useMemo(() => {
     if (!free) return new Map();
@@ -146,7 +158,7 @@ export default function Timeline({
 
   const isSel = (kind, id) => selection.kind === kind && selection.id === id;
 
-  const block = ({ key, left, w, label, kind, id, selectKind, color, handles, orig, sub }) => (
+  const block = ({ key, left, w, label, kind, id, selectKind, color, handles, orig, sub, swatch }) => (
     <div
       key={key}
       onPointerDown={handles.move ? (e) => start(e, { kind: handles.move, id, select: selectKind, orig }) : (e) => { e.stopPropagation(); onSelect(selectKind, id); }}
@@ -161,6 +173,7 @@ export default function Timeline({
       }}
     >
       {handles.left && <Handle side="left" onPointerDown={(e) => start(e, { kind: handles.left, id, select: selectKind, orig })} />}
+      {swatch && <span style={{ width: 9, height: 9, borderRadius: 2, background: swatch, border: "1px solid rgba(0,0,0,.35)", marginRight: 5, flexShrink: 0 }} />}
       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
       {sub && <span style={{ marginLeft: 6, fontWeight: 500, color: "var(--ink-mute)", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</span>}
       {handles.right && <Handle side="right" onPointerDown={(e) => start(e, { kind: handles.right, id, select: selectKind, orig })} />}
@@ -178,7 +191,7 @@ export default function Timeline({
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderBottom: "1px solid var(--line)", minWidth: 0 }}>
         <span style={{ fontSize: 11.5, fontWeight: 650, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink-mute)" }}>Timeline</span>
         <span style={{ fontSize: 12, color: "var(--ink-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          Drag edges to trim. Click the B-roll row to add a photo or clip there.
+          {`Drag edges to trim. Click a caption to pick it. Click the ${term} row to add a photo or clip there.`}
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
           {free && (
@@ -218,11 +231,24 @@ export default function Timeline({
             )}
           </Track>
 
-          <Track label="B-roll" icon={<Icon.Camera size={12} />} onPointerDown={openAdd} hint>
+          <Track label="Captions" icon={<Icon.Captions size={12} />}>
+            {captionBlocks.map((p) =>
+              block({
+                key: `${p.seg.id}:${p.clip.id}`, id: p.seg.id, selectKind: "caption",
+                left: LABEL + p.start * pps, w: (p.end - p.start) * pps,
+                label: captionText(p.seg, tl.captions).slice(0, 60) || "…",
+                color: tl.captions?.mode === "off" ? "#F2F1EE" : "#FFF3CC",
+                swatch: p.seg.custom ? p.seg.custom.color || "#FFFFFF" : null,
+                handles: {},
+              })
+            )}
+          </Track>
+
+          <Track label={term} icon={term === "Media" ? <Icon.Image size={12} /> : <Icon.Camera size={12} />} onPointerDown={openAdd} hint>
             {broll.map((b) =>
               block({
                 key: b.id, id: b.id, selectKind: "broll", left: LABEL + b.start * pps, w: (b.end - b.start) * pps,
-                label: b.media ? `${layoutWord(b)}${b.label || "B-roll"}` : waiting[b.id] ? "Uploading…" : `Empty: ${b.label || "B-roll"}`,
+                label: b.media ? `${layoutWord(b)}${b.label || term}` : waiting[b.id] ? "Uploading…" : `Empty: ${b.label || term}`,
                 color: b.media ? "#D9E6EF" : "repeating-linear-gradient(45deg,#F2F1EE,#F2F1EE 6px,#E8E6E1 6px,#E8E6E1 12px)",
                 handles: { move: "broll-move", right: "broll-len" }, orig: { start: b.start, duration: b.duration },
               })
@@ -260,7 +286,7 @@ export default function Timeline({
         <div
           data-broll-add
           role="dialog"
-          aria-label="Add B-roll"
+          aria-label="Add media"
           className="hg-fade"
           style={{
             position: "absolute", left: adding.left, top: adding.top - 8, transform: "translate(-50%, -100%)", zIndex: 30,
@@ -269,7 +295,7 @@ export default function Timeline({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>B-roll at {fmtTime(adding.t)}</span>
+            <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{term === "Media" ? "Add media" : "B-roll"} at {fmtTime(adding.t)}</span>
             <Btn size="s" kind="quiet" aria-label="Close" icon={<Icon.Close size={13} />} onClick={() => setAdding(null)} style={{ padding: 4, minHeight: 0 }} />
           </div>
           <Btn

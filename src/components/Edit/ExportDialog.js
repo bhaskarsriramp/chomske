@@ -19,7 +19,7 @@ import { Btn, Bar, Icon, Notice, Section, Segmented, fmtBytes, fmtTime } from ".
  * Empty B-roll slots export as the creator talking, which may be fine, and is
  * worth one line before paying rather than after watching the result.
  */
-export default function ExportDialog({ project, tl, lay, price, languages = [], nativeLabel = "", priceNow, onFlush, onAspect, onData, onClose }) {
+export default function ExportDialog({ project, tl, lay, price, languages = [], nativeLabel = "", term = "B-roll", priceNow, onFlush, onAspect, onData, onClose }) {
   const isPhone = useIsMobile(600);
   const { balance, setBalance, openBuy, canBuy } = useCredits();
   const [shown, setShown] = useState(price);
@@ -137,7 +137,7 @@ export default function ExportDialog({ project, tl, lay, price, languages = [], 
             <li>Length <strong style={{ color: "var(--ink)" }}>{fmtTime(lay.duration, false)}</strong>, 1080p MP4</li>
             <li>Captions: <strong style={{ color: "var(--ink)" }}>{captionWords}</strong></li>
             <li>
-              B-roll: <strong style={{ color: "var(--ink)" }}>{slots ? `${slots - emptySlots} of ${slots} filled` : "none"}</strong>
+              {term}: <strong style={{ color: "var(--ink)" }}>{slots ? `${slots - emptySlots} of ${slots} filled` : "none"}</strong>
               {emptySlots > 0 && <span style={{ color: "#8A5A0F" }}> · empty ones show you talking</span>}
             </li>
             <li>Music: <strong style={{ color: "var(--ink)" }}>{(tl.audio || []).length ? `${tl.audio.length} track${tl.audio.length === 1 ? "" : "s"}` : "none"}</strong>

@@ -38,7 +38,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { ffmpeg } from "../media/ffmpeg.js";
 import {
-  ASPECTS, layout, captionCues, captionPlacement, textPlacement, pipPlacement, splitPanes,
+  ASPECTS, layout, captionCues, captionPlacement, captionLook, segmentsOf, textPlacement, pipPlacement, splitPanes,
 } from "./timeline.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -131,23 +131,31 @@ function richText(text) {
  * the point is where it was dropped, and the margins are the wrap width the
  * preview used (timeline.js captionPlacement), so both break lines alike.
  */
+const HEX = /^#([0-9a-f]{6})$/i;
+/** "#FFD400" as ASS's &HBBGGRR&. */
+const assColor = (hex) => {
+  const m = HEX.exec(String(hex || ""));
+  const h = (m ? m[1] : "FFFFFF").toUpperCase();
+  return `&H${h.slice(4, 6)}${h.slice(2, 4)}${h.slice(0, 2)}&`;
+};
+
+/** Each caption look's colours, border style, outline and shadow, for a font size. */
+const LOOKS = {
+  bold: (px) => ({ colours: "&H00FFFFFF,&H000000FF,&H00000000,&H64000000", border: 1, bord: Math.round(px * 0.09), shad: 0 }),
+  clean: (px) => ({ colours: "&H00FFFFFF,&H000000FF,&H40000000,&H80000000", border: 1, bord: Math.round(px * 0.04), shad: Math.round(px * 0.05) }),
+  box: (px) => ({ colours: "&H00FFFFFF,&H000000FF,&H59000000,&H59000000", border: 3, bord: Math.round(px * 0.22), shad: 0 }),
+};
+
 export function buildAss(tl, { width, height }) {
-  const cap = tl.captions || {};
   const cues = captionCues(tl);
   const texts = tl.texts || [];
+  const segById = new Map(segmentsOf(tl).map((s) => [s.id, s]));
 
   const sample = [...cues.map((c) => c.text), ...texts.map((t) => t.text)].join(" ");
   const family = LATIN_FONT[0];
-
-  const cp = captionPlacement(tl, width, height);
-  const capSize = cp.size;
-  const capStyle = {
-    bold: `&H00FFFFFF,&H000000FF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,${Math.round(capSize * 0.09)},0`,
-    clean: `&H00FFFFFF,&H000000FF,&H40000000,&H80000000,-1,0,0,0,100,100,0,0,1,${Math.round(capSize * 0.04)},${Math.round(capSize * 0.05)}`,
-    box: `&H00FFFFFF,&H000000FF,&H59000000,&H59000000,-1,0,0,0,100,100,0,0,3,${Math.round(capSize * 0.22)},0`,
-  }[cap.style] || "";
-
+  const base = captionPlacement(tl, width, height).size;
   const edge = Math.round(width * 0.08);
+
   const lines = [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -158,8 +166,15 @@ export function buildAss(tl, { width, height }) {
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Cap,${family},${capSize},${capStyle},5,${edge},${edge},0,1`,
   ];
+
+  // One style per look, because the box look's border style cannot be switched
+  // by an inline tag. Size, outline, shadow and colour can, so those are set on
+  // every line, which is what lets one caption section differ from the rest.
+  for (const [name, look] of Object.entries(LOOKS)) {
+    const l = look(base);
+    lines.push(`Style: Cap_${name},${family},${base},${l.colours},-1,0,0,0,100,100,0,0,${l.border},${l.bord},${l.shad},5,${edge},${edge},0,1`);
+  }
 
   for (const size of ["s", "m", "l"]) {
     const px = textPlacement({ size }, width, height).size;
@@ -173,7 +188,14 @@ export function buildAss(tl, { width, height }) {
 
   lines.push("", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
   for (const c of cues) {
-    lines.push(`Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap,,${margins(cp)},0,,{\\an5\\pos(${cp.cx},${cp.cy})}${richText(c.text)}`);
+    const seg = c.seg ? segById.get(c.seg) : null;
+    const look = captionLook(tl, seg);
+    const name = LOOKS[look.style] ? look.style : "bold";
+    const p = captionPlacement(tl, width, height, seg);
+    const l = LOOKS[name](p.size);
+    lines.push(
+      `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Cap_${name},,${margins(p)},0,,{\\an5\\pos(${p.cx},${p.cy})\\fs${p.size}\\bord${l.bord}\\shad${l.shad}\\c${assColor(look.color)}}${richText(c.text)}`
+    );
   }
   for (const t of texts) {
     const tp = textPlacement(t, width, height);

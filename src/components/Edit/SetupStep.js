@@ -227,7 +227,7 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
                 {[
                   [Icon.Captions, "Captions in your language", "Every word you say, on screen while you say it. Fix any word by typing."],
                   [Icon.Globe, "Translate the captions", "Telugu and English speech, captioned in English only, or Hindi, or Tamil. Same timing."],
-                  [Icon.Split, "B-roll three ways", "Full screen, split screen with you in the other half, or an overlay you drag and resize."],
+                  [Icon.Split, "Photos and clips, three ways", "Full screen, split screen with you in the other half, or on top of your video, dragged and resized."],
                   [Icon.Scissors, "Cut, music, text", "Split and remove parts, add music under your voice, put a price on screen."],
                 ].map(([ItemIcon, head, body]) => (
                   <li key={head} style={{ display: "grid", gridTemplateColumns: "28px minmax(0,1fr)", gap: 8 }}>

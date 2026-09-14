@@ -151,9 +151,120 @@ export function captionCues(tl) {
   return cues;
 }
 
+/* ── Sentences ─────────────────────────────────────────────────────────────
+   A stretch of speech with no pause in it can hold three sentences, and a
+   caption section that long is too coarse to place or style on its own. So a
+   stretch is split at its sentence ends, with the time shared out by length:
+   the same proportion the caption cues already use, so no word moves. */
+
+/** "One. Two? Three." as ["One.", "Two?", "Three."]. The danda counts. */
+export function splitSentences(text) {
+  const out = [];
+  let cur = "";
+  for (const token of String(text || "").split(/(\s+)/)) {
+    cur += token;
+    if (/[.?!\u0964\u0965]$/.test(token)) {
+      out.push(cur.trim());
+      cur = "";
+    }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(Boolean);
+}
+
+/** Words shared into parts by weight, each word going where its middle falls. */
+function divide(text, weights) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const total = weights.reduce((n, w) => n + w, 0) || 1;
+  const chars = words.reduce((n, w) => n + w.length + 1, 0) || 1;
+  const out = weights.map(() => []);
+  let at = 0;
+  for (const w of words) {
+    const mid = (at + (w.length + 1) / 2) / chars;
+    let k = 0;
+    let acc = weights[0] / total;
+    while (k < weights.length - 1 && mid >= acc) {
+      k++;
+      acc += weights[k] / total;
+    }
+    out[k].push(w);
+    at += w.length + 1;
+  }
+  return out.map((ws) => ws.join(" "));
+}
+
+/**
+ * A segment holding several sentences, as one segment per sentence (keeping
+ * the original's id, for the caller to replace), or null. A sentence too short
+ * to read on its own joins its neighbour.
+ */
+export function sentencePieces(seg, minSeconds = 0.7) {
+  const parts = splitSentences(seg?.text);
+  if (parts.length < 2 || !(seg.end > seg.start)) return null;
+  const dur = seg.end - seg.start;
+  const total = parts.reduce((n, p) => n + p.length, 0) || 1;
+  const groups = [];
+  parts.forEach((p, i) => {
+    const d = (dur * p.length) / total;
+    const last = groups[groups.length - 1];
+    if (last && (d < minSeconds || last.d < minSeconds)) {
+      last.to = i;
+      last.d += d;
+      last.len += p.length;
+    } else {
+      groups.push({ from: i, to: i, d, len: p.length });
+    }
+  });
+  if (groups.length < 2) return null;
+  const weights = groups.map((g) => g.len);
+  const alike = (other) => {
+    const ps = splitSentences(other);
+    return ps.length === parts.length ? groups.map((g) => ps.slice(g.from, g.to + 1).join(" ")) : divide(other, weights);
+  };
+  const roman = alike(seg.roman);
+  const tr = Object.entries(seg.tr || {}).map(([k, v]) => [k, alike(v)]);
+  let at = seg.start;
+  return groups.map((g, i) => {
+    const end = i === groups.length - 1 ? seg.end : at + (dur * g.len) / total;
+    const piece = {
+      ...seg,
+      start: Math.round(at * 1000) / 1000,
+      end: Math.round(end * 1000) / 1000,
+      text: parts.slice(g.from, g.to + 1).join(" "),
+      roman: roman[i],
+      tr: Object.fromEntries(tr.map(([k, v]) => [k, v[i]])),
+    };
+    at = end;
+    return piece;
+  });
+}
+
+/**
+ * How one caption looks: the captions' own settings, with whatever that
+ * section was given on its own (seg.custom) on top.
+ */
+export function captionLook(tl, seg = null) {
+  const cap = tl?.captions || {};
+  const c = seg?.custom || {};
+  return {
+    style: c.style || cap.style || "bold",
+    size: c.size || cap.size || "m",
+    color: c.color || cap.color || "#FFFFFF",
+    position: cap.position,
+    x: isSet(c.x) ? Number(c.x) : cap.x,
+    y: isSet(c.y) ? Number(c.y) : cap.y,
+  };
+}
+
+/** Where a position preset puts the middle of the captions, as a fraction of the height. */
+export function captionPresetY(position, W, H) {
+  const portrait = H > W;
+  return position === "middle" ? 0.5 : position === "top" ? (portrait ? 0.2 : 0.14) : portrait ? 0.77 : 0.86;
+}
+
 /* ── Placement, in output pixels (see timeline.js) ─────────────────────── */
 
-const SIZE_MUL = { s: 0.8, m: 1, l: 1.25 };
+const SIZE_MUL = { s: 0.8, m: 1, l: 1.25, xl: 1.55 };
 const TEXT_SIZE = { s: 0.05, m: 0.064, l: 0.085 };
 
 function placeBox(x, y, fx, fy, W, H, maxFrac) {
@@ -167,12 +278,11 @@ function placeBox(x, y, fx, fy, W, H, maxFrac) {
   return { cx, cy, boxW, left: cx - boxW / 2, x: cx / W, y: cy / H };
 }
 
-export function captionPlacement(tl, W, H) {
-  const cap = tl?.captions || {};
-  const portrait = H > W;
-  const fy = cap.position === "middle" ? 0.5 : cap.position === "top" ? (portrait ? 0.2 : 0.14) : portrait ? 0.77 : 0.86;
-  const size = Math.round(Math.min(W, H) * (cap.style === "clean" ? 0.062 : 0.075) * (SIZE_MUL[cap.size] || 1));
-  return { ...placeBox(cap.x, cap.y, 0.5, fy, W, H, 0.84), size };
+/** A caption's box and font size; `seg` for one section's own look and place. */
+export function captionPlacement(tl, W, H, seg = null) {
+  const look = captionLook(tl, seg);
+  const size = Math.round(Math.min(W, H) * (look.style === "clean" ? 0.062 : 0.075) * (SIZE_MUL[look.size] || 1));
+  return { ...placeBox(look.x, look.y, 0.5, captionPresetY(look.position, W, H), W, H, 0.84), size };
 }
 
 export function textPlacement(t, W, H) {
@@ -272,6 +382,41 @@ export function fitFor(media, w, h) {
   if (!(media?.width > 0 && media?.height > 0) || !(w > 0 && h > 0)) return "contain";
   const r = media.width / media.height / (w / h);
   return r > 0.82 && r < 1.22 ? "cover" : "contain";
+}
+
+/** Every section that holds several sentences, split into one per sentence. Returns how many were split. */
+export function splitIntoSentences(d) {
+  let split = 0;
+  d.segments = segmentsOf(d).flatMap((s) => {
+    const parts = sentencePieces(s);
+    if (!parts) return [s];
+    split++;
+    return parts.map((p) => ({ ...p, id: newId("sg") }));
+  });
+  return split;
+}
+
+/**
+ * One caption section cut in two at recording time `src`, its words shared by
+ * where the cut falls. Returns the two new ids, or null when the cut would
+ * leave a part too short or empty.
+ */
+export function splitSegmentAt(d, id, src) {
+  if (!Array.isArray(d.segments)) d.segments = segmentsOf(d);
+  const i = d.segments.findIndex((s) => s.id === id);
+  const s = d.segments[i];
+  if (!s || !(src > s.start + 0.3 && src < s.end - 0.3)) return null;
+  const f = (src - s.start) / (s.end - s.start);
+  const halves = (t) => divide(t, [f, 1 - f]);
+  const text = halves(s.text);
+  if (!text[0] || !text[1]) return null;
+  const roman = halves(s.roman);
+  const tr = Object.entries(s.tr || {}).map(([k, v]) => [k, halves(v)]);
+  const cut = Math.round(src * 1000) / 1000;
+  const a = { ...s, id: newId("sg"), end: cut, text: text[0], roman: roman[0], tr: Object.fromEntries(tr.map(([k, v]) => [k, v[0]])) };
+  const b = { ...s, id: newId("sg"), start: cut, text: text[1], roman: roman[1], tr: Object.fromEntries(tr.map(([k, v]) => [k, v[1]])) };
+  d.segments.splice(i, 1, a, b);
+  return [a.id, b.id];
 }
 
 export function hasIndic(text) {
