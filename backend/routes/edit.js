@@ -48,9 +48,17 @@ import { editCost, EDIT_ANALYSE_CREDITS_PER_MIN, EDIT_EXPORT_CREDITS_PER_MIN } f
 const router = express.Router();
 router.use(authenticateToken);
 
-/** Where the browser reaches this API, for local-mode media links. */
-const baseUrlOf = (req) =>
-  String(process.env.PUBLIC_API_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+/**
+ * Where the browser reaches this API, for local-mode media links.
+ *
+ * Empty unless PUBLIC_API_URL is set, which makes the links root-relative
+ * ("/media/upload/..."), and the browser puts its own API address in front
+ * (src/components/Edit/editApi.js). It used to fall back to this request's own
+ * host, which behind nginx is "https://trylipi.online" WITHOUT the "/api" the
+ * proxy strips, so every upload chunk went to the static site and nginx
+ * refused it with 413.
+ */
+const baseUrlOf = () => String(process.env.PUBLIC_API_URL || "").replace(/\/$/, "");
 
 const originOf = (req) =>
   req.get("origin") || String(process.env.CORS_ORIGINS || "").split(",")[0].trim() || undefined;
