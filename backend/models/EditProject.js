@@ -40,6 +40,12 @@ const MediaSchema = new Schema(
     audio_key: { type: String, default: "" },
     thumb_key: { type: String, default: "" },
 
+    // An upload in flight: the browser's own name for it, so asking twice starts
+    // one upload, and Cloud Storage's resumable session, so a stopped upload
+    // carries on from the last byte instead of starting over. Never sent out.
+    client_key: { type: String, default: "" },
+    upload_url: { type: String, default: "" },
+
     duration:  { type: Number, default: 0 },
     width:     { type: Number, default: 0 },
     height:    { type: Number, default: 0 },

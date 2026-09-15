@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
+import useOnline from "../../hooks/useOnline";
 import { useCredits } from "../../state/CreditsContext";
 import { startRender, renderDownloadUrl, deleteRender } from "./editApi";
 import { ASPECTS, segmentsOf } from "./model";
@@ -96,8 +97,9 @@ function readStored() {
 
 export default function ExportDialog({ project, tl, lay, price, config, languages = [], nativeLabel = "", term = "B-roll", priceNow, onFlush, onAspect, onData, onClose }) {
   const isPhone = useIsMobile(600);
+  const online = useOnline();
   const { balance, setBalance, openBuy, canBuy } = useCredits();
-  const cfg = useMemo(() => ({ ...FALLBACK, ...(config?.export || {}) }), [config]);
+  const cfg =useMemo(() => ({ ...FALLBACK, ...(config?.export || {}) }), [config]);
   const [opts, setOpts] = useState(() => cleanOptions({ ...DEFAULTS, ...(config?.export?.defaults || {}), ...(readStored() || {}) }, { ...FALLBACK, ...(config?.export || {}) }));
   const [base, setBase] = useState(price);
   const [pinned, setPinned] = useState(null);
@@ -202,7 +204,7 @@ export default function ExportDialog({ project, tl, lay, price, config, language
     try { onData(await deleteRender(project.id, r.id)); } catch (err) { setError(errorMessage(err)); }
   }
 
-  const label = busy ? "Starting…" : running ? "Export running…" : tooExpensive ? "Not enough credits" : `Export · ${shown} credit${shown === 1 ? "" : "s"}`;
+  const label = busy ? "Starting…" : running ? "Export running…" : !online ? "Offline" : tooExpensive ? "Not enough credits" : `Export · ${shown} credit${shown === 1 ? "" : "s"}`;
   const select = {
     width: "100%", fontSize: 13, fontFamily: "inherit", color: "var(--ink)", padding: "8px 10px",
     borderRadius: 9, border: "1px solid var(--line)", background: "var(--card)", minHeight: 36,
@@ -373,11 +375,18 @@ export default function ExportDialog({ project, tl, lay, price, config, language
           </ul>
         </Section>
 
+        {!online && (
+          <div style={{ marginBottom: 12 }}>
+            <Notice tone="warn">
+              You're offline. An export that is already running carries on on our servers, and shows here as soon as you're back.
+            </Notice>
+          </div>
+        )}
         {note && <div style={{ marginBottom: 12 }}><Notice tone="warn">{note}</Notice></div>}
         {error && <div style={{ marginBottom: 12 }}><Notice tone="bad">{error}</Notice></div>}
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn kind="primary" size="l" disabled={busy || !!running || tooExpensive || !(lay.duration > 0)} onClick={go} style={{ flex: isPhone ? "1 1 100%" : undefined }}>
+          <Btn kind="primary" size="l" disabled={busy || !!running || !online || tooExpensive || !(lay.duration > 0)} onClick={go} style={{ flex: isPhone ? "1 1 100%" : undefined }}>
             {label}
           </Btn>
           {tooExpensive && canBuy && <Btn size="l" onClick={openBuy} style={{ flex: isPhone ? "1 1 100%" : undefined }}>Buy credits</Btn>}
@@ -414,8 +423,8 @@ export default function ExportDialog({ project, tl, lay, price, config, language
                           </div>
                         )}
                       </div>
-                      {r.status === "done" && <Btn size="s" kind="primary" icon={<Icon.Download size={13} />} onClick={() => download(r)}>Download</Btn>}
-                      {r.status === "done" && r.has_srt && <Btn size="s" icon={<Icon.Captions size={13} />} onClick={() => download(r, "srt")}>.srt</Btn>}
+                      {r.status === "done" && <Btn size="s" kind="primary" icon={<Icon.Download size={13} />} disabled={!online} onClick={() => download(r)}>Download</Btn>}
+                      {r.status === "done" && r.has_srt && <Btn size="s" icon={<Icon.Captions size={13} />} disabled={!online} onClick={() => download(r, "srt")}>.srt</Btn>}
                       {(r.status === "done" || r.status === "failed") && (
                         <Btn size="s" kind="quiet" aria-label="Delete export" icon={<Icon.Trash />} onClick={() => remove(r)} style={{ padding: 6 }} />
                       )}

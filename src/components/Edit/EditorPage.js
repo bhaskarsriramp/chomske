@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { errorMessage } from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
 import { onLiveEvent } from "../../realtime/socket";
-import { getProject, getEditConfig, startUpload, completeUpload } from "./editApi";
-import { uploadFile } from "./uploads";
+import { getProject, getEditConfig, startUpload, resumeUpload, completeUpload } from "./editApi";
+import { uploadFile, waitForNetwork } from "./uploads";
 import SetupStep from "./SetupStep";
 import Processing from "./Processing";
 import Workspace from "./Workspace";
@@ -23,7 +23,9 @@ import { Btn, Icon, Spinner } from "./ui";
  * ── UPLOADS LIVE HERE ────────────────────────────────────────────────────────
  * Not in the setup screen, because the workspace uploads too (B-roll, music),
  * and an upload that dies when the creator switches screens is an upload they
- * have to start again on a phone connection.
+ * have to start again on a phone connection. For the same reason a dropped
+ * connection only pauses one (uploads.js): it shows as waiting, and carries on
+ * from the last byte the server holds when the network is back.
  *
  * Kept fresh two ways: the server's edit:update events over the shared socket,
  * and a poll while anything is running, because a socket is an improvement and
@@ -67,6 +69,14 @@ export default function EditorPage({ projectId, onExit }) {
     getEditConfig().then(setConfig).catch(() => {});
   }, []);
 
+  // Back online: whatever the server finished meanwhile (a preview, captions,
+  // an export) shows at once, not on the next poll.
+  useEffect(() => {
+    const back = () => load();
+    window.addEventListener("online", back);
+    return () => window.removeEventListener("online", back);
+  }, [load]);
+
   const scheduleReload = useCallback(() => {
     clearTimeout(reloadTimer.current);
     reloadTimer.current = setTimeout(load, 350);
@@ -103,11 +113,88 @@ export default function EditorPage({ projectId, onExit }) {
     setUploads((list) => list.map((u) => (u.key === key ? { ...u, ...fields } : u)));
   }, []);
 
+  // Resolves once the server has answered. A request lost to the network is sent
+  // again when the connection is back, for as long as it takes; one refused by
+  // a busy or restarting server (5xx) a few times more. Anything else the server
+  // said is its answer. Safe for starting and finishing an upload, which the
+  // server treats as the same request when it arrives twice.
+  const persist = useCallback(async (fn, onWaiting) => {
+    let waited = false;
+    for (let failures = 1; ; failures++) {
+      try {
+        const out = await fn();
+        if (waited) onWaiting(false);
+        return out;
+      } catch (err) {
+        const status = err?.response?.status || 0;
+        const lost = !err?.response && err?.code !== "ERR_CANCELED";
+        const busy = status >= 500 || status === 408 || status === 429;
+        if (!lost && !(busy && failures < 6)) {
+          if (waited) onWaiting(false);
+          throw err;
+        }
+        waited = true;
+        onWaiting(true);
+        await waitForNetwork(Math.min(30000, 1000 * 2 ** Math.min(failures, 5)));
+      }
+    }
+  }, []);
+
+  const runUpload = useCallback(async (item) => {
+    const it = { ...item };
+    const waiting = (on) => patchUpload(it.key, { waiting: on });
+    const progress = (p) => patchUpload(it.key, { progress: p });
+    try {
+      let upload = null;
+      let done = false;
+      if (!it.mediaId) {
+        const started = await persist(
+          () => startUpload(projectId, { filename: it.file.name, mime: it.file.type, size: it.file.size, kind: it.kind, clientKey: it.key }),
+          waiting
+        );
+        it.mediaId = started.media_id;
+        upload = started.upload;
+        done = !!started.done;
+        patchUpload(it.key, { mediaId: it.mediaId, status: "uploading" });
+        // A file uploaded into a particular place (a B-roll moment, the music, a
+        // spot between two parts) is put there once it is ready (Workspace.js).
+        it.opts?.onMedia?.(it.mediaId);
+      } else {
+        // Carrying on: the server hands back the session that holds what arrived.
+        patchUpload(it.key, { status: "uploading", error: "" });
+        const resumed = await persist(() => resumeUpload(projectId, it.mediaId), waiting);
+        upload = resumed.upload;
+        done = !!resumed.done;
+      }
+
+      const send = () => uploadFile(it.file, upload, { onProgress: progress, onWaiting: waiting });
+      if (!done && upload) await send();
+      patchUpload(it.key, { status: "finishing", progress: 1 });
+
+      let d = null;
+      for (let tries = 0; !d; tries++) {
+        try {
+          d = await persist(() => completeUpload(projectId, it.mediaId), waiting);
+        } catch (err) {
+          // The store holds less than the whole file: send the rest, then ask again.
+          if (err?.response?.status !== 409 || typeof err.response.data?.received !== "number" || !upload || tries >= 2) throw err;
+          patchUpload(it.key, { status: "uploading" });
+          await send();
+          patchUpload(it.key, { status: "finishing", progress: 1 });
+        }
+      }
+      if (live.current) setData(d);
+      setUploads((list) => list.filter((u) => u.key !== it.key));
+    } catch (err) {
+      patchUpload(it.key, { status: "failed", waiting: false, error: err?.response ? errorMessage(err) : err?.message || "Upload failed." });
+      scheduleReload();
+    }
+  }, [projectId, patchUpload, persist, scheduleReload]);
+
   const addFiles = useCallback(async (files, kind, opts = {}) => {
     const items = Array.from(files || []).map((file) => ({
-      key: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      file, name: file.name, size: file.size, kind, opts,
-      mediaId: null, progress: 0, status: "starting", error: "",
+      key: uploadKey(), file, name: file.name, size: file.size, kind, opts,
+      mediaId: null, progress: 0, status: "starting", error: "", waiting: false,
     }));
     if (!items.length) return;
     setUploads((list) => [...list, ...items]);
@@ -116,35 +203,30 @@ export default function EditorPage({ projectId, onExit }) {
     // on 4G does not stall every upload at once.
     const queue = items.slice();
     const worker = async () => {
-      while (queue.length) {
-        const it = queue.shift();
-        try {
-          const started = await startUpload(projectId, { filename: it.file.name, mime: it.file.type, size: it.file.size, kind });
-          patchUpload(it.key, { mediaId: started.media_id, status: "uploading" });
-          // A file uploaded into a particular place (a B-roll moment, the music)
-          // is put there once it is ready (Workspace.js), not left in the library.
-          it.opts?.onMedia?.(started.media_id);
-          await uploadFile(it.file, started.upload, { onProgress: (p) => patchUpload(it.key, { progress: p }) });
-          patchUpload(it.key, { status: "finishing", progress: 1 });
-          const d = await completeUpload(projectId, started.media_id);
-          if (live.current) setData(d);
-          setUploads((list) => list.filter((u) => u.key !== it.key));
-        } catch (err) {
-          patchUpload(it.key, { status: "failed", error: err?.response ? errorMessage(err) : err?.message || "Upload failed." });
-          scheduleReload();
-        }
-      }
+      while (queue.length) await runUpload(queue.shift());
     };
     await Promise.all([worker(), worker()]);
     scheduleReload();
-  }, [projectId, patchUpload, scheduleReload]);
+  }, [runUpload, scheduleReload]);
 
+  // Retry carries on the same upload: the server keeps what already arrived.
   const retryUpload = useCallback((key) => {
     const it = uploads.find((u) => u.key === key);
     if (!it) return;
-    setUploads((list) => list.filter((u) => u.key !== key));
-    addFiles([it.file], it.kind, it.opts);
-  }, [uploads, addFiles]);
+    patchUpload(key, { status: it.mediaId ? "uploading" : "starting", error: "", waiting: false });
+    runUpload(it);
+  }, [uploads, patchUpload, runUpload]);
+
+  // An upload cut off by a closed tab or a reload: the same file, chosen again,
+  // carries on from what the server already holds.
+  const resumeFile = useCallback((media, file) => {
+    const it = {
+      key: uploadKey(), file, name: file.name, size: file.size, kind: media.kind, opts: {},
+      mediaId: media.id, progress: 0, status: "uploading", error: "", waiting: false,
+    };
+    setUploads((list) => [...list, it]);
+    runUpload(it).then(scheduleReload);
+  }, [runUpload, scheduleReload]);
 
   const dismissUpload = useCallback((key) => setUploads((list) => list.filter((u) => u.key !== key)), []);
 
@@ -242,6 +324,7 @@ export default function EditorPage({ projectId, onExit }) {
         onAddFiles={addFiles}
         onRetryUpload={retryUpload}
         onDismissUpload={dismissUpload}
+        onResumeUpload={resumeFile}
         onData={setData}
         onReload={load}
         hasEdit={hasEdit}
@@ -250,6 +333,8 @@ export default function EditorPage({ projectId, onExit }) {
     </>
   );
 }
+
+const uploadKey = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function Centered({ children }) {
   return (

@@ -14,11 +14,12 @@ import { Btn, Icon, Notice, fmtTime } from "./ui";
  * Two kinds live side by side: a video uploaded here on its own (New project),
  * and a recording cut to one of the creator's scripts (Edit video under the
  * script). The list does not split them, because to a creator both are "my
- * video I am editing"; the row just says which one came from a script.
+ * video I am editing"; the card just says which one came from a script.
  *
- * The status line answers the one question each row is looked at for: what do
+ * The status line answers the one question each card is looked at for: what do
  * I have to do next with this. Upload, wait, edit, download, or nothing, because
- * it expired.
+ * it expired. Cards run the full width, four a row on a desk (index.css
+ * .hg-video-grid), since a thumbnail is what a creator finds a video by.
  */
 export default function VideosPanel({ onGoCreate }) {
   const isPhone = useIsMobile(680);
@@ -40,6 +41,13 @@ export default function VideosPanel({ onGoCreate }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Back online: the list may have moved on (an export finished) while it could not be read.
+  useEffect(() => {
+    const back = () => load();
+    window.addEventListener("online", back);
+    return () => window.removeEventListener("online", back);
+  }, [load]);
+
   async function remove(id) {
     setConfirming(null);
     try {
@@ -54,85 +62,57 @@ export default function VideosPanel({ onGoCreate }) {
 
   return (
     <div className="hg-scroll" style={{ flex: 1, minHeight: 0, padding: `${isPhone ? 16 : 22}px ${gut}px 40px` }}>
-      <div style={{ maxWidth: 820 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-          <div style={{ minWidth: 0, flex: "1 1 320px" }}>
-            <h1 style={{ fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 4px" }}>Edit videos</h1>
-            <p style={{ fontSize: 13.5, color: "var(--ink-body)", margin: 0, lineHeight: 1.6 }}>
-              Caption any video in your language, translate it, add B-roll and music, and export. Files are kept for a week after you last work on a video.
-            </p>
-          </div>
-          <Btn kind="primary" icon={<Icon.Plus size={15} />} onClick={() => setCreating(true)} style={{ flex: isPhone ? "1 1 100%" : "0 0 auto" }}>
-            New project
-          </Btn>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px 24px", flexWrap: "wrap", marginBottom: 18 }}>
+        <div style={{ minWidth: 0, flex: "1 1 320px" }}>
+          <h1 style={{ fontSize: isPhone ? 20 : 23, fontWeight: 750, letterSpacing: "-0.03em", color: "var(--ink)", margin: "0 0 4px" }}>Edit videos</h1>
+          <p style={{ fontSize: 13.5, color: "var(--ink-body)", margin: 0, lineHeight: 1.6 }}>
+            Caption any video in your language, translate it, add B-roll and music, and export. Files are kept for a week after you last work on a video.
+          </p>
         </div>
-
-        {error && <div role="alert" style={{ padding: "10px 13px", borderRadius: 10, marginBottom: 12, background: "#FCE8E6", border: "1px solid #F5C7C3", color: "var(--bad)", fontSize: 13 }}>{error}</div>}
-
-        {rows === null && (
-          <div style={{ display: "grid", gap: 8 }}>
-            {[0, 1, 2].map((i) => <Skeleton key={i} variant="rectangular" height={84} />)}
-          </div>
-        )}
-
-        {rows && rows.length === 0 && (
-          <div style={{ padding: "28px 20px", borderRadius: 14, border: "1px solid var(--line)", background: "var(--card)", textAlign: "center" }}>
-            <span style={{ display: "inline-grid", placeItems: "center", width: 46, height: 46, borderRadius: 12, background: "var(--made-tint)", color: "var(--made)", marginBottom: 10 }}>
-              <Icon.Film size={22} />
-            </span>
-            <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 6 }}>No videos yet</div>
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 auto 16px", maxWidth: 400 }}>
-              Start a project and upload any video where you talk. Or record one of your scripts, and press Edit video under it.
-            </p>
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-              <Btn kind="primary" icon={<Icon.Plus size={15} />} onClick={() => setCreating(true)}>New project</Btn>
-              {onGoCreate && <Btn onClick={onGoCreate}>Write a script</Btn>}
-            </div>
-          </div>
-        )}
-
-        {rows && rows.length > 0 && (
-          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
-            {rows.map((p) => {
-              const status = statusOf(p);
-              return (
-                <li key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: 10, borderRadius: 12, border: "1px solid var(--line)", background: "var(--card)" }}>
-                  <button
-                    type="button"
-                    onClick={() => !p.purged && navigate(`/app/edit?p=${p.id}`)}
-                    className="hg-row"
-                    style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 12, border: "none", background: "none", padding: 0, textAlign: "left", cursor: p.purged ? "default" : "pointer", fontFamily: "inherit" }}
-                  >
-                    <span style={{ width: 52, height: 66, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: "#ECEAE6", display: "grid", placeItems: "center", color: "var(--ink-mute)" }}>
-                      {p.thumb_url ? <img src={p.thumb_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Icon.Film size={18} />}
-                    </span>
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 14, fontWeight: 650, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isPhone ? "normal" : "nowrap", lineHeight: 1.35 }}>
-                        {p.headline || "Untitled"}
-                      </span>
-                      <span style={{ display: "block", fontSize: 12.5, marginTop: 3, color: status.tone }}>
-                        {status.label}
-                        <span style={{ color: "var(--ink-mute)" }}>
-                          {p.mode !== "free" ? " · from a script" : ""}
-                          {p.duration ? ` · ${fmtTime(p.duration, false)}` : ""} · {timeAgo(p.updated_at)}
-                        </span>
-                      </span>
-                    </span>
-                  </button>
-                  {confirming === p.id ? (
-                    <span style={{ display: "flex", gap: 6 }}>
-                      <Btn size="s" kind="danger" onClick={() => remove(p.id)}>Delete</Btn>
-                      <Btn size="s" onClick={() => setConfirming(null)}>Keep</Btn>
-                    </span>
-                  ) : (
-                    <Btn size="s" kind="quiet" aria-label="Delete video" onClick={() => setConfirming(p.id)} icon={<Icon.Trash />} style={{ padding: 7 }} />
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <Btn kind="primary" icon={<Icon.Plus size={15} />} onClick={() => setCreating(true)} style={{ flex: isPhone ? "1 1 100%" : "0 0 auto" }}>
+          New project
+        </Btn>
       </div>
+
+      {error && <div role="alert" style={{ padding: "10px 13px", borderRadius: 10, marginBottom: 12, background: "#FCE8E6", border: "1px solid #F5C7C3", color: "var(--bad)", fontSize: 13 }}>{error}</div>}
+
+      {rows === null && (
+        <div className="hg-video-grid">
+          {[0, 1, 2, 3].map((i) => <Skeleton key={i} variant="rectangular" height={236} />)}
+        </div>
+      )}
+
+      {rows && rows.length === 0 && (
+        <div style={{ padding: "28px 20px", borderRadius: 14, border: "1px solid var(--line)", background: "var(--card)", textAlign: "center" }}>
+          <span style={{ display: "inline-grid", placeItems: "center", width: 46, height: 46, borderRadius: 12, background: "var(--made-tint)", color: "var(--made)", marginBottom: 10 }}>
+            <Icon.Film size={22} />
+          </span>
+          <div style={{ fontSize: 15, fontWeight: 650, color: "var(--ink)", marginBottom: 6 }}>No videos yet</div>
+          <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 auto 16px", maxWidth: 400 }}>
+            Start a project and upload any video where you talk. Or record one of your scripts, and press Edit video under it.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+            <Btn kind="primary" icon={<Icon.Plus size={15} />} onClick={() => setCreating(true)}>New project</Btn>
+            {onGoCreate && <Btn onClick={onGoCreate}>Write a script</Btn>}
+          </div>
+        </div>
+      )}
+
+      {rows && rows.length > 0 && (
+        <ul className="hg-video-grid" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {rows.map((p) => (
+            <VideoCard
+              key={p.id}
+              p={p}
+              confirming={confirming === p.id}
+              onOpen={() => !p.purged && navigate(`/app/edit?p=${p.id}`)}
+              onAskDelete={() => setConfirming(p.id)}
+              onDelete={() => remove(p.id)}
+              onKeep={() => setConfirming(null)}
+            />
+          ))}
+        </ul>
+      )}
 
       {creating && (
         <NewProjectDialog
@@ -141,6 +121,61 @@ export default function VideosPanel({ onGoCreate }) {
         />
       )}
     </div>
+  );
+}
+
+function VideoCard({ p, confirming, onOpen, onAskDelete, onDelete, onKeep }) {
+  const status = statusOf(p);
+  const name = p.headline || "Untitled";
+  return (
+    <li className="hg-row" style={{ display: "flex", flexDirection: "column", minWidth: 0, borderRadius: 14, border: "1px solid var(--line)", background: "var(--card)", overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={onOpen}
+        style={{ display: "block", width: "100%", border: "none", background: "none", padding: 0, textAlign: "left", cursor: p.purged ? "default" : "pointer", fontFamily: "inherit", color: "inherit" }}
+      >
+        {/* Portrait and landscape both fit whole, over a blurred fill of themselves. */}
+        <span style={{ position: "relative", display: "block", aspectRatio: "16 / 10", background: "#1D1C1A", overflow: "hidden" }}>
+          {p.thumb_url ? (
+            <>
+              <img src={p.thumb_url} alt="" aria-hidden="true" style={{ position: "absolute", inset: "-12%", width: "124%", height: "124%", objectFit: "cover", filter: "blur(18px) brightness(.6)" }} />
+              <img src={p.thumb_url} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" }} />
+            </>
+          ) : (
+            <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#8C877F" }}><Icon.Film size={26} /></span>
+          )}
+          {p.duration > 0 && (
+            <span style={{ position: "absolute", right: 8, bottom: 8, padding: "2px 6px", borderRadius: 5, background: "rgba(0,0,0,.72)", color: "#fff", fontSize: 11.5, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+              {fmtTime(p.duration, false)}
+            </span>
+          )}
+        </span>
+        <span style={{ display: "block", padding: "11px 12px 0" }}>
+          <span title={name} style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", fontSize: 14, fontWeight: 650, lineHeight: 1.35, color: "var(--ink)", wordBreak: "break-word" }}>
+            {name}
+          </span>
+          <span style={{ display: "block", marginTop: 4, fontSize: 12.5, color: status.tone, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {status.label}
+          </span>
+        </span>
+      </button>
+      <div style={{ marginTop: "auto", display: "flex", alignItems: "center", gap: 6, minHeight: 44, padding: "4px 6px 6px 12px" }}>
+        {confirming ? (
+          <>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "var(--ink)" }}>Delete?</span>
+            <Btn size="s" kind="danger" onClick={onDelete}>Delete</Btn>
+            <Btn size="s" onClick={onKeep}>Keep</Btn>
+          </>
+        ) : (
+          <>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--ink-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {p.mode !== "free" ? "From a script · " : ""}{timeAgo(p.updated_at)}
+            </span>
+            <Btn size="s" kind="quiet" aria-label={`Delete ${name}`} onClick={onAskDelete} icon={<Icon.Trash />} style={{ padding: 7 }} />
+          </>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -157,9 +192,8 @@ function statusOf(p) {
 }
 
 /**
- * A name, then straight to the upload. The name is optional ("Untitled video")
- * because nobody should be stopped at a text box from getting to the thing they
- * came for, and it can be changed from the editor at any time.
+ * A name, then straight to the upload. The name comes first because it is what
+ * the video is found by here; it can be changed from the editor at any time.
  */
 function NewProjectDialog({ onClose, onCreated }) {
   const isPhone = useIsMobile(600);
@@ -167,6 +201,7 @@ function NewProjectDialog({ onClose, onCreated }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const input = useRef(null);
+  const named = name.trim().length > 0;
 
   useEffect(() => { input.current?.focus(); }, []);
   useEffect(() => {
@@ -177,11 +212,11 @@ function NewProjectDialog({ onClose, onCreated }) {
 
   async function submit(e) {
     e?.preventDefault();
-    if (busy) return;
+    if (busy || !named) return;
     setBusy(true);
     setError("");
     try {
-      const d = await createProject(name.trim() || "Untitled video");
+      const d = await createProject(name.trim());
       onCreated(d.project.id);
     } catch (err) {
       setError(errorMessage(err));
@@ -225,7 +260,7 @@ function NewProjectDialog({ onClose, onCreated }) {
         </p>
         {error && <div style={{ marginBottom: 12 }}><Notice tone="bad">{error}</Notice></div>}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn kind="primary" size="l" type="submit" disabled={busy} style={{ flex: isPhone ? "1 1 100%" : undefined }}>
+          <Btn kind="primary" size="l" type="submit" disabled={busy || !named} style={{ flex: isPhone ? "1 1 100%" : undefined }}>
             {busy ? "Creating…" : "Create and upload"}
           </Btn>
           <Btn size="l" onClick={onClose} disabled={busy} style={{ flex: isPhone ? "1 1 100%" : undefined }}>Cancel</Btn>

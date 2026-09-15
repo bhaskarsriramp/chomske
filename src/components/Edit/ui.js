@@ -43,7 +43,7 @@ export const Btn = forwardRef(function Btn({ kind = "ghost", size = "m", icon = 
       ref={ref}
       type="button"
       disabled={disabled}
-      className={disabled ? undefined : kind === "primary" ? "hg-btn-primary" : kind === "ghost" ? "hg-btn-ghost" : undefined}
+      className={disabled ? undefined : `hg-btn-${kind}`}
       style={{
         display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
         fontFamily: "inherit", fontWeight: 600, whiteSpace: "nowrap", lineHeight: 1.2,

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { errorMessage } from "../../api";
+import useOnline from "../../hooks/useOnline";
 import { alphabetName } from "../Order/ScriptToggle";
 import { saveTimeline, removeMedia, renameProject, ackTranslation } from "./editApi";
 import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, placedSegments, anchorAt, splitClipAt, fitFor, splitPanes, removeClip, removeSegment, insertRecording } from "./model";
@@ -82,6 +83,8 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
   const [renaming, setRenaming] = useState(false);
   const [errorSeen, setErrorSeen] = useState("");
   const [waiting, setWaiting] = useState({});
+
+  const online = useOnline();
 
   const revRef = useRef(project.timeline_rev);
   const dirtyRef = useRef(false);
@@ -185,10 +188,15 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
   }, [tl, flush]);
 
   useEffect(() => {
-    if (save.state !== "error") return undefined;
+    if (save.state !== "error" || !online) return undefined;
     const t = setTimeout(() => { flush(); }, 5000);
     return () => clearTimeout(t);
-  }, [save.state, flush]);
+  }, [save.state, flush, online]);
+
+  // Offline, edits stay in memory; back online, they are saved straight away.
+  useEffect(() => {
+    if (online && dirtyRef.current) flush();
+  }, [online, flush]);
 
   // Unsaved changes are the one thing leaving can lose.
   useEffect(() => {
@@ -439,7 +447,8 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
   const insertsShown = useMemo(() => inserts.flatMap((x) => {
     const u = uploads.find((y) => y.opts?.insert === x.key);
     if (u && u.status !== "failed") {
-      const text = u.status === "uploading" ? `Uploading ${Math.round(u.progress * 100)}%` : u.status === "finishing" ? "Preparing…" : "Starting…";
+      const pct = Math.round(u.progress * 100);
+      const text = u.waiting ? `Offline · ${pct}%` : u.status === "uploading" ? `Uploading ${pct}%` : u.status === "finishing" ? "Preparing…" : "Starting…";
       return [{ ...x, text }];
     }
     return waiting[x.key] ? [{ ...x, text: "Preparing…" }] : [];
@@ -688,13 +697,15 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
   );
 
   const activeRender = project.renders.some((r) => r.status === "queued" || r.status === "rendering");
-  const saveLabel = {
-    saved: "Saved",
-    pending: "Saving…",
-    saving: "Saving…",
-    error: "Not saved",
-    conflict: "Changed elsewhere",
-  }[save.state];
+  const saveLabel = !online && save.state !== "conflict"
+    ? save.state === "saved" ? "Saved · offline" : "Offline · saves when you're back"
+    : {
+        saved: "Saved",
+        pending: "Saving…",
+        saving: "Saving…",
+        error: "Not saved",
+        conflict: "Changed elsewhere",
+      }[save.state];
 
   const header = (
     <header style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: isNarrow ? "8px 10px" : "9px 14px", borderBottom: "1px solid var(--line)", background: "var(--card)", minHeight: 54 }}>
@@ -729,7 +740,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
             <span style={{ color: "var(--ink-mute)", flexShrink: 0 }}><Icon.Pencil size={12} /></span>
           </button>
         )}
-        <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: save.state === "error" || save.state === "conflict" ? "var(--bad)" : "var(--ink-mute)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: (online && save.state === "error") || save.state === "conflict" ? "var(--bad)" : "var(--ink-mute)" }}>
           {save.state === "saved" && <Icon.Check size={11} />}
           {saveLabel} · {fmtTime(lay.duration, false)}
         </div>
@@ -765,7 +776,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
           </Notice>
         </div>
       )}
-      {save.state === "error" && (
+      {save.state === "error" && online && (
         <div style={{ padding: "8px 12px 0" }}>
           <Notice tone="bad" action={<Btn size="s" onClick={flush}>Retry now</Btn>}>{save.message}</Notice>
         </div>

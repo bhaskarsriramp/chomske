@@ -333,6 +333,14 @@ function Stat({ label, value, suffix, note, onClick, actionLabel, tone = "normal
  */
 function Activity({ days, label, isPhone }) {
   const max = Math.max(...days.map((d) => d.count), 1);
+  // A week gets weekday names under its bars; a month gets every fourth date,
+  // since thirty labels on a phone overlap into a grey smear.
+  const labelFor = (day, n) => {
+    const dt = new Date(`${day}T00:00:00`);
+    if (Number.isNaN(dt.getTime())) return "";
+    if (days.length <= 10) return dt.toLocaleDateString(undefined, { weekday: "short" });
+    return n % 4 === 0 || n === days.length - 1 ? String(dt.getDate()) : "";
+  };
   return (
     <section style={{ marginTop: 34 }}>
       <h2
@@ -358,12 +366,13 @@ function Activity({ days, label, isPhone }) {
           background: "var(--card)", border: "1px solid var(--line)", overflowX: "auto",
         }}
       >
-        {days.map((d) => (
+        {days.map((d, n) => (
           <div
             key={d.day}
             title={`${d.day}: ${d.count} script${d.count === 1 ? "" : "s"}`}
-            style={{ flex: 1, minWidth: isPhone ? 10 : 14, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%" }}
+            style={{ flex: 1, minWidth: isPhone ? 10 : 14, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", gap: 7 }}
           >
+            <div style={{ flex: 1, width: "100%", display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
             <div
               style={{
                 // A day with nothing gets a 3px stub rather than a share of
@@ -374,9 +383,16 @@ function Activity({ days, label, isPhone }) {
                 // Same hue as the scripts count above it: one colour for the
                 // one thing this app produces.
                 background: d.count ? "var(--made)" : "#EDEDED",
-                borderRadius: 4,
+                // Bars stay bar-shaped: two busy days out of seven used to fill
+                // the whole card as two dark slabs.
+                width: "100%", maxWidth: 38,
+                borderRadius: d.count ? "6px 6px 2px 2px" : 2,
               }}
             />
+            </div>
+            <span style={{ fontSize: 10.5, lineHeight: 1, height: 11, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+              {labelFor(d.day, n)}
+            </span>
           </div>
         ))}
       </div>

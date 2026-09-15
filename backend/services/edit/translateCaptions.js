@@ -13,6 +13,7 @@
  * which is as close as a translation can honestly be timed.
  */
 import { TEXT_MODEL, generateJson, retryable, pool } from "./gemini.js";
+import { transient } from "./transient.js";
 import { languageByCode } from "./languages.js";
 
 const BATCH = 60;
@@ -103,6 +104,7 @@ export async function translateSegments({ segments, lang, sourceLabel = "", onPr
   } catch (err) {
     throw Object.assign(new Error(`translation failed: ${err?.message}`), {
       userMessage: "We couldn't translate your captions just now. Your credits are back; please try again.",
+      transient: transient(err),
     });
   }
   onProgress(1);

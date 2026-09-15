@@ -37,11 +37,13 @@ export const getProject = (id) => api.get(`/edit/projects/${id}`).then(data);
 export const renameProject = (id, name) => api.patch(`/edit/projects/${id}`, { name }).then((r) => r.data);
 export const deleteProject = (id) => api.delete(`/edit/projects/${id}`).then((r) => r.data);
 
-export const startUpload = (id, { filename, mime, size, kind }) =>
-  api.post(`/edit/projects/${id}/media`, { filename, mime, size, kind }).then((r) => ({
-    ...r.data,
-    upload: { ...r.data.upload, url: abs(r.data.upload?.url) },
-  }));
+const session = (r) => ({ ...r.data, upload: r.data.upload ? { ...r.data.upload, url: abs(r.data.upload.url) } : null });
+
+// `clientKey` names this upload, so asking twice (a lost answer, sent again)
+// hands back the one upload already started rather than a second.
+export const startUpload = (id, { filename, mime, size, kind, clientKey }) =>
+  api.post(`/edit/projects/${id}/media`, { filename, mime, size, kind, client_key: clientKey }).then(session);
+export const resumeUpload = (id, mediaId) => api.post(`/edit/projects/${id}/media/${mediaId}/resume`).then(session);
 export const completeUpload = (id, mediaId) => api.post(`/edit/projects/${id}/media/${mediaId}/complete`).then(data);
 export const removeMedia = (id, mediaId) => api.delete(`/edit/projects/${id}/media/${mediaId}`).then(data);
 export const reorderRecordings = (id, ids) => api.patch(`/edit/projects/${id}/recordings`, { ids }).then(data);

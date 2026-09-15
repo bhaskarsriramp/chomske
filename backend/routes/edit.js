@@ -10,6 +10,7 @@
  *   DELETE /edit/projects/:id
  *   POST   /edit/projects/:id/media           { filename, mime, size, kind }  start an upload
  *   POST   /edit/projects/:id/media/:mid/complete
+ *   POST   /edit/projects/:id/media/:mid/resume   carry on an upload that stopped
  *   DELETE /edit/projects/:id/media/:mid
  *   PATCH  /edit/projects/:id/recordings      { ids }  the order recordings were made in
  *   POST   /edit/projects/:id/analyse         { expected_cost }  match to the script, or write captions
@@ -283,10 +284,34 @@ router.delete("/projects/:id", wrap(async (req, res) => {
 
 /* ── Media ───────────────────────────────────────────────────────────────── */
 
+/**
+ * The session for a file still uploading, to carry on from the last byte the
+ * store holds. Cloud Storage keeps a resumable session for a week, so the same
+ * one is handed back (a new one would start the file over). A local upload link
+ * is signed again: the bytes already written wait on disk under the same key.
+ */
+async function uploadSessionFor(project, m, req) {
+  if (storageKind() === "gcs" && m.upload_url) return { kind: "gcs", url: m.upload_url, chunk_bytes: CHUNK_BYTES };
+  const upload = await createUploadSession({ key: m.key, contentType: m.mime, size: m.size, origin: originOf(req), baseUrl: baseUrlOf(req) });
+  if (upload.kind === "gcs") {
+    await EditProject.updateOne({ _id: project._id, "media.id": m.id }, { $set: { "media.$.upload_url": upload.url } });
+  }
+  return upload;
+}
+
 router.post("/projects/:id/media", wrap(async (req, res) => {
   const project = await ownProject(req, res);
   if (!project) return;
   if (project.purged) return fail(res, 410, "This project's files have expired. Start a new project.");
+
+  // The same upload asked for twice, because the answer to the first was lost
+  // on a dropped connection: hand back the one already started, not a second.
+  const clientKey = String(req.body?.client_key || "").slice(0, 80);
+  const same = clientKey ? project.media.find((m) => m.client_key === clientKey) : null;
+  if (same) {
+    if (same.status !== "uploading") return res.json({ success: true, media_id: same.id, upload: null, done: true });
+    return res.json({ success: true, media_id: same.id, upload: await uploadSessionFor(project, same, req) });
+  }
 
   const kind = req.body?.kind === "recording" ? "recording" : "asset";
   const size = Number(req.body?.size) || 0;
@@ -313,7 +338,9 @@ router.post("/projects/:id/media", wrap(async (req, res) => {
   await EditProject.updateOne(
     { _id: project._id },
     {
-      $push: { media: { id, kind, type, status: "uploading", filename, mime, size, order, key } },
+      $push: {
+        media: { id, kind, type, status: "uploading", filename, mime, size, order, key, client_key: clientKey, upload_url: upload.kind === "gcs" ? upload.url : "" },
+      },
       $set: { updated_at: new Date(), expires_at: bumpExpiry() },
     }
   );
@@ -333,7 +360,7 @@ router.post("/projects/:id/media/:mid/complete", wrap(async (req, res) => {
     }
     const claimed = await EditProject.updateOne(
       { _id: project._id, media: { $elemMatch: { id: m.id, status: "uploading" } } },
-      { $set: { "media.$.status": "uploaded", updated_at: new Date() } }
+      { $set: { "media.$.status": "uploaded", "media.$.upload_url": "", updated_at: new Date() } }
     );
     if (claimed.modifiedCount) {
       await enqueue({ project: project._id, user: project.user, type: "prepare", ref: m.id });
@@ -341,6 +368,17 @@ router.post("/projects/:id/media/:mid/complete", wrap(async (req, res) => {
     }
   }
   return respondProject(req, res, await EditProject.findById(project._id));
+}));
+
+/** An upload that stopped: its session again, so the browser carries on from what arrived. */
+router.post("/projects/:id/media/:mid/resume", wrap(async (req, res) => {
+  const project = await ownProject(req, res);
+  if (!project) return;
+  if (project.purged) return fail(res, 410, "This project's files have expired.");
+  const m = project.media.find((x) => x.id === req.params.mid);
+  if (!m) return fail(res, 404, "That upload no longer exists. Upload the file again.");
+  if (m.status !== "uploading") return res.json({ success: true, media_id: m.id, upload: null, done: true });
+  res.json({ success: true, media_id: m.id, size: m.size, upload: await uploadSessionFor(project, m, req) });
 }));
 
 router.delete("/projects/:id/media/:mid", wrap(async (req, res) => {

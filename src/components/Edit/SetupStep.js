@@ -25,7 +25,7 @@ import { hasIndic } from "./model";
  * Phones split long recordings and creators record in parts. Every file here
  * plays as one continuous video in the order shown, which the arrows change.
  */
-export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles, onRetryUpload, onDismissUpload, onData, onReload, hasEdit, onBackToEdit }) {
+export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles, onRetryUpload, onDismissUpload, onResumeUpload, onData, onReload, hasEdit, onBackToEdit }) {
   const { project, script } = data;
   const free = project.mode === "free";
   const { balance, setBalance, openBuy, canBuy } = useCredits();
@@ -213,6 +213,11 @@ export default function SetupStep({ data, config, isNarrow, uploads, onAddFiles,
                   onRemove={() => remove(m.id)}
                   onUp={() => move(m.id, -1)}
                   onDown={() => move(m.id, 1)}
+                  onRetry={() => {
+                    const u = local.find((x) => x.mediaId === m.id);
+                    if (u) onRetryUpload(u.key);
+                  }}
+                  onResume={(file) => onResumeUpload(m, file)}
                 />
               ))}
             </ul>
@@ -334,7 +339,11 @@ function UploadRow({ upload, onRetry, onDismiss }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{upload.name}</div>
         <div style={{ fontSize: 12, color: failed ? "var(--bad)" : "var(--ink-mute)", margin: "2px 0 6px" }}>
-          {failed ? upload.error : upload.status === "starting" ? "Starting upload…" : `Uploading ${Math.round(upload.progress * 100)}% of ${fmtBytes(upload.size)}`}
+          {failed
+            ? upload.error
+            : upload.waiting
+            ? `No connection. Carries on${upload.progress > 0 ? ` from ${Math.round(upload.progress * 100)}%` : ""} when you're back online.`
+            : upload.status === "starting" ? "Starting upload…" : `Uploading ${Math.round(upload.progress * 100)}% of ${fmtBytes(upload.size)}`}
         </div>
         {!failed && <Bar value={upload.progress} />}
       </div>
@@ -348,17 +357,30 @@ function UploadRow({ upload, onRetry, onDismiss }) {
   );
 }
 
-function RecordingRow({ media, free, index, count, upload, onRemove, onUp, onDown }) {
+function RecordingRow({ media, free, index, count, upload, onRemove, onUp, onDown, onRetry, onResume }) {
   const s = media.status;
-  const status = upload && upload.status !== "failed"
-    ? upload.status === "finishing" ? "Upload done, preparing…" : `Uploading ${Math.round(upload.progress * 100)}%`
-    : s === "uploading"
-    ? "Upload didn't finish. Remove it and upload again."
+  const picker = useRef(null);
+  const [wrongFile, setWrongFile] = useState("");
+  const active = !!upload && upload.status !== "failed";
+  const failedHere = upload?.status === "failed";
+  // Nothing in this tab is uploading it: the tab that was closed, or a reload.
+  const stopped = s === "uploading" && !upload;
+  const pct = Math.round((upload?.progress || 0) * 100);
+
+  const status = wrongFile || (active
+    ? upload.waiting
+      ? `No connection. Carries on${pct ? ` from ${pct}%` : ""} when you're back online.`
+      : upload.status === "finishing" ? "Upload done, preparing…" : `Uploading ${pct}%`
+    : failedHere
+    ? upload.error || "The upload stopped."
+    : stopped
+    ? "Upload stopped. Choose the same file again to carry on where it left off."
     : s === "uploaded" || s === "processing"
     ? "Preparing a preview…"
     : s === "failed"
     ? media.error || "We couldn't read this file."
-    : `Ready · ${fmtTime(media.duration, false)} · ${fmtBytes(media.size)}${free ? media.captioned ? " · captions written" : media.has_audio ? "" : " · no sound" : ""}`;
+    : `Ready · ${fmtTime(media.duration, false)} · ${fmtBytes(media.size)}${free ? media.captioned ? " · captions written" : media.has_audio ? "" : " · no sound" : ""}`);
+  const tone = wrongFile || failedHere || stopped || s === "failed" ? "var(--bad)" : s === "ready" ? "var(--ok)" : "var(--ink-mute)";
 
   return (
     <li style={rowStyle}>
@@ -368,14 +390,37 @@ function RecordingRow({ media, free, index, count, upload, onRemove, onUp, onDow
       <Thumb src={media.thumb_url} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{media.filename}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginTop: 2, color: s === "failed" || s === "uploading" ? "var(--bad)" : s === "ready" ? "var(--ok)" : "var(--ink-mute)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginTop: 2, color: tone }}>
           {(s === "uploaded" || s === "processing") && <Spinner size={11} />}
           {s === "ready" && <Icon.Check size={12} />}
           <span>{status}</span>
         </div>
-        {upload && upload.status === "uploading" && <div style={{ marginTop: 6 }}><Bar value={upload.progress} /></div>}
+        {active && upload.status === "uploading" && <div style={{ marginTop: 6 }}><Bar value={upload.progress} /></div>}
       </div>
-      <span style={{ display: "flex", gap: 2 }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+        {failedHere && <Btn size="s" onClick={onRetry}>Retry</Btn>}
+        {stopped && (
+          <>
+            <Btn size="s" icon={<Icon.Upload size={13} />} onClick={() => picker.current?.click()}>Resume</Btn>
+            <input
+              ref={picker}
+              type="file"
+              accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.3gp"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                if (file.size !== media.size) {
+                  setWrongFile(`That's a different file. ${media.filename} is ${fmtBytes(media.size)}.`);
+                  return;
+                }
+                setWrongFile("");
+                onResume(file);
+              }}
+            />
+          </>
+        )}
         {count > 1 && (
           <>
             <Btn size="s" kind="quiet" aria-label="Move up" disabled={index === 0} onClick={onUp} icon={<Icon.Up />} style={{ padding: 6 }} />

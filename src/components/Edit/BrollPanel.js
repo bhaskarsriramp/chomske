@@ -290,7 +290,9 @@ export default function BrollPanel({
                   </span>
                 ) : (
                   <span style={{ width: "80%" }}>
-                    <span style={{ display: "block", fontSize: 11, color: "var(--ink-mute)", marginBottom: 5 }}>{Math.round(u.progress * 100)}%</span>
+                    <span style={{ display: "block", fontSize: 11, color: "var(--ink-mute)", marginBottom: 5 }}>
+                      {u.waiting ? `Offline · ${Math.round(u.progress * 100)}%` : `${Math.round(u.progress * 100)}%`}
+                    </span>
                     <Bar value={u.progress} />
                   </span>
                 )}

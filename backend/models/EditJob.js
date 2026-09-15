@@ -30,6 +30,10 @@ const EditJobSchema = new Schema({
   lease_until: { type: Date, default: null },
   worker:      { type: String, default: "" },
   error:       { type: String, default: "" },
+  // After a network fault: not to be claimed before `not_before`, and how many
+  // such faults it has waited out (they do not count as attempts).
+  not_before:  { type: Date, default: null },
+  retries:     { type: Number, default: 0 },
 
   created_at: { type: Date, default: Date.now },
   updated_at: { type: Date, default: Date.now },

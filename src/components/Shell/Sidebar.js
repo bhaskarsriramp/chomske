@@ -103,8 +103,8 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, showcase 
       {/* The app header already shows the wordmark on mobile, repeating it at
           the top of the drawer just pushes the nav down. */}
       {!isNarrow && (
-        <div style={{ padding: "16px 18px 18px" }}>
-          <Logo size={28} fontSize={16} />
+        <div style={{ padding: "18px 20px 20px" }}>
+          <Logo size={26} fontSize={17} />
         </div>
       )}
 
@@ -131,15 +131,21 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, showcase 
                     aria-current={on ? "page" : undefined}
                     className={on ? undefined : "hg-nav-item"}
                     style={{
-                      display: "flex", alignItems: "center", gap: 11, width: "100%",
-                      textAlign: "left", padding: "10px 11px", borderRadius: 10,
+                      display: "flex", alignItems: "center", gap: 10, width: "100%",
+                      textAlign: "left", padding: "8px 10px", borderRadius: 9,
                       border: "none", cursor: "pointer",
-                      background: on ? "var(--ink)" : "transparent",
-                      color: on ? "#fff" : "var(--ink-body)",
-                      fontSize: 14.5, fontWeight: on ? 600 : 500,
+                      // A soft filled row rather than a black pill: the page the
+                      // creator is on should be findable at a glance without being
+                      // the loudest thing on the screen.
+                      background: on ? "#ECECEC" : "transparent",
+                      boxShadow: on ? "inset 0 0 0 1px rgba(15,15,15,.04)" : "none",
+                      color: on ? "var(--ink)" : "var(--ink-body)",
+                      fontSize: 14, fontWeight: on ? 600 : 500, letterSpacing: "-0.005em",
                     }}
                   >
-                    <Icon />
+                    <span style={{ display: "inline-flex", color: on ? "var(--ink)" : "var(--ink-mute)" }}>
+                      <Icon />
+                    </span>
                     {item.label}
                   </button>
                 );
@@ -193,7 +199,7 @@ export default function Sidebar({ tab, onTab, isNarrow, open, onClose, showcase 
    dependency,
    and currentColor makes them follow the active state for free. */
 
-const svg = { width: 17, height: 17, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", style: { flexShrink: 0 } };
+const svg = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.75, strokeLinecap: "round", strokeLinejoin: "round", style: { flexShrink: 0 } };
 
 function TargetIcon() {
   return (

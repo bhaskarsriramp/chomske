@@ -22,6 +22,7 @@
  */
 import fsp from "fs/promises";
 import { AUDIO_MODEL, generateJson, retryable } from "./gemini.js";
+import { transient } from "./transient.js";
 
 /** Stretches per request. Keeps one request well under the inline-data ceiling. */
 const BATCH = 30;
@@ -116,6 +117,8 @@ export async function transcribePieces({ pieces, lines = [], languageLabel = "",
     }
     throw Object.assign(new Error(`transcription failed: ${lastErr?.message}`), {
       userMessage: "We couldn't listen to your recording just now. Please try again in a minute.",
+      // The model unreachable is waited out by the job runner before this is said.
+      transient: transient(lastErr),
     });
   };
 

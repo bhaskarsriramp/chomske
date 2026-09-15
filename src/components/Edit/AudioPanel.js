@@ -89,7 +89,12 @@ export default function AudioPanel({ tl, lay, media, uploads, time, onChange, on
                   <span style={{ display: "block", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
                   {u.status === "failed"
                     ? <span style={{ fontSize: 12, color: "var(--bad)" }}>{u.error}</span>
-                    : <span style={{ display: "block", marginTop: 5 }}><Bar value={u.progress} /></span>}
+                    : (
+                      <span style={{ display: "block", marginTop: 5 }}>
+                        {u.waiting && <span style={{ display: "block", fontSize: 11.5, color: "var(--ink-mute)", marginBottom: 4 }}>No connection. Carries on when you're back online.</span>}
+                        <Bar value={u.progress} />
+                      </span>
+                    )}
                 </span>
                 {u.status === "failed" && <><Btn size="s" onClick={() => onRetryUpload(u.key)}>Retry</Btn><Btn size="s" kind="quiet" aria-label="Dismiss" onClick={() => onDismissUpload(u.key)} icon={<Icon.Close size={13} />} /></>}
               </li>

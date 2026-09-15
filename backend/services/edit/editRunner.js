@@ -9,6 +9,11 @@
  * tick anywhere picks the job up again. After MAX_ATTEMPTS the job is failed and
  * whatever it charged is refunded.
  *
+ * A network fault is different (storage or the model unreachable for a while,
+ * transient.js). The job waits, longer each time, and runs again without using
+ * up an attempt, so a dropped connection holds a preview or an export up rather
+ * than failing it.
+ *
  * ── NOTHING ESCAPES A HANDLER ────────────────────────────────────────────────
  * A job has nobody to report to. Every failure ends in the project saying what
  * went wrong in a sentence a creator can read, the credits back, and an event
@@ -33,6 +38,7 @@ import {
 import { renderTimeline, missingFonts, FONTS_DIR } from "./render.js";
 import { EXPORT_ENGINE } from "./exportOptions.js";
 import { refund } from "../creditsService.js";
+import { transient } from "./transient.js";
 import {
   EDIT_LIMITS, mediaKey, projectPrefix, bumpExpiry, scriptLines, publishProgress, modeOf, aspectOf,
   readyRecordings, untranscribed,
@@ -42,6 +48,10 @@ const WORKER = `${os.hostname()}:${process.pid}`;
 const LEASE_MS = 90_000;
 const TICK_MS = 2500;
 const MAX_ATTEMPTS = 3;
+// Network faults waited out per job: 15 s between tries, doubling, at most
+// 10 min. A preview copy or an export waits about an hour; captions and a
+// translation, which pay for model calls on every try, give up after minutes.
+const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, translate: 4 };
 const int = (v, d) => (parseInt(v, 10) > 0 ? parseInt(v, 10) : d);
 
 const LIMIT = {
@@ -86,7 +96,13 @@ async function tick() {
 function claim(type) {
   const now = new Date();
   return EditJob.findOneAndUpdate(
-    { type, $or: [{ status: "queued" }, { status: "running", lease_until: { $lt: now } }] },
+    {
+      type,
+      $or: [
+        { status: "queued", $or: [{ not_before: null }, { not_before: { $lte: now } }] },
+        { status: "running", lease_until: { $lt: now } },
+      ],
+    },
     {
       $set: { status: "running", lease_until: new Date(now.getTime() + LEASE_MS), worker: WORKER, updated_at: now },
       $inc: { attempts: 1 },
@@ -115,10 +131,23 @@ async function execute(job) {
     await EditJob.updateOne({ _id: job._id }, { $set: { status: "done", lease_until: null, updated_at: new Date() } });
   } catch (err) {
     console.error(`[edit] ${job.type} ${job._id} (attempt ${job.attempts}) failed:`, err.message);
+    const retries = job.retries || 0;
+    const network = !err.final && transient(err) && retries < (NETWORK_RETRIES[job.type] || 0);
     // A clear user-facing refusal (no sound, wrong file) will fail the same way
     // every time. Only faults with no message of their own are worth another go.
     const again = !err.userMessage && !err.final && job.attempts < MAX_ATTEMPTS;
-    if (again) {
+    if (network) {
+      const wait = Math.min(10 * 60_000, 15_000 * 2 ** retries);
+      await EditJob.updateOne(
+        { _id: job._id },
+        {
+          $set: { status: "queued", lease_until: null, not_before: new Date(Date.now() + wait), error: String(err.message).slice(0, 500), updated_at: new Date() },
+          $inc: { retries: 1, attempts: -1 },
+        }
+      );
+      if (handler.retrying) await handler.retrying(job).catch(() => {});
+      console.log(`[edit] ${job.type} ${job._id}: network fault, trying again in ${Math.round(wait / 1000)} s (${retries + 1}/${NETWORK_RETRIES[job.type]})`);
+    } else if (again) {
       await EditJob.updateOne({ _id: job._id }, { $set: { status: "queued", lease_until: null, error: String(err.message).slice(0, 500) } });
     } else {
       await EditJob.updateOne({ _id: job._id }, { $set: { status: "failed", lease_until: null, error: String(err.message).slice(0, 500), updated_at: new Date() } });
@@ -249,6 +278,15 @@ const prepare = {
     publishProgress(project, { media: m.id, media_status: "ready" });
   },
 
+  // Waiting out a network fault: back to "uploaded", which reads the same in the
+  // browser ("Preparing a preview…") and lets the file be removed meanwhile.
+  async retrying(job) {
+    await EditProject.updateOne(
+      { _id: job.project, media: { $elemMatch: { id: job.ref, status: "processing" } } },
+      { $set: { "media.$.status": "uploaded" } }
+    );
+  },
+
   async fail(job, err) {
     const project = await EditProject.findById(job.project).lean();
     if (!project) return;
@@ -373,6 +411,15 @@ const analyse = {
       `[edit] analysed ${project._id}: ${alignment.stats.matched}/${alignment.stats.lines} lines, ` +
         `${pieces.length} pieces, $${(usage.usd || 0).toFixed(4)}`
     );
+  },
+
+  async retrying(job) {
+    const project = await EditProject.findOneAndUpdate(
+      { _id: job.project, status: "analysing" },
+      { $set: { stage: "Connection problem. Trying again shortly" } },
+      { new: true, projection: { user: 1 } }
+    ).lean();
+    if (project) publishProgress(project, { stage: "retrying" });
   },
 
   async fail(job, err) {
@@ -602,6 +649,14 @@ const render = {
     );
     await EditProject.updateOne({ _id: project._id }, { $set: { updated_at: new Date(), expires_at: bumpExpiry() } });
     publishProgress(project, { render: r.id, render_status: "done" });
+  },
+
+  async retrying(job) {
+    const project = await EditProject.findById(job.project).select("user renders").lean();
+    const r = (project?.renders || []).find((x) => x.id === job.ref);
+    if (!r || r.status === "done" || r.status === "failed") return;
+    await setRender(project._id, r.id, { status: "rendering", stage: "Connection problem. Trying again shortly", progress: 0 });
+    publishProgress(project, { render: r.id, render_status: "rendering" });
   },
 
   async fail(job, err) {

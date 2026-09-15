@@ -164,6 +164,32 @@ export default function Preview({
     Object.values(brollVideos.current).forEach((v) => v && !v.paused && v.pause());
   }, []);
 
+  // A preview copy whose loading was cut off by a dropped connection stays
+  // broken until it is loaded again. Coming back online reloads it at the same
+  // moment of the edit, and the edit plays on if it was playing.
+  useEffect(() => {
+    const revive = () => {
+      for (const group of [videos.current, audios.current, brollVideos.current]) {
+        for (const el of Object.values(group)) {
+          if (!el?.error) continue;
+          el.addEventListener("loadedmetadata", () => {
+            if (group !== videos.current) {
+              paint(tRef.current);
+              return;
+            }
+            place(tRef.current);
+            const { clips: C, playing: P } = live.current;
+            const current = C[idxRef.current];
+            if (P && current && videos.current[current.media] === el) el.play().catch(() => {});
+          }, { once: true });
+          el.load();
+        }
+      }
+    };
+    window.addEventListener("online", revive);
+    return () => window.removeEventListener("online", revive);
+  }, [place, paint]);
+
   // ── Playing the edit ────────────────────────────────────────────────────
   useEffect(() => {
     if (audition) return undefined;

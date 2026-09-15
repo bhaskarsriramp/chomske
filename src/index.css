@@ -6,14 +6,16 @@
   --ink-body: #383838;   /* paragraphs */
   --ink-mute: #606060;   /* labels, captions */
   --line: #E3E3E3;       /* hairlines */
+  --line-strong: #D0D0D0;
   --paper: #F9F9F9;      /* page */
   --card: #FFFFFF;
+  --hover: #F3F3F3;      /* a row or quiet control under the pointer */
   /* Filled primary actions. Deliberately NOT the accent: red is the destructive
      colour too, and "Add video" sitting next to "Delete" in the same red gives a
      creator no way to tell them apart. Black-filled primaries are also what
      Instagram and YouTube Studio actually use. */
   --primary: #0F0F0F;
-  --primary-hover: #2E2E2E;
+  --primary-hover: #2A2A2A;
   /* One signal, one job: a story first seen in the last three hours. It used to
      also mean "working", "filled slot" and "fair confidence", which is how red
      stopped meaning anything. Everything else moved to --made or to amber. */
@@ -34,6 +36,38 @@
   --made: #3A3733;
   --made-tint: #F5F3F0;
   --made-line: #E3DFD9;
+
+  /* ── MOTION ────────────────────────────────────────────────────────────────
+     One vocabulary for every animation in the product, from Emil Kowalski's
+     design-engineering rules (.claude/skills/emil-design-eng). The built-in CSS
+     easings are too weak to feel intentional, so these are the strong custom
+     curves, and nothing in this codebase should hand-roll another:
+
+       --ease-out     things entering or leaving, and presses
+       --ease-in-out  things moving or morphing while on screen
+       --ease-drawer  sheets and drawers (the iOS curve)
+
+     `ease-in` is never used on UI: it starts slow, which delays exactly the
+     moment the eye is watching. Durations stay under 300ms for UI; only the
+     landing page's explanatory motion runs longer. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-press: 160ms;
+  --dur-hover: 150ms;
+  --dur-pop: 180ms;
+  --dur-modal: 240ms;
+  --dur-drawer: 360ms;
+
+  /* ── DEPTH ─────────────────────────────────────────────────────────────────
+     Shadows are for things that float (menus, dialogs) and the faintest one
+     for things that can be pressed. Cards on the page stay flat with a
+     hairline, which is what keeps a dense workspace calm. */
+  --shadow-xs: 0 1px 2px rgba(15, 15, 15, .05);
+  --shadow-sm: 0 1px 2px rgba(15, 15, 15, .06), 0 1px 3px rgba(15, 15, 15, .04);
+  --shadow-pop: 0 12px 32px -12px rgba(15, 15, 15, .28), 0 4px 10px -4px rgba(15, 15, 15, .10);
+  --shadow-modal: 0 32px 72px -24px rgba(15, 15, 15, .40), 0 10px 22px -12px rgba(15, 15, 15, .16);
+  --ring: 0 0 0 3px rgba(15, 15, 15, .09);
 }
 
 /* Inter is self-hosted: its two @font-face rules live in an inline <style> in
@@ -53,6 +87,12 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Headings wrap into even lines instead of leaving one word stranded on the
+   last; paragraphs avoid a one-word final line. Both are free in the browsers
+   that support them and ignored in the ones that do not. */
+h1, h2, h3, h4 { text-wrap: balance; }
+p { text-wrap: pretty; }
+
 /* Indic transcripts need their own stack, or Windows renders tofu boxes for
    Telugu and Bengali. Devanagari first, then the others, then a Latin fallback
    so code-mixed English inside a Hindi sentence still looks right.
@@ -71,7 +111,7 @@ body {
   line-height: 1.85;
 }
 
-button { font-family: inherit; }
+button { font-family: inherit; -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 
 input, textarea, select { font-family: inherit; color: inherit; }
@@ -114,33 +154,89 @@ input, textarea, select { font-family: inherit; color: inherit; }
 }
 
 /* Focus ring: visible for keyboard users, absent for mouse clicks. Not red:
-   a red ring around the thing you just tabbed to looks like a rejection. */
+   a red ring around the thing you just tabbed to looks like a rejection. It
+   does not animate: keyboard movement is repeated hundreds of times a day. */
 :focus-visible { outline: 2px solid var(--made); outline-offset: 2px; }
 
 /* Text fields get a real focus state rather than only the keyboard ring:
-   clicking into a box should visibly claim it. */
-input:focus, textarea:focus { border-color: var(--ink) !important; outline: none; }
+   clicking into a box should visibly claim it. The border turns ink and a soft
+   ring settles around it; colour changes, so plain `ease`. */
+input, textarea, select {
+  transition: border-color var(--dur-hover) ease, box-shadow var(--dur-hover) ease, background-color var(--dur-hover) ease;
+}
+input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):focus,
+textarea:focus {
+  border-color: var(--ink) !important;
+  outline: none;
+  box-shadow: var(--ring);
+}
 input::placeholder, textarea::placeholder { color: #9A9A9A; }
+
+/* ── EVERY BUTTON ANSWERS THE PRESS ──────────────────────────────────────────
+   A button that does not move under the pointer feels like it did not hear
+   the click. It scales to 0.97 on press, with a strong ease-out so the
+   response is immediate, and returns the same way. scale() takes the label
+   and icon with it, which is what makes it read as a physical press.
+
+   Three exclusions, each for a reason:
+     :disabled        nothing happens, so nothing should look like it did
+     :focus-visible   a Space or Enter press from the keyboard; keyboard actions
+                      are never animated
+     inline transform a component that positions itself with transform keeps
+                      it (an inline style beats this rule, no conflict)
+
+   Colour transitions ride along for hover states, and only colour: `ease` for
+   those, never `transition: all`. */
+button {
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    background-color var(--dur-hover) ease,
+    border-color var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    box-shadow var(--dur-hover) ease,
+    opacity var(--dur-hover) ease;
+}
+button:not(:disabled):not(:focus-visible):active,
+.hg-press:not(:focus-visible):active {
+  transform: scale(0.97);
+}
+/* Wide surfaces move further for the same scale, so they press more gently. */
+.hg-press-soft:not(:disabled):not(:focus-visible):active { transform: scale(0.985); }
+.hg-press { transition: transform var(--dur-press) var(--ease-out), background-color var(--dur-hover) ease, border-color var(--dur-hover) ease; }
 
 @keyframes hg-spin { to { transform: rotate(360deg); } }
 @keyframes hg-rise {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: none; }
 }
 @keyframes hg-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes hg-sheet-up {
-  from { opacity: 0; transform: translateY(18px); }
+
+/* ── DIALOGS ─────────────────────────────────────────────────────────────────
+   A modal appears centred and is not anchored to anything, so it grows from its
+   own centre: scale 0.96 and transparent to its settled size. Never from
+   scale(0), since nothing in the world appears from nothing.
+
+   On a phone the same dialogs are sheets pinned to the bottom edge (or whole
+   screens), and a sheet rises: a short travel measured in its own height, on
+   the drawer curve. One class serves both, split by the same 600px the dialogs
+   use to decide between the two layouts.
+
+   Keyframes rather than transitions are right here: a dialog mounts once per
+   opening and is never retargeted mid-flight. */
+@keyframes hg-modal-in {
+  from { opacity: 0; transform: scale(0.96); }
   to   { opacity: 1; transform: none; }
 }
-/* The same entrance, for a dialog centred with top/left 50% and a negative
-   translate.
-   hg-sheet-up cannot be used there. It ends at `transform: none` and runs with
-   fill-mode `both`, so once it finishes the animation KEEPS overriding the
-   element's own inline translate(-50%,-50%), and the dialog settles with its
-   top-left corner at the middle of the screen instead of its centre. This
-   version animates inside the centring transform rather than replacing it. */
+@keyframes hg-sheet-in {
+  from { opacity: 0; transform: translateY(8%); }
+  to   { opacity: 1; transform: none; }
+}
+/* For a dialog centred with top/left 50% and a negative translate. It animates
+   INSIDE the centring transform: an animation ending at `transform: none` with
+   fill-mode both would keep overriding the element's own translate(-50%,-50%)
+   and settle it with its top-left corner in the middle of the screen. */
 @keyframes hg-dialog-in {
-  from { opacity: 0; transform: translate(-50%, calc(-50% + 18px)); }
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
   to   { opacity: 1; transform: translate(-50%, -50%); }
 }
 /* The mobile drawer enters from the right edge, matching the reference project:
@@ -150,27 +246,57 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
   from { transform: translateX(100%); }
   to   { transform: none; }
 }
-.hg-drawer-in { animation: hg-drawer-in .24s cubic-bezier(.2,.7,.3,1) both; }
+.hg-drawer-in { animation: hg-drawer-in var(--dur-drawer) var(--ease-drawer) both; }
 
-/* Inactive nav rows warm on hover; the active one is already solid. */
-.hg-nav-item { transition: background .12s ease; }
-.hg-nav-item:hover { background: #F2F2F2 !important; }
+.hg-rise { animation: hg-rise 260ms var(--ease-out) both; }
+.hg-fade { animation: hg-fade 200ms var(--ease-out) both; }
+.hg-sheet-up { animation: hg-modal-in var(--dur-modal) var(--ease-out) both; }
+.hg-dialog-in { animation: hg-dialog-in var(--dur-modal) var(--ease-out) both; }
+@media (max-width: 600px) {
+  .hg-sheet-up { animation: hg-sheet-in 320ms var(--ease-drawer) both; }
+}
+
+/* ── REDUCED MOTION IS GENTLER, NOT NOTHING ──────────────────────────────────
+   Travel and scale go; the fades that say "this appeared" stay, because a
+   dialog that simply materialises with no transition at all is its own small
+   shock. Spinners keep turning: they are the only sign that work is running. */
+@keyframes hg-dialog-fade {
+  from { opacity: 0; transform: translate(-50%, -50%); }
+  to   { opacity: 1; transform: translate(-50%, -50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hg-rise, .hg-sheet-up, .hg-drawer-in { animation: hg-fade 200ms ease both !important; }
+  .hg-dialog-in { animation: hg-dialog-fade 200ms ease both !important; }
+}
+
+/* ── HOVER, ONLY WHERE THERE IS A POINTER ────────────────────────────────────
+   A touch screen fires :hover on tap and then leaves it stuck on, so every
+   hover state below is gated to devices that genuinely hover. Colour and
+   border only: see "NOTHING LIFTS ON HOVER" further down. */
+
+/* Inactive nav rows warm on hover; the active one is already filled. */
+.hg-nav-item { transition: background-color var(--dur-hover) ease, color var(--dur-hover) ease, transform var(--dur-press) var(--ease-out); }
 
 /* Destructive icon buttons stay quiet until pointed at, a row of red bins
    reads as a warning screen rather than a list. */
-.hg-icon-btn { transition: background .12s ease, color .12s ease, border-color .12s ease; }
-.hg-icon-btn:hover {
-  background: #FCE8E6 !important;
-  border-color: #F5C7C3 !important;
-  color: var(--bad) !important;
-}
-.hg-rise { animation: hg-rise .45s cubic-bezier(.2,.7,.3,1) both; }
-.hg-fade { animation: hg-fade .18s ease both; }
-.hg-sheet-up { animation: hg-sheet-up .26s cubic-bezier(.2,.7,.3,1) both; }
-.hg-dialog-in { animation: hg-dialog-in .26s cubic-bezier(.2,.7,.3,1) both; }
+.hg-icon-btn { transition: background-color var(--dur-hover) ease, color var(--dur-hover) ease, border-color var(--dur-hover) ease, transform var(--dur-press) var(--ease-out); }
 
-@media (prefers-reduced-motion: reduce) {
-  * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+/* Filled primaries carry a faint top highlight and a hairline shadow, which is
+   the difference between a black rectangle and a button. */
+.hg-btn-primary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10), 0 1px 2px rgba(15, 15, 15, .20); }
+.hg-btn-ghost { box-shadow: var(--shadow-xs); }
+
+@media (hover: hover) and (pointer: fine) {
+  .hg-nav-item:hover { background: var(--hover) !important; color: var(--ink) !important; }
+  .hg-icon-btn:hover {
+    background: #FCE8E6 !important;
+    border-color: #F5C7C3 !important;
+    color: var(--bad) !important;
+  }
+  .hg-btn-primary:not(:disabled):hover { background: var(--primary-hover) !important; }
+  .hg-btn-ghost:not(:disabled):hover { border-color: #BDBDBD !important; background: #FAFAFA !important; color: var(--ink) !important; }
+  .hg-btn-quiet:not(:disabled):hover { background: var(--hover) !important; color: var(--ink) !important; }
+  .hg-btn-danger:not(:disabled):hover { background: #FCE8E6 !important; border-color: #EFB7B2 !important; }
 }
 
 /* ── THE ONE PLACE THE APP MOVES ─────────────────────────────────────────────
@@ -214,22 +340,23 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
   from { opacity: 0; transform: translateY(5px); }
   to   { opacity: 1; transform: none; }
 }
-.hg-voice-line { animation: hg-voice-line .4s cubic-bezier(.2,.7,.3,1) both; }
+.hg-voice-line { animation: hg-voice-line 300ms var(--ease-out) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hg-voice-eq, .hg-voice-live, .hg-voice-bar::after { animation: none !important; }
+  .hg-voice-line { animation: hg-fade 200ms ease both !important; }
+}
 
 /* The app shell owns the viewport: header fixed, panes scroll independently.
    dvh second so mobile browser chrome doesn't cut off the last row. */
 .hg-app { height: 100vh; height: 100dvh; }
-
-/* Scoped hover states: inline styles can't do :hover. */
-.hg-btn-primary:hover { background: var(--primary-hover) !important; }
-.hg-btn-ghost:hover { border-color: #A6A6A6 !important; background: #F9F9F9 !important; }
 
 /* ── NOTHING LIFTS ON HOVER ──────────────────────────────────────────────────
    A card that floats up 2px with a soft shadow is the single most recognisable
    generated-UI gesture, and creators live in YouTube Studio, which never does
    it. Rows here change fill and border only. It also stops a list of forty
    items twitching as the cursor crosses it. */
-.hg-row { transition: background .12s ease, border-color .12s ease; }
+.hg-row { transition: background-color var(--dur-hover) ease, border-color var(--dur-hover) ease; }
 
 /* A <summary> keeps its disclosure triangle in WebKit even with list-style:none,
    so the marker has to be removed twice to be removed at all. Used by the
@@ -237,11 +364,28 @@ input::placeholder, textarea::placeholder { color: #9A9A9A; }
    in front of the text is the one thing on it nobody styled. */
 summary::-webkit-details-marker { display: none; }
 summary::marker { content: ""; }
-.hg-row:hover { background: #F9F9F9 !important; border-color: #D0D0D0 !important; }
 
 /* Selectable cards (onboarding, category editing): same idea, no motion. */
-.hg-pick { transition: background .12s ease, border-color .12s ease; }
-.hg-pick:hover { border-color: #A6A6A6 !important; }
+.hg-pick { transition: background-color var(--dur-hover) ease, border-color var(--dur-hover) ease; }
+
+/* Category pills carry their own hue when selected, so hover only touches the
+   unselected ones, otherwise pointing at "Crypto" would grey out its amber. */
+.hg-pill { transition: background-color var(--dur-hover) ease, border-color var(--dur-hover) ease, color var(--dur-hover) ease; }
+
+@media (hover: hover) and (pointer: fine) {
+  .hg-row:hover { background: #FAFAFA !important; border-color: var(--line-strong) !important; }
+  .hg-pick:hover { border-color: #A6A6A6 !important; }
+  .hg-pill[aria-pressed="false"]:hover {
+    border-color: #B8B8B8 !important;
+    color: var(--ink-body) !important;
+  }
+}
+
+/* Edit videos: four cards a row on a desk, fewer as the screen narrows. */
+.hg-video-grid { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1280px) { .hg-video-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 980px) { .hg-video-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .hg-video-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* ── THE LENGTH SLIDER ───────────────────────────────────────────────────────
    A native <input type="range">, not a hand-rolled drag handler. Touch,
@@ -288,7 +432,7 @@ summary::marker { content: ""; }
   background: var(--card);
   border: 2px solid var(--ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
-  transition: transform .12s ease;
+  transition: transform var(--dur-press) var(--ease-out);
 }
 .hg-range:active::-webkit-slider-thumb { transform: scale(1.12); }
 
@@ -300,12 +444,12 @@ summary::marker { content: ""; }
   background: var(--card);
   border: 2px solid var(--ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
-  transition: transform .12s ease;
+  transition: transform var(--dur-press) var(--ease-out);
 }
 .hg-range:active::-moz-range-thumb { transform: scale(1.12); }
 
 /* Focus lands on the thumb, not a box around the whole 100%-wide input. */
-.hg-range:focus { outline: none; }
+.hg-range:focus { outline: none; box-shadow: none; }
 .hg-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(15, 15, 15, .18); }
 .hg-range:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba(15, 15, 15, .18); }
 
@@ -316,20 +460,12 @@ summary::marker { content: ""; }
   .hg-range:active::-moz-range-thumb { transform: none; }
 }
 
-/* Category pills carry their own hue when selected, so hover only touches the
-   unselected ones, otherwise pointing at "Crypto" would grey out its amber. */
-.hg-pill { transition: background .12s ease, border-color .12s ease, color .12s ease; }
-.hg-pill[aria-pressed="false"]:hover {
-  border-color: #B8B8B8 !important;
-  color: var(--ink-body) !important;
-}
-
 /* The category strip scrolls sideways rather than wrapping, so the header keeps
    one fixed height however many categories someone picked. The bar itself is
    hidden: it is a row of four chips, and a scrollbar under them would be taller
    than the thing it scrolls. Swipe and trackpad still work, and the chips are
    focusable, so a keyboard reaches the ones off-screen. */
-.hg-strip { -ms-overflow-style: none; }
+.hg-strip { -ms-overflow-style: none; scrollbar-width: none; }
 .hg-strip::-webkit-scrollbar { display: none; }
 
 /* ── SKELETONS ───────────────────────────────────────────────────────────────
@@ -341,10 +477,11 @@ summary::marker { content: ""; }
   background: #EDEDED; border-radius: 8px;
   animation: hg-pulse 1.5s ease-in-out infinite;
 }
+@media (prefers-reduced-motion: reduce) { .hg-skel { animation: none; } }
 
 /* Panes scroll a lot, and the default Windows scrollbar is a heavy slab. */
 .hg-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #C6C6C6 transparent; }
-.hg-scroll::-webkit-scrollbar { width: 10px; }
+.hg-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
 .hg-scroll::-webkit-scrollbar-track { background: transparent; }
 .hg-scroll::-webkit-scrollbar-thumb {
   background: #C6C6C6; border-radius: 99px;
@@ -359,71 +496,50 @@ summary::marker { content: ""; }
    ───────────────────────────────────────────────────────────────────────────
    Everything below is scoped to the signed-out page and NOTHING here applies
    inside the app. The two are deliberately different: the app is a light, quiet
-   workspace a creator sits in every morning and its own rule is that nothing
-   moves ("NOTHING LIFTS ON HOVER", above, still stands in there). The landing
-   page has one job the app does not: convincing somebody in four seconds that
-   this is a real, current product, and motion is most of how that is done.
-   Keeping the two rule sets apart is why the app can stay still while the
-   front door moves.
+   workspace a creator sits in every morning, and in there motion is limited to
+   feedback (presses, dialogs arriving). The landing page has one job the app
+   does not: convincing somebody in four seconds that this is a real, current
+   product, and explanatory motion is most of how that is done. It is the one
+   place longer, choreographed animation belongs.
 
-   Every animation here is decorative and is switched off wholesale by the
-   reduced-motion block at the end. The page must read identically with all of
-   it disabled, so nothing below may be the only way a piece of content appears.
+   Every animation here is decorative or explanatory and the reduced-motion
+   blocks turn movement into plain fades. The page must read identically with
+   all of it disabled, so nothing below may be the only way content appears.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .hg-dark {
   /* ── FLAT, AND FOUR COLOURS ────────────────────────────────────────────────
-     This page has now been through three grounds, and the reasoning for the
-     current one is worth keeping because the first two both looked fine in
-     isolation and wrong in place.
-
-     #000 came first: pure black under panels that are a few percent of white,
-     so nothing had an edge and the whole page read as one sheet.
-
-     Then a near-black with red radial washes over it, which fixed the edges and
-     introduced a worse problem. Four overlapping blurred gradients meant no
-     element on the page had a stable background, so no contrast ratio on it was
-     a fact, only an average. It also read as the same soft red cloud every
-     other AI product shipped that year.
-
-     Now: one flat colour, and the light comes off objects instead. Every value
-     below is measured against this exact ground and stays true, because the
-     ground cannot drift underneath it.
+     One flat ground, and the light comes off objects instead of washes, so
+     every contrast value measured against it stays true.
 
      The blue cast is not decoration. #1B17FF is the literal dominant pixel of
      logo192.png, and #0A0B0F is that hue taken almost to black, so the page and
-     the mark sit in the same family instead of the mark being the only blue
-     thing on a red page. */
+     the mark sit in the same family. */
   --d-bg: #0A0B0F;
-  --d-bg-alt: #101218;
+  --d-bg-alt: #0E1015;
 
-  --d-panel: rgba(255, 255, 255, 0.045);
-  --d-line: rgba(255, 255, 255, 0.11);
+  --d-panel: rgba(255, 255, 255, 0.035);
+  --d-panel-strong: rgba(255, 255, 255, 0.055);
+  --d-line: rgba(255, 255, 255, 0.10);
   --d-line-soft: rgba(255, 255, 255, 0.07);
+  --d-line-strong: rgba(255, 255, 255, 0.18);
+  /* A card's top edge catching light: one pixel of white at low alpha, inside.
+     It is what makes a panel on a near-black ground read as an object. */
+  --d-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 
-  /* Opaque, and measured against --d-bg rather than left as alphas whose real
-     value depended on whichever blob happened to be behind them:
-       --d-ink   17.9:1    --d-body  8.4:1    --d-mute  5.5:1
-     --d-mute matters most and is the one that used to fail: the demo panels
-     set field labels and timestamps at 8.5-10.5px in it. */
+  /* Opaque, and measured against --d-bg:
+       --d-ink   17.9:1    --d-body  8.4:1    --d-mute  5.5:1 */
   --d-ink: #F4F4F6;
   --d-body: #A8A8B3;
   --d-mute: #86868F;
 
   /* ── THE FOUR ──────────────────────────────────────────────────────────────
-     Blue is the logo's own hue (241) lightened until it reads on this ground.
-     Purple is pushed to 284 rather than its natural 265, because at 265 it sat
-     33 degrees from the logo blue and the two sections looked like one colour
-     rendered inconsistently. At 284 the gap is 43 degrees and they separate.
-
-       --d-blue    #7C79FF   241    5.65:1
+       --d-blue    #7C79FF   241    5.65:1   the logo's own hue
        --d-purple  #DC7BFF   284    7.79:1
        --d-green   #3DD68C   151   10.49:1
        --d-red     #FF5A5A     0    6.43:1
-
-     Four hues make "colour must never be the only signal" easier to break, not
-     harder. Every section is still labelled and every demo still says in words
-     what it is doing. */
+     Every section is still labelled in words; colour never carries meaning
+     alone. */
   --d-blue: #7C79FF;
   --d-purple: #DC7BFF;
   --d-green: #3DD68C;
@@ -432,136 +548,98 @@ summary::marker { content: ""; }
   background: var(--d-bg);
   color: var(--d-body);
 }
-
-/* .hg-wash is deliberately absent. It was a fixed layer of three red radial
-   gradients held still behind the whole page, and removing it is most of what
-   "no gradient backgrounds" means here. Its element is gone from LandingPage
-   too; nothing else referenced it. The z-index 1 on the page's content wrapper
-   is now harmless rather than load-bearing, and is left alone so the stacking
-   context around the nav and the mobile sheet does not shift. */
-
-/* The aurora keyframes and .hg-aurora lived here. They drifted three large
-   blurred radial gradients across the hero, and they went when the page moved
-   to a flat ground: nothing references them any more, and a stylesheet that
-   ships animation for elements that no longer exist is how the next person
-   spends an afternoon hunting for the blobs. */
+.hg-dark ::selection { background: rgba(124, 121, 255, .38); color: #fff; }
 
 /* ── Scroll reveal ───────────────────────────────────────────────────────────
-   Driven by an IntersectionObserver in the component, not by a scroll handler:
-   one observer for the whole page costs nothing, where a scroll listener runs
-   on every frame of every scroll for the life of the page.
+   Driven by one IntersectionObserver in the component, fired once per element.
 
-   ── AND WHY THE HIDDEN STATE IS ARMED BY JAVASCRIPT ─────────────────────────
+   ── WHY THE HIDDEN STATE IS ARMED BY JAVASCRIPT ─────────────────────────────
    `.hg-reveal` on its own does NOTHING. The hidden state only applies inside
    `.hg-armed`, which the component adds after confirming IntersectionObserver
-   exists. Written the obvious way round (hidden in CSS, revealed by JS), the
-   page fails CLOSED: any browser without the observer, any error before the
-   effect runs, and every section below the fold is a blank black screen with
-   the content still in the DOM. This way the worst case is that the animation
-   simply does not happen. */
+   exists, so the page fails OPEN: without the observer, or after an error, the
+   content is simply there, unanimated.
+
+   Explanatory marketing motion, so longer than UI's 300ms budget, but on the
+   strong ease-out: it arrives quickly and settles slowly. A group staggers by
+   the --i each child sets, 70ms apart. */
 .hg-armed .hg-reveal {
   opacity: 0;
-  transform: translateY(24px);
-  transition: opacity .75s cubic-bezier(.2,.7,.3,1), transform .75s cubic-bezier(.2,.7,.3,1);
+  transform: translateY(18px);
+  transition:
+    opacity 700ms var(--ease-out) calc(var(--i, 0) * 70ms),
+    transform 900ms var(--ease-out) calc(var(--i, 0) * 70ms);
 }
 .hg-armed .hg-reveal.is-in { opacity: 1; transform: none; }
 
-/* ── The language flip ───────────────────────────────────────────────────────
-   Every language stacks in ONE grid cell, so the container is as wide as the
-   widest of them and the headline never reflows mid-sentence. A width that
-   animated with the word would drag the rest of the line around nine times a
-   minute, which is the difference between a headline that breathes and one that
-   twitches. */
-@keyframes hg-flip-in {
-  from { opacity: 0; transform: translateY(0.5em) rotateX(-55deg); }
-  to   { opacity: 1; transform: none; }
+/* ── The language word ───────────────────────────────────────────────────────
+   Nine scripts take turns in one slot. The word leaving rises and blurs away,
+   the arriving one comes up from below and sharpens: blur is what hides the
+   moment two different scripts overlap, which no easing curve can. The slot's
+   width follows the word on the in-out curve, because it is morphing on
+   screen rather than entering. */
+.hg-lang-word {
+  position: absolute; left: 0; right: 0; top: 0;
+  text-align: center; white-space: nowrap;
+  opacity: 0;
+  transform: translateY(0.42em);
+  filter: blur(6px);
+  transition:
+    opacity 420ms var(--ease-out),
+    transform 620ms var(--ease-out),
+    filter 420ms var(--ease-out);
 }
-.hg-flip { display: inline-grid; vertical-align: baseline; perspective: 700px; }
-.hg-flip > * { grid-area: 1 / 1; }
-.hg-flip-on { animation: hg-flip-in .55s cubic-bezier(.2,.8,.25,1) both; }
+.hg-lang-word[data-state="on"] { opacity: 1; transform: none; filter: blur(0); }
+.hg-lang-word[data-state="gone"] { opacity: 0; transform: translateY(-0.42em); filter: blur(6px); }
+.hg-lang-slot { transition: width 520ms var(--ease-in-out); }
 
 /* ── Marquee ─────────────────────────────────────────────────────────────────
    The track holds the list twice and travels exactly -50%, so the second copy
-   lands where the first began and the seam is never visible. */
+   lands where the first began and the seam is never visible. Constant motion,
+   so linear. */
 @keyframes hg-marquee { from { transform: translate3d(0,0,0); } to { transform: translate3d(-50%,0,0); } }
-.hg-marquee-track { display: flex; width: max-content; animation: hg-marquee 38s linear infinite; }
-.hg-marquee:hover .hg-marquee-track { animation-play-state: paused; }
+.hg-marquee-track { display: flex; width: max-content; animation: hg-marquee 42s linear infinite; }
+@media (hover: hover) and (pointer: fine) {
+  .hg-marquee:hover .hg-marquee-track { animation-play-state: paused; }
+}
 
 /* ── Small signals ───────────────────────────────────────────────────────── */
-/* --ping-rgb so one keyframe serves every section: the hero pings in the logo
-   blue, and a section further down can override the variable to ping in its own
-   hue. A second copy of this animation that differed only in colour is how the
-   two drift apart. */
+/* --ping-rgb so one keyframe serves every section. */
 @keyframes hg-ping {
   0%   { box-shadow: 0 0 0 0 rgba(var(--ping-rgb, 112,255,210), .5); }
   70%  { box-shadow: 0 0 0 8px rgba(var(--ping-rgb, 112,255,210), 0); }
   100% { box-shadow: 0 0 0 0 rgba(var(--ping-rgb, 112,255,210), 0); }
 }
-.hg-ping { animation: hg-ping 2.4s cubic-bezier(.2,.7,.3,1) infinite; }
+.hg-ping { animation: hg-ping 2.4s var(--ease-out) infinite; }
 
-/* ── The hero's own palette ──────────────────────────────────────────────────
-   YouTube red, black and white, and nothing else. The rest of the page carries
-   the brand seven, but the first screen speaks the language of the platform
-   these creators actually publish on: a red they recognise before they have
-   read a word. Scoped to .hg-hero so it cannot leak into the sections below,
-   which would leave the page with two accent systems fighting. */
 .hg-hero {
-  /* ── THE HERO IS THE LOGO'S COLOUR NOW ─────────────────────────────────────
-     These tokens paint the biggest text on the site: the language word that
-     flips through nine scripts at ~90px. It was YouTube red, which made the
-     mark in the top-left the only blue thing on the page.
-
-     Blue instead, on the logo's own hue. Red is not gone, it carries the whole
-     "How it works" section and the YouTube badge in the platform row, which is
-     where it actually means something. The trade is that the first thing a
-     visitor sees now matches the product's mark rather than the platform's.
-
-     Scoped to .hg-hero so the APP's --yt (still #FF0000 in :root, for the
-     product's own chrome) is untouched. */
+  /* The hero's accent is the logo's hue: the language word that flips through
+     nine scripts at ~80px, the play button and the live dot. Scoped here so the
+     app's own tokens are untouched. */
   --yt: #7C79FF;
   --yt-deep: #5C58F0;
-  /* The word the headline is built around, the language that flips through nine
-     scripts, gets a brighter, more violet cut of the same hue than the chrome
-     around it. At 80px on a near-black ground the base tone reads muted; this
-     one carries. It is now the ONLY accent in the headline, which is the point:
-     the language is the claim. Separate token, not a change to --yt, so the
-     dots, buttons and badges that share the accent stay where they are. */
   --yt-bright: #A78BFF;
   --ping-rgb: 124, 121, 255;
-  background: var(--d-bg);
 }
-.hg-hero .hg-d-btn:hover { box-shadow: 0 12px 30px -12px rgba(124,121,255,.55); }
 
 @keyframes hg-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 .hg-caret { animation: hg-blink 1.05s steps(1) infinite; }
 
-/* The hero video's play button. A ring leaving it on a slow loop, which is the
-   whole of the motion here: the frame itself is deliberately still, because it
-   is a video player and a player that drifts while it plays is a fault, not a
-   flourish. (This replaced .hg-drift, which floated the hand-built demo window
-   that used to sit here.) */
+/* The hero video's play button: a ring leaving it on a slow loop. The frame
+   itself stays still; a player that drifts while it plays is a fault. */
 @keyframes hg-play-ring {
-  0%   { box-shadow: 0 0 0 0 rgba(167,139,255,.55); }
+  0%   { box-shadow: 0 0 0 0 rgba(167,139,255,.5); }
   70%  { box-shadow: 0 0 0 22px rgba(167,139,255,0); }
   100% { box-shadow: 0 0 0 0 rgba(167,139,255,0); }
 }
 .hg-play {
-  animation: hg-play-ring 2.6s cubic-bezier(.2,.7,.3,1) infinite;
-  transition: transform .2s ease;
+  animation: hg-play-ring 2.6s var(--ease-out) infinite;
+  transition: transform 240ms var(--ease-out);
 }
-button:hover > .hg-play { transform: scale(1.06); }
-
-/* A light sweeping across a border, for the primary CTA. Sized 200% and moved
-   across, rather than animating a gradient's colour stops. Stops are not
-   compositable and animating them repaints the button every frame. */
-@keyframes hg-sweep { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-.hg-sweep {
-  background-size: 200% 100%;
-  animation: hg-sweep 3.4s linear infinite;
+@media (hover: hover) and (pointer: fine) {
+  button:hover > .hg-play { transform: scale(1.06); }
 }
 
-/* Equaliser bars under the voice sample: five bars, staggered, so it reads as
-   audio rather than as a loading state. */
+/* Equaliser bars under the voice samples: staggered, so it reads as audio. */
 @keyframes hg-eq { 0%, 100% { transform: scaleY(.32); } 50% { transform: scaleY(1); } }
 .hg-eq span {
   display: block; width: 3px; height: 18px; border-radius: 2px;
@@ -569,27 +647,122 @@ button:hover > .hg-play { transform: scale(1.06); }
   animation: hg-eq 1.1s ease-in-out infinite;
 }
 
-/* Dark-surface hover states. Inline styles cannot express :hover, and the app's
-   .hg-row rules are tuned for white cards. */
-.hg-d-card { transition: border-color .2s ease, background .2s ease, transform .2s ease; }
-.hg-d-card:hover { border-color: rgba(255,255,255,.2) !important; background: rgba(255,255,255,.06) !important; }
-.hg-d-link { transition: color .15s ease; }
-.hg-d-link:hover { color: var(--d-ink) !important; }
-.hg-d-btn { transition: transform .15s ease, box-shadow .2s ease, background .2s ease; }
-.hg-d-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 30px -12px rgba(124,121,255,.42); }
-.hg-d-ghost { transition: background .2s ease, border-color .2s ease; }
-.hg-d-ghost:hover { background: rgba(255,255,255,.07) !important; border-color: rgba(255,255,255,.24) !important; }
+/* ── Landing components ──────────────────────────────────────────────────── */
+
+/* Buttons. Pills, 44px tall (a thumb's target), pressed like every button in
+   the product. Hover is colour only, and only where there is a pointer. */
+.lp-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 44px; padding: 0 22px; border-radius: 999px;
+  font: inherit; font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em;
+  text-decoration: none; white-space: nowrap; cursor: pointer; border: 1px solid transparent;
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    background-color var(--dur-hover) ease,
+    border-color var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    box-shadow 200ms ease;
+}
+.lp-btn:not(:disabled):not(:focus-visible):active { transform: scale(0.97); }
+.lp-btn:disabled { opacity: .55; cursor: default; }
+.lp-btn--primary {
+  background: var(--d-ink); color: #0B0C10;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 8px 24px -12px rgba(124,121,255,.55);
+}
+.lp-btn--ghost {
+  background: rgba(255,255,255,.04); color: var(--d-ink);
+  border-color: var(--d-line); box-shadow: var(--d-highlight);
+}
+.lp-btn--sm { height: 36px; padding: 0 16px; font-size: 13.5px; }
+.lp-btn .lp-arrow { transition: transform 240ms var(--ease-out); }
+
+.lp-link { color: var(--d-mute); text-decoration: none; transition: color var(--dur-hover) ease; }
+
+/* Cards: a panel a few percent of white, a hairline, and the lit top edge. */
+.lp-card {
+  position: relative;
+  background: var(--d-panel);
+  border: 1px solid var(--d-line-soft);
+  border-radius: 20px;
+  box-shadow: var(--d-highlight);
+  transition: border-color 200ms ease, background-color 200ms ease;
+}
+
+/* The small uppercase label above a heading, as a chip with a dot. */
+.lp-eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600; letter-spacing: .02em;
+  padding: 5px 12px 5px 10px; border-radius: 999px;
+  color: var(--d-body); background: rgba(255,255,255,.04);
+  border: 1px solid var(--d-line-soft); box-shadow: var(--d-highlight);
+}
+.lp-eyebrow i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: block; }
+
+/* The step picker in How it works. The active step's bar fills over the time
+   it is shown: linear, because it is progress, and a transform so it costs
+   nothing to paint. It restarts by remounting (a new key), not by retargeting. */
+.lp-step {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  padding: 18px 20px 18px 22px; border-radius: 16px;
+  background: transparent; border: 1px solid transparent; color: inherit; font: inherit;
+  position: relative; overflow: hidden;
+}
+.lp-step[aria-selected="true"] { background: var(--d-panel); border-color: var(--d-line-soft); box-shadow: var(--d-highlight); }
+.lp-step:not(:disabled):not(:focus-visible):active { transform: scale(0.985); }
+@keyframes lp-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.lp-progress {
+  position: absolute; left: 22px; right: 22px; bottom: 0; height: 2px;
+  background: rgba(255,255,255,.08); border-radius: 2px; overflow: hidden;
+}
+.lp-progress > span {
+  display: block; height: 100%; transform-origin: left center;
+  background: var(--tone, var(--d-blue));
+  animation: lp-progress var(--step-ms, 7000ms) linear both;
+}
+.lp-progress[data-paused="true"] > span { animation-play-state: paused; }
+
+/* A scene arriving in place of another. Blur masks the swap, and it is short:
+   this one is triggered by a click. */
+@keyframes lp-scene-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.99); filter: blur(4px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+.lp-scene-in { animation: lp-scene-in 320ms var(--ease-out) both; }
+
+/* The glow under a framed product shot: light in the logo's hue, beneath the
+   object rather than behind the text. */
+.lp-glow {
+  position: absolute; left: 8%; right: 8%; top: 18%; bottom: -6%;
+  background: radial-gradient(60% 60% at 50% 50%, rgba(124,121,255,.28), transparent 70%);
+  filter: blur(40px); pointer-events: none; z-index: 0;
+}
+
+/* Feature ticks in the editor section. */
+.lp-tick {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: rgba(124,121,255,.14); color: var(--d-blue);
+  border: 1px solid rgba(124,121,255,.32);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lp-btn--primary:not(:disabled):hover { background: #FFFFFF; box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 12px 30px -12px rgba(124,121,255,.75); }
+  .lp-btn--ghost:not(:disabled):hover { background: rgba(255,255,255,.08); border-color: var(--d-line-strong); }
+  .lp-btn:hover .lp-arrow { transform: translateX(3px); }
+  .lp-link:hover { color: var(--d-ink); }
+  .lp-card--hover:hover { border-color: var(--d-line); background: var(--d-panel-strong); }
+  .lp-step[aria-selected="false"]:hover { background: rgba(255,255,255,.025); }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  /* The global rule above collapses animation DURATION, which is enough for a
-     spinner but leaves a reveal stuck at opacity 0. Its end state comes from a
-     transition, not an animation. So the reveals are forced to their finished
-     state here, and the decorative loops are stopped outright rather than run
-     at 0.01ms forever. */
-  .hg-armed .hg-reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
-  .hg-marquee-track, .hg-ping, .hg-caret, .hg-play, .hg-sweep, .hg-eq span,
-  .hg-flip-on { animation: none !important; }
-  .hg-d-btn:hover { transform: none; }
+  /* Reveals keep their fade and lose their travel. */
+  .hg-armed .hg-reveal { transform: none !important; transition: opacity 400ms ease !important; }
+  .hg-lang-word, .hg-lang-word[data-state="gone"] { transform: none !important; filter: none !important; transition: opacity 300ms ease !important; }
+  .hg-lang-slot { transition: none !important; }
+  .lp-scene-in { animation: hg-fade 200ms ease both !important; }
+  .hg-marquee-track, .hg-ping, .hg-caret, .hg-play, .hg-eq span { animation: none !important; }
+  .lp-progress > span { animation: none !important; transform: scaleX(1); }
+  .lp-btn .lp-arrow, .lp-btn:hover .lp-arrow { transform: none !important; }
 }
 
 /* ── Editor ────────────────────────────────────────────────────────────────
