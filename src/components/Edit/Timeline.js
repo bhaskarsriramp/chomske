@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { layout, anchorAt, placedSegments, captionText, segmentsOf } from "./model";
+import { layout, anchorAt, placedSegments, captionText, segmentsOf, moveClip } from "./model";
 import { Btn, Icon, fmtTime } from "./ui";
 
 /**
  * The timeline, for a mouse.
  *
  * Five tracks: the video (script lines, or the parts of a video uploaded on its
- * own), captions, B-roll, text and music. Drag a clip's edges to trim it, drag
- * B-roll, text or music to move it and their right edge to change how long they
- * last, drag a caption's edges to change when it shows. Click empty track to
- * move the playhead.
+ * own), captions, B-roll, text and music. Drag a clip to move it to another
+ * place in the order (its captions and B-roll go with it) and its edges to trim
+ * it; drag B-roll, text or music to move it and their right edge to change how
+ * long they last; drag a caption's edges to change when it shows. Click empty
+ * track to move the playhead. The "+" after each part of a video uploaded on
+ * its own adds another video there.
  *
  * Ctrl (⌘ on a Mac, or Alt) with the wheel zooms around the pointer, and so does
  * a trackpad pinch; the wheel alone scrolls along the edit. + and − zoom around
@@ -33,7 +35,7 @@ import { Btn, Icon, fmtTime } from "./ui";
  * 12-pixel drag handle is not a touch control.
  */
 const ROW = 36;
-const LABEL = 64;
+const LABEL = 88;
 const POPOVER_W = 264;
 const MIN_PPS = 0.5;
 const MAX_PPS = 400;
@@ -42,18 +44,19 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 export default function Timeline({
-  tl, lay, mediaById, mode = "script", term = "B-roll", time, playing, selection, assets = [], waiting = {}, deletion = null,
-  onSelect, onSeek, onChange, onSplit, onAutoCut = () => {}, onJoin = () => {}, onDelete = () => {}, onAddBrollAt, onUploadBrollAt,
+  tl, lay, mediaById, mode = "script", term = "B-roll", time, playing, selection, assets = [], waiting = {}, deletion = null, inserts = [],
+  onSelect, onSeek, onChange, onSplit, onDelete = () => {}, onInsertAt = () => {}, onAddBrollAt, onUploadBrollAt,
 }) {
   const free = mode === "free";
   const [pps, setPps] = useState(36);
   const ppsRef = useRef(36);
   const zoomAnchor = useRef(null);
   const [adding, setAdding] = useState(null);
-  const [cutMenu, setCutMenu] = useState(false);
+  const [reorder, setReorder] = useState(null);
   const root = useRef(null);
   const scroller = useRef(null);
   const drag = useRef(null);
+  const scrollRaf = useRef(0);
 
   const width = Math.max(560, LABEL + lay.duration * pps + 60);
   const clips = lay.clips.filter((c) => c.start !== null);
@@ -92,14 +95,6 @@ export default function Timeline({
   // Parts are named by number (their words are on the Captions row), and by
   // file when the edit is made of more than one video.
   const manyVideos = new Set(clips.map((c) => c.media)).size > 1;
-
-  const joinable = useMemo(
-    () => tl.clips.some((c, i) => {
-      const p = tl.clips[i - 1];
-      return p && p.media && p.media === c.media && p.enabled && c.enabled && Math.abs(p.out - c.in) < 0.002;
-    }),
-    [tl.clips]
-  );
 
   // ── Zoom ────────────────────────────────────────────────────────────────
   // The moment under the pointer (or the playhead) stays put on screen while
@@ -178,17 +173,14 @@ export default function Timeline({
     if (x < el.scrollLeft + LABEL || x > el.scrollLeft + el.clientWidth - 40) el.scrollLeft = x - LABEL - 40;
   }, [time, pps, playing]);
 
-  // The add and auto-cut menus close on a press anywhere else, Escape, or scrolling away.
+  // The add menu closes on a press anywhere else, Escape, or scrolling away.
   useEffect(() => {
-    if (!adding && !cutMenu) return undefined;
+    if (!adding) return undefined;
     const away = (e) => {
-      if (adding && !e.target.closest?.("[data-broll-add]")) setAdding(null);
-      if (cutMenu && !e.target.closest?.("[data-cut-menu]")) setCutMenu(false);
+      if (!e.target.closest?.("[data-broll-add]")) setAdding(null);
     };
     const key = (e) => {
-      if (e.key !== "Escape") return;
-      setAdding(null);
-      setCutMenu(false);
+      if (e.key === "Escape") setAdding(null);
     };
     const el = scroller.current;
     const scrolled = () => setAdding(null);
@@ -200,19 +192,69 @@ export default function Timeline({
       window.removeEventListener("keydown", key);
       el?.removeEventListener("scroll", scrolled);
     };
-  }, [adding, cutMenu]);
+  }, [adding]);
+
+  useEffect(() => () => cancelAnimationFrame(scrollRaf.current), []);
+
+  // ── Moving a part to another place in the order ─────────────────────────
+  // Nothing changes until the drop: the part follows the pointer and a bar
+  // shows where it would land. Measured in the track's own coordinates, so the
+  // track can scroll under a held part (it does by itself near its edges).
+  const contentX = (clientX) => {
+    const el = scroller.current;
+    return el ? clientX - el.getBoundingClientRect().left + el.scrollLeft : clientX;
+  };
+
+  const placeReorder = (d) => {
+    const dx = contentX(d.lastX) - d.x0;
+    if (!d.moved && Math.abs(dx) < 4) return;
+    d.moved = true;
+    const center = (d.orig.start + d.orig.end) / 2 + dx / ppsRef.current;
+    d.to = d.others.filter((x) => x.mid < center).length;
+    const at = d.to < d.others.length ? d.others[d.to].start : d.others[d.others.length - 1]?.end ?? 0;
+    setReorder({ id: d.id, dx, to: d.to, from: d.orig.from, at });
+  };
+
+  const edgeScroll = () => {
+    const d = drag.current;
+    const el = scroller.current;
+    if (!d || d.kind !== "clip-move" || !el) return;
+    const r = el.getBoundingClientRect();
+    const lo = r.left + LABEL + 40;
+    const hi = r.right - 40;
+    const v = d.lastX < lo ? d.lastX - lo : d.lastX > hi ? d.lastX - hi : 0;
+    if (v && d.moved) {
+      el.scrollLeft += clamp(v * 0.35, -22, 22);
+      placeReorder(d);
+    }
+    scrollRaf.current = requestAnimationFrame(edgeScroll);
+  };
 
   const start = (e, info) => {
     e.stopPropagation();
     e.preventDefault();
     e.currentTarget.setPointerCapture?.(e.pointerId);
     drag.current = { ...info, x0: e.clientX, key: `drag:${info.kind}:${info.id}:${e.timeStamp}` };
+    if (info.kind === "clip-move") {
+      Object.assign(drag.current, {
+        x0: contentX(e.clientX),
+        lastX: e.clientX,
+        others: clips.filter((x) => x.id !== info.id).map((x) => ({ id: x.id, start: x.start, end: x.end, mid: (x.start + x.end) / 2 })),
+      });
+      cancelAnimationFrame(scrollRaf.current);
+      scrollRaf.current = requestAnimationFrame(edgeScroll);
+    }
     onSelect(info.select, info.id);
   };
 
   const move = (e) => {
     const d = drag.current;
     if (!d) return;
+    if (d.kind === "clip-move") {
+      d.lastX = e.clientX;
+      placeReorder(d);
+      return;
+    }
     const dt = (e.clientX - d.x0) / pps;
     onChange((t) => {
       if (d.kind === "clip-in" || d.kind === "clip-out") {
@@ -269,7 +311,17 @@ export default function Timeline({
     }, d.key);
   };
 
-  const end = () => { drag.current = null; };
+  const end = () => {
+    const d = drag.current;
+    drag.current = null;
+    if (d?.kind !== "clip-move") return;
+    cancelAnimationFrame(scrollRaf.current);
+    setReorder(null);
+    if (d.moved && d.to !== undefined && d.to !== d.orig.from) {
+      const before = d.others[d.to]?.id ?? null;
+      onChange((t) => { moveClip(t, d.id, before); });
+    }
+  };
 
   const seekFrom = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -293,7 +345,7 @@ export default function Timeline({
 
   const isSel = (kind, id) => selection.kind === kind && selection.id === id;
 
-  const block = ({ key, left, w, label, kind, id, selectKind, color, handles, orig, sub, swatch }) => (
+  const block = ({ key, left, w, label, kind, id, selectKind, color, handles, orig, sub, swatch, shift = 0 }) => (
     <div
       key={key}
       data-kind={kind}
@@ -301,11 +353,12 @@ export default function Timeline({
       title={label}
       style={{
         position: "absolute", top: 4, height: ROW - 8, left, width: Math.max(4, w),
-        borderRadius: 6, background: color, overflow: "hidden", cursor: handles.move ? "grab" : "pointer",
+        borderRadius: 6, background: color, overflow: "hidden", cursor: handles.move ? (shift ? "grabbing" : "grab") : "pointer",
         border: `1.5px solid ${isSel(selectKind, id) ? "var(--ink)" : "rgba(0,0,0,.08)"}`,
         boxShadow: isSel(selectKind, id) ? "0 0 0 1px var(--ink)" : "none",
         display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11.5, fontWeight: 600, color: "var(--ink)",
         whiteSpace: "nowrap", userSelect: "none", touchAction: "none", boxSizing: "border-box",
+        ...(shift ? { transform: `translateX(${shift}px)`, zIndex: 1, opacity: 0.92, boxShadow: "0 10px 24px -10px rgba(15,15,15,.55)" } : {}),
       }}
     >
       {handles.left && <Handle side="left" onPointerDown={(e) => start(e, { kind: handles.left, id, select: selectKind, orig })} />}
@@ -321,7 +374,6 @@ export default function Timeline({
   for (let k = 0; k * every <= lay.duration + 0.001; k++) ticks.push(k * every);
 
   const layoutWord = (b) => (b.layout === "split" ? "Split · " : b.layout === "pip" ? "Overlay · " : "");
-  const hasCaptions = captionBlocks.length > 0;
   const tool = { padding: "4px 10px", minHeight: 28 };
 
   return (
@@ -329,7 +381,7 @@ export default function Timeline({
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderBottom: "1px solid var(--line)", minWidth: 0 }}>
         <span style={{ fontSize: 11.5, fontWeight: 650, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink-mute)" }}>Timeline</span>
         <span style={{ fontSize: 12, color: "var(--ink-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {`Drag edges to trim. Ctrl + scroll to zoom. Click the ${term} row to add a photo or clip.`}
+          {`Drag a part to move it, its edges to trim. Ctrl + scroll to zoom. Click the ${term} row to add a photo or clip.`}
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
           {deletion && (
@@ -342,33 +394,6 @@ export default function Timeline({
               onClick={onDelete}
               style={{ padding: "4px 8px", minHeight: 28 }}
             />
-          )}
-          {/* Auto-cut works from the captions, so a video with nobody speaking has none. */}
-          {free && (hasCaptions || joinable) && (
-            <span data-cut-menu style={{ position: "relative" }}>
-              <Btn size="s" icon={<Icon.Scissors size={13} />} aria-haspopup="menu" aria-expanded={cutMenu} onClick={() => setCutMenu((v) => !v)} style={tool}>
-                Auto-cut
-              </Btn>
-              {cutMenu && (
-                <div
-                  role="menu"
-                  aria-label="Auto-cut"
-                  className="hg-fade"
-                  style={{
-                    position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 30, width: 290, padding: 6,
-                    background: "var(--card)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 18px 44px -18px rgba(15,15,15,.45)",
-                  }}
-                >
-                  {hasCaptions && (
-                    <>
-                      <MenuItem title="At every caption" sub="A part per sentence. Nothing is taken out." onClick={() => { setCutMenu(false); onAutoCut(false); }} />
-                      <MenuItem title="At every caption, without the pauses" sub="Also cuts out the silence between sentences." onClick={() => { setCutMenu(false); onAutoCut(true); }} />
-                    </>
-                  )}
-                  {joinable && <MenuItem title="Join the parts back" sub="Parts that play straight on become one again." onClick={() => { setCutMenu(false); onJoin(); }} />}
-                </div>
-              )}
-            </span>
           )}
           {free && (
             <Btn size="s" icon={<Icon.Scissors size={13} />} onClick={onSplit} title="Split the part under the playhead (S)" style={tool}>Split</Btn>
@@ -406,14 +431,65 @@ export default function Timeline({
                 label: free ? `${i + 1}` : c.line ? `${c.line}` : "+",
                 sub: free ? (manyVideos ? mediaById.get(c.media)?.filename || "" : "") : (c.roman || c.said_roman || c.text || "").slice(0, 40),
                 color: free || c.line ? (i % 2 ? "#DCD6CC" : "#E7E2DA") : "#EFE6D2",
-                handles: { left: "clip-in", right: "clip-out" },
+                handles: { move: "clip-move", left: "clip-in", right: "clip-out" },
+                shift: reorder?.id === c.id ? reorder.dx : 0,
                 orig: {
                   in: c.in,
                   out: c.out,
+                  start: c.start,
+                  end: c.end,
+                  from: i,
                   prev: free && prev && prev.media === c.media && prev.out <= c.in + 0.002 ? { id: prev.id, in: prev.in, out: prev.out } : null,
                   next: free && next && next.media === c.media && next.in >= c.out - 0.002 ? { id: next.id, in: next.in, out: next.out } : null,
                 },
               });
+            })}
+
+            {reorder && reorder.to !== reorder.from && (
+              <span
+                aria-hidden="true"
+                style={{ position: "absolute", top: 1, bottom: 1, left: LABEL + reorder.at * pps - 1.5, width: 3, borderRadius: 2, background: "var(--ink)", zIndex: 1, pointerEvents: "none" }}
+              />
+            )}
+
+            {/* A video goes in after any part. While it uploads, its progress sits where the "+" was. */}
+            {free && !reorder && clips.map((c, i) => {
+              const x = LABEL + c.end * pps;
+              const pending = inserts.find((p) => p.after === c.id);
+              if (pending) {
+                return (
+                  <span
+                    key={`ins:${c.id}`}
+                    role="status"
+                    style={{
+                      position: "absolute", left: x, top: ROW / 2, transform: "translate(-50%,-50%)", zIndex: 1, pointerEvents: "none",
+                      padding: "3px 9px", borderRadius: 99, background: "var(--ink)", color: "#fff", fontSize: 10.5, fontWeight: 650, whiteSpace: "nowrap",
+                    }}
+                  >
+                    {pending.text}
+                  </span>
+                );
+              }
+              const where = i < clips.length - 1 ? `Between part ${i + 1} and part ${i + 2}, at ${fmtTime(c.end)}` : `After part ${i + 1}, at the end`;
+              return (
+                <button
+                  key={`add:${c.id}`}
+                  type="button"
+                  aria-label={`Add a video. ${where}`}
+                  title="Add a video here"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => onInsertAt(c.id, where)}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink)"; e.currentTarget.style.color = "#fff"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "var(--card)"; e.currentTarget.style.color = "var(--ink)"; }}
+                  style={{
+                    position: "absolute", left: x, top: 0, transform: "translate(-50%,-50%)", zIndex: 1,
+                    width: 17, height: 17, padding: 0, borderRadius: "50%", display: "grid", placeItems: "center", cursor: "pointer",
+                    border: "1.5px solid var(--ink)", background: "var(--card)", color: "var(--ink)", boxShadow: "0 1px 3px rgba(0,0,0,.18)",
+                  }}
+                >
+                  <Icon.Plus size={10} />
+                </button>
+              );
             })}
           </Track>
 
@@ -532,8 +608,8 @@ function Track({ label, icon, children, onPointerDown, hint = false }) {
     >
       <span
         style={{
-          position: "sticky", left: 0, zIndex: 2, width: LABEL, height: "100%",
-          display: "inline-flex", alignItems: "center", gap: 4, paddingLeft: 10,
+          position: "sticky", left: 0, zIndex: 2, width: LABEL, height: "100%", boxSizing: "border-box", whiteSpace: "nowrap",
+          display: "inline-flex", alignItems: "center", gap: 5, paddingLeft: 10,
           fontSize: 11, fontWeight: 600, color: "var(--ink-mute)", background: "var(--card)", borderRight: "1px solid var(--line)",
         }}
       >
@@ -555,21 +631,5 @@ function Handle({ side, onPointerDown }) {
         background: "rgba(0,0,0,.14)", borderRadius: side === "left" ? "5px 0 0 5px" : "0 5px 5px 0",
       }}
     />
-  );
-}
-
-function MenuItem({ title, sub, onClick }) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--paper)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-      style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 10px", border: "none", borderRadius: 8, background: "transparent", cursor: "pointer", fontFamily: "inherit" }}
-    >
-      <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{title}</div>
-      <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 1 }}>{sub}</div>
-    </button>
   );
 }

@@ -419,7 +419,7 @@ export default function CaptionsPanel({
               </Section>
 
               <Section
-                title="Position"
+                title="Placement"
                 right={byHand ? <Btn size="s" kind="quiet" icon={<Icon.Reset size={13} />} title="Put every caption back at the bottom" onClick={resetPositions} style={{ padding: "4px 8px", minHeight: 28 }}>Reset</Btn> : null}
               >
                 <p style={{ ...hint, margin: 0 }}>

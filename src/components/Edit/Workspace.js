@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { errorMessage } from "../../api";
 import { alphabetName } from "../Order/ScriptToggle";
 import { saveTimeline, removeMedia, renameProject, ackTranslation } from "./editApi";
-import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, placedSegments, anchorAt, splitClipAt, fitFor, splitPanes, cutAtSegments, joinParts, removeClip, removeSegment } from "./model";
+import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, placedSegments, anchorAt, splitClipAt, fitFor, splitPanes, removeClip, removeSegment, insertRecording } from "./model";
 import Preview from "./Preview";
 import ClipList from "./ClipList";
 import CutsPanel from "./CutsPanel";
@@ -12,6 +12,7 @@ import AudioPanel from "./AudioPanel";
 import TextPanel from "./TextPanel";
 import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
+import InsertVideoDialog from "./InsertVideoDialog";
 import { Btn, Icon, Notice, Range, Segmented, fmtTime } from "./ui";
 
 // A video cut to a script opens on its lines. A video uploaded on its own opens
@@ -257,7 +258,10 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         continue;
       }
       if (p.slot) settled.push(p.slot);
-      if (m.status !== "ready") continue;
+      if (m.status !== "ready") {
+        if (p.type === "clip") setNotice(m.error || `We couldn't read ${m.filename || "that video"}.`);
+        continue;
+      }
       if (p.type === "broll") {
         change((d) => {
           const b = d.broll.find((x) => x.id === p.slot);
@@ -275,6 +279,8 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
             b.duration = p.grow ? Math.max(0.5, Math.round(Math.min(5, m.duration, room) * 10) / 10) : Math.min(b.duration, m.duration);
           }
         });
+      } else if (p.type === "clip") {
+        change((d) => { insertRecording(d, m, p.after); });
       } else if (p.type === "audio") {
         change((d) => {
           d.audio = [...(d.audio || []), {
@@ -411,17 +417,59 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     if (made) setSelection({ kind: "clip", id: made });
   }, [change]);
 
-  // A part per caption, with or without the pauses between (model.js cutAtSegments).
-  const autoCut = useCallback((pauses) => {
-    if (!cutAtSegments(tlRef.current, { pauses }).changed) {
-      setNotice(pauses ? "There are no pauses left to cut out." : "Every part already holds a single caption, so there is nothing to cut.");
-      return;
-    }
-    change((d) => { Object.assign(d, cutAtSegments(d, { pauses }).timeline); });
-    setSelection({ kind: null, id: null });
-  }, [change]);
+  // ── A video added after a part (the "+" on the timeline) ──────────────────
+  // Uploaded like any recording and put in its place once the server has
+  // prepared it (the pending effect above). Until then the timeline shows how
+  // far it has got, where the "+" was.
+  const [insertAt, setInsertAt] = useState(null);
+  const [inserts, setInserts] = useState([]);
 
-  const joinAll = useCallback(() => { change((d) => { joinParts(d); }); }, [change]);
+  const insertVideo = useCallback((file) => {
+    const target = insertAt;
+    setInsertAt(null);
+    if (!file || !target) return;
+    const key = newId("ins");
+    setInserts((list) => [...list, { key, after: target.after, name: file.name }]);
+    onAddFiles([file], "recording", {
+      insert: key,
+      onMedia: (media) => assignWhenReady({ type: "clip", slot: key, media, after: target.after }),
+    });
+  }, [insertAt, onAddFiles, assignWhenReady]);
+
+  const insertsShown = useMemo(() => inserts.flatMap((x) => {
+    const u = uploads.find((y) => y.opts?.insert === x.key);
+    if (u && u.status !== "failed") {
+      const text = u.status === "uploading" ? `Uploading ${Math.round(u.progress * 100)}%` : u.status === "finishing" ? "Preparing…" : "Starting…";
+      return [{ ...x, text }];
+    }
+    return waiting[x.key] ? [{ ...x, text: "Preparing…" }] : [];
+  }), [inserts, uploads, waiting]);
+
+  // A failed upload says so and lets go; a finished one is simply no longer pending.
+  useEffect(() => {
+    const failed = [];
+    const done = [];
+    for (const x of inserts) {
+      const u = uploads.find((y) => y.opts?.insert === x.key);
+      if (u?.status === "failed") failed.push([x, u]);
+      else if (!u && !waiting[x.key]) done.push(x.key);
+    }
+    if (!failed.length && !done.length) return;
+    for (const [x, u] of failed) {
+      setNotice(`${x.name} couldn't be added. ${u.error}`);
+      onDismissUpload(u.key);
+      pendingRef.current = pendingRef.current.filter((p) => p.slot !== x.key);
+    }
+    const drop = new Set([...done, ...failed.map(([x]) => x.key)]);
+    setInserts((list) => list.filter((x) => !drop.has(x.key)));
+    if (failed.length) {
+      setWaiting((w) => {
+        const next = { ...w };
+        for (const [x] of failed) delete next[x.key];
+        return next;
+      });
+    }
+  }, [inserts, uploads, waiting, onDismissUpload]);
 
   // ── Deleting what is selected ─────────────────────────────────────────────
   // A part, a caption, media, text or music, picked on the timeline or in a
@@ -467,7 +515,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     const onKey = (e) => {
       const tag = String(e.target?.tagName || "").toLowerCase();
       if (tag === "input" || tag === "textarea" || tag === "select" || e.target?.isContentEditable) return;
-      if (exporting) return;
+      if (exporting || insertAt) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -493,7 +541,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, togglePlay, seekTo, lay.duration, exporting, mode, splitAtPlayhead, deletion, deleteSelection]);
+  }, [undo, redo, togglePlay, seekTo, lay.duration, exporting, insertAt, mode, splitAtPlayhead, deletion, deleteSelection]);
 
   // ── The name ──────────────────────────────────────────────────────────────
   async function commitName(value) {
@@ -545,10 +593,9 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         time={time}
         selectedId={sel("clip")}
         onSelect={(id) => select("clip", id)}
+        isNarrow={isNarrow}
         onPlayRange={playRange}
         onSplit={splitAtPlayhead}
-        onAutoCut={autoCut}
-        onJoin={joinAll}
         onRecordings={async () => { await flush(); onRecordings(); }}
       />
     ),
@@ -791,6 +838,16 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     />
   );
 
+  const insertDialog = insertAt && (
+    <InsertVideoDialog
+      where={insertAt.where}
+      accept={config?.accept?.recording}
+      maxMb={config?.limits?.max_upload_mb}
+      onSubmit={insertVideo}
+      onClose={() => setInsertAt(null)}
+    />
+  );
+
   const brollFile = (
     <input
       ref={brollInput}
@@ -854,14 +911,15 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
             onSeek={seekTo}
             onChange={change}
             onSplit={splitAtPlayhead}
-            onAutoCut={autoCut}
-            onJoin={joinAll}
+            inserts={insertsShown}
+            onInsertAt={(after, where) => setInsertAt({ after, where })}
             onAddBrollAt={addBrollAt}
             onUploadBrollAt={pickBrollFile}
           />
         </div>
       </div>
       {dialog}
+      {insertDialog}
       {brollFile}
     </>
   );

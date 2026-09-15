@@ -408,6 +408,39 @@ export function removeClip(d, id, { toUnused = false } = {}) {
   return true;
 }
 
+/**
+ * A part moved, on a draft, to play just before `beforeId`, or last for null.
+ * Its captions follow, being placed through the clips, and so does its B-roll.
+ */
+export function moveClip(d, id, beforeId = null) {
+  const i = d.clips.findIndex((c) => c.id === id);
+  if (i < 0 || id === beforeId) return false;
+  const [c] = d.clips.splice(i, 1);
+  const j = beforeId ? d.clips.findIndex((x) => x.id === beforeId) : -1;
+  if (j < 0) d.clips.push(c);
+  else d.clips.splice(j, 0, c);
+  return true;
+}
+
+/**
+ * A whole video added to a free edit as one part, on a draft, right after
+ * `afterId` (last when that part has gone). Listed in `sources`, so the server
+ * never appends it a second time. Returns the new part's id, or null when the
+ * video is already in the edit.
+ */
+export function insertRecording(d, media, afterId = null) {
+  if (d.clips.some((c) => c.media === media.id)) return null;
+  const clip = {
+    id: newId("cl"), line: null, text: "", roman: "", media: media.id, in: 0, out: Math.round((Number(media.duration) || 0) * 1000) / 1000,
+    enabled: true, missing: false, take_id: null, said: "", said_roman: "", takes: [],
+  };
+  const i = afterId ? d.clips.findIndex((c) => c.id === afterId) : -1;
+  if (i < 0) d.clips.push(clip);
+  else d.clips.splice(i + 1, 0, clip);
+  d.sources = [...new Set([...(d.sources || []), media.id])];
+  return clip.id;
+}
+
 /** One caption section taken out, on a draft. The video under it is untouched. */
 export function removeSegment(d, id) {
   if (!Array.isArray(d.segments)) d.segments = segmentsOf(d);

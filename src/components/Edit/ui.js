@@ -248,6 +248,11 @@ export const Icon = {
   Download: ({ size = 16 }) => <svg {...svg(size)}><path d="M12 4v12M7 11l5 5 5-5M4 20h16" /></svg>,
   Wave: ({ size = 15 }) => <svg {...svg(size)}><path d="M4 11v2M8 7.5v9M12 4.5v15M16 8.5v7M20 11v2" /></svg>,
   Scissors: ({ size = 15 }) => <svg {...svg(size)}><circle cx="6" cy="6.5" r="2.5" /><circle cx="6" cy="17.5" r="2.5" /><path d="M8.2 7.8L20 17M8.2 16.2L20 7" /></svg>,
+  Grip: ({ size = 15 }) => (
+    <svg {...svg(size)}>
+      {[6, 12, 18].map((y) => [9, 15].map((x) => <circle key={`${x}${y}`} cx={x} cy={y} r="1.6" fill="currentColor" stroke="none" />))}
+    </svg>
+  ),
   Reset: ({ size = 14 }) => <svg {...svg(size)}><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" /><path d="M4 4v4.5h4.5" /></svg>,
   Pencil: ({ size = 14 }) => <svg {...svg(size)}><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></svg>,
   Globe: ({ size = 15 }) => <svg {...svg(size)}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.6 3 2.6 15 0 18M12 3c-2.6 3-2.6 15 0 18" /></svg>,
