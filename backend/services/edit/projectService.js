@@ -245,6 +245,8 @@ export async function shapeProject(doc, { baseUrl, withTimeline = true } = {}) {
     renders: (p.renders || []).map((r) => ({
       id: r.id, status: r.status, stage: r.stage, progress: r.progress, error: r.error,
       aspect: r.aspect, size: r.size, duration: r.duration, charged: r.charged,
+      options: r.options || null, drew: r.drew || null, width: r.width || 0, height: r.height || 0,
+      has_srt: !!r.srt_key, engine: r.engine || 0,
       created_at: r.created_at, finished_at: r.finished_at,
     })),
     // Priced here, from the saved state, never in the browser. See the note at

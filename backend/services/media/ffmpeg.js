@@ -111,6 +111,22 @@ export function ffmpeg(args, { duration = 0, onProgress, ...opts } = {}) {
   });
 }
 
+let encoderList = null;
+
+/**
+ * Whether this ffmpeg build has an encoder. libx265 is in the npm builds but
+ * not in every distro's, and an export dialog should not offer H.265 to a
+ * server that will fail on it.
+ */
+export async function hasEncoder(name) {
+  if (!encoderList) {
+    encoderList = runProcess(FFMPEG_PATH, ["-hide_banner", "-encoders"], { keepStdout: 400_000, timeoutMs: 20_000 })
+      .then(({ stdout }) => stdout)
+      .catch(() => "");
+  }
+  return new RegExp(`\\s${name}\\s`).test(await encoderList);
+}
+
 function rate(r) {
   const [a, b] = String(r || "").split("/").map(Number);
   return a && b ? a / b : Number(r) || 0;

@@ -43,6 +43,11 @@ import {
   storageKind, CHUNK_BYTES, createUploadSession, statObject, readUrl, removePrefix, removeObject,
 } from "../services/media/storage.js";
 import { enqueue } from "../services/edit/editRunner.js";
+import { hasEncoder } from "../services/media/ffmpeg.js";
+import {
+  EXPORT_ENGINE, RESOLUTIONS, FRAME_RATES, VIDEO_MBPS, AUDIO_KBPS, SPEEDS, MAX_RESOLUTION, EXPORT_MULTIPLIERS,
+  DEFAULT_EXPORT, cleanExportOptions, exportPrice,
+} from "../services/edit/exportOptions.js";
 import {
   EDIT_LIMITS, LEDGER_REASON, ACCEPT, classify, mediaKey, projectPrefix, bumpExpiry, scriptLines,
   shapeProject, publishProgress, modeOf, aspectOf, readyRecordings, untranscribed, translationQuote,
@@ -140,7 +145,8 @@ async function charge(req, res, cost, { refId, note, what }) {
 
 /* ── Config ──────────────────────────────────────────────────────────────── */
 
-router.get("/config", (req, res) => {
+router.get("/config", async (req, res) => {
+  const hevc = await hasEncoder("libx265");
   res.json({
     success: true,
     storage: storageKind(),
@@ -160,6 +166,20 @@ router.get("/config", (req, res) => {
       translate_per_min: EDIT_TRANSLATE_CREDITS_PER_MIN,
     },
     caption_languages: CAPTION_LANGUAGES.map(({ code, label, native }) => ({ code, label, native })),
+    // What the export dialog offers. `engine` lets the browser notice a server
+    // that was never restarted after an update, before a creator pays for an
+    // export that server would draw without its captions and media.
+    export: {
+      engine: EXPORT_ENGINE,
+      resolutions: RESOLUTIONS.filter((r) => r <= MAX_RESOLUTION),
+      frame_rates: FRAME_RATES,
+      video_mbps: VIDEO_MBPS,
+      audio_kbps: AUDIO_KBPS,
+      codecs: hevc ? ["h264", "hevc"] : ["h264"],
+      speeds: Object.keys(SPEEDS),
+      multipliers: EXPORT_MULTIPLIERS,
+      defaults: DEFAULT_EXPORT,
+    },
   });
 });
 
@@ -599,7 +619,8 @@ router.post("/projects/:id/renders", wrap(async (req, res) => {
 
   const duration = layout(project.timeline).duration;
   if (!(duration > 0)) return fail(res, 400, "There is nothing in this edit to export. Turn on at least one part of your video.");
-  const cost = editCost("export", duration);
+  const options = cleanExportOptions(req.body?.options, { hevc: await hasEncoder("libx265") });
+  const cost = exportPrice(editCost("export", duration), options);
   if (req.body?.expected_cost !== undefined && Number(req.body.expected_cost) !== cost) {
     return fail(res, 409, `This export now costs ${cost} credits.`, { price_changed: true, cost });
   }
@@ -613,7 +634,7 @@ router.post("/projects/:id/renders", wrap(async (req, res) => {
   const charged = await charge(req, res, cost, {
     refId: project._id,
     what: "This export",
-    note: `Export video (${Math.ceil(duration / 60)} min)`,
+    note: `Export video (${Math.ceil(duration / 60)} min, ${options.resolution}p${options.fps})`,
   });
   if (charged === null) return;
 
@@ -622,7 +643,7 @@ router.post("/projects/:id/renders", wrap(async (req, res) => {
     {
       $push: {
         renders: {
-          $each: [{ id, status: "queued", stage: "Queued", aspect: project.timeline.aspect, charged, duration }],
+          $each: [{ id, status: "queued", stage: "Queued", aspect: project.timeline.aspect, charged, duration, options, engine: EXPORT_ENGINE }],
           $slice: -10,
         },
       },
@@ -642,16 +663,18 @@ router.get("/projects/:id/renders/:rid/download", wrap(async (req, res) => {
   const r = project.renders.find((x) => x.id === req.params.rid);
   if (!r || r.status !== "done" || !r.output_key) return fail(res, 404, "That export isn't ready.");
   if (project.purged) return fail(res, 410, "This export has expired.");
+  const srt = req.query.file === "srt";
+  if (srt && !r.srt_key) return fail(res, 404, "This export has no subtitle file.");
 
   const slug = String(project.headline || "video")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 60) || "video";
-  const url = await readUrl(r.output_key, {
+  const url = await readUrl(srt ? r.srt_key : r.output_key, {
     baseUrl: baseUrlOf(req),
-    filename: `${slug}-${String(r.aspect).replace(":", "x")}.mp4`,
-    contentType: "video/mp4",
+    filename: `${slug}-${String(r.aspect).replace(":", "x")}.${srt ? "srt" : "mp4"}`,
+    contentType: srt ? "application/x-subrip" : "video/mp4",
     expiresSec: 3600,
   });
   res.json({ success: true, url });
@@ -664,6 +687,7 @@ router.delete("/projects/:id/renders/:rid", wrap(async (req, res) => {
   if (!r) return respondProject(req, res, project);
   if (r.status === "queued" || r.status === "rendering") return fail(res, 409, "That export is still running.");
   if (r.output_key) await removeObject(r.output_key).catch(() => {});
+  if (r.srt_key) await removeObject(r.srt_key).catch(() => {});
   await EditProject.updateOne({ _id: project._id }, { $pull: { renders: { id: r.id } } });
   return respondProject(req, res, await EditProject.findById(project._id));
 }));

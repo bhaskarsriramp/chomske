@@ -359,6 +359,134 @@ export function captionCues(tl, { maxWords, maxChars } = {}) {
   return cues;
 }
 
+/** The captions as an .srt subtitle file: one entry per caption section, where it plays. */
+export function buildSrt(tl) {
+  const cap = tl?.captions || {};
+  const shown = { ...cap, mode: cap.mode === "off" ? "native" : cap.mode };
+  const lay = layout(tl);
+  const rows = shown.mode !== "tr" && cap.source === "script"
+    ? lay.clips.filter((c) => c.start !== null).map((c) => ({ start: c.start, end: c.end, text: shown.mode === "native" ? c.text : c.roman || c.text }))
+    : placedSegments(tl, lay).map(({ seg, start, end }) => ({ start, end, text: captionText(seg, shown) }));
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const ts = (t) => {
+    const ms = Math.max(0, Math.round(t * 1000));
+    return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
+  };
+  return rows
+    .map((r) => ({ ...r, text: String(r.text || "").replace(/\s+/g, " ").trim() }))
+    .filter((r) => r.text && r.end - r.start > 0.05)
+    .sort((a, b) => a.start - b.start)
+    .map((r, i) => `${i + 1}\n${ts(r.start)} --> ${ts(r.end)}\n${r.text}\n`)
+    .join("\n");
+}
+
+/* ── Cutting at the captions ───────────────────────────────────────────────
+   A video uploaded on its own starts as one long part: one block on the
+   timeline, and nothing to take hold of. Cut at its caption sections, every
+   sentence is a part of its own, trimmed by its edges, turned off or moved,
+   with its captions riding along (they live in recording time). With `pauses`
+   the silence between sentences goes too: the jump cut short videos are made
+   of. The browser keeps a copy (model.js); change them together. */
+
+/**
+ * The edit re-cut at its caption sections.
+ *
+ * Without pauses, each cut falls in the middle of the gap between two
+ * sentences, so no word is clipped and nothing moves on the output: B-roll,
+ * text and music stay exactly where they were. With pauses, each part is its
+ * sentence plus `pad` either side, and everything placed on the output is
+ * carried to where the same moment of the recording now plays.
+ *
+ * @param {object} tl
+ * @param {object} [opts]
+ * @param {string[]} [opts.only]   clip ids to cut (default: every clip)
+ * @param {boolean} [opts.pauses]  cut out the silence between sentences
+ * @returns {{ timeline: object, changed: number }}  changed: clips that were re-cut
+ */
+export function cutAtSegments(tl, { only = null, pauses = false, pad = 0.15, minPart = 0.4 } = {}) {
+  const byMedia = new Map();
+  for (const s of segmentsOf(tl)) {
+    if (!(s.end > s.start) || !(s.text || s.roman)) continue;
+    if (!byMedia.has(s.media)) byMedia.set(s.media, []);
+    byMedia.get(s.media).push(s);
+  }
+  for (const list of byMedia.values()) list.sort((a, b) => a.start - b.start);
+
+  const parts = new Map();
+  const clips = [];
+  for (const c of tl?.clips || []) {
+    const wanted = c.enabled && c.media && c.out > c.in && (!only || only.includes(c.id));
+    const segs = wanted ? (byMedia.get(c.media) || []).filter((s) => s.end > c.in + 0.05 && s.start < c.out - 0.05) : [];
+    const spans = [];
+    if (pauses) {
+      for (const s of segs) {
+        const a = Math.max(c.in, s.start - pad);
+        const b = Math.min(c.out, s.end + pad);
+        const last = spans[spans.length - 1];
+        if (last && a - last.out < 0.3) last.out = Math.max(last.out, b);
+        else if (b - a >= 0.1) spans.push({ in: a, out: b });
+      }
+    } else if (segs.length > 1) {
+      let from = c.in;
+      for (let i = 0; i < segs.length - 1; i++) {
+        const cut = (segs[i].end + segs[i + 1].start) / 2;
+        if (cut - from >= minPart && c.out - cut >= minPart) {
+          spans.push({ in: from, out: cut });
+          from = cut;
+        }
+      }
+      spans.push({ in: from, out: c.out });
+    }
+    const unchanged = spans.length === 1 && Math.abs(spans[0].in - c.in) < 0.01 && Math.abs(spans[0].out - c.out) < 0.01;
+    if (!spans.length || unchanged) {
+      clips.push(c);
+      continue;
+    }
+    const made = spans.map((p, k) => ({
+      ...c,
+      id: k === 0 ? c.id : newId("cl"),
+      in: r3(p.in),
+      out: r3(p.out),
+      takes: k === 0 ? c.takes : [],
+      take_id: k === 0 ? c.take_id : null,
+    }));
+    parts.set(c.id, made);
+    clips.push(...made);
+  }
+  if (!parts.size) return { timeline: tl, changed: 0 };
+
+  const oldClips = new Map((tl.clips || []).map((c) => [c.id, c]));
+  const partAt = (clipId, src) => {
+    const list = parts.get(clipId);
+    return list.find((p) => src < p.out - 1e-6) || list[list.length - 1];
+  };
+  const broll = (tl.broll || []).map((b) => {
+    if (!parts.has(b.clip)) return b;
+    const src = oldClips.get(b.clip).in + Math.max(0, Number(b.offset) || 0);
+    const p = partAt(b.clip, src);
+    return { ...b, clip: p.id, offset: r3(Math.max(0, src - p.in)) };
+  });
+  const next = { ...tl, clips, broll };
+  if (!pauses) return { timeline: next, changed: parts.size };
+
+  // Text and music sit at output times, which removing the pauses has moved.
+  const oldLay = layout(tl);
+  const newLay = layout(next);
+  const placed = new Map(newLay.clips.map((c) => [c.id, c]));
+  const carry = (t) => {
+    const oc = oldLay.clips.find((c) => c.start !== null && t >= c.start - 1e-6 && t < c.end - 1e-6);
+    if (!oc) return r3(Math.min(t, newLay.duration));
+    const src = oc.in + (t - oc.start);
+    const list = (parts.get(oc.id) || [oc]).map((p) => placed.get(p.id)).filter((p) => p && p.start !== null);
+    const hit = list.find((p) => src < p.out - 1e-6);
+    if (!hit) return r3(list.length ? list[list.length - 1].end : Math.min(t, newLay.duration));
+    return r3(hit.start + Math.max(0, src - hit.in));
+  };
+  next.texts = (tl.texts || []).map((x) => ({ ...x, start: carry(x.start) }));
+  next.audio = (tl.audio || []).map((a) => ({ ...a, start: carry(a.start) }));
+  return { timeline: next, changed: parts.size };
+}
+
 /* ── Sentences ─────────────────────────────────────────────────────────────
    A stretch of speech with no pause in it can hold three sentences, and a
    caption section that long is too coarse to place or style on its own. So a
@@ -738,5 +866,5 @@ export function sanitizeTimeline(input, mediaById) {
 export default {
   ASPECTS, newId, defaultCaptions, segmentsFromPieces, buildInitialTimeline, buildFreeTimeline, mergeFreeTimeline,
   layout, segmentsOf, placedSegments, captionText, captionCues, captionPlacement, textPlacement, pipPlacement,
-  splitPanes, sanitizeTimeline, splitSentences, sentencePieces, captionLook, captionPresetY,
+  splitPanes, sanitizeTimeline, splitSentences, sentencePieces, captionLook, captionPresetY, buildSrt, cutAtSegments,
 };

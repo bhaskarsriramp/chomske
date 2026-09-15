@@ -419,6 +419,127 @@ export function splitSegmentAt(d, id, src) {
   return [a.id, b.id];
 }
 
+/* ── Cutting at the captions (a copy of timeline.js cutAtSegments) ─────── */
+
+const r3 = (n) => Math.round(Number(n) * 1000) / 1000;
+
+/**
+ * The edit re-cut at its caption sections: a part per sentence, each cut in the
+ * middle of the pause before the next. With `pauses`, each part is only its
+ * sentence (plus `pad`), and B-roll, text and music are carried to where the
+ * same moment of the recording now plays. Pure: returns { timeline, changed }.
+ */
+export function cutAtSegments(tl, { only = null, pauses = false, pad = 0.15, minPart = 0.4 } = {}) {
+  const byMedia = new Map();
+  for (const s of segmentsOf(tl)) {
+    if (!(s.end > s.start) || !(s.text || s.roman)) continue;
+    if (!byMedia.has(s.media)) byMedia.set(s.media, []);
+    byMedia.get(s.media).push(s);
+  }
+  for (const list of byMedia.values()) list.sort((a, b) => a.start - b.start);
+
+  const parts = new Map();
+  const clips = [];
+  for (const c of tl?.clips || []) {
+    const wanted = c.enabled && c.media && c.out > c.in && (!only || only.includes(c.id));
+    const segs = wanted ? (byMedia.get(c.media) || []).filter((s) => s.end > c.in + 0.05 && s.start < c.out - 0.05) : [];
+    const spans = [];
+    if (pauses) {
+      for (const s of segs) {
+        const a = Math.max(c.in, s.start - pad);
+        const b = Math.min(c.out, s.end + pad);
+        const last = spans[spans.length - 1];
+        if (last && a - last.out < 0.3) last.out = Math.max(last.out, b);
+        else if (b - a >= 0.1) spans.push({ in: a, out: b });
+      }
+    } else if (segs.length > 1) {
+      let from = c.in;
+      for (let i = 0; i < segs.length - 1; i++) {
+        const cut = (segs[i].end + segs[i + 1].start) / 2;
+        if (cut - from >= minPart && c.out - cut >= minPart) {
+          spans.push({ in: from, out: cut });
+          from = cut;
+        }
+      }
+      spans.push({ in: from, out: c.out });
+    }
+    const unchanged = spans.length === 1 && Math.abs(spans[0].in - c.in) < 0.01 && Math.abs(spans[0].out - c.out) < 0.01;
+    if (!spans.length || unchanged) {
+      clips.push(c);
+      continue;
+    }
+    const made = spans.map((p, k) => ({
+      ...c,
+      id: k === 0 ? c.id : newId("cl"),
+      in: r3(p.in),
+      out: r3(p.out),
+      takes: k === 0 ? c.takes : [],
+      take_id: k === 0 ? c.take_id : null,
+    }));
+    parts.set(c.id, made);
+    clips.push(...made);
+  }
+  if (!parts.size) return { timeline: tl, changed: 0 };
+
+  const oldClips = new Map((tl.clips || []).map((c) => [c.id, c]));
+  const partAt = (clipId, src) => {
+    const list = parts.get(clipId);
+    return list.find((p) => src < p.out - 1e-6) || list[list.length - 1];
+  };
+  const broll = (tl.broll || []).map((b) => {
+    if (!parts.has(b.clip)) return b;
+    const src = oldClips.get(b.clip).in + Math.max(0, Number(b.offset) || 0);
+    const p = partAt(b.clip, src);
+    return { ...b, clip: p.id, offset: r3(Math.max(0, src - p.in)) };
+  });
+  const next = { ...tl, clips, broll };
+  if (!pauses) return { timeline: next, changed: parts.size };
+
+  const oldLay = layout(tl);
+  const newLay = layout(next);
+  const placed = new Map(newLay.clips.map((c) => [c.id, c]));
+  const carry = (t) => {
+    const oc = oldLay.clips.find((c) => c.start !== null && t >= c.start - 1e-6 && t < c.end - 1e-6);
+    if (!oc) return r3(Math.min(t, newLay.duration));
+    const src = oc.in + (t - oc.start);
+    const list = (parts.get(oc.id) || [oc]).map((p) => placed.get(p.id)).filter((p) => p && p.start !== null);
+    const hit = list.find((p) => src < p.out - 1e-6);
+    if (!hit) return r3(list.length ? list[list.length - 1].end : Math.min(t, newLay.duration));
+    return r3(hit.start + Math.max(0, src - hit.in));
+  };
+  next.texts = (tl.texts || []).map((x) => ({ ...x, start: carry(x.start) }));
+  next.audio = (tl.audio || []).map((a) => ({ ...a, start: carry(a.start) }));
+  return { timeline: next, changed: parts.size };
+}
+
+/**
+ * Neighbouring parts that play straight on from each other in the same video,
+ * joined back into one, on a draft. Parts with a pause cut out between them
+ * stay apart: joining those would bring back what was cut. Returns the joins.
+ */
+export function joinParts(d) {
+  let joined = 0;
+  const out = [];
+  for (const c of d.clips) {
+    const prev = out[out.length - 1];
+    if (prev && prev.media && prev.media === c.media && prev.enabled && c.enabled && Math.abs(prev.out - c.in) < 0.002) {
+      const shift = c.in - prev.in;
+      for (const b of d.broll || []) {
+        if (b.clip === c.id) {
+          b.clip = prev.id;
+          b.offset = r3((Number(b.offset) || 0) + shift);
+        }
+      }
+      prev.out = c.out;
+      joined++;
+      continue;
+    }
+    out.push(c);
+  }
+  d.clips = out;
+  return joined;
+}
+
 export function hasIndic(text) {
   return /[ऀ-෿]/.test(String(text || ""));
 }

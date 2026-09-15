@@ -27,9 +27,11 @@ import { ffmpeg, probe, detectSpeech, extractSpeechAudio, FFMPEG_PATH, runProces
 import { alignRecording } from "../services/edit/align.js";
 import {
   buildInitialTimeline, buildFreeTimeline, mergeFreeTimeline, segmentsFromPieces, segmentsOf, layout,
-  captionCues, sanitizeTimeline,
+  captionCues, sanitizeTimeline, cutAtSegments, buildSrt,
 } from "../services/edit/timeline.js";
 import { renderTimeline, FONTS_DIR } from "../services/edit/render.js";
+import { cleanExportOptions } from "../services/edit/exportOptions.js";
+import { hasEncoder } from "../services/media/ffmpeg.js";
 
 const keep = process.argv.includes("--keep");
 const dir = path.join(os.tmpdir(), `lipi-edit-selftest-${Date.now()}`);
@@ -61,6 +63,7 @@ const frame = (video, at, name) => ffmpeg(["-ss", String(at), "-i", video, "-fra
 async function main() {
   await fsp.mkdir(path.join(dir, "render"), { recursive: true });
   await fsp.mkdir(path.join(dir, "render2"), { recursive: true });
+  await fsp.mkdir(path.join(dir, "render3"), { recursive: true });
   console.log(`ffmpeg: ${FFMPEG_PATH}`);
   console.log(`work:   ${dir}\n`);
 
@@ -211,6 +214,14 @@ async function main() {
   const out2 = await renderTimeline({ timeline: byHand, mediaById, pathOf: async (id) => paths[id], workDir: path.join(dir, "render2") });
   const out2Info = await probe(out2.output);
   check(Math.abs(out2Info.duration - layHand.duration) < 0.25, `hand-edited export runs ${out2Info.duration.toFixed(2)}s against ${layHand.duration.toFixed(2)}s`);
+
+  // ── The export's own settings: 720p, 25 fps, a bitrate, H.265 where the build has it ──
+  const hevc = await hasEncoder("libx265");
+  const opts = cleanExportOptions({ resolution: 720, fps: 25, video_mbps: 3, audio_kbps: 128, codec: "hevc", loudness: true, srt: true }, { hevc });
+  const out3 = await renderTimeline({ timeline: byHand, mediaById, pathOf: async (id) => paths[id], workDir: path.join(dir, "render3"), options: opts });
+  const out3Info = await probe(out3.output);
+  check(out3Info.width === 720 && out3Info.height === 1280 && Math.abs(out3Info.fps - 25) < 0.01 && out3Info.has_audio, `an export at 720p 25 fps${hevc ? " in H.265" : ""} is ${out3Info.width}x${out3Info.height} at ${out3Info.fps} fps`);
+  check(out3.drew.captions > 0 && out3.drew.split === 2 && out3.drew.pip === 1 && out3.drew.texts === 1 && !!out3.srt, "and says what it drew, with an .srt beside it");
   const handVideo = path.join(dir, "export_by_hand.mp4");
   await fsp.copyFile(out2.output, handVideo);
   const mid = (b) => (b.start + b.end) / 2;
@@ -226,6 +237,11 @@ async function main() {
   check(added.clips.length === 2 && added.clips[1].media === "rec2", "a second upload joins the end of the edit");
   const cutOut = mergeFreeTimeline({ ...added, clips: added.clips.slice(0, 1) }, { recordings: [{ id: "rec1", duration: info.duration }, { id: "rec2", duration: 5 }] });
   check(cutOut.clips.length === 1, "a video the creator cut out does not come back on the next merge");
+  const parts = cutAtSegments(free).timeline;
+  check(parts.clips.length > 1 && captionCues(parts).length === captionCues(free).length && Math.abs(layout(parts).duration - layout(free).duration) < 0.01, `cut at its captions it is ${parts.clips.length} parts, with no caption or time lost`);
+  const tight = cutAtSegments(free, { pauses: true }).timeline;
+  check(layout(tight).duration < layout(free).duration - 1 && captionCues(tight).length === captionCues(free).length, `without the pauses it runs ${layout(tight).duration.toFixed(1)}s of ${layout(free).duration.toFixed(1)}s, every caption kept`);
+  check(buildSrt(free).trim().split(/\n\n/).length === segmentsOf(free).length, "its captions make an .srt, an entry per section");
 
   console.log(`\n  frames: ${dir}`);
   for (const f of ["frame_caption", "frame_broll", "frame_split_top", "frame_overlay", "frame_split_bottom"]) console.log(`          ${f}.png`);

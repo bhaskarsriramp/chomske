@@ -55,6 +55,8 @@ export const startTranslation = (id, lang, expectedCost) =>
   api.post(`/edit/projects/${id}/translate`, { lang, expected_cost: expectedCost }).then(data);
 export const ackTranslation = (id, translationId) => api.post(`/edit/projects/${id}/translate/ack`, { id: translationId }).then((r) => r.data);
 
-export const startRender = (id, expectedCost) => api.post(`/edit/projects/${id}/renders`, { expected_cost: expectedCost }).then(data);
-export const renderDownloadUrl = (id, renderId) => api.get(`/edit/projects/${id}/renders/${renderId}/download`).then((r) => abs(r.data.url));
+export const startRender = (id, expectedCost, options) =>
+  api.post(`/edit/projects/${id}/renders`, { expected_cost: expectedCost, options }).then(data);
+export const renderDownloadUrl = (id, renderId, file = "") =>
+  api.get(`/edit/projects/${id}/renders/${renderId}/download`, { params: file ? { file } : undefined }).then((r) => abs(r.data.url));
 export const deleteRender = (id, renderId) => api.delete(`/edit/projects/${id}/renders/${renderId}`).then(data);

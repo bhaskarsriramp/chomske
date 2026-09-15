@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { layout, anchorAt, placedSegments, captionText } from "./model";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { layout, anchorAt, placedSegments, captionText, segmentsOf } from "./model";
 import { Btn, Icon, fmtTime } from "./ui";
 
 /**
  * The timeline, for a mouse.
  *
- * Four tracks: the video (script lines, or the parts of a video uploaded on its
- * own), B-roll, text and music. Drag a clip's edges to trim it, drag B-roll,
- * text or music to move it and their right edge to change how long they last.
- * Click empty track to move the playhead.
+ * Five tracks: the video (script lines, or the parts of a video uploaded on its
+ * own), captions, B-roll, text and music. Drag a clip's edges to trim it, drag
+ * B-roll, text or music to move it and their right edge to change how long they
+ * last, drag a caption's edges to change when it shows. Click empty track to
+ * move the playhead.
+ *
+ * Ctrl (⌘ on a Mac, or Alt) with the wheel zooms around the pointer, and so does
+ * a trackpad pinch; the wheel alone scrolls along the edit. + and − zoom around
+ * the playhead, Fit shows the whole edit.
  *
  * Clicking the empty B-roll row also offers to put something there: upload a
  * photo or clip, or pick one already uploaded. That is the moment a creator
@@ -18,22 +23,34 @@ import { Btn, Icon, fmtTime } from "./ui";
  * another with nothing between them, so shortening one pulls the next in.
  * B-roll rides with the clip it was dropped on.
  *
+ * ── PARTS OF ONE VIDEO BUTT UP AGAINST EACH OTHER ────────────────────────────
+ * A video cut at its captions is a row of parts that play straight on from one
+ * another. Dragging an edge inward cuts that bit out. Dragging it outward takes
+ * back what was cut and, past that, moves the cut into the neighbouring part, so
+ * the same moment of the recording is never played twice.
+ *
  * Desktop only. On a phone the same edits are the buttons in the panels; a
  * 12-pixel drag handle is not a touch control.
  */
 const ROW = 36;
 const LABEL = 64;
 const POPOVER_W = 264;
+const MIN_PPS = 0.5;
+const MAX_PPS = 400;
 const snap = (v) => Math.round(v * 20) / 20;
+const r3 = (v) => Math.round(v * 1000) / 1000;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 export default function Timeline({
   tl, lay, mediaById, mode = "script", term = "B-roll", time, playing, selection, assets = [], waiting = {},
-  onSelect, onSeek, onChange, onSplit, onAddBrollAt, onUploadBrollAt,
+  onSelect, onSeek, onChange, onSplit, onAutoCut = () => {}, onJoin = () => {}, onAddBrollAt, onUploadBrollAt,
 }) {
   const free = mode === "free";
   const [pps, setPps] = useState(36);
+  const ppsRef = useRef(36);
+  const zoomAnchor = useRef(null);
   const [adding, setAdding] = useState(null);
+  const [cutMenu, setCutMenu] = useState(false);
   const root = useRef(null);
   const scroller = useRef(null);
   const drag = useRef(null);
@@ -56,14 +73,109 @@ export default function Timeline({
     });
   }, [tl, lay]);
 
+  // How far each caption section's edges can go: up to its neighbours in the same recording.
+  const captionRoom = useMemo(() => {
+    const byMedia = new Map();
+    for (const s of segmentsOf(tl)) {
+      if (!byMedia.has(s.media)) byMedia.set(s.media, []);
+      byMedia.get(s.media).push(s);
+    }
+    const room = new Map();
+    for (const [media, list] of byMedia) {
+      list.sort((a, b) => a.start - b.start);
+      const end = mediaById.get(media)?.duration || Infinity;
+      list.forEach((s, i) => room.set(s.id, { min: i > 0 ? list[i - 1].end : 0, max: i < list.length - 1 ? list[i + 1].start : end }));
+    }
+    return room;
+  }, [tl, mediaById]);
+
+  // Every part's own words, so a row of parts reads as the sentences they are.
   const words = useMemo(() => {
     if (!free) return new Map();
     const out = new Map();
     for (const { seg, clip } of placedSegments(tl, lay)) {
-      if (!out.has(clip.id)) out.set(clip.id, seg.text || seg.roman || "");
+      const prev = out.get(clip.id) || "";
+      if (prev.length < 90) out.set(clip.id, `${prev} ${captionText(seg, tl.captions)}`.trim());
     }
     return out;
   }, [free, tl, lay]);
+
+  const joinable = useMemo(
+    () => tl.clips.some((c, i) => {
+      const p = tl.clips[i - 1];
+      return p && p.media && p.media === c.media && p.enabled && c.enabled && Math.abs(p.out - c.in) < 0.002;
+    }),
+    [tl.clips]
+  );
+
+  // ── Zoom ────────────────────────────────────────────────────────────────
+  // The moment under the pointer (or the playhead) stays put on screen while
+  // the scale changes around it, which is what makes zooming feel like zooming.
+  const zoomTo = useCallback((next, at = null, t = null) => {
+    const el = scroller.current;
+    const p = ppsRef.current;
+    const target = clamp(next, MIN_PPS, MAX_PPS);
+    if (!el || Math.abs(target - p) < 1e-3) return;
+    const x = at ?? el.clientWidth / 2;
+    zoomAnchor.current = { t: t ?? Math.max(0, (el.scrollLeft + x - LABEL) / p), x };
+    ppsRef.current = target;
+    setPps(target);
+  }, []);
+
+  useLayoutEffect(() => {
+    const a = zoomAnchor.current;
+    const el = scroller.current;
+    if (!a || !el) return;
+    zoomAnchor.current = null;
+    el.scrollLeft = Math.max(0, LABEL + a.t * pps - a.x);
+  }, [pps]);
+
+  // A wheel listener React cannot attach: it has to be non-passive to stop the
+  // browser zooming the whole page on Ctrl + wheel.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return undefined;
+    const onWheel = (e) => {
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientWidth : 1;
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        e.preventDefault();
+        zoomTo(ppsRef.current * Math.exp(-e.deltaY * unit * 0.0025), e.clientX - el.getBoundingClientRect().left);
+      } else if (!e.shiftKey && Math.abs(e.deltaY) > Math.abs(e.deltaX) && el.scrollWidth > el.clientWidth) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY * unit;
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomTo]);
+
+  const zoomAtPlayhead = (factor) => {
+    const el = scroller.current;
+    if (!el) return;
+    const x = LABEL + Math.min(time, lay.duration) * ppsRef.current - el.scrollLeft;
+    zoomTo(ppsRef.current * factor, x >= LABEL && x <= el.clientWidth ? x : null);
+  };
+  const zoomKeys = useRef(zoomAtPlayhead);
+  zoomKeys.current = zoomAtPlayhead;
+
+  const fit = () => {
+    const el = scroller.current;
+    if (!el || !(lay.duration > 0)) return;
+    // The track is LABEL + duration × pps + 60 wide (see `width`); this fills the view exactly.
+    zoomTo((el.clientWidth - LABEL - 62) / lay.duration, LABEL, 0);
+    el.scrollLeft = 0;
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = String(e.target?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || e.target?.isContentEditable || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "=" || e.key === "+") zoomKeys.current(1.5);
+      else if (e.key === "-" || e.key === "_") zoomKeys.current(1 / 1.5);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Keep the playhead in view while playing.
   useEffect(() => {
@@ -73,11 +185,18 @@ export default function Timeline({
     if (x < el.scrollLeft + LABEL || x > el.scrollLeft + el.clientWidth - 40) el.scrollLeft = x - LABEL - 40;
   }, [time, pps, playing]);
 
-  // The add menu closes on a press anywhere else, Escape, or scrolling away.
+  // The add and auto-cut menus close on a press anywhere else, Escape, or scrolling away.
   useEffect(() => {
-    if (!adding) return undefined;
-    const away = (e) => { if (!e.target.closest?.("[data-broll-add]")) setAdding(null); };
-    const key = (e) => { if (e.key === "Escape") setAdding(null); };
+    if (!adding && !cutMenu) return undefined;
+    const away = (e) => {
+      if (adding && !e.target.closest?.("[data-broll-add]")) setAdding(null);
+      if (cutMenu && !e.target.closest?.("[data-cut-menu]")) setCutMenu(false);
+    };
+    const key = (e) => {
+      if (e.key !== "Escape") return;
+      setAdding(null);
+      setCutMenu(false);
+    };
     const el = scroller.current;
     const scrolled = () => setAdding(null);
     window.addEventListener("pointerdown", away, true);
@@ -88,7 +207,7 @@ export default function Timeline({
       window.removeEventListener("keydown", key);
       el?.removeEventListener("scroll", scrolled);
     };
-  }, [adding]);
+  }, [adding, cutMenu]);
 
   const start = (e, info) => {
     e.stopPropagation();
@@ -106,8 +225,31 @@ export default function Timeline({
       if (d.kind === "clip-in" || d.kind === "clip-out") {
         const c = t.clips.find((x) => x.id === d.id);
         if (!c) return;
-        if (d.kind === "clip-in") c.in = clamp(snap(d.orig.in + dt), 0, c.out - 0.1);
-        else c.out = clamp(snap(d.orig.out + dt), c.in + 0.1, mediaById.get(c.media)?.duration || c.out + 30);
+        const o = d.orig;
+        if (d.kind === "clip-in") {
+          let v = Math.min(r3(o.in + snap(dt)), c.out - 0.1);
+          const p = o.prev && t.clips.find((x) => x.id === o.prev.id);
+          if (p) {
+            v = Math.max(v, o.prev.in + 0.1);
+            p.out = r3(Math.min(o.prev.out, v));
+          } else v = Math.max(0, v);
+          c.in = r3(v);
+        } else {
+          let v = Math.max(r3(o.out + snap(dt)), c.in + 0.1);
+          const n = o.next && t.clips.find((x) => x.id === o.next.id);
+          if (n) {
+            v = Math.min(v, o.next.out - 0.1);
+            n.in = r3(Math.max(o.next.in, v));
+          } else v = Math.min(v, mediaById.get(c.media)?.duration || c.out + 30);
+          c.out = r3(v);
+        }
+      } else if (d.kind === "cap-in" || d.kind === "cap-out") {
+        if (!Array.isArray(t.segments)) t.segments = segmentsOf(t);
+        const s = t.segments.find((x) => x.id === d.id);
+        if (!s) return;
+        const o = d.orig;
+        if (d.kind === "cap-in") s.start = r3(clamp(o.start + snap(dt), o.min, s.end - 0.2));
+        else s.end = r3(clamp(o.end + snap(dt), s.start + 0.2, o.max));
       } else if (d.kind === "broll-move") {
         const b = t.broll.find((x) => x.id === d.id);
         if (!b) return;
@@ -161,6 +303,7 @@ export default function Timeline({
   const block = ({ key, left, w, label, kind, id, selectKind, color, handles, orig, sub, swatch }) => (
     <div
       key={key}
+      data-kind={kind}
       onPointerDown={handles.move ? (e) => start(e, { kind: handles.move, id, select: selectKind, orig }) : (e) => { e.stopPropagation(); onSelect(selectKind, id); }}
       title={label}
       style={{
@@ -168,8 +311,8 @@ export default function Timeline({
         borderRadius: 6, background: color, overflow: "hidden", cursor: handles.move ? "grab" : "pointer",
         border: `1.5px solid ${isSel(selectKind, id) ? "var(--ink)" : "rgba(0,0,0,.08)"}`,
         boxShadow: isSel(selectKind, id) ? "0 0 0 1px var(--ink)" : "none",
-        display: "flex", alignItems: "center", padding: "0 8px", fontSize: 11.5, fontWeight: 600, color: "var(--ink)",
-        whiteSpace: "nowrap", userSelect: "none", touchAction: "none",
+        display: "flex", alignItems: "center", padding: "0 10px", fontSize: 11.5, fontWeight: 600, color: "var(--ink)",
+        whiteSpace: "nowrap", userSelect: "none", touchAction: "none", boxSizing: "border-box",
       }}
     >
       {handles.left && <Handle side="left" onPointerDown={(e) => start(e, { kind: handles.left, id, select: selectKind, orig })} />}
@@ -180,31 +323,63 @@ export default function Timeline({
     </div>
   );
 
+  const every = pps >= 200 ? 0.5 : pps >= 80 ? 1 : pps >= 30 ? 5 : pps >= 12 ? 10 : pps >= 4 ? 30 : pps >= 1.5 ? 60 : 300;
   const ticks = [];
-  const every = pps >= 80 ? 1 : pps >= 30 ? 5 : pps >= 12 ? 10 : 30;
-  for (let s = 0; s <= lay.duration + 0.001; s += every) ticks.push(s);
+  for (let k = 0; k * every <= lay.duration + 0.001; k++) ticks.push(k * every);
 
   const layoutWord = (b) => (b.layout === "split" ? "Split · " : b.layout === "pip" ? "Overlay · " : "");
+  const hasCaptions = captionBlocks.length > 0;
+  const tool = { padding: "4px 10px", minHeight: 28 };
 
   return (
     <div ref={root} style={{ position: "relative", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderBottom: "1px solid var(--line)", minWidth: 0 }}>
         <span style={{ fontSize: 11.5, fontWeight: 650, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink-mute)" }}>Timeline</span>
         <span style={{ fontSize: 12, color: "var(--ink-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {`Drag edges to trim. Click a caption to pick it. Click the ${term} row to add a photo or clip there.`}
+          {`Drag edges to trim. Ctrl + scroll to zoom. Click the ${term} row to add a photo or clip.`}
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
           {free && (
-            <Btn size="s" icon={<Icon.Scissors size={13} />} onClick={onSplit} title="Split the part under the playhead (S)" style={{ padding: "4px 10px", minHeight: 28 }}>Split</Btn>
+            <span data-cut-menu style={{ position: "relative" }}>
+              <Btn size="s" icon={<Icon.Scissors size={13} />} aria-haspopup="menu" aria-expanded={cutMenu} onClick={() => setCutMenu((v) => !v)} style={tool}>
+                Auto-cut
+              </Btn>
+              {cutMenu && (
+                <div
+                  role="menu"
+                  aria-label="Auto-cut"
+                  className="hg-fade"
+                  style={{
+                    position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 30, width: 290, padding: 6,
+                    background: "var(--card)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 18px 44px -18px rgba(15,15,15,.45)",
+                  }}
+                >
+                  {hasCaptions ? (
+                    <>
+                      <MenuItem title="At every caption" sub="A part per sentence. Nothing is taken out." onClick={() => { setCutMenu(false); onAutoCut(false); }} />
+                      <MenuItem title="At every caption, without the pauses" sub="Also cuts out the silence between sentences." onClick={() => { setCutMenu(false); onAutoCut(true); }} />
+                    </>
+                  ) : (
+                    <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: 8, lineHeight: 1.5 }}>Write captions first: the video is cut where each sentence ends.</p>
+                  )}
+                  {joinable && <MenuItem title="Join the parts back" sub="Parts that play straight on become one again." onClick={() => { setCutMenu(false); onJoin(); }} />}
+                </div>
+              )}
+            </span>
           )}
-          <Btn size="s" kind="quiet" aria-label="Zoom out" onClick={() => setPps((p) => Math.max(8, Math.round(p / 1.5)))} style={{ padding: "4px 9px", minHeight: 28 }}>−</Btn>
-          <Btn size="s" kind="quiet" aria-label="Zoom in" onClick={() => setPps((p) => Math.min(240, Math.round(p * 1.5)))} style={{ padding: "4px 9px", minHeight: 28 }}>+</Btn>
+          {free && (
+            <Btn size="s" icon={<Icon.Scissors size={13} />} onClick={onSplit} title="Split the part under the playhead (S)" style={tool}>Split</Btn>
+          )}
+          <Btn size="s" kind="quiet" aria-label="Zoom to fit" title="Show the whole edit" onClick={fit} style={tool}>Fit</Btn>
+          <Btn size="s" kind="quiet" aria-label="Zoom out" title="Zoom out (−)" onClick={() => zoomAtPlayhead(1 / 1.5)} style={{ padding: "4px 9px", minHeight: 28 }}>−</Btn>
+          <Btn size="s" kind="quiet" aria-label="Zoom in" title="Zoom in (+)" onClick={() => zoomAtPlayhead(1.5)} style={{ padding: "4px 9px", minHeight: 28 }}>+</Btn>
         </span>
       </div>
 
       <div
         ref={scroller}
         className="hg-scroll"
+        data-timeline-scroll
         style={{ overflowX: "auto", overflowY: "hidden" }}
         onPointerMove={move}
         onPointerUp={end}
@@ -214,40 +389,51 @@ export default function Timeline({
           <div style={{ position: "relative", height: 22, borderBottom: "1px solid var(--line)" }}>
             {ticks.map((s) => (
               <span key={s} style={{ position: "absolute", left: LABEL + s * pps, top: 3, fontSize: 10.5, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums", transform: "translateX(-50%)" }}>
-                {fmtTime(s, false)}
+                {fmtTime(s, every < 1)}
               </span>
             ))}
           </div>
 
           <Track label={free ? "Video" : "Lines"} icon={free ? <Icon.Film size={12} /> : <Icon.Script size={12} />}>
-            {clips.map((c, i) =>
-              block({
-                key: c.id, id: c.id, selectKind: "clip", left: LABEL + c.start * pps, w: (c.end - c.start) * pps,
+            {clips.map((c, i) => {
+              const prev = clips[i - 1];
+              const next = clips[i + 1];
+              return block({
+                key: c.id, id: c.id, kind: "clip", selectKind: "clip", left: LABEL + c.start * pps, w: (c.end - c.start) * pps,
                 label: free ? `${i + 1}` : c.line ? `${c.line}` : "+",
-                sub: free ? (words.get(c.id) || "").slice(0, 40) : (c.roman || c.said_roman || c.text || "").slice(0, 40),
-                color: free || c.line ? "#E7E2DA" : "#EFE6D2",
-                handles: { left: "clip-in", right: "clip-out" }, orig: { in: c.in, out: c.out },
-              })
-            )}
+                sub: free ? (words.get(c.id) || "").slice(0, 80) : (c.roman || c.said_roman || c.text || "").slice(0, 40),
+                color: free || c.line ? (i % 2 ? "#DCD6CC" : "#E7E2DA") : "#EFE6D2",
+                handles: { left: "clip-in", right: "clip-out" },
+                orig: {
+                  in: c.in,
+                  out: c.out,
+                  prev: free && prev && prev.media === c.media && prev.out <= c.in + 0.002 ? { id: prev.id, in: prev.in, out: prev.out } : null,
+                  next: free && next && next.media === c.media && next.in >= c.out - 0.002 ? { id: next.id, in: next.in, out: next.out } : null,
+                },
+              });
+            })}
           </Track>
 
           <Track label="Captions" icon={<Icon.Captions size={12} />}>
-            {captionBlocks.map((p) =>
-              block({
-                key: `${p.seg.id}:${p.clip.id}`, id: p.seg.id, selectKind: "caption",
-                left: LABEL + p.start * pps, w: (p.end - p.start) * pps,
+            {captionBlocks.map((p) => {
+              const w = (p.end - p.start) * pps;
+              const room = captionRoom.get(p.seg.id) || { min: 0, max: Infinity };
+              return block({
+                key: `${p.seg.id}:${p.clip.id}`, id: p.seg.id, kind: "caption", selectKind: "caption",
+                left: LABEL + p.start * pps, w,
                 label: captionText(p.seg, tl.captions).slice(0, 60) || "…",
                 color: tl.captions?.mode === "off" ? "#F2F1EE" : "#FFF3CC",
                 swatch: p.seg.custom ? p.seg.custom.color || "#FFFFFF" : null,
-                handles: {},
-              })
-            )}
+                handles: w >= 28 ? { left: "cap-in", right: "cap-out" } : {},
+                orig: { start: p.seg.start, end: p.seg.end, min: room.min, max: room.max },
+              });
+            })}
           </Track>
 
           <Track label={term} icon={term === "Media" ? <Icon.Image size={12} /> : <Icon.Camera size={12} />} onPointerDown={openAdd} hint>
             {broll.map((b) =>
               block({
-                key: b.id, id: b.id, selectKind: "broll", left: LABEL + b.start * pps, w: (b.end - b.start) * pps,
+                key: b.id, id: b.id, kind: "broll", selectKind: "broll", left: LABEL + b.start * pps, w: (b.end - b.start) * pps,
                 label: b.media ? `${layoutWord(b)}${b.label || term}` : waiting[b.id] ? "Uploading…" : `Empty: ${b.label || term}`,
                 color: b.media ? "#D9E6EF" : "repeating-linear-gradient(45deg,#F2F1EE,#F2F1EE 6px,#E8E6E1 6px,#E8E6E1 12px)",
                 handles: { move: "broll-move", right: "broll-len" }, orig: { start: b.start, duration: b.duration },
@@ -258,7 +444,7 @@ export default function Timeline({
           <Track label="Text" icon={<Icon.Text size={12} />}>
             {texts.map((t) =>
               block({
-                key: t.id, id: t.id, selectKind: "text", left: LABEL + t.start * pps, w: t.duration * pps,
+                key: t.id, id: t.id, kind: "text", selectKind: "text", left: LABEL + t.start * pps, w: t.duration * pps,
                 label: t.text || "Text", color: "#E9E1F0",
                 handles: { move: "text-move", right: "text-len" }, orig: { start: t.start, duration: t.duration },
               })
@@ -268,7 +454,7 @@ export default function Timeline({
           <Track label="Music" icon={<Icon.Music size={12} />}>
             {audio.map((a) =>
               block({
-                key: a.id, id: a.id, selectKind: "audio", left: LABEL + a.start * pps, w: a.duration * pps,
+                key: a.id, id: a.id, kind: "audio", selectKind: "audio", left: LABEL + a.start * pps, w: a.duration * pps,
                 label: mediaById.get(a.media)?.filename || "Music", color: "#DDEBDD",
                 handles: { move: "audio-move", right: "audio-len" }, orig: { start: a.start, duration: a.duration },
               })
@@ -359,11 +545,28 @@ function Track({ label, icon, children, onPointerDown, hint = false }) {
 function Handle({ side, onPointerDown }) {
   return (
     <span
+      data-handle={side}
       onPointerDown={onPointerDown}
       style={{
         position: "absolute", top: 0, bottom: 0, [side]: 0, width: 9, cursor: "ew-resize", touchAction: "none",
         background: "rgba(0,0,0,.14)", borderRadius: side === "left" ? "5px 0 0 5px" : "0 5px 5px 0",
       }}
     />
+  );
+}
+
+function MenuItem({ title, sub, onClick }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--paper)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+      style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 10px", border: "none", borderRadius: 8, background: "transparent", cursor: "pointer", fontFamily: "inherit" }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{title}</div>
+      <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 1 }}>{sub}</div>
+    </button>
   );
 }

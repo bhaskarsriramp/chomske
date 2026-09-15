@@ -63,6 +63,18 @@ const RenderSchema = new Schema(
     size:        { type: Number, default: 0 },
     duration:    { type: Number, default: 0 },
     charged:     { type: Number, default: 0 },
+    // What was asked for (services/edit/exportOptions.js), and what the render
+    // actually drew: counts of captions, media, text and music, so an export
+    // that came out plain says so instead of looking like a finished edit.
+    options:     { type: Schema.Types.Mixed, default: null },
+    drew:        { type: Schema.Types.Mixed, default: null },
+    width:       { type: Number, default: 0 },
+    height:      { type: Number, default: 0 },
+    srt_key:     { type: String, default: "" },
+    // Which process rendered it, on which engine version. Two servers claiming
+    // jobs, one of them never restarted, shows up here.
+    worker:      { type: String, default: "" },
+    engine:      { type: Number, default: 0 },
     created_at:  { type: Date, default: Date.now },
     finished_at: { type: Date, default: null },
   },

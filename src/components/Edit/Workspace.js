@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { errorMessage } from "../../api";
 import { alphabetName } from "../Order/ScriptToggle";
 import { saveTimeline, removeMedia, renameProject, ackTranslation } from "./editApi";
-import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, placedSegments, anchorAt, splitClipAt, fitFor, splitPanes } from "./model";
+import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, placedSegments, anchorAt, splitClipAt, fitFor, splitPanes, cutAtSegments, joinParts } from "./model";
 import Preview from "./Preview";
 import ClipList from "./ClipList";
 import CutsPanel from "./CutsPanel";
@@ -412,6 +412,18 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     if (made) setSelection({ kind: "clip", id: made });
   }, [change]);
 
+  // A part per caption, with or without the pauses between (model.js cutAtSegments).
+  const autoCut = useCallback((pauses) => {
+    if (!cutAtSegments(tlRef.current, { pauses }).changed) {
+      setNotice(pauses ? "There are no pauses left to cut out." : "Every part already holds a single caption, so there is nothing to cut.");
+      return;
+    }
+    change((d) => { Object.assign(d, cutAtSegments(d, { pauses }).timeline); });
+    setSelection({ kind: null, id: null });
+  }, [change]);
+
+  const joinAll = useCallback(() => { change((d) => { joinParts(d); }); }, [change]);
+
   useEffect(() => {
     const onKey = (e) => {
       const tag = String(e.target?.tagName || "").toLowerCase();
@@ -493,6 +505,8 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         onSelect={(id) => select("clip", id)}
         onPlayRange={playRange}
         onSplit={splitAtPlayhead}
+        onAutoCut={autoCut}
+        onJoin={joinAll}
         onRecordings={async () => { await flush(); onRecordings(); }}
       />
     ),
@@ -726,6 +740,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       tl={tl}
       lay={lay}
       price={exportCost}
+      config={config}
       languages={languages}
       nativeLabel={nativeLabel}
       term={term}
@@ -798,6 +813,8 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
             onSeek={seekTo}
             onChange={change}
             onSplit={splitAtPlayhead}
+            onAutoCut={autoCut}
+            onJoin={joinAll}
             onAddBrollAt={addBrollAt}
             onUploadBrollAt={pickBrollFile}
           />

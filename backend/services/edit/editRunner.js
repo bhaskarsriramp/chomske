@@ -28,9 +28,10 @@ import { transcribePieces } from "./transcribeSpeech.js";
 import { translateSegments } from "./translateCaptions.js";
 import { alignRecording } from "./align.js";
 import {
-  buildInitialTimeline, buildFreeTimeline, mergeFreeTimeline, segmentsFromPieces, segmentsOf, layout,
+  buildInitialTimeline, buildFreeTimeline, mergeFreeTimeline, segmentsFromPieces, segmentsOf, layout, cutAtSegments,
 } from "./timeline.js";
-import { renderTimeline } from "./render.js";
+import { renderTimeline, missingFonts, FONTS_DIR } from "./render.js";
+import { EXPORT_ENGINE } from "./exportOptions.js";
 import { refund } from "../creditsService.js";
 import {
   EDIT_LIMITS, mediaKey, projectPrefix, bumpExpiry, scriptLines, publishProgress, modeOf, aspectOf,
@@ -434,9 +435,20 @@ async function captionVideo(project, workDir, stage) {
 
   const segments = segmentsFromPieces(pieces);
   const heard = new Set(segments.map((s) => s.media));
-  const timeline = project.timeline
+  const merged = project.timeline
     ? mergeFreeTimeline(project.timeline, { recordings: ready, segments })
     : buildFreeTimeline({ recordings: ready, segments, aspect: aspectOf(ready[0]) });
+
+  // A video captioned for the first time is cut into a part per sentence, so the
+  // timeline has something to take hold of: each part trims by its edges, with
+  // its captions. Only a video still whole (one untrimmed part); an edit the
+  // creator has already cut is theirs, and the Video tab can still cut it.
+  const whole = merged.clips.filter((c) => {
+    const rec = ready.find((m) => m.id === c.media);
+    return heard.has(c.media) && rec && c.enabled && c.in <= 0.01 && Math.abs(c.out - rec.duration) < 0.05 &&
+      merged.clips.filter((x) => x.media === c.media).length === 1;
+  });
+  const timeline = whole.length ? cutAtSegments(merged, { only: whole.map((c) => c.id) }).timeline : merged;
 
   // Nobody talking (music, silent footage) is not a failure of the video, but
   // there was nothing to caption, so it costs nothing.
@@ -564,6 +576,7 @@ const render = {
       mediaById,
       pathOf,
       workDir,
+      options: r.options,
       onProgress: (p, stage) => report({ status: "rendering", stage, progress: Math.round(p * 100) / 100 }),
     });
 
@@ -571,11 +584,22 @@ const render = {
     await report({ status: "rendering", stage: "Saving", progress: 0.99 }, true);
     await putFile(result.output, key, "video/mp4");
     const { size } = await fsp.stat(result.output);
+    let srtKey = "";
+    if (result.srt) {
+      srtKey = `${projectPrefix(project)}/renders/${r.id}.srt`;
+      await putFile(result.srt, srtKey, "application/x-subrip");
+    }
 
+    const d = result.drew;
     await setRender(project._id, r.id, {
-      status: "done", stage: "", progress: 1, output_key: key, size,
-      duration: Math.round(result.duration * 100) / 100, finished_at: new Date(),
+      status: "done", stage: "", progress: 1, output_key: key, size, srt_key: srtKey,
+      duration: Math.round(result.duration * 100) / 100, width: result.width, height: result.height,
+      drew: d, worker: WORKER, engine: EXPORT_ENGINE, finished_at: new Date(),
     });
+    console.log(
+      `[edit] rendered ${project._id}/${r.id} on ${WORKER} (engine ${EXPORT_ENGINE}): ${result.width}x${result.height} ${result.fps}fps ${result.options.codec}, ` +
+        `${d.captions} caption cues, ${d.media} media (full ${d.full}, split ${d.split}, overlay ${d.pip}), ${d.texts} text, ${d.music} music`
+    );
     await EditProject.updateOne({ _id: project._id }, { $set: { updated_at: new Date(), expires_at: bumpExpiry() } });
     publishProgress(project, { render: r.id, render_status: "done" });
   },
@@ -649,7 +673,11 @@ export function startEditRunner() {
   setInterval(() => sweepExpired().catch((err) => console.error("[edit] sweep:", err.message)), 30 * 60 * 1000);
   setTimeout(() => sweepExpired().catch(() => {}), 60 * 1000);
   tick().catch(() => {});
-  console.log(`[edit] runner ${WORKER} started (prepare ${LIMIT.prepare}, analyse ${LIMIT.analyse}, render ${LIMIT.render}, translate ${LIMIT.translate})`);
+  console.log(`[edit] runner ${WORKER} started, engine ${EXPORT_ENGINE} (prepare ${LIMIT.prepare}, analyse ${LIMIT.analyse}, render ${LIMIT.render}, translate ${LIMIT.translate})`);
+  // Said at start-up rather than discovered by a creator whose export failed.
+  missingFonts().then((missing) => {
+    if (missing.length) console.error(`[edit] caption fonts missing in ${FONTS_DIR}: ${missing.join(", ")}. Exports with captions or text will fail until they are there.`);
+  });
 }
 
 export default { enqueue, startEditRunner, sweepExpired };
