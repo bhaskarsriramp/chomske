@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Btn, Icon, Nudge, Section, Switch, fmtTime } from "./ui";
-import { hasIndic, newId } from "./model";
+import { hasIndic, newId, removeClip } from "./model";
 
 /**
  * The script, as the edit: one card per line.
@@ -43,14 +43,7 @@ export default function ClipList({ tl, lay, mediaById, selectedId, onSelect, onC
       [d.clips[i], d.clips[j]] = [d.clips[j], d.clips[i]];
     });
 
-  const removeExtra = (id) =>
-    onChange((d) => {
-      const i = d.clips.findIndex((x) => x.id === id);
-      if (i < 0) return;
-      const [c] = d.clips.splice(i, 1);
-      d.unused = [...(d.unused || []), { id: newId("un"), media: c.media, in: c.in, out: c.out, said: c.said, said_roman: c.said_roman }];
-      d.broll = (d.broll || []).filter((b) => b.clip !== id);
-    });
+  const removeExtra = (id) => onChange((d) => { removeClip(d, id, { toUnused: true }); });
 
   const chooseTake = (id, t) =>
     update(id, (c) => Object.assign(c, {

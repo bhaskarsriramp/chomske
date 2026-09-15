@@ -241,14 +241,18 @@ export function sentencePieces(seg, minSeconds = 0.7) {
 
 /**
  * How one caption looks: the captions' own settings, with whatever that
- * section was given on its own (seg.custom) on top.
+ * section was given on its own (seg.custom) on top. A section given its own
+ * size, a preset or pixels, takes both from itself, so a preset picked for one
+ * caption is not overridden by pixels set for all of them.
  */
 export function captionLook(tl, seg = null) {
   const cap = tl?.captions || {};
   const c = seg?.custom || {};
+  const sized = c.size || isSet(c.px) ? c : cap;
   return {
     style: c.style || cap.style || "bold",
-    size: c.size || cap.size || "m",
+    size: sized.size || cap.size || "m",
+    px: isSet(sized.px) ? Number(sized.px) : null,
     color: c.color || cap.color || "#FFFFFF",
     position: cap.position,
     x: isSet(c.x) ? Number(c.x) : cap.x,
@@ -278,10 +282,25 @@ function placeBox(x, y, fx, fy, W, H, maxFrac) {
   return { cx, cy, boxW, left: cx - boxW / 2, x: cx / W, y: cy / H };
 }
 
+/**
+ * Caption pixels are measured on a frame 240 px across its shorter side, so the
+ * default (Bold, M) is 18px and a size means the same in every aspect ratio.
+ */
+export const CAPTION_PX = { min: 8, max: 48, frame: 240 };
+const captionBase = (style) => (style === "clean" ? 0.062 : 0.075);
+
+/** A look's size in caption pixels, for its preset when it has no pixels of its own. */
+export function captionPx(look) {
+  if (isSet(look?.px)) return Math.round(clamp(look.px, CAPTION_PX.min, CAPTION_PX.max));
+  return Math.round(CAPTION_PX.frame * captionBase(look?.style) * (SIZE_MUL[look?.size] || 1));
+}
+
 /** A caption's box and font size; `seg` for one section's own look and place. */
 export function captionPlacement(tl, W, H, seg = null) {
   const look = captionLook(tl, seg);
-  const size = Math.round(Math.min(W, H) * (look.style === "clean" ? 0.062 : 0.075) * (SIZE_MUL[look.size] || 1));
+  const size = isSet(look.px)
+    ? Math.round((Math.min(W, H) * clamp(look.px, CAPTION_PX.min, CAPTION_PX.max)) / CAPTION_PX.frame)
+    : Math.round(Math.min(W, H) * captionBase(look.style) * (SIZE_MUL[look.size] || 1));
   return { ...placeBox(look.x, look.y, 0.5, captionPresetY(look.position, W, H), W, H, 0.84), size };
 }
 
@@ -371,6 +390,30 @@ export function splitClipAt(d, t) {
     }
   }
   return second.id;
+}
+
+/**
+ * A part taken out of the edit, on a draft, with the B-roll laid on it. With
+ * `toUnused`, the speech it held goes back to the pile of speech that matched no
+ * line (a script edit). Returns false when there is no such part.
+ */
+export function removeClip(d, id, { toUnused = false } = {}) {
+  const i = d.clips.findIndex((c) => c.id === id);
+  if (i < 0) return false;
+  const [c] = d.clips.splice(i, 1);
+  if (toUnused && c.media) {
+    d.unused = [...(d.unused || []), { id: newId("un"), media: c.media, in: c.in, out: c.out, said: c.said, said_roman: c.said_roman }];
+  }
+  d.broll = (d.broll || []).filter((b) => b.clip !== id);
+  return true;
+}
+
+/** One caption section taken out, on a draft. The video under it is untouched. */
+export function removeSegment(d, id) {
+  if (!Array.isArray(d.segments)) d.segments = segmentsOf(d);
+  const before = d.segments.length;
+  d.segments = d.segments.filter((s) => s.id !== id);
+  return d.segments.length < before;
 }
 
 /**

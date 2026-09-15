@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Btn, Icon, Nudge, Switch, fmtTime } from "./ui";
-import { hasIndic, placedSegments, segmentsOf } from "./model";
+import { hasIndic, placedSegments, removeClip, segmentsOf } from "./model";
 
 /**
  * The video, as parts: what a video uploaded on its own is cut into.
@@ -46,11 +46,7 @@ export default function CutsPanel({ tl, lay, mediaById, time, selectedId, onSele
       [d.clips[i], d.clips[j]] = [d.clips[j], d.clips[i]];
     });
 
-  const remove = (id) =>
-    onChange((d) => {
-      d.clips = d.clips.filter((x) => x.id !== id);
-      d.broll = (d.broll || []).filter((b) => b.clip !== id);
-    });
+  const remove = (id) => onChange((d) => { removeClip(d, id); });
 
   const underPlayhead = lay.clips.find((c) => c.start !== null && time > c.start + 0.2 && time < c.end - 0.2);
   const hasCaptions = segmentsOf(tl).some((s) => s.text || s.roman);
@@ -72,19 +68,17 @@ export default function CutsPanel({ tl, lay, mediaById, time, selectedId, onSele
           <Btn size="s" icon={<Icon.Plus size={14} />} onClick={onRecordings}>Add video</Btn>
         </span>
       </div>
-      <div style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid var(--line)", background: "var(--card)", margin: "4px 0 12px" }}>
-        <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)", marginBottom: 3 }}>Cut automatically</div>
-        <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", margin: "0 0 8px" }}>
-          {hasCaptions
-            ? "A part for every caption, cut in the pause before the next. On the timeline, drag a part's edges to trim it; its captions go with it."
-            : "Write captions first: the video is cut where each sentence ends."}
-        </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          <Btn size="s" icon={<Icon.Scissors size={13} />} disabled={!hasCaptions} onClick={() => onAutoCut(false)}>At every caption</Btn>
-          <Btn size="s" icon={<Icon.Scissors size={13} />} disabled={!hasCaptions} onClick={() => onAutoCut(true)}>And cut out the pauses</Btn>
-          {joinable && <Btn size="s" kind="quiet" onClick={onJoin}>Join parts back</Btn>}
+      {/* Cutting at the captions needs speech. A silent video stays whole, for splitting by hand. */}
+      {(hasCaptions || joinable) && (
+        <div style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid var(--line)", background: "var(--card)", margin: "4px 0 12px" }}>
+          <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)", marginBottom: 8 }}>Cut automatically</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {hasCaptions && <Btn size="s" icon={<Icon.Scissors size={13} />} onClick={() => onAutoCut(false)}>At every caption</Btn>}
+            {hasCaptions && <Btn size="s" icon={<Icon.Scissors size={13} />} onClick={() => onAutoCut(true)}>And cut out the pauses</Btn>}
+            {joinable && <Btn size="s" kind="quiet" onClick={onJoin}>Join parts back</Btn>}
+          </div>
         </div>
-      </div>
+      )}
       <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", margin: "0 0 12px" }}>
         To cut something out by hand, split before and after it, then turn that part off. Everything after it moves up.
       </p>

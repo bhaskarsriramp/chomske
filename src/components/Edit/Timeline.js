@@ -42,8 +42,8 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 export default function Timeline({
-  tl, lay, mediaById, mode = "script", term = "B-roll", time, playing, selection, assets = [], waiting = {},
-  onSelect, onSeek, onChange, onSplit, onAutoCut = () => {}, onJoin = () => {}, onAddBrollAt, onUploadBrollAt,
+  tl, lay, mediaById, mode = "script", term = "B-roll", time, playing, selection, assets = [], waiting = {}, deletion = null,
+  onSelect, onSeek, onChange, onSplit, onAutoCut = () => {}, onJoin = () => {}, onDelete = () => {}, onAddBrollAt, onUploadBrollAt,
 }) {
   const free = mode === "free";
   const [pps, setPps] = useState(36);
@@ -89,16 +89,9 @@ export default function Timeline({
     return room;
   }, [tl, mediaById]);
 
-  // Every part's own words, so a row of parts reads as the sentences they are.
-  const words = useMemo(() => {
-    if (!free) return new Map();
-    const out = new Map();
-    for (const { seg, clip } of placedSegments(tl, lay)) {
-      const prev = out.get(clip.id) || "";
-      if (prev.length < 90) out.set(clip.id, `${prev} ${captionText(seg, tl.captions)}`.trim());
-    }
-    return out;
-  }, [free, tl, lay]);
+  // Parts are named by number (their words are on the Captions row), and by
+  // file when the edit is made of more than one video.
+  const manyVideos = new Set(clips.map((c) => c.media)).size > 1;
 
   const joinable = useMemo(
     () => tl.clips.some((c, i) => {
@@ -339,7 +332,19 @@ export default function Timeline({
           {`Drag edges to trim. Ctrl + scroll to zoom. Click the ${term} row to add a photo or clip.`}
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-          {free && (
+          {deletion && (
+            <Btn
+              size="s"
+              kind="danger"
+              aria-label={deletion.label}
+              title={`${deletion.label} (Del)`}
+              icon={<Icon.Trash size={14} />}
+              onClick={onDelete}
+              style={{ padding: "4px 8px", minHeight: 28 }}
+            />
+          )}
+          {/* Auto-cut works from the captions, so a video with nobody speaking has none. */}
+          {free && (hasCaptions || joinable) && (
             <span data-cut-menu style={{ position: "relative" }}>
               <Btn size="s" icon={<Icon.Scissors size={13} />} aria-haspopup="menu" aria-expanded={cutMenu} onClick={() => setCutMenu((v) => !v)} style={tool}>
                 Auto-cut
@@ -354,13 +359,11 @@ export default function Timeline({
                     background: "var(--card)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 18px 44px -18px rgba(15,15,15,.45)",
                   }}
                 >
-                  {hasCaptions ? (
+                  {hasCaptions && (
                     <>
                       <MenuItem title="At every caption" sub="A part per sentence. Nothing is taken out." onClick={() => { setCutMenu(false); onAutoCut(false); }} />
                       <MenuItem title="At every caption, without the pauses" sub="Also cuts out the silence between sentences." onClick={() => { setCutMenu(false); onAutoCut(true); }} />
                     </>
-                  ) : (
-                    <p style={{ fontSize: 12.5, color: "var(--ink-mute)", margin: 8, lineHeight: 1.5 }}>Write captions first: the video is cut where each sentence ends.</p>
                   )}
                   {joinable && <MenuItem title="Join the parts back" sub="Parts that play straight on become one again." onClick={() => { setCutMenu(false); onJoin(); }} />}
                 </div>
@@ -401,7 +404,7 @@ export default function Timeline({
               return block({
                 key: c.id, id: c.id, kind: "clip", selectKind: "clip", left: LABEL + c.start * pps, w: (c.end - c.start) * pps,
                 label: free ? `${i + 1}` : c.line ? `${c.line}` : "+",
-                sub: free ? (words.get(c.id) || "").slice(0, 80) : (c.roman || c.said_roman || c.text || "").slice(0, 40),
+                sub: free ? (manyVideos ? mediaById.get(c.media)?.filename || "" : "") : (c.roman || c.said_roman || c.text || "").slice(0, 40),
                 color: free || c.line ? (i % 2 ? "#DCD6CC" : "#E7E2DA") : "#EFE6D2",
                 handles: { left: "clip-in", right: "clip-out" },
                 orig: {

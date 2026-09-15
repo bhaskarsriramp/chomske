@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { errorMessage } from "../../api";
 import { alphabetName } from "../Order/ScriptToggle";
 import { saveTimeline, removeMedia, renameProject, ackTranslation } from "./editApi";
-import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, placedSegments, anchorAt, splitClipAt, fitFor, splitPanes, cutAtSegments, joinParts } from "./model";
+import { ASPECTS, layout, clone, newId, withSegments, segmentsOf, placedSegments, anchorAt, splitClipAt, fitFor, splitPanes, cutAtSegments, joinParts, removeClip, removeSegment } from "./model";
 import Preview from "./Preview";
 import ClipList from "./ClipList";
 import CutsPanel from "./CutsPanel";
@@ -81,7 +81,6 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
   const [renaming, setRenaming] = useState(false);
   const [errorSeen, setErrorSeen] = useState("");
   const [waiting, setWaiting] = useState({});
-  const [captionScope, setCaptionScope] = useState("all");
 
   const revRef = useRef(project.timeline_rev);
   const dirtyRef = useRef(false);
@@ -424,6 +423,46 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
 
   const joinAll = useCallback(() => { change((d) => { joinParts(d); }); }, [change]);
 
+  // ── Deleting what is selected ─────────────────────────────────────────────
+  // A part, a caption, media, text or music, picked on the timeline or in a
+  // panel. It is one change like any other, so Ctrl+Z brings it back.
+  const deletion = useMemo(() => {
+    const { kind, id } = selection;
+    const list = { clip: tl.clips, caption: segmentsOf(tl), broll: tl.broll, text: tl.texts, audio: tl.audio }[kind];
+    if (!id || !list?.some((x) => x.id === id)) return null;
+    const noun = { clip: mode === "free" ? "part" : "line", caption: "caption", broll: term === "Media" ? "media" : "B-roll", text: "text", audio: "music" }[kind];
+    return { kind, id, label: `Delete ${noun}` };
+  }, [selection, tl, mode, term]);
+
+  const deleteSelection = useCallback(() => {
+    if (!deletion) return;
+    const { kind, id } = deletion;
+    if (kind === "clip") {
+      const cur = tlRef.current;
+      const c = cur.clips.find((x) => x.id === id);
+      if (!c) return;
+      if (mode === "free") {
+        if (cur.clips.length < 2) {
+          setNotice("This is the only part. Split it first, then delete the piece you don't want.");
+          return;
+        }
+        change((d) => { removeClip(d, id); });
+      } else if (c.line) {
+        // A script line stays in the script: it is turned off, and its card can turn it back on.
+        if (!c.enabled) return;
+        change((d) => { const x = d.clips.find((y) => y.id === id); if (x) x.enabled = false; });
+      } else {
+        change((d) => { removeClip(d, id, { toUnused: true }); });
+      }
+    } else if (kind === "caption") {
+      change((d) => { removeSegment(d, id); });
+    } else {
+      const field = { broll: "broll", text: "texts", audio: "audio" }[kind];
+      change((d) => { d[field] = (d[field] || []).filter((x) => x.id !== id); });
+    }
+    setSelection({ kind: null, id: null });
+  }, [deletion, mode, change]);
+
   useEffect(() => {
     const onKey = (e) => {
       const tag = String(e.target?.tagName || "").toLowerCase();
@@ -442,6 +481,9 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       } else if (!mod && mode === "free" && e.key.toLowerCase() === "s") {
         e.preventDefault();
         splitAtPlayhead();
+      } else if (!mod && (e.key === "Delete" || e.key === "Backspace") && deletion) {
+        e.preventDefault();
+        deleteSelection();
       } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         if (tag === "button" && e.target.getAttribute("role") === "tab") return;
         e.preventDefault();
@@ -451,7 +493,7 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, togglePlay, seekTo, lay.duration, exporting, mode, splitAtPlayhead]);
+  }, [undo, redo, togglePlay, seekTo, lay.duration, exporting, mode, splitAtPlayhead, deletion, deleteSelection]);
 
   // ── The name ──────────────────────────────────────────────────────────────
   async function commitName(value) {
@@ -548,8 +590,6 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
         onData={onData}
         onReload={onReload}
         selectedId={sel("caption")}
-        scope={captionScope}
-        onScope={setCaptionScope}
         onSelectCaption={selectCaption}
       />
     ),
@@ -596,7 +636,6 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
       selection={selection}
       onChange={change}
       onPick={pick}
-      captionScope={captionScope}
       term={term}
     />
   );
@@ -806,6 +845,8 @@ export default function Workspace({ data, config, isNarrow, uploads, onAddFiles,
             assets={readyAssets}
             term={term}
             waiting={waiting}
+            deletion={deletion}
+            onDelete={deleteSelection}
             onSelect={(kind, id) => {
               select(kind, id);
               setTab({ clip: mode === "free" ? "video" : "script", broll: "broll", text: "text", audio: "audio", caption: "captions" }[kind] || tab);

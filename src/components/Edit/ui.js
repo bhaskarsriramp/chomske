@@ -58,8 +58,10 @@ export const Btn = forwardRef(function Btn({ kind = "ghost", size = "m", icon = 
   );
 });
 
-/** A row of mutually exclusive options. */
+/** A row of mutually exclusive options. The chosen one is solid ink, readable at a glance. */
 export function Segmented({ value, options, onChange, size = "m", full = false, label }) {
+  const pad = { xs: "3px 7px", s: "5px 9px", m: "7px 12px" }[size] || "7px 12px";
+  const minHeight = { xs: 20, s: 30, m: 34 }[size] || 34;
   return (
     <div
       role="group"
@@ -81,12 +83,11 @@ export function Segmented({ value, options, onChange, size = "m", full = false, 
             className={o.indic ? "indic" : undefined}
             style={{
               flex: full ? "1 1 0" : undefined,
-              fontSize: size === "s" ? 12 : 12.5, fontWeight: 600, lineHeight: 1.3,
-              padding: size === "s" ? "5px 9px" : "7px 12px", minHeight: size === "s" ? 30 : 34,
-              borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap",
-              background: on ? "var(--card)" : "transparent",
-              color: on ? "var(--ink)" : "var(--ink-mute)",
-              boxShadow: on ? "0 1px 2px rgba(0,0,0,.08)" : "none",
+              fontSize: size === "m" ? 12.5 : size === "xs" ? 11.5 : 12, fontWeight: 600, lineHeight: 1.3,
+              padding: pad, minHeight,
+              borderRadius: size === "xs" ? 6 : 7, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+              background: on ? "var(--ink)" : "transparent",
+              color: on ? "#fff" : "var(--ink-mute)",
               ...(o.indic ? {} : { fontFamily: "inherit" }),
             }}
           >
@@ -247,6 +248,7 @@ export const Icon = {
   Download: ({ size = 16 }) => <svg {...svg(size)}><path d="M12 4v12M7 11l5 5 5-5M4 20h16" /></svg>,
   Wave: ({ size = 15 }) => <svg {...svg(size)}><path d="M4 11v2M8 7.5v9M12 4.5v15M16 8.5v7M20 11v2" /></svg>,
   Scissors: ({ size = 15 }) => <svg {...svg(size)}><circle cx="6" cy="6.5" r="2.5" /><circle cx="6" cy="17.5" r="2.5" /><path d="M8.2 7.8L20 17M8.2 16.2L20 7" /></svg>,
+  Reset: ({ size = 14 }) => <svg {...svg(size)}><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" /><path d="M4 4v4.5h4.5" /></svg>,
   Pencil: ({ size = 14 }) => <svg {...svg(size)}><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></svg>,
   Globe: ({ size = 15 }) => <svg {...svg(size)}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.6 3 2.6 15 0 18M12 3c-2.6 3-2.6 15 0 18" /></svg>,
   Full: ({ size = 15 }) => <svg {...svg(size)}><rect x="6" y="3" width="12" height="18" rx="2" fill="currentColor" fillOpacity=".25" /></svg>,

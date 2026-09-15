@@ -3,42 +3,46 @@ import { errorMessage } from "../../api";
 import { useCredits } from "../../state/CreditsContext";
 import { startAnalysis, startTranslation, translationQuote, ackTranslation } from "./editApi";
 import {
-  ASPECTS, captionCues, captionText, captionLook, captionPresetY, placedSegments, segmentsOf, sentencePieces,
-  splitIntoSentences, splitSegmentAt, hasIndic,
+  CAPTION_PX, captionCues, captionText, captionLook, captionPx, placedSegments, removeSegment, segmentsOf, sentencePieces,
+  splitIntoSentences, hasIndic,
 } from "./model";
-import { Btn, Icon, Notice, Section, Segmented, Spinner, fmtTime } from "./ui";
+import { Btn, Icon, Notice, Section, Segmented, Spinner, Switch, fmtTime } from "./ui";
 
 const INDIC = /[ऀ-෿]/;
 const HEX = /^#[0-9a-f]{6}$/i;
+const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
 // Bright enough to read over any shot, with the outline or box behind them.
-// Black is left to the picker: black text under a black outline disappears.
-const COLORS = [
-  ["#FFFFFF", "White"], ["#FFD400", "Yellow"], ["#7CFF4F", "Green"], ["#33E1FF", "Blue"],
-  ["#FF5CC8", "Pink"], ["#FF8A1F", "Orange"], ["#FF3B30", "Red"],
-];
+// Anything else is typed as hex.
+const COLORS = [["#FFFFFF", "White"], ["#FFD400", "Yellow"], ["#FF8A1F", "Orange"], ["#FF3B30", "Red"]];
 
-const LOOK_CARDS = [
+const LOOKS = [
   ["bold", "Bold", { fontWeight: 800, textShadow: "1.5px 0 #000,-1.5px 0 #000,0 1.5px #000,0 -1.5px #000" }],
   ["clean", "Clean", { fontWeight: 700, textShadow: "0 1px 5px rgba(0,0,0,.8)" }],
   ["box", "Box", { fontWeight: 700, background: "rgba(0,0,0,.7)", padding: "2px 6px", borderRadius: 4 }],
 ];
+const TILE = "linear-gradient(135deg,#6B7F95,#C9A27A)";
+const SIZES = [{ value: "s", label: "S", title: "Small" }, { value: "m", label: "M", title: "Medium" }, { value: "l", label: "L", title: "Large" }];
+
+const given = (v) => v !== null && v !== undefined;
+const styledOwn = (c) => !!c && ["style", "size", "px", "color"].some((k) => given(c[k]));
 
 /**
  * Captions: from what was said, in the letters or language the creator picks,
- * styled and placed for all of them or one section at a time, with every word
- * correctable.
+ * styled for all of them here and for one at a time in its own row, with every
+ * word correctable.
  *
  * Most Shorts are watched on mute, so captions are on by default and follow what
  * was SAID rather than a script: a caption reading a sentence nobody spoke is
  * the fastest way to look auto-generated.
  *
- * ── ALL OF THEM, OR ONE ──────────────────────────────────────────────────────
- * Every caption starts with the same look. "One caption" narrows the look,
- * size, colour and position controls, and a drag on the video, to the selected
- * section, which is how a creator lifts one caption above a product shot or
- * turns the price yellow. A section styled on its own keeps what it was given
- * when the rest change, and can be matched to them again.
+ * ── ALL OF THEM, AND ONE ─────────────────────────────────────────────────────
+ * Look, colour and size at the top go to every caption. Picking a caption opens
+ * the same controls in its row, for that caption alone, which is how a creator
+ * turns the price yellow. A caption styled on its own keeps what it was given
+ * when the rest change, until it is reset. Position is by hand, on the video
+ * (Preview.js): the first caption carries all of them, any other moves only
+ * itself.
  *
  * ── TRANSLATION KEEPS THE TIMING ─────────────────────────────────────────────
  * A translation is written per stretch of speech (services/edit/translateCaptions.js),
@@ -48,7 +52,7 @@ const LOOK_CARDS = [
  */
 export default function CaptionsPanel({
   tl, lay, mode, project, languages = [], nativeLabel, hasRoman, time, playing,
-  selectedId = null, scope = "all", onScope, onSelectCaption,
+  selectedId = null, onSelectCaption,
   onChange, onSeek, onFlush, onData, onReload,
 }) {
   const cap = tl.captions || {};
@@ -58,7 +62,6 @@ export default function CaptionsPanel({
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [dismissed, setDismissed] = useState(null);
-  const [W, H] = ASPECTS[tl.aspect] || ASPECTS["9:16"];
 
   const set = useCallback((fields, key) => onChange((d) => { d.captions = { ...d.captions, ...fields }; }, key), [onChange]);
 
@@ -77,8 +80,8 @@ export default function CaptionsPanel({
   const translated = useMemo(() => {
     const codes = new Set();
     for (const s of allSegments) for (const [k, v] of Object.entries(s.tr || {})) if (v) codes.add(k);
-    return languages.filter((l) => codes.has(l.code));
-  }, [allSegments, languages]);
+    return codes;
+  }, [allSegments]);
 
   // ── Writing captions (a video on its own) ─────────────────────────────────
   const uncaptioned = free
@@ -110,7 +113,9 @@ export default function CaptionsPanel({
   }
 
   // ── Translating ───────────────────────────────────────────────────────────
-  const [lang, setLang] = useState(() => (/^\s*english\s*$/i.test(project.language_label || "") ? "hi" : "en"));
+  const [lang, setLang] = useState(() =>
+    cap.mode === "tr" && cap.lang ? cap.lang : /^\s*english\s*$/i.test(project.language_label || "") ? "hi" : "en"
+  );
   const t = project.translation;
   const running = t?.status === "running";
   const langLabel = (code) => languages.find((l) => l.code === code)?.label || code;
@@ -177,6 +182,36 @@ export default function CaptionsPanel({
     ackTranslation(project.id, t?.id).catch(() => {});
   }
 
+  // ── Which words show ──────────────────────────────────────────────────────
+  // The switches return to what was showing before: captions turned back on
+  // come back as they were, a translation turned off gives the original back.
+  const lastOn = useRef(cap.mode && cap.mode !== "off" ? cap.mode : "native");
+  const lastOriginal = useRef(cap.mode === "roman" ? "roman" : "native");
+  useEffect(() => {
+    if (cap.mode && cap.mode !== "off") lastOn.current = cap.mode;
+    if (cap.mode === "native" || cap.mode === "roman") lastOriginal.current = cap.mode;
+  }, [cap.mode]);
+
+  const [translateOpen, setTranslateOpen] = useState(false);
+  const translateOn = translateOpen || cap.mode === "tr";
+
+  const showCaptions = (on) => set({ mode: on ? lastOn.current : "off" });
+  const showOriginal = (v) => {
+    setTranslateOpen(false);
+    set({ mode: v });
+  };
+  const switchTranslate = (on) => {
+    setTranslateOpen(on);
+    // A language already translated shows at once; one that is not waits for Translate.
+    if (on && !missing.count && placed.length && !running) set({ mode: "tr", lang });
+    else if (!on && cap.mode === "tr") set({ mode: lastOriginal.current });
+  };
+
+  const originals = [
+    { value: "native", label: nativeLabel || "Original", indic: INDIC.test(nativeLabel || "") },
+    ...(hasRoman ? [{ value: "roman", label: "Roman" }] : []),
+  ];
+
   // ── The sections ──────────────────────────────────────────────────────────
   const bySegments = cap.mode !== "off" && (cap.mode === "tr" || cap.source !== "script");
   const field = cap.mode === "roman" ? "roman" : cap.mode === "tr" ? `tr:${cap.lang}` : "text";
@@ -206,66 +241,39 @@ export default function CaptionsPanel({
     }, `words:${id}:${field}`);
   }, [onChange, field]);
 
-  const selected = useMemo(() => placed.find((p) => p.seg.id === selectedId) || null, [placed, selectedId]);
-  const one = bySegments && scope === "one" && !!selected;
-  const current = captionLook(tl, one ? selected.seg : null);
-  const customCount = useMemo(() => placed.filter((p) => p.seg.custom).length, [placed]);
+  const current = captionLook(tl);
+  const currentColor = HEX.test(String(current.color || "")) ? String(current.color).toUpperCase() : "#FFFFFF";
   const canSentences = useMemo(() => placed.some((p) => sentencePieces(p.seg)), [placed]);
 
-  // Look, size, colour and position go to every caption, or to the one picked.
-  const apply = (fields, key) => {
-    if (!one) {
-      set(fields, key);
-      return;
-    }
-    const id = selected.seg.id;
-    onChange((d) => {
-      if (!Array.isArray(d.segments)) d.segments = segmentsOf(d);
-      const s = d.segments.find((x) => x.id === id);
-      if (s) s.custom = { ...(s.custom || {}), ...fields };
-    }, key);
-  };
+  // One caption's own look, from the controls in its row.
+  const styleOne = useCallback((id, fields, key) => onChange((d) => {
+    if (!Array.isArray(d.segments)) d.segments = segmentsOf(d);
+    const s = d.segments.find((x) => x.id === id);
+    if (s) s.custom = { ...(s.custom || {}), ...fields };
+  }, key), [onChange]);
 
-  const matchOthers = (id) => onChange((d) => {
+  const resetOne = useCallback((id) => onChange((d) => {
     const s = (d.segments || []).find((x) => x.id === id);
     if (s) delete s.custom;
+  }), [onChange]);
+
+  const deleteOne = useCallback((id) => {
+    onChange((d) => { removeSegment(d, id); });
+    onSelectCaption(null);
+  }, [onChange, onSelectCaption]);
+
+  const byHand = given(cap.x) || placed.some((p) => given(p.seg.custom?.x) || given(p.seg.custom?.y));
+  const resetPositions = () => onChange((d) => {
+    d.captions = { ...d.captions, position: "bottom", x: null, y: null };
+    for (const s of d.segments || []) {
+      if (!s.custom) continue;
+      delete s.custom.x;
+      delete s.custom.y;
+      if (!Object.keys(s.custom).length) delete s.custom;
+    }
   });
 
-  const chooseScope = (v) => {
-    if (v === "one" && !selected) {
-      const id = activeSeg || placed[0]?.seg.id;
-      if (id) onSelectCaption(id);
-    }
-    onScope(v);
-  };
-
-  const presetOf = (x, y) => (Math.abs(x - 0.5) < 0.001 ? ["top", "middle", "bottom"].find((p) => Math.abs(captionPresetY(p, W, H) - y) < 0.002) : null);
-  const byHand = current.x !== null && current.x !== undefined;
-  const positionValue = byHand ? presetOf(current.x, current.y) || "custom" : cap.position;
-  const choosePosition = (v) => (one
-    ? apply({ x: 0.5, y: Math.round(captionPresetY(v, W, H) * 1000) / 1000 })
-    : set({ position: v, x: null, y: null }));
-
-  const splitSrc = selected && time > selected.start + 0.3 && time < selected.end - 0.3
-    ? selected.clip.in + (time - selected.clip.start)
-    : null;
-  const splitSelected = () => {
-    let ids = null;
-    onChange((d) => { ids = splitSegmentAt(d, selected.seg.id, splitSrc); });
-    if (ids) onSelectCaption(ids[1]);
-  };
-
-  const value = cap.mode === "tr" ? `tr:${cap.lang}` : cap.mode;
-  const modeOptions = [
-    { value: "off", label: "Off" },
-    { value: "native", label: nativeLabel || "Original", indic: INDIC.test(nativeLabel || "") },
-    ...(hasRoman ? [{ value: "roman", label: "Roman" }] : []),
-    ...translated.map((l) => ({ value: `tr:${l.code}`, label: l.label })),
-  ];
-
   const empty = !allSegments.length && (free || !tl.clips.some((c) => c.text || c.roman));
-  const currentColor = HEX.test(String(current.color || "")) ? String(current.color).toUpperCase() : "#FFFFFF";
-  const colorKnown = COLORS.some(([hex]) => hex === currentColor);
 
   return (
     <div>
@@ -308,46 +316,53 @@ export default function CaptionsPanel({
             </div>
           )}
 
-          <Section title="Show captions in">
-            <Segmented full label="Captions" value={value} onChange={(v) => (v.startsWith("tr:") ? set({ mode: "tr", lang: v.slice(3) }) : set({ mode: v }))} options={modeOptions} />
+          <Section title="Captions" right={<Switch on={cap.mode !== "off"} label="Show captions" onChange={showCaptions} />}>
+            {cap.mode !== "off" && (
+              <Segmented full label="Captions in" value={cap.mode} onChange={showOriginal} options={originals} />
+            )}
           </Section>
 
-          {allSegments.length > 0 && languages.length > 0 && (
-            <Section title="Translate captions">
-              <p style={hint}>Same timing, another language. Your voice stays as it is; only the captions change.</p>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <select
-                  aria-label="Translate into"
-                  value={lang}
-                  onChange={(e) => setLang(e.target.value)}
-                  disabled={running}
-                  style={{ flex: "1 1 160px", minWidth: 0, minHeight: 36, padding: "6px 10px", borderRadius: 9, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink)", fontSize: 13.5 }}
-                >
-                  {languages.map((l) => (
-                    <option key={l.code} value={l.code}>{l.label}{l.native && l.native !== l.label && !l.label.includes(l.native) ? ` · ${l.native}` : ""}</option>
-                  ))}
-                </select>
-                <Btn kind="primary" size="m" disabled={!!busy || running || !placed.length || tooExpensive || showing} onClick={translate}>
-                  {running ? <><Spinner size={12} /> Translating…</>
-                    : busy === "translate" ? "Starting…"
-                    : showing ? `Showing ${langLabel(lang)}`
-                    : !missing.count ? `Show in ${langLabel(lang)}`
-                    : tooExpensive ? "Not enough credits"
-                    : `Translate · ${price} credit${price === 1 ? "" : "s"}`}
-                </Btn>
-                {tooExpensive && canBuy && <Btn onClick={openBuy}>Buy credits</Btn>}
-              </div>
-              {missing.count > 0 && missing.count < placed.length && !running && (
-                <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 6 }}>
-                  {placed.length - missing.count} of {placed.length} already in {langLabel(lang)}; only the rest is charged.
-                </div>
+          {cap.mode !== "off" && allSegments.length > 0 && languages.length > 0 && (
+            <Section title="Translate captions" right={<Switch on={translateOn} label="Translate captions" onChange={switchTranslate} />}>
+              {translateOn && (
+                <>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <select
+                      aria-label="Translate into"
+                      value={lang}
+                      onChange={(e) => setLang(e.target.value)}
+                      disabled={running}
+                      style={{ flex: "1 1 160px", minWidth: 0, minHeight: 36, padding: "6px 10px", borderRadius: 9, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink)", fontSize: 13.5 }}
+                    >
+                      {languages.map((l) => (
+                        <option key={l.code} value={l.code}>
+                          {l.label}{l.native && l.native !== l.label && !l.label.includes(l.native) ? ` · ${l.native}` : ""}{translated.has(l.code) ? " ✓" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <Btn kind="primary" size="m" disabled={!!busy || running || !placed.length || tooExpensive || showing} onClick={translate}>
+                      {running ? <><Spinner size={12} /> Translating…</>
+                        : busy === "translate" ? "Starting…"
+                        : showing ? `Showing ${langLabel(lang)}`
+                        : !missing.count ? `Show in ${langLabel(lang)}`
+                        : tooExpensive ? "Not enough credits"
+                        : `Translate · ${price} credit${price === 1 ? "" : "s"}`}
+                    </Btn>
+                    {tooExpensive && canBuy && <Btn onClick={openBuy}>Buy credits</Btn>}
+                  </div>
+                  {missing.count > 0 && missing.count < placed.length && !running && (
+                    <div style={{ fontSize: 12, color: "var(--ink-mute)", marginTop: 6 }}>
+                      {placed.length - missing.count} of {placed.length} already in {langLabel(lang)}; only the rest is charged.
+                    </div>
+                  )}
+                  {running && (
+                    <div style={{ fontSize: 12.5, color: "var(--ink-body)", marginTop: 8, lineHeight: 1.5 }}>
+                      Translating {t.count} caption{t.count === 1 ? "" : "s"} into {langLabel(t.lang)}. Keep editing; they switch over when ready.
+                    </div>
+                  )}
+                  {note && <div style={{ marginTop: 8 }}><Notice tone="warn">{note}</Notice></div>}
+                </>
               )}
-              {running && (
-                <div style={{ fontSize: 12.5, color: "var(--ink-body)", marginTop: 8, lineHeight: 1.5 }}>
-                  Translating {t.count} caption{t.count === 1 ? "" : "s"} into {langLabel(t.lang)}. Keep editing; they switch over when ready.
-                </div>
-              )}
-              {note && <div style={{ marginTop: 8 }}><Notice tone="warn">{note}</Notice></div>}
               {t?.status === "failed" && dismissed !== t.id && (
                 <div style={{ marginTop: 8 }}>
                   <Notice tone="bad" action={<Btn size="s" onClick={dismissFailure}>Dismiss</Btn>}>{t.error}</Notice>
@@ -373,44 +388,19 @@ export default function CaptionsPanel({
 
           {cap.mode !== "off" && (
             <>
-              {bySegments && placed.length > 0 && (
-                <Section title="Change the style of">
-                  <Segmented
-                    full
-                    label="Change the style of"
-                    value={scope}
-                    onChange={chooseScope}
-                    options={[
-                      { value: "all", label: "All captions", title: "Every caption, except ones styled on their own" },
-                      { value: "one", label: "One caption", title: "Only the caption you pick" },
-                    ]}
-                  />
-                  <p style={{ ...hint, margin: "8px 0 0" }}>
-                    {scope === "one"
-                      ? selected
-                        ? <>Only the caption at <strong style={{ color: "var(--ink)" }}>{fmtTime(selected.start)}</strong> changes. Pick another in the list, on the timeline, or tap it on the video.</>
-                        : "Pick a caption in the list below, on the timeline, or tap it on the video."
-                      : `Changes apply to every caption${customCount ? `, except ${customCount} styled on ${customCount === 1 ? "its" : "their"} own` : ""}.`}
-                  </p>
-                  {one && selected.seg.custom && (
-                    <Btn size="s" onClick={() => matchOthers(selected.seg.id)} style={{ marginTop: 8 }}>Match the other captions again</Btn>
-                  )}
-                </Section>
-              )}
-
               <Section title="Look">
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8 }}>
-                  {LOOK_CARDS.map(([v, label, look]) => {
+                  {LOOKS.map(([v, label, look]) => {
                     const on = current.style === v;
                     return (
                       <button
                         key={v}
                         type="button"
                         aria-pressed={on}
-                        onClick={() => apply({ style: v })}
+                        onClick={() => set({ style: v })}
                         style={{ border: `1.5px solid ${on ? "var(--ink)" : "var(--line)"}`, borderRadius: 10, padding: 0, overflow: "hidden", cursor: "pointer", background: "var(--card)", fontFamily: "inherit" }}
                       >
-                        <span style={{ display: "grid", placeItems: "center", height: 54, background: "linear-gradient(135deg,#6B7F95,#C9A27A)" }}>
+                        <span style={{ display: "grid", placeItems: "center", height: 54, background: TILE }}>
                           <span style={{ fontSize: 14, color: currentColor, ...look }}>Sale leak</span>
                         </span>
                         <span style={{ display: "block", padding: "6px 0", fontSize: 12, fontWeight: 600, color: on ? "var(--ink)" : "var(--ink-mute)" }}>{label}</span>
@@ -421,62 +411,23 @@ export default function CaptionsPanel({
               </Section>
 
               <Section title="Color">
-                <div role="group" aria-label="Caption color" style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                  {COLORS.map(([hex, name]) => {
-                    const on = currentColor === hex;
-                    return (
-                      <button
-                        key={hex}
-                        type="button"
-                        aria-label={name}
-                        aria-pressed={on}
-                        title={name}
-                        onClick={() => apply({ color: hex })}
-                        style={{
-                          width: 30, height: 30, borderRadius: "50%", padding: 0, cursor: "pointer", background: hex,
-                          border: "1px solid rgba(0,0,0,.2)", boxShadow: on ? "0 0 0 2px var(--paper), 0 0 0 4px var(--ink)" : "none",
-                        }}
-                      />
-                    );
-                  })}
-                  <label
-                    title="Any color"
-                    style={{
-                      position: "relative", width: 30, height: 30, borderRadius: "50%", overflow: "hidden", cursor: "pointer",
-                      border: "1px solid rgba(0,0,0,.2)", background: "conic-gradient(#f33,#fd0,#6f4,#3df,#55f,#f5c,#f33)",
-                      boxShadow: colorKnown ? "none" : "0 0 0 2px var(--paper), 0 0 0 4px var(--ink)",
-                    }}
-                  >
-                    <input
-                      type="color"
-                      aria-label="Any color"
-                      value={currentColor.toLowerCase()}
-                      onChange={(e) => apply({ color: e.target.value.toUpperCase() }, `color:${one ? selected.seg.id : "all"}`)}
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", border: "none", padding: 0 }}
-                    />
-                  </label>
-                </div>
+                <ColorPicker value={currentColor} keyId="all" onChange={(hex, key) => set({ color: hex }, key)} />
               </Section>
 
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0 18px" }}>
-                <Section title="Size" style={{ marginBottom: 10 }}>
-                  <Segmented label="Caption size" value={current.size} onChange={(v) => apply({ size: v })} options={[{ value: "s", label: "S" }, { value: "m", label: "M" }, { value: "l", label: "L" }, { value: "xl", label: "XL" }]} />
-                </Section>
-                <Section title="Position" style={{ marginBottom: 10 }}>
-                  <Segmented
-                    label="Caption position"
-                    value={positionValue}
-                    onChange={choosePosition}
-                    options={[{ value: "top", label: "Top" }, { value: "middle", label: "Middle" }, { value: "bottom", label: "Bottom" }]}
-                  />
-                </Section>
-              </div>
-              <p style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--ink-mute)", margin: "0 0 18px", lineHeight: 1.5 }}>
-                <Icon.Pencil size={13} />
-                {one
-                  ? byHand ? "Placed by hand. Drag it on the video to move it again." : "Or drag this caption on the video to put it anywhere."
-                  : byHand ? "Placed by hand. Drag the captions on the video to move them again." : "Or drag the captions on the video to put them anywhere."}
-              </p>
+              <Section title="Size">
+                <SizePicker look={current} onPreset={(v) => set({ size: v, px: null })} onPx={(px) => set({ px }, "px:all")} />
+              </Section>
+
+              <Section
+                title="Position"
+                right={byHand ? <Btn size="s" kind="quiet" icon={<Icon.Reset size={13} />} title="Put every caption back at the bottom" onClick={resetPositions} style={{ padding: "4px 8px", minHeight: 28 }}>Reset</Btn> : null}
+              >
+                <p style={{ ...hint, margin: 0 }}>
+                  {bySegments
+                    ? "Place by hand anywhere you want. The first caption moves them all; any other moves only itself."
+                    : "Place by hand anywhere you want: drag the captions on the video."}
+                </p>
+              </Section>
             </>
           )}
 
@@ -485,36 +436,30 @@ export default function CaptionsPanel({
               title={`Caption sections · ${placed.length}`}
               right={canSentences ? <Btn size="s" icon={<Icon.Scissors size={13} />} onClick={() => onChange((d) => { splitIntoSentences(d); })}>Split into sentences</Btn> : null}
             >
-              <p style={hint}>
-                Each section shows while you say it. Tap one to pick it, tap its time to jump there, type to fix a word{cap.mode === "tr" ? ` in ${langLabel(cap.lang)}` : ""}.
-              </p>
-              {selected && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 10px", borderRadius: 10, background: "var(--made-tint)", border: "1px solid var(--made-line)", marginBottom: 8 }}>
-                  <span style={{ flex: "1 1 150px", fontSize: 12.5, color: "var(--ink-body)" }}>
-                    Picked: <strong style={{ color: "var(--ink)" }}>{fmtTime(selected.start)}–{fmtTime(selected.end)}</strong>
-                  </span>
-                  <Btn size="s" icon={<Icon.Scissors size={13} />} disabled={splitSrc === null} onClick={splitSelected} title="Move the playhead inside this caption to split it there">
-                    Split at {fmtTime(time)}
-                  </Btn>
-                  {scope !== "one" && <Btn size="s" onClick={() => onScope("one")}>Style just this one</Btn>}
-                </div>
-              )}
               <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}>
-                {placed.map(({ seg, start }) => (
-                  <CaptionRow
-                    key={seg.id}
-                    id={seg.id}
-                    start={start}
-                    value={captionText(seg, cap)}
-                    active={seg.id === activeSeg}
-                    selected={seg.id === selectedId}
-                    swatch={seg.custom ? seg.custom.color || "#FFFFFF" : null}
-                    onEdit={editWords}
-                    onSeek={onSeek}
-                    onSelect={onSelectCaption}
-                    rows={rows}
-                  />
-                ))}
+                {placed.map(({ seg, start }) => {
+                  const selected = seg.id === selectedId;
+                  return (
+                    <CaptionRow
+                      key={seg.id}
+                      id={seg.id}
+                      start={start}
+                      value={captionText(seg, cap)}
+                      active={seg.id === activeSeg}
+                      selected={selected}
+                      swatch={styledOwn(seg.custom) ? seg.custom.color || currentColor : null}
+                      look={selected ? captionLook(tl, seg) : null}
+                      custom={!!seg.custom}
+                      onEdit={editWords}
+                      onSeek={onSeek}
+                      onSelect={onSelectCaption}
+                      onStyle={styleOne}
+                      onReset={resetOne}
+                      onDelete={deleteOne}
+                      rows={rows}
+                    />
+                  );
+                })}
               </ol>
             </Section>
           )}
@@ -526,8 +471,11 @@ export default function CaptionsPanel({
 
 const hint = { fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-mute)", margin: "0 0 8px" };
 
-const CaptionRow = memo(function CaptionRow({ id, start, value, active, selected, swatch, onEdit, onSeek, onSelect, rows }) {
+const CaptionRow = memo(function CaptionRow({
+  id, start, value, active, selected, swatch, look, custom, onEdit, onSeek, onSelect, onStyle, onReset, onDelete, rows,
+}) {
   const indic = hasIndic(value);
+  const color = HEX.test(String(look?.color || "")) ? String(look.color).toUpperCase() : "#FFFFFF";
   return (
     <li
       ref={(el) => { rows.current[id] = el; }}
@@ -545,16 +493,21 @@ const CaptionRow = memo(function CaptionRow({ id, start, value, active, selected
         background: active ? "var(--made-tint)" : "var(--card)",
       }}
     >
-      <span style={{ display: "grid", justifyItems: "start", gap: 3 }}>
+      <span style={{ display: "grid", justifyItems: "start", gap: 3, minWidth: 42 }}>
         <button
           type="button"
-          onClick={() => onSeek(start + 0.01)}
+          onClick={(e) => { e.stopPropagation(); onSeek(start + 0.01); }}
           aria-label={`Play from ${fmtTime(start)}`}
           style={{ border: "none", background: "none", padding: "5px 2px 0", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 650, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}
         >
           {fmtTime(start)}
         </button>
-        {swatch && (
+        {selected ? (
+          <span style={{ display: "inline-flex", gap: 2 }}>
+            {custom && <RowIcon label="Match the other captions" onClick={() => onReset(id)}><Icon.Reset size={13} /></RowIcon>}
+            <RowIcon label="Delete caption (Del)" danger onClick={() => onDelete(id)}><Icon.Trash size={13} /></RowIcon>
+          </span>
+        ) : swatch && (
           <span title="Styled on its own" style={{ marginLeft: 3, width: 12, height: 12, borderRadius: 3, background: swatch, border: "1px solid rgba(0,0,0,.35)" }} />
         )}
       </span>
@@ -573,6 +526,182 @@ const CaptionRow = memo(function CaptionRow({ id, start, value, active, selected
         onFocus={(e) => { onSelect(id); e.target.style.borderColor = "var(--line)"; e.target.style.background = "var(--card)"; }}
         onBlur={(e) => { e.target.style.borderColor = "transparent"; e.target.style.background = "transparent"; }}
       />
+      {selected && look && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px 12px", padding: "7px 0 2px", borderTop: "1px solid var(--line)", cursor: "default" }}
+        >
+          <ColorPicker compact value={color} keyId={id} onChange={(hex, key) => onStyle(id, { color: hex }, key)} />
+          <LookPicker value={look.style} onChange={(v) => onStyle(id, { style: v })} />
+          <SizePicker compact look={look} onPreset={(v) => onStyle(id, { size: v, px: null })} onPx={(px) => onStyle(id, { px }, `px:${id}`)} />
+        </div>
+      )}
     </li>
   );
 });
+
+function RowIcon({ label, danger = false, onClick, children }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      style={{ width: 20, height: 20, padding: 0, display: "grid", placeItems: "center", border: "none", borderRadius: 5, background: "transparent", color: danger ? "var(--bad)" : "var(--ink-mute)", cursor: "pointer" }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** The four colours, and a hex code for any other. */
+function ColorPicker({ value, onChange, keyId, compact = false }) {
+  const d = compact ? 16 : 30;
+  return (
+    <div role="group" aria-label="Caption color" style={{ display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: compact ? 6 : 10, flexShrink: 0 }}>
+      {COLORS.map(([hex, name]) => {
+        const on = value === hex;
+        return (
+          <button
+            key={hex}
+            type="button"
+            aria-label={name}
+            aria-pressed={on}
+            title={name}
+            onClick={() => onChange(hex)}
+            style={{
+              width: d, height: d, borderRadius: "50%", padding: 0, cursor: "pointer", background: hex, flexShrink: 0,
+              border: "1px solid rgba(0,0,0,.2)",
+              boxShadow: on ? `0 0 0 2px ${compact ? "var(--card)" : "var(--paper)"}, 0 0 0 ${compact ? 3.5 : 4}px var(--ink)` : "none",
+            }}
+          />
+        );
+      })}
+      <HexInput value={value} compact={compact} onChange={(hex) => onChange(hex, `color:${keyId}`)} />
+    </div>
+  );
+}
+
+/** "#" is fixed; only the six digits are typed. A colour applies once all six are in. */
+function HexInput({ value, onChange, compact }) {
+  const code = String(value || "#FFFFFF").slice(1).toUpperCase();
+  const [draft, setDraft] = useState(code);
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { setDraft(code); }, [code]);
+  const fs = compact ? 11.5 : 13;
+  return (
+    <label
+      title="Hex color"
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 2, height: compact ? 26 : 34, padding: compact ? "0 6px" : "0 9px",
+        borderRadius: compact ? 6 : 8, border: `1px solid ${focus ? "var(--ink)" : "var(--line)"}`, background: "var(--card)", cursor: "text", flexShrink: 0,
+      }}
+    >
+      {!compact && <span aria-hidden="true" style={{ width: 14, height: 14, borderRadius: 4, background: value, border: "1px solid rgba(0,0,0,.2)", marginRight: 5 }} />}
+      <span aria-hidden="true" style={{ fontSize: fs, color: "var(--ink-mute)", fontFamily: MONO }}>#</span>
+      <input
+        value={draft}
+        maxLength={6}
+        spellCheck={false}
+        autoComplete="off"
+        aria-label="Hex color code"
+        onFocus={() => setFocus(true)}
+        onChange={(e) => {
+          const v = e.target.value.replace(/[^0-9a-f]/gi, "").slice(0, 6).toUpperCase();
+          setDraft(v);
+          if (v.length === 6 && v !== code) onChange(`#${v}`);
+        }}
+        onBlur={() => { setFocus(false); setDraft(code); }}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur(); }}
+        style={{ width: "6.3ch", border: "none", outline: "none", padding: 0, background: "transparent", color: "var(--ink)", fontSize: fs, fontWeight: 600, fontFamily: MONO }}
+      />
+    </label>
+  );
+}
+
+/** Bold, Clean and Box as small tiles drawn in their own look. */
+function LookPicker({ value, onChange }) {
+  return (
+    <div role="group" aria-label="Caption look" style={{ display: "inline-flex", gap: 3, flexShrink: 0 }}>
+      {LOOKS.map(([v, label, look]) => {
+        const on = value === v;
+        return (
+          <button
+            key={v}
+            type="button"
+            aria-label={label}
+            aria-pressed={on}
+            title={label}
+            onClick={() => onChange(v)}
+            style={{
+              width: 28, height: 26, padding: 0, boxSizing: "border-box", borderRadius: 6, cursor: "pointer", display: "grid", placeItems: "center",
+              background: TILE, border: `2px solid ${on ? "var(--ink)" : "transparent"}`, fontFamily: "inherit",
+            }}
+          >
+            <span style={{ fontSize: 12, lineHeight: 1, color: "#fff", ...look, ...(v === "box" ? { padding: "2px 3px", borderRadius: 3 } : {}) }}>A</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** S, M, L, or pixels. The pixel field always shows the size in use, preset or not. */
+function SizePicker({ look, onPreset, onPx, compact = false }) {
+  const own = look.px !== null && look.px !== undefined;
+  return (
+    <div role="group" aria-label="Caption size" style={{ display: "inline-flex", alignItems: "center", gap: compact ? 4 : 8, flexShrink: 0 }}>
+      <Segmented size={compact ? "xs" : "s"} label="Size preset" value={own ? null : look.size} onChange={onPreset} options={SIZES} />
+      <PxInput value={captionPx(look)} compact={compact} onChange={onPx} />
+    </div>
+  );
+}
+
+function PxInput({ value, onChange, compact }) {
+  const [draft, setDraft] = useState(String(value));
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { setDraft(String(value)); }, [value]);
+  const fit = (n) => Math.min(CAPTION_PX.max, Math.max(CAPTION_PX.min, n));
+  const commit = () => {
+    const n = parseInt(draft, 10);
+    const px = Number.isFinite(n) ? fit(n) : value;
+    if (px !== value) onChange(px);
+    setDraft(String(px));
+  };
+  const fs = compact ? 11.5 : 13;
+  return (
+    <label
+      title={`Size in pixels, ${CAPTION_PX.min} to ${CAPTION_PX.max}`}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 2, height: compact ? 26 : 36, padding: compact ? "0 6px" : "0 9px",
+        borderRadius: compact ? 6 : 8, border: `1px solid ${focus ? "var(--ink)" : "var(--line)"}`, background: "var(--card)", cursor: "text", flexShrink: 0,
+      }}
+    >
+      <input
+        value={draft}
+        inputMode="numeric"
+        maxLength={2}
+        aria-label="Caption size in pixels"
+        onFocus={(e) => { setFocus(true); e.target.select(); }}
+        onChange={(e) => {
+          const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+          setDraft(v);
+          const n = parseInt(v, 10);
+          if (n >= CAPTION_PX.min && n <= CAPTION_PX.max && n !== value) onChange(n);
+        }}
+        onBlur={() => { setFocus(false); commit(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
+          else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            const n = fit((parseInt(draft, 10) || value) + (e.key === "ArrowUp" ? 1 : -1));
+            setDraft(String(n));
+            if (n !== value) onChange(n);
+          }
+        }}
+        style={{ width: "2.2ch", textAlign: "right", border: "none", outline: "none", padding: 0, background: "transparent", color: "var(--ink)", fontSize: fs, fontWeight: 600, fontFamily: "inherit", fontVariantNumeric: "tabular-nums" }}
+      />
+      <span aria-hidden="true" style={{ fontSize: fs, color: "var(--ink-mute)" }}>px</span>
+    </label>
+  );
+}

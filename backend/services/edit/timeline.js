@@ -27,7 +27,7 @@
  *              take_id, said, said_roman, takes: [{ id, media, in, out, score,
  *              said, said_roman }] }]
  *   segments [{ id, media, start, end, text, roman, tr: { [lang]: text },
- *              custom: { style, size, color, x, y } }]  a section styled on its own
+ *              custom: { style, size, px, color, x, y } }]  a section styled on its own
  *   sources  [media id]  recordings already given clips (videos uploaded on their own)
  *   broll    [{ id, shot, label, source, clip, offset, duration, media, media_in,
  *              fit: "contain" | "cover",
@@ -40,7 +40,8 @@
  *              size: "s"|"m"|"l", x, y }]
  *   captions { mode: "roman"|"native"|"tr"|"off", lang, source: "said"|"script",
  *              style: "bold"|"clean"|"box", position: "top"|"middle"|"bottom",
- *              size: "s"|"m"|"l"|"xl", color: "#RRGGBB"|null, x, y }
+ *              size: "s"|"m"|"l"|"xl", px: 8..48|null (overrides size),
+ *              color: "#RRGGBB"|null, x, y }
  *   unused   [{ id, media, in, out, said, said_roman }]  speech that matched no line
  *   aspect   "9:16" | "16:9" | "1:1" | "4:5"
  *   voice_volume  0..2
@@ -76,14 +77,18 @@ const frac = (v) => (isSet(v) ? Math.round(clamp(v, 0, 1) * 1000) / 1000 : null)
 const A_ROLL = /\b(on[- ]camera|a-?roll|talking head|to camera|face ?cam|selfie|presenter)\b/i;
 
 export const defaultCaptions = (mode = "native") => ({
-  mode, lang: "", source: "said", style: "bold", position: "bottom", size: "m", color: null, x: null, y: null,
+  mode, lang: "", source: "said", style: "bold", position: "bottom", size: "m", px: null, color: null, x: null, y: null,
 });
+
+// What a model writes for a sound that is not speech: "[Music]", "(silence)", "♪ ♪".
+// A video with nothing but that in it has nobody talking, and is not cut up.
+const spoken = (t) => /[\p{L}\p{N}]/u.test(String(t || "").replace(/\[[^\]]*\]|\([^)]*\)/g, ""));
 
 /** Transcribed stretches of speech, as caption segments, a sentence each. */
 export function segmentsFromPieces(pieces) {
   const out = [];
   for (const p of pieces || []) {
-    if (!(p.text || p.roman) || !(Number(p.end) > Number(p.start))) continue;
+    if (!(spoken(p.text) || spoken(p.roman)) || !(Number(p.end) > Number(p.start))) continue;
     const seg = {
       id: newId("sg"),
       media: p.media,
@@ -582,9 +587,12 @@ export function sentencePieces(seg, minSeconds = 0.7) {
 export function captionLook(tl, seg = null) {
   const cap = tl?.captions || {};
   const c = seg?.custom || {};
+  // A section given its own size, a preset or pixels, takes both from itself.
+  const sized = c.size || isSet(c.px) ? c : cap;
   return {
     style: c.style || cap.style || "bold",
-    size: c.size || cap.size || "m",
+    size: sized.size || cap.size || "m",
+    px: isSet(sized.px) ? Number(sized.px) : null,
     color: c.color || cap.color || "#FFFFFF",
     position: cap.position,
     x: isSet(c.x) ? Number(c.x) : cap.x,
@@ -605,6 +613,7 @@ export function captionPresetY(position, W, H) {
    preview. */
 
 const SIZE_MUL = { s: 0.8, m: 1, l: 1.25, xl: 1.55 };
+const CAPTION_PX = { min: 8, max: 48, frame: 240 };
 const TEXT_SIZE = { s: 0.05, m: 0.064, l: 0.085 };
 
 function placeBox(x, y, fx, fy, W, H, maxFrac) {
@@ -621,7 +630,10 @@ function placeBox(x, y, fx, fy, W, H, maxFrac) {
 /** A caption's box and font size; `seg` for one section's own look and place. */
 export function captionPlacement(tl, W, H, seg = null) {
   const look = captionLook(tl, seg);
-  const size = Math.round(Math.min(W, H) * (look.style === "clean" ? 0.062 : 0.075) * (SIZE_MUL[look.size] || 1));
+  // Pixels are measured on a frame 240 px across its shorter side (Bold, M is 18px).
+  const size = isSet(look.px)
+    ? Math.round((Math.min(W, H) * clamp(look.px, CAPTION_PX.min, CAPTION_PX.max)) / CAPTION_PX.frame)
+    : Math.round(Math.min(W, H) * (look.style === "clean" ? 0.062 : 0.075) * (SIZE_MUL[look.size] || 1));
   return { ...placeBox(look.x, look.y, 0.5, captionPresetY(look.position, W, H), W, H, 0.84), size };
 }
 
@@ -685,6 +697,7 @@ function cleanCustom(c) {
   const out = {};
   if (["bold", "clean", "box"].includes(c.style)) out.style = c.style;
   if (["s", "m", "l", "xl"].includes(c.size)) out.size = c.size;
+  if (isSet(c.px)) out.px = Math.round(clamp(c.px, CAPTION_PX.min, CAPTION_PX.max));
   if (COLOR.test(String(c.color || ""))) out.color = c.color.toUpperCase();
   if (isSet(c.x)) out.x = frac(c.x);
   if (isSet(c.y)) out.y = frac(c.y);
@@ -828,6 +841,7 @@ export function sanitizeTimeline(input, mediaById) {
       style: ["bold", "clean", "box"].includes(cap.style) ? cap.style : "bold",
       position: ["top", "middle"].includes(cap.position) ? cap.position : "bottom",
       size: ["s", "m", "l", "xl"].includes(cap.size) ? cap.size : "m",
+      px: isSet(cap.px) ? Math.round(clamp(cap.px, CAPTION_PX.min, CAPTION_PX.max)) : null,
       color: COLOR.test(String(cap.color || "")) ? cap.color.toUpperCase() : null,
       x: frac(cap.x),
       y: frac(cap.y),

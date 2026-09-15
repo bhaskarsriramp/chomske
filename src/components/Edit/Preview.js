@@ -37,7 +37,7 @@ import { Icon } from "./ui";
  */
 export default function Preview({
   tl, mediaById, playing, onPlayingChange, seek, onTime, stopAt = null, audition = null, onAuditionEnd,
-  tab = null, selection = { kind: null, id: null }, onChange, onPick, captionScope = "all", term = "B-roll",
+  tab = null, selection = { kind: null, id: null }, onChange, onPick, term = "B-roll",
 }) {
   const outer = useRef(null);
   const box = useBox(outer);
@@ -312,8 +312,9 @@ export default function Preview({
   // Every drag handler gets where the thing was when the press began, never
   // where it is now: the movement is measured from the press, and applying it
   // to the current place would count it again on every re-render of the drag.
-  // A caption drag moves every caption, or, with "One caption" chosen, only the
-  // section that was pressed (origin.seg), which then keeps its own place.
+  // Dragging the first caption moves every caption without a place of its own
+  // (origin.lead, which gives up any place of its own to lead them). Dragging
+  // any other moves only that section (origin.seg), which then keeps its place.
   const moveCaption = (origin, dx, dy, key) =>
     onChange((d) => {
       const x = snapX(origin.x + dx);
@@ -328,6 +329,14 @@ export default function Preview({
       }
       const p = captionPlacement({ ...d, captions: { ...d.captions, x, y } }, W, H);
       d.captions = { ...d.captions, x: r3(p.x), y: r3(p.y) };
+      const lead = origin.lead && (d.segments || []).find((z) => z.id === origin.lead);
+      if (lead?.custom) {
+        const rest = { ...lead.custom };
+        delete rest.x;
+        delete rest.y;
+        if (Object.keys(rest).length) lead.custom = rest;
+        else delete lead.custom;
+      }
     }, key);
 
   const moveText = (id) => (origin, dx, dy, key) =>
@@ -440,16 +449,16 @@ export default function Preview({
           const style = { left: p.left * scale, width: p.boxW * scale, top: p.cy * scale, transform: "translateY(-50%)" };
           const body = <Caption text={overlay.cue.text} look={look} px={p.size * scale} />;
           if (!editable) return <div style={{ position: "absolute", pointerEvents: "none", ...style }}>{body}</div>;
-          const one = captionScope === "one" && !!seg;
+          const own = !!seg && seg.id !== cues[0]?.seg;
           return (
             <Movable
-              label={one ? "Captions: drag to place this one" : "Captions: drag to place them anywhere"}
+              label={own ? "Caption: drag to place this one" : "Captions: drag to place them all"}
               style={style}
               frame={{ fw, fh }}
               hint={tab === "captions"}
               selected={!!seg && selection.kind === "caption" && selection.id === seg.id}
               onPress={() => onPick?.("caption", seg?.id || null)}
-              origin={{ x: p.x, y: p.y, seg: one ? seg.id : null }}
+              origin={{ x: p.x, y: p.y, seg: own ? seg.id : null, lead: own ? null : seg?.id || null }}
               onMove={moveCaption}
               onEnd={() => setGuide(false)}
             >
