@@ -556,7 +556,9 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
         confidence: clamp(confidence * (after ? 1 : 0.8), 0, 1),
         shape: rest.shape || "default",
         corroborated: after,
-        scrolled: slid >= SCROLL_SUM,
+        // After OR around: on one recording the creator's flick ended a tenth of
+        // a second before the rest, so looking only forward saw nothing.
+        scrolled: slid >= SCROLL_SUM || scrollingAround(mot, rest.end),
         scroll_shift: round3(slid),
       })
     );
@@ -683,34 +685,71 @@ function nearest(series, t) {
 function screenAgrees(screen, t) {
   const series = screen && screen.motion;
   if (!series || !series.length) return true;
-  let best = null;
+  /**
+   * ── THE LARGEST CHANGE IN THE WINDOW, NOT THE NEAREST SAMPLE ─────────────
+   * The video is read as frame-to-frame differences, and a page replacing
+   * itself is ONE frame of difference: the frame after it is already the new
+   * page, and differs from its predecessor by almost nothing. So the nearest
+   * sample to the browser's timestamp is the change about half the time and
+   * the quiet frame right after it the other half.
+   *
+   * On one recording the browser saw "API Keys" open at 3.74s. The video saw
+   * it at 3.67s, with a third of the screen changing — and the sample nearest
+   * 3.74 was 3.75, with 0.2%. The navigation was vetoed, the click that caused
+   * it was never found, and the zoom came from something else a second and a
+   * half later. The question is whether the video saw a big change around
+   * this moment, so that is what is asked.
+   */
+  let seen = false;
+  let most = 0;
   for (const m of series) {
-    const d = Math.abs(m.t - t);
-    if (d > 0.25) continue;
-    if (!best || d < Math.abs(best.t - t)) best = m;
+    if (Math.abs(m.t - t) > 0.25) continue;
+    seen = true;
+    most = Math.max(most, num(m.cover, 0));
   }
-  if (!best) return true;
-  return best.cover >= RULES.navCover;
+  if (!seen) return true;
+  return most >= RULES.navCover;
 }
 
-/** Frames of shift, around a change, that make it a scroll. */
-const SCROLL_FRAMES = 10;
-/** How much of that shift must agree on a direction. */
+/**
+ * ── A SCROLL IS A RUN ────────────────────────────────────────────────────────
+ * The first version of this asked which way the page moved overall, and
+ * called it a scroll only when nearly every shift agreed on a direction. A
+ * creator who scrolls down and then straight back up moves the page fourteen
+ * times with a net movement of nothing — coherence 0.01 — and that "page
+ * change" minted a click and a zoom at the very start of a demo.
+ *
+ * What a scroll has that nothing else has is a RUN: several frames in a row,
+ * each moved the same way as the one before. A page loading wobbles as its
+ * layout settles, and a real click on "API Keys" measured a longest run of 4.
+ * Every scroll measured in the same recordings ran 6, 7 and more. A run of
+ * five is the line, and a long one-directional drift still counts as well.
+ */
+const SCROLL_RUN = 5;
+const SCROLL_FRAMES = 5;
 const SCROLL_COHERENCE = 0.85;
 
 function scrollingAround(mot, t) {
   let n = 0;
   let abs = 0;
   let net = 0;
+  let run = 0;
+  let longest = 0;
+  let sign = 0;
   for (const m of mot) {
     if (m.t < t - 0.4) continue;
     if (m.t > t + 1.4) break;
     const dy = num(m.dy, 0);
-    if (Math.abs(dy) < SCROLL_SHIFT) continue;
+    if (Math.abs(dy) < SCROLL_SHIFT) { run = 0; sign = 0; continue; }
+    const sg = Math.sign(dy);
+    run = sg === sign ? run + 1 : 1;
+    sign = sg;
+    longest = Math.max(longest, run);
     n++;
     abs += Math.abs(dy);
     net += dy;
   }
+  if (longest >= SCROLL_RUN) return true;
   return n >= SCROLL_FRAMES && abs >= SCROLL_SUM && Math.abs(net) / abs >= SCROLL_COHERENCE;
 }
 
@@ -1013,9 +1052,25 @@ function navColumn(els) {
   const cy = rows.map((e) => e.bbox[1] + e.bbox[3] / 2);
   const spread = (v) => Math.max(...v) - Math.min(...v);
   if (spread(cy) < spread(cx) * 2) return null;
+  /**
+   * ── AND IT STOPS WHERE THE PAGE STARTS ─────────────────────────────────
+   * The model's sidebar boxes sit about a tenth of the frame too far right, so
+   * their right edges reach into the page content. Taken as the column's edge,
+   * that made a pointer resting on the billing page count as being "on Spend"
+   * in the sidebar, and a scroll there produced a sidebar click. The model
+   * places the page's own elements accurately, so the first of those to the
+   * right of the list is where the list ends.
+   */
+  const lefts = rows.map((e) => e.bbox[0]).sort((a, b) => a - b);
+  const listLeft = lefts[Math.floor(lefts.length / 2)];
+  const page = els
+    .filter((e) => Array.isArray(e.bbox) && !["nav_item", "sidebar", "avatar"].includes(String(e.type)))
+    .map((e) => e.bbox[0])
+    .filter((x) => x >= listLeft + 0.05);
+  const right = Math.max(...rows.map((e) => e.bbox[0] + e.bbox[2]));
   return {
-    x0: Math.max(0, Math.min(...rows.map((e) => e.bbox[0])) - EDGE_SLOP),
-    x1: Math.max(...rows.map((e) => e.bbox[0] + e.bbox[2])),
+    x0: Math.max(0, Math.min(...lefts) - EDGE_SLOP),
+    x1: page.length ? Math.min(right, Math.min(...page) - 0.005) : right,
   };
 }
 
@@ -1050,6 +1105,8 @@ export function controlUnder(shots, t, x, y) {
        * the item, so the box is widened to the whole column the list occupies.
        */
       if (column && String(el.type) === "nav_item") {
+        // Past the column's right edge is the page, not the list: no slack.
+        if (x > column.x1) continue;
         ex = column.x0;
         ew = column.x1 - column.x0;
       }
@@ -1154,10 +1211,23 @@ export function shapeFromControls(track, shots) {
  * that wanders is the bug.
  */
 
-/** How long a new position must hold before the pointer will move to it. */
+/** How long a dart has to come back within to count as one. */
 const STAY = 0.22;
-/** Within this, two positions are the same place. */
-const SAME = 0.02;
+/**
+ * A move smaller than this is the hand, and is always followed.
+ *
+ * ── THE FIRST VERSION HELD FAR TOO MUCH ─────────────────────────────────────
+ * It refused any move under 0.02 of the frame — thirty-eight pixels on a 1920
+ * recording — on the theory that small moves were noise. They were not. They
+ * were the creator sliding the last few pixels onto "API Keys" and stopping,
+ * and our pointer stayed where they had been. Measured across one recording
+ * the drawn pointer sat 33 pixels from the real one on average, and the real
+ * hand showed beside ours for the whole of the zoom. A pointer that follows
+ * every real move is covered by ours by construction; only the dart is wrong.
+ */
+const DART = 0.03;
+/** Coming back within this of where it left from is a return. */
+const BACK = 0.012;
 
 export function steadyPath(track, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
   if (!track || track.length < 3) return track || [];
@@ -1169,19 +1239,16 @@ export function steadyPath(track, { sourceWidth = 1920, sourceHeight = 1080 } = 
 
   for (let i = 1; i < track.length; i++) {
     const p = track[i];
-    if (apart(held, p) <= SAME) { out.push({ ...p, x: held.x, y: held.y }); continue; }
+    if (apart(held, p) < DART) { held = p; out.push(p); continue; }
 
-    /**
-     * It has moved. Is it going to stay moved? Look forward over the settling
-     * window: if the path comes back to where it started, this was an
-     * excursion and nothing is drawn. If it is still away — whether it stopped
-     * somewhere new or is travelling on through — it is real.
-     */
+    // A big move. If the path comes back to where it left from inside the
+    // window, it was an excursion and nothing is drawn; otherwise it is real,
+    // whether it stopped somewhere new or is travelling on through.
     let returns = false;
     for (let j = i + 1; j < track.length; j++) {
       const q = track[j];
       if (num(q.t) - num(p.t) > STAY) break;
-      if (apart(held, q) <= SAME) { returns = true; break; }
+      if (apart(held, q) <= BACK) { returns = true; break; }
     }
     if (returns) { out.push({ ...p, x: held.x, y: held.y }); continue; }
 
@@ -1192,44 +1259,21 @@ export function steadyPath(track, { sourceWidth = 1920, sourceHeight = 1080 } = 
 }
 
 /**
- * While the pointer is resting on a control, hold it perfectly still.
+ * Kept as a named step so the pipeline reads the same, but it no longer moves
+ * anything.
  *
- * ── WHY THE JITTER MATTERS MORE THAN IT SOUNDS ───────────────────────────────
- * A hand on a trackpad is never quite still. The recorded cursor wobbles a few
- * pixels while somebody reads, and the tracker faithfully reports the wobble,
- * and the drawn pointer wobbles with it — except a frame or two behind, because
- * of smoothing. Two hands a few pixels apart, one lagging the other, is exactly
- * what a viewer reports as seeing two cursors: ours no longer covers theirs.
- *
- * The creator asked for it directly: it "should ignore the little scrolls or
- * movements of the mouse from the browser".
- *
- * The position held is the one FIRST seen inside the control, not its centre.
- * That distinction is the whole point. The real cursor stopped where it
- * stopped, and snapping ours to the middle of the button would invent an
- * offset between the two rather than remove one.
+ * ── WHY THE LOCK WAS REMOVED ─────────────────────────────────────────────────
+ * It held the pointer at the FIRST position seen on a control until the hand
+ * moved a twentieth of the frame away, to stop a resting hand's wobble pulling
+ * ours off the real one. The wobble was never the problem: while a real
+ * pointer rests the tracker cannot see it at all, so ours already holds at the
+ * last sighting, which is where the real one is. What the lock did instead was
+ * pin ours to the spot the hand ENTERED the control, nine pixels from where it
+ * stopped, and keep it there after the hand had left — 78 and 109 pixels
+ * behind on the way out. That is the real hand showing beside ours.
  */
-export function restOnControls(track, shots, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
-  if (!shots || !shots.length || !track || !track.length) return track || [];
-  const ratio = sourceHeight / Math.max(1, sourceWidth);
-  const apart = (a, b) => Math.hypot(num(b.x) - num(a.x), (num(b.y) - num(a.y)) * ratio);
-
-  const out = [];
-  let lock = null;
-
-  for (const p of track) {
-    const on = controlUnder(shots, num(p.t), num(p.x, 0.5), num(p.y, 0.5));
-    const label = on ? on.type + "|" + on.label : "";
-    // Leaving the control, or crossing to a different one, releases the hold.
-    // So does drifting far enough that holding would be the visible error.
-    if (!on || !lock || lock.label !== label || apart(lock, p) > 0.05) {
-      lock = on ? { label, x: num(p.x), y: num(p.y) } : null;
-      out.push(p);
-      continue;
-    }
-    out.push({ ...p, x: lock.x, y: lock.y });
-  }
-  return out;
+export function restOnControls(track) {
+  return track || [];
 }
 
 /**
