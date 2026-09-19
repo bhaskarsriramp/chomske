@@ -37,8 +37,9 @@ import { extractFrames } from "../media/ffmpeg.js";
 import {
   newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull } from "./events.js";
+import { inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
 import { alignCapture } from "./sync.js";
+import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
 
@@ -83,7 +84,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   onProgress(0.04, "Checking the pointer against the recording");
   const aligned = await alignCapture({ video, capture, duration, sourceWidth: source?.width || 1920, sourceHeight: source?.height || 1080 }).catch((err) => {
     console.error("[studio] capture alignment failed:", err);
-    return { track: capture.track || [], motion: capture.motion || [], sync: { offset: 0, confident: false, reason: "the check could not be run" } };
+    return { track: capture.track || [], motion: capture.motion || [], screen: null, sync: { offset: 0, confident: false, reason: "the check could not be run" } };
   });
   const capturedTrack = aligned.track;
   const capturedMotion = aligned.motion;
@@ -94,6 +95,9 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     samples: capturedTrack,
     motion: capturedMotion,
     duration,
+    // What the finished video says changed, with loading spinners and other
+    // animations discounted. Without it a spinner reads as a page navigating.
+    screen: aligned.screen,
   });
 
   /* ── Everything the model reads ──────────────────────────────────────── */
@@ -197,14 +201,38 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
 
   const tl = emptyTimeline({ duration, ...source });
 
-  // The pointer path, smoothed once here rather than at render time: the editor
-  // draws the same path the export will, and re-smoothing on every preview
-  // frame in the browser would cost more than it is worth.
-  tl.track = smoothTrack(capturedTrack, {
-    rate: 60,
-    strength: tl.cursor.smoothing,
-    duration,
-  });
+  /**
+   * ── THE POINTER IS COMPOSED, NOT COPIED ──────────────────────────────────
+   * Where the recording gives enough real clicks to work from, the path drawn
+   * in the demo is built from them — resting on each control, travelling to
+   * the next along a curve a hand would make, arriving a beat before the press
+   * (intent.js). Where it does not, the recovered path is smoothed and used as
+   * before. Either way this happens once, here: the editor draws the same path
+   * the export will.
+   *
+   * What was actually seen is never overwritten. It stays in capture.track, so
+   * a better composer tomorrow can be run against a recording made today.
+   */
+  const composed = intentPath(events, { shots, track: capturedTrack, duration });
+  tl.track = composed
+    ? composed.path
+    : smoothTrack(capturedTrack, { rate: 60, strength: tl.cursor.smoothing, duration });
+  tl.cursor = {
+    ...tl.cursor,
+    mode: composed ? "intent" : "recorded",
+    captured_px: aligned.sync?.cursor_px > 0 ? aligned.sync.cursor_px : 22,
+  };
+
+  // Where the pointer really was, thinned, so the renderer can erase the one
+  // burnt into the recording. Only worth carrying when the drawn path is not
+  // the recovered one — otherwise the drawn pointer is already on top of it.
+  tl.captured = composed ? thin(capturedTrack) : [];
+  if (composed) {
+    console.log(
+      `[studio] pointer composed from ${composed.anchors.length} clicks ` +
+        `(${composed.snapped} snapped to a control the model named)`
+    );
+  }
   tl.events = events;
   tl.steps = steps;
   tl.zooms = zooms;
@@ -215,7 +243,10 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // and the pointer log's idle stretches are usually the same silence seen
   // twice. mergedCuts() folds them; ids are re-minted after, so every cut in
   // the document is one the editor can select and delete.
-  tl.cuts = mergeCuts([...dead, ...idleCuts(events, { duration })], duration);
+  // The camera is decided first and the cuts give way to it: a cut that lands
+  // on a zoom's ramp deletes the frames the move was going to play on, and what
+  // survives is a jump. See events.js partCuts.
+  tl.cuts = partCuts(mergeCuts([...dead, ...idleCuts(events, { duration })], duration), zooms);
 
   tl.captions = {
     enabled: captions.cues.length > 0,
@@ -257,6 +288,25 @@ export async function generateCaptions({ audio, duration }) {
   if (!audio) return { cues: [], language: "", language_label: "", spend };
   const res = await writeCaptions(audio, { duration, spend });
   return { ...res, spend };
+}
+
+/**
+ * The recovered path at fifteen samples a second.
+ *
+ * The erase patch is a little larger than a cursor and moves between samples in
+ * a straight line, so more resolution than this buys nothing and costs document
+ * size. A sample is kept when the pointer has moved far enough to matter or
+ * when enough time has passed that the patch would otherwise drift.
+ */
+function thin(track, { step = 1 / 15, move = 0.004 } = {}) {
+  const out = [];
+  for (const p of track || []) {
+    const last = out[out.length - 1];
+    if (!last || p.t - last.t >= step || Math.hypot(p.x - last.x, p.y - last.y) >= move) {
+      out.push({ t: p.t, x: p.x, y: p.y });
+    }
+  }
+  return out;
 }
 
 /** Seconds the camera must sit at the full frame between two zooms. */

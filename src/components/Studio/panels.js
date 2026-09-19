@@ -615,6 +615,11 @@ const CAPTION_PX = { min: 12, max: 96 };
    Cursor
    ──────────────────────────────────────────────────────────────────────────── */
 
+const CURSOR_MODE_HINT = {
+  intent: "Built from the clicks in the recording: it rests on each control, travels to the next and arrives just before the press. Steadier than a real hand, and the pointer in the recording is reconstructed away underneath it.",
+  recorded: "The pointer path recovered from the recording, smoothed. Use this when a demo is mostly scrolling or dragging, which a composed path does not describe.",
+};
+
 export function CursorPanel({ tl, edit }) {
   const cur = tl.cursor || {};
   const points = tl.track?.length || 0;
@@ -630,7 +635,26 @@ export function CursorPanel({ tl, edit }) {
       ) : (
         <>
           <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--ink-mute)", marginTop: -4 }}>
-            {points.toLocaleString()} points recovered, {clicks} click{clicks === 1 ? "" : "s"} detected.
+            {clicks} click{clicks === 1 ? "" : "s"} detected, {points.toLocaleString()} points in the path.
+          </div>
+          <div>
+            <Label>Path</Label>
+            <Segmented
+              full
+              size="xs"
+              value={cur.mode || "intent"}
+              onChange={(v) => edit({ cursor: { ...cur, mode: v } }, v === "intent" ? "Composed pointer" : "Recorded pointer")}
+              options={[
+                { value: "intent", label: "Composed" },
+                { value: "recorded", label: "As recorded" },
+              ]}
+            />
+            <div style={{ fontSize: 11.5, lineHeight: 1.5, color: "var(--ink-mute)", marginTop: 6 }}>
+              {CURSOR_MODE_HINT[cur.mode === "recorded" ? "recorded" : "intent"]}
+            </div>
+            <div style={{ fontSize: 11.5, lineHeight: 1.5, color: "var(--ink-mute)", marginTop: 6 }}>
+              Changing this takes effect the next time the demo is analysed.
+            </div>
           </div>
           <Toggle
             label="Draw a clean cursor"
@@ -708,7 +732,7 @@ export function CursorPanel({ tl, edit }) {
 
 export function CanvasPanel({ tl, edit }) {
   const c = tl.canvas || {};
-  const bg = c.background || { kind: "gradient", value: "dusk" };
+  const bg = c.background || { kind: "none" };
 
   return (
     <Panel title="Canvas">
@@ -717,9 +741,12 @@ export function CanvasPanel({ tl, edit }) {
         <Segmented
           full
           size="xs"
-          value={c.aspect}
+          value={c.aspect || "source"}
           onChange={(v) => edit({ canvas: { ...c, aspect: v } }, "Aspect")}
           options={[
+            // First and default: the recording's own shape, at its own size.
+            // Anything else scales the picture to fit and softens the text.
+            { value: "source", label: "As recorded" },
             { value: "16:9", label: "16:9" },
             { value: "9:16", label: "9:16" },
             { value: "1:1", label: "1:1" },
@@ -779,7 +806,7 @@ export function CanvasPanel({ tl, edit }) {
         min={0}
         max={0.22}
         step={0.005}
-        value={c.padding ?? 0.06}
+        value={c.padding ?? 0}
         onChange={(v) => edit({ canvas: { ...c, padding: v } }, "Video size")}
         format={(v) => pct(1 - v * 2)}
       />
@@ -788,7 +815,7 @@ export function CanvasPanel({ tl, edit }) {
         min={0}
         max={56}
         step={1}
-        value={c.radius ?? 18}
+        value={c.radius ?? 0}
         onChange={(v) => edit({ canvas: { ...c, radius: v } }, "Corner radius")}
         format={(v) => `${Math.round(v)}px`}
       />

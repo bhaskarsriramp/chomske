@@ -17,7 +17,7 @@
  * platform uses the word. Every position in a timeline is a fraction of the
  * frame, so a 4K export is the same design drawn with more pixels.
  */
-import { ASPECTS } from "./timeline.js";
+import { ASPECT_KEYS } from "./timeline.js";
 
 const pos = (v, d) => {
   const n = Number(v);
@@ -44,9 +44,12 @@ export const MAX_RESOLUTION =
   RESOLUTIONS.filter((r) => r <= pos(process.env.STUDIO_MAX_RESOLUTION, 2160)).pop() || 1080;
 
 export const DEFAULT_EXPORT = Object.freeze({
-  preset: "youtube",
-  aspect: "16:9",
-  resolution: 1080,
+  preset: "original",
+  aspect: "source",
+  // Not 1080: with aspect "source" this is a ceiling, never a target, so a
+  // recording made on a larger display keeps its own pixels instead of being
+  // scaled down to a number.
+  resolution: 1440,
   fps: 30,
   codec: "h264",
   format: "mp4",
@@ -66,6 +69,10 @@ export const DEFAULT_EXPORT = Object.freeze({
  * megabytes.
  */
 export const PRESETS = [
+  // First, and the default. Every other preset reshapes the recording to fit a
+  // platform; this one leaves it exactly as it was captured, which is the only
+  // way interface text survives an export unsoftened.
+  { id: "original", label: "Original", hint: "The recording's own size · 30fps", options: { aspect: "source", resolution: 1440, fps: 30, format: "mp4" } },
   { id: "youtube", label: "YouTube", hint: "1920×1080 · 30fps", options: { aspect: "16:9", resolution: 1080, fps: 30, format: "mp4" } },
   { id: "demo4k", label: "4K demo", hint: "3840×2160 · 60fps", options: { aspect: "16:9", resolution: 2160, fps: 60, format: "mp4", speed: "best" } },
   { id: "reels", label: "Reels / Shorts", hint: "1080×1920 · 30fps", options: { aspect: "9:16", resolution: 1080, fps: 30, format: "mp4" } },
@@ -92,7 +99,10 @@ export const EXPORT_MULTIPLIERS = {
  */
 export function cleanExportOptions(input, { hevc = false, maxResolution = MAX_RESOLUTION } = {}) {
   const raw = input && typeof input === "object" ? input : {};
-  const preset = presetById(raw.preset);
+  // The default preset counts as a choice. Without this its options were listed
+  // in PRESETS and never applied to anything, because nothing had asked for it
+  // by name yet.
+  const preset = presetById(raw.preset || DEFAULT_EXPORT.preset);
   const o = { ...DEFAULT_EXPORT, ...(preset?.options || {}), ...raw };
 
   const one = (v, list, d) => (list.includes(v) ? v : d);
@@ -103,7 +113,7 @@ export function cleanExportOptions(input, { hevc = false, maxResolution = MAX_RE
 
   return {
     preset: preset?.id || "",
-    aspect: one(o.aspect, Object.keys(ASPECTS), "16:9"),
+    aspect: one(o.aspect, ASPECT_KEYS, "source"),
     // A GIF above 720 is a file nobody can load; the cap is not negotiable.
     resolution: Math.min(resolution, format === "gif" ? 720 : maxResolution),
     fps: format === "gif" ? Math.min(fps, 15) : fps,
@@ -133,7 +143,11 @@ export function exportPrice(baseCost, o) {
 
 /** Constant-quality target when no bitrate was asked for. */
 export function crfFor(o) {
-  const base = o.codec === "hevc" ? 26 : 21;
+  // 18 rather than 21: a demo is text on flat colour, where the artefact that
+  // shows first is ringing around letter edges, and it shows at 21. The extra
+  // bytes are cheap on screen content — it compresses to almost nothing between
+  // the moments something actually moves.
+  const base = o.codec === "hevc" ? 23 : 18;
   // Screen content is flat colour and hard edges, which H.264 handles very
   // well; the quality that matters is text sharpness, and that is lost to a
   // high CRF long before it is lost to a low bitrate. 4K gets a touch more

@@ -162,7 +162,9 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
                   size="xs"
                   value={options.aspect}
                   onChange={(v) => setOver((o) => ({ ...o, aspect: v }))}
-                  options={(config?.timeline?.aspects || ["16:9"]).map((a) => ({ value: a, label: a }))}
+                  // "source" is not a ratio and reads as nonsense next to
+                  // "16:9", so it is named for what it does.
+                  options={(config?.timeline?.aspects || ["16:9"]).map((a) => ({ value: a, label: a === "source" ? "As recorded" : a }))}
                 />
               </Row>
               <Row label="Resolution">

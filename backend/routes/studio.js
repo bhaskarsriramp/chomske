@@ -55,7 +55,7 @@ import {
   PRESETS, DEFAULT_EXPORT, EXPORT_MULTIPLIERS, cleanExportOptions, exportPrice,
 } from "../services/studio/exportOptions.js";
 import {
-  ASPECTS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, BLUR_KINDS,
+  ASPECT_KEYS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, BLUR_KINDS,
   sanitizeTimeline, layout, newId,
 } from "../services/studio/timeline.js";
 import { GRADIENTS } from "../services/studio/render/frame.js";
@@ -161,7 +161,7 @@ router.get("/config", wrap(async (req, res) => {
       hevc,
     },
     timeline: {
-      aspects: Object.keys(ASPECTS),
+      aspects: ASPECT_KEYS,
       cursor_themes: CURSOR_THEMES,
       caption_styles: CAPTION_STYLES,
       easings: EASINGS,

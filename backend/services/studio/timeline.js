@@ -28,7 +28,8 @@
  *   cuts     [{ id, start, end, reason, auto }]          removed from the output
  *   zooms    [{ id, start, end, x, y, w, h, level, easing, follow, auto }]
  *   cursor   { enabled, theme, size, smoothing, glow, trail, ripple, hide_real }
- *   track    [{ t, x, y, shape, confidence }]            recovered cursor path
+ *   track    [{ t, x, y, shape }]                        the path that is DRAWN
+ *   captured [{ t, x, y }]                               where the pointer really was
  *   events   [{ id, t, type, x, y, ... }]                clicks, scrolls, typing
  *   steps    [{ id, start, end, title, detail, importance, camera }]
  *   captions { enabled, style, position, size, px, color, x, y, lang }
@@ -41,12 +42,26 @@
 import crypto from "crypto";
 
 /** Output frame shapes. Keyed the way a creator names them, not W:H maths. */
+/**
+ * The shapes a demo can be exported in.
+ *
+ * "source" is first and is the default, and it is not a shape at all — it means
+ * the recording's own. A screen recording is already the shape somebody chose
+ * when they sized the window, and putting it inside a 16:9 frame means scaling
+ * it to fit: a 1920 wide capture rendered into a 1690 wide box, every pixel
+ * resampled, every letter softened. That is invisible on a photograph and
+ * glaring on interface text, which is the only thing a product demo contains.
+ * Exporting at the recording's own size copies pixels one for one.
+ */
 export const ASPECTS = {
   "16:9": [1920, 1080],
   "9:16": [1080, 1920],
   "1:1": [1080, 1080],
   "4:5": [1080, 1350],
 };
+
+/** Aspect choices including "source". ASPECTS holds only the fixed shapes. */
+export const ASPECT_KEYS = ["source", ...Object.keys(ASPECTS)];
 
 export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
 export const CAPTION_STYLES = ["trylipi", "hormozi", "apple", "minimal", "neon"];
@@ -67,7 +82,16 @@ const pick = (v, list, d) => (list.includes(v) ? v : d);
    Defaults
    ──────────────────────────────────────────────────────────────────────────── */
 
+/** Where the drawn pointer's path comes from. See intent.js. */
+export const CURSOR_MODES = ["intent", "recorded"];
+
 export const defaultCursor = () => ({
+  // "intent": composed from the clicks the recording actually contains, resting
+  // on each control and travelling between them. "recorded": the recovered
+  // path, smoothed. Composed is the default because a recovered path carries
+  // every hesitation and twitch of a real hand, and none of them are what the
+  // demo is about.
+  mode: "intent",
   enabled: true,
   theme: "light",
   // Drawn larger than the captured pointer on purpose. The real cursor is burnt
@@ -79,6 +103,7 @@ export const defaultCursor = () => ({
   trail: 0,
   ripple: true,
   hide_real: true,
+  captured_px: 22,
 });
 
 export const defaultCaptions = () => ({
@@ -96,12 +121,25 @@ export const defaultCaptions = () => ({
   lang: "",
 });
 
+/**
+ * ── NOTHING AROUND THE RECORDING UNLESS SOMEBODY ASKS ────────────────────────
+ * This used to default to a gradient with six per cent padding and rounded
+ * corners — the look every screen-recorder markets itself with. It is the wrong
+ * default for this product twice over.
+ *
+ * It costs resolution: padding shrinks the picture inside the frame, so a 1920
+ * wide capture is resampled down to about 1690 and back up on playback, and the
+ * interface text — the entire content of a product demo — comes out soft. And
+ * it is a decision the creator has not made yet. The Canvas panel offers
+ * backgrounds, padding and corners; picking one is opting IN to a presentation
+ * frame, and until then what they recorded is what they see.
+ */
 export const defaultCanvas = () => ({
-  aspect: "16:9",
-  background: { kind: "gradient", value: "dusk" },
-  padding: 0.06,
-  radius: 18,
-  shadow: 0.5,
+  aspect: "source",
+  background: { kind: "none" },
+  padding: 0,
+  radius: 0,
+  shadow: 0,
 });
 
 export const defaultAudio = () => ({ voice: 1, music: [] });
@@ -116,6 +154,7 @@ export function emptyTimeline({ duration = 0, width = 1920, height = 1080, fps =
     zooms: [],
     cursor: defaultCursor(),
     track: [],
+    captured: [],
     events: [],
     steps: [],
     captions: defaultCaptions(),
@@ -799,7 +838,7 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
   // ── Canvas ────────────────────────────────────────────────────────────────
   const c = src.canvas || {};
   out.canvas = {
-    aspect: pick(c.aspect, Object.keys(ASPECTS), "16:9"),
+    aspect: pick(c.aspect, ASPECT_KEYS, "source"),
     background: {
       kind: pick(c.background?.kind, ["gradient", "solid", "image", "none"], "gradient"),
       value: text(c.background?.value ?? "dusk", 64),
@@ -854,6 +893,11 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     trail: clamp(num(cur.trail, 0), 0, 1),
     ripple: cur.ripple !== false,
     hide_real: cur.hide_real !== false,
+    mode: pick(cur.mode, CURSOR_MODES, "intent"),
+    // How big the captured pointer actually measured, in source pixels. The
+    // creator's display scaling decides it and nothing in the recording says,
+    // so sync.js measures it and the erase patch is sized from it.
+    captured_px: clamp(num(cur.captured_px, 22), 8, 96),
   };
 
   // ── The recovered path ────────────────────────────────────────────────────
@@ -868,6 +912,21 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       y: round4(frac(p.y)),
       shape: text(p.shape, 16) || "default",
     }))
+    .sort((a, b) => a.t - b.t);
+
+  /**
+   * ── WHERE THE POINTER REALLY WAS ──────────────────────────────────────────
+   * Not the path that gets drawn — `track` is that, and once composed it is a
+   * different path entirely. This is the recovered one, kept for exactly one
+   * job: telling the renderer where the pointer the operating system burnt into
+   * the recording is, so it can be removed (render/hide.js).
+   *
+   * Thinned hard, because it is only ever used to position a patch a little
+   * larger than a cursor. Fifteen samples a second is finer than the patch is.
+   */
+  out.captured = (src.captured || [])
+    .slice(0, 40000)
+    .map((p) => ({ t: round3(clamp(num(p.t), 0, total)), x: round4(frac(p.x)), y: round4(frac(p.y)) }))
     .sort((a, b) => a.t - b.t);
 
   // ── Events ────────────────────────────────────────────────────────────────
@@ -984,8 +1043,24 @@ export function drewCounts(tl, lay = layout(tl)) {
   };
 }
 
-/** Output pixel size for an aspect at a short-side resolution. */
-export function outputSize(aspect, resolution = 1080) {
+/**
+ * Output pixel size for an aspect at a short-side resolution.
+ *
+ * With aspect "source" the recording's own size wins, and is never scaled UP:
+ * a 1020 tall capture asked for "1440p" has no 1440 lines to give, and
+ * inventing them costs bitrate that would otherwise go on sharpening the lines
+ * it does have. It is scaled DOWN when a smaller export was asked for.
+ */
+export function outputSize(aspect, resolution = 1080, source = null) {
+  if (aspect === "source") {
+    const sw = num(source?.width);
+    const sh = num(source?.height);
+    if (sw > 1 && sh > 1) {
+      const short = Math.min(sw, sh);
+      const k = short > resolution ? resolution / short : 1;
+      return [Math.max(2, Math.round((sw * k) / 2) * 2), Math.max(2, Math.round((sh * k) / 2) * 2)];
+    }
+  }
   const [w, h] = ASPECTS[aspect] || ASPECTS["16:9"];
   const short = Math.min(w, h);
   const k = resolution / short;

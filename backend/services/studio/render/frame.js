@@ -60,8 +60,8 @@ const even = (n) => Math.max(2, Math.round(n / 2) * 2);
  * edge held the navigation, and the navigation is usually what tells a viewer
  * where they are.
  */
-export function videoBox({ aspect, resolution, sourceWidth, sourceHeight, padding = 0.06 }) {
-  const [W, H] = outputSize(aspect, resolution);
+export function videoBox({ aspect, resolution, sourceWidth, sourceHeight, padding = 0 }) {
+  const [W, H] = outputSize(aspect, resolution, { width: sourceWidth, height: sourceHeight });
   const pad = clamp(padding, 0, 0.3);
   const boxW = W * (1 - pad * 2);
   const boxH = H * (1 - pad * 2);

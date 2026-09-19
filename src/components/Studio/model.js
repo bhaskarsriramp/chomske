@@ -24,6 +24,7 @@ export const ASPECTS = {
   "4:5": [1080, 1350],
 };
 
+export const CURSOR_MODES = ["intent", "recorded"];
 export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
 export const CAPTION_STYLES = ["trylipi", "hormozi", "apple", "minimal", "neon"];
 export const EASINGS = ["smooth", "snappy", "slow", "linear"];
@@ -306,11 +307,13 @@ export function projectRect(r, cam) {
  * (backend/services/studio/render/frame.js). Returned as fractions rather than
  * pixels because the preview is whatever size the browser window left for it.
  */
-export function videoBox({ aspect, sourceWidth, sourceHeight, padding = 0.06 }) {
-  const [AW, AH] = ASPECTS[aspect] || ASPECTS["16:9"];
-  const outAr = AW / AH;
-  const pad = clamp(num(padding, 0.06), 0, 0.3);
+export function videoBox({ aspect, sourceWidth, sourceHeight, padding = 0 }) {
   const srcAr = sourceWidth > 0 && sourceHeight > 0 ? sourceWidth / sourceHeight : 16 / 9;
+  // "source" is the recording's own shape, so the frame and the picture have
+  // the same ratio and the picture fills it. Mirrors timeline.js outputSize.
+  const [AW, AH] = ASPECTS[aspect] || (aspect === "source" ? [srcAr, 1] : ASPECTS["16:9"]);
+  const outAr = AW / AH;
+  const pad = clamp(num(padding, 0), 0, 0.3);
 
   // In fractions of the output frame, the available box is (1-2p) on each side.
   const boxW = 1 - pad * 2;

@@ -33,7 +33,7 @@
  * the editor shows the low ones differently, and the creator can add or remove
  * one by hand. A missed click costs a zoom; it does not cost the recording.
  */
-import { newId } from "./timeline.js";
+import { newId, rampsOf } from "./timeline.js";
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -75,6 +75,18 @@ export const RULES = {
   navEnergy: 0.02,
   /** Repaints closer together than this are one navigation, not several. */
   navGap: 0.4,
+  /**
+   * How much of the screen the VIDEO must agree changed, ignoring anything
+   * that was merely animating.
+   *
+   * The browser's own summary is a single bounding box around everything that
+   * changed, so a spinner in the middle and the pointer near an edge produce a
+   * box spanning the frame — indistinguishable from a page replacing itself.
+   * That is how a demo collected a click for every turn of a loading spinner.
+   * sync.js measures the same moment from the finished video, in cells, with
+   * the animations discounted; below this share of them, nothing navigated.
+   */
+  navCover: 0.12,
   /** A scroll changes a lot of the screen too; this is its ceiling. */
   scrollMaxEnergy: 0.42,
   /** Below this, nothing happened worth calling an event. */
@@ -251,7 +263,7 @@ const GAP_REST = 0.25;
  *
  * @returns {Array<{id,t,type,x,y,dy,text,confidence,source}>}
  */
-export function inferEvents({ samples, motion, duration = 0 }) {
+export function inferEvents({ samples, motion, duration = 0, screen = null }) {
   const pts = cleanSamples(samples, { duration });
   const mot = cleanMotion(motion, { duration });
   if (!mot.length) return [];
@@ -271,6 +283,7 @@ export function inferEvents({ samples, motion, duration = 0 }) {
   let lastNav = -Infinity;
   for (const m of mot) {
     if (m.energy < RULES.navEnergy || m.w < RULES.navBox || m.h < RULES.navBox) continue;
+    if (!screenAgrees(screen, m.t)) continue;
     if (m.t - lastNav < RULES.navGap) {
       lastNav = m.t;
       continue;
@@ -459,6 +472,26 @@ export function inferEvents({ samples, motion, duration = 0 }) {
   return events
     .filter((e) => !e.drop && e.type !== "type_end")
     .sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Does the recording itself say the screen changed at this moment?
+ *
+ * Absent a reading (an older analysis, or a video that could not be re-read)
+ * the answer is yes, and the browser's summary stands on its own as it always
+ * did. This only ever removes a navigation nothing corroborates.
+ */
+function screenAgrees(screen, t) {
+  const series = screen && screen.motion;
+  if (!series || !series.length) return true;
+  let best = null;
+  for (const m of series) {
+    const d = Math.abs(m.t - t);
+    if (d > 0.25) continue;
+    if (!best || d < Math.abs(best.t - t)) best = m;
+  }
+  if (!best) return true;
+  return best.cover >= RULES.navCover;
 }
 
 function event(type, t, x, y, extra = {}) {
@@ -779,3 +812,62 @@ export default {
   RULES, cleanSamples, cleanMotion, speeds, dwells, inferEvents, idleCuts,
   zoomsFromClicks, anticipateClicks, containing, restToFull,
 };
+
+/**
+ * Cuts, moved out of the way of the camera.
+ *
+ * ── A CUT THAT EATS A RAMP IS A JUMP CUT ON THE LENS ─────────────────────────
+ * Cuts and zooms are decided independently — one from dead air, the other from
+ * clicks — and they are both spans on the same recording, so they collide. When
+ * they do, the collision is invisible in the timeline and brutal in the export.
+ *
+ * A real one: the creator clicks a menu item at 4.42s, the page starts loading
+ * at 4.54s, and the loading is dead air so it is cut from 4.5s. The zoom built
+ * for that click runs 4.12–4.97 and its camera is moving from 3.57 to 5.39. Cut
+ * everything after 4.5 and the ramp OUT no longer exists, and neither does most
+ * of the hold. What plays is the camera arriving at 2x and the picture changing
+ * underneath it in one frame — measured at 1.00x to 1.98x between two
+ * consecutive frames. The creator described it as "in a flash, there is no
+ * smooth transition", which is exactly right: there is no transition at all,
+ * because the frames it would have played on were thrown away.
+ *
+ * The camera wins. A cut exists to save the viewer three seconds of a spinner;
+ * a zoom exists to show them the thing the demo is about. So the cut gives way:
+ * it starts after the camera has finished leaving, or ends before it starts
+ * arriving, and if that leaves too little to be worth cutting it is dropped.
+ */
+export function partCuts(cuts, zooms, { min = 0.5 } = {}) {
+  const spans = (zooms || []).map((z) => {
+    const r = rampsOf(z);
+    return { a: num(z.start) - r.in, b: num(z.end) + r.out };
+  });
+  const out = [];
+
+  for (const c of cuts || []) {
+    let s = num(c.start);
+    let e = num(c.end);
+    let gone = false;
+
+    for (const z of spans) {
+      if (z.b <= s || z.a >= e || gone) continue;
+      if (z.a <= s && z.b >= e) {
+        // The camera is moving for the whole of this cut. There is nothing
+        // left to remove.
+        gone = true;
+      } else if (z.a <= s) {
+        s = z.b;
+      } else if (z.b >= e) {
+        e = z.a;
+      } else {
+        // The camera move sits inside the cut, which splits it. Keeping the
+        // longer half is simpler than splitting and merging afterwards, and a
+        // cut is dead air either way.
+        if (z.a - s >= e - z.b) e = z.a;
+        else s = z.b;
+      }
+    }
+
+    if (!gone && e - s >= min) out.push({ ...c, start: round3(s), end: round3(e) });
+  }
+  return out;
+}

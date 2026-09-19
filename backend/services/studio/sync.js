@@ -52,6 +52,17 @@ const LONG_SECONDS = 600;
 const READ_EDGE = 480;
 /** Per-pixel difference that counts as changed. Matches the browser tracker. */
 const DIFF = 18;
+/** Columns the frame is divided into when asking WHERE things changed. */
+const GRID_W = 40;
+/** Changed pixels in a cell before the cell counts as having changed. */
+const CELL_MIN = 3;
+/** The window over which a cell is judged to be animating rather than reacting. */
+const BUSY_WINDOW = 1.5;
+/** Share of that window a cell must change in before it counts as an animation. */
+const BUSY_SHARE = 0.32;
+/** Cells of margin around an animation, since a cursor drawn over one is lost. */
+const BUSY_PAD = 1;
+
 /** The widest disagreement between the two clocks worth searching for. */
 const MAX_OFFSET = 3;
 /** Correlation the best shift must reach before it is believed. */
@@ -61,6 +72,7 @@ const MIN_MARGIN = 1.2;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const round3 = (v) => Math.round(v * 1000) / 1000;
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 /* ────────────────────────────────────────────────────────────────────────────
    What the video itself says
@@ -101,9 +113,14 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
 
   const energy = [];
   const sizes = [];
+  const grids = [];
   let parked = null;
   let prev = null;
   const N = W * H;
+  const gw = GRID_W;
+  const gh = Math.max(4, Math.round((gw * H) / W));
+  const cw = W / gw;
+  const ch = H / gh;
 
   await ffmpegToFrames(video, {
     width: W,
@@ -115,17 +132,25 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
       if (!prev) {
         prev = Buffer.from(buf);
         energy.push(0);
+        grids.push(new Uint8Array(gw * gh));
         return;
       }
       const mask = new Uint8Array(N);
+      const counts = new Uint16Array(gw * gh);
       let changed = 0;
       for (let i = 0; i < N; i++) {
         const d = buf[i] - prev[i];
         if (d > DIFF || d < -DIFF) {
           mask[i] = 1;
           changed++;
+          const y = (i / W) | 0;
+          const x = i - y * W;
+          counts[Math.min(gh - 1, (y / ch) | 0) * gw + Math.min(gw - 1, (x / cw) | 0)]++;
         }
       }
+      const grid = new Uint8Array(gw * gh);
+      for (let c = 0; c < grid.length; c++) grid[c] = counts[c] >= CELL_MIN ? 1 : 0;
+      grids.push(grid);
       energy.push(changed / N);
       // Only a frame where little moved can say anything about the pointer;
       // on a frame where the page repainted the patches are the page.
@@ -180,13 +205,171 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
    */
   const measured = sizes.length >= 12 ? sizes[Math.floor(sizes.length * 0.5)] : 0;
 
+  const read = readGrids(grids, gw, gh, fps);
+
   return {
     fps,
     energy,
     frames: energy.length,
     cursorPx: measured > 0 ? round3((measured * sourceWidth) / W) : 0,
     parked,
+    grid: { w: gw, h: gh },
+    busy: read.busy,
+    motion: read.motion,
   };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Animations, and what actually changed around them
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The spinners, and the real screen changes once they are discounted.
+ *
+ * ── WHY AN ANIMATION HAS TO BE FOUND BEFORE ANYTHING ELSE IS BELIEVED ────────
+ * A loading spinner is a small, compact, high-contrast thing that moves every
+ * frame in one place. To a tracker that finds the pointer by looking for a
+ * small, compact, high-contrast thing that moved, it is a better pointer than
+ * the pointer — and a still pointer, which makes no difference at all, cannot
+ * compete. So the drawn cursor leaves the mouse, sits on the spinner and turns
+ * with it, which is exactly what the creator described seeing.
+ *
+ * It corrupts the conclusions too. A spinner repaints the screen dozens of
+ * times while somebody's hand rests on a menu item, and every one of those
+ * repaints looks like the consequence of a click.
+ *
+ * Both fall out of one observation: THE POINTER NEVER CHANGES THE SAME PIXELS
+ * TWICE IN A ROW. It moves, so it changes somewhere new; when it stops it
+ * changes nothing at all. Anything that keeps changing in one place for half a
+ * second is an animation, and the places it does that are marked here — for the
+ * frames it is running, and not for the rest of the recording.
+ *
+ * What is left is the motion series: how much of the screen changed and where,
+ * counted in cells, with the animations taken out. A navigation touches cells
+ * all over the frame; a spinner touches four of them forever.
+ */
+function readGrids(grids, gw, gh, fps) {
+  const cells = gw * gh;
+  const n = grids.length;
+  const busy = [];
+  const busyFlags = grids.map(() => new Uint8Array(cells));
+  const half = Math.max(2, Math.round((BUSY_WINDOW * fps) / 2));
+
+  /**
+   * ── AN ANIMATION IS OFTEN NOT CONTINUOUS IN ANY ONE PLACE ─────────────────
+   * The first version of this asked whether a cell changed on every frame for
+   * half a second, and a rotating spinner failed it: the arc sweeps through a
+   * cell, leaves, and comes back a rotation later, so each cell changes in
+   * bursts with gaps between them. The test is how OFTEN a cell changes over a
+   * window, not whether it never stops.
+   *
+   * A pointer crossing a cell changes it for two or three frames out of the
+   * eighteen in that window and is nowhere near the threshold; a pointer that
+   * stops changes nothing at all. Only something that keeps redrawing itself in
+   * one place — a spinner, a progress bar, a caret, a playing video — gets
+   * close.
+   */
+  for (let c = 0; c < cells; c++) {
+    let sum = 0;
+    for (let i = 0; i < Math.min(n, half + 1); i++) sum += grids[i][c];
+    let openFrom = -1;
+    for (let i = 0; i < n; i++) {
+      const lo = Math.max(0, i - half);
+      const hi = Math.min(n - 1, i + half);
+      if (i > 0) {
+        const add = i + half;
+        const drop = i - half - 1;
+        if (add < n) sum += grids[add][c];
+        if (drop >= 0) sum -= grids[drop][c];
+      }
+      const hot = sum / (hi - lo + 1) >= BUSY_SHARE;
+      if (hot) {
+        busyFlags[i][c] = 1;
+        if (openFrom < 0) openFrom = i;
+      } else if (openFrom >= 0) {
+        busy.push({ c, start: round3(openFrom / fps), end: round3((i - 1) / fps) });
+        openFrom = -1;
+      }
+    }
+    if (openFrom >= 0) busy.push({ c, start: round3(openFrom / fps), end: round3((n - 1) / fps) });
+  }
+
+  // A cursor drawn over a spinner covers more than the spinner's own cells.
+  for (let i = 0; i < n; i++) {
+    const src = busyFlags[i];
+    const out = new Uint8Array(cells);
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        if (!src[y * gw + x]) continue;
+        for (let dy = -BUSY_PAD; dy <= BUSY_PAD; dy++) {
+          for (let dx = -BUSY_PAD; dx <= BUSY_PAD; dx++) {
+            const yy = y + dy;
+            const xx = x + dx;
+            if (yy >= 0 && yy < gh && xx >= 0 && xx < gw) out[yy * gw + xx] = 1;
+          }
+        }
+      }
+    }
+    busyFlags[i] = out;
+  }
+
+  const motion = [];
+  for (let i = 0; i < n; i++) {
+    const g = grids[i];
+    const b = busyFlags[i];
+    let hit = 0;
+    let live = 0;
+    let x0 = gw;
+    let y0 = gh;
+    let x1 = -1;
+    let y1 = -1;
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        const c = y * gw + x;
+        if (b[c]) continue;
+        live++;
+        if (!g[c]) continue;
+        hit++;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    motion.push({
+      t: round3(i / fps),
+      cover: live > 0 ? round3(hit / live) : 0,
+      x: x1 >= 0 ? round3(x0 / gw) : 0.5,
+      y: y1 >= 0 ? round3(y0 / gh) : 0.5,
+      w: x1 >= 0 ? round3((x1 - x0 + 1) / gw) : 0,
+      h: y1 >= 0 ? round3((y1 - y0 + 1) / gh) : 0,
+    });
+  }
+
+  return { busy, motion };
+}
+
+/**
+ * Whether a point was inside something that was animating at that moment.
+ *
+ * Used to throw away pointer sightings that are really a spinner. Throwing one
+ * away leaves a gap, and a gap is read as the pointer standing still — which,
+ * while somebody waits for a page to load, it almost certainly was.
+ */
+export function inBusy(screen, t, x, y) {
+  if (!screen || !screen.busy || !screen.busy.length || !screen.grid) return false;
+  const gw = screen.grid.w;
+  const gh = screen.grid.h;
+  const cx = Math.min(gw - 1, Math.max(0, Math.floor(x * gw)));
+  const cy = Math.min(gh - 1, Math.max(0, Math.floor(y * gh)));
+  for (const s of screen.busy) {
+    if (t < s.start - 0.1 || t > s.end + 0.1) continue;
+    const c = s.c;
+    const sy = (c / gw) | 0;
+    const sx = c - sy * gw;
+    if (Math.abs(sx - cx) <= BUSY_PAD && Math.abs(sy - cy) <= BUSY_PAD) return true;
+  }
+  return false;
 }
 
 /**
@@ -506,6 +689,25 @@ async function refineParked(video, approx, { width, height, fps }) {
   return found || approx;
 }
 
+/**
+ * Sightings with no neighbour, dropped.
+ *
+ * A pointer that is moving is seen repeatedly; one sighting on its own, with
+ * nothing either side of it, is something that flickered once — the tail of a
+ * spinner the filter above did not quite cover, a compression artefact, a
+ * dialog's drop shadow. Drawn, it is the pointer jumping across the picture for
+ * a single frame and back. Held instead, it is nothing at all.
+ */
+function dropLoners(track, { reach = 0.4 } = {}) {
+  if (track.length < 3) return track;
+  return track.filter((p, i) => {
+    const prev = track[i - 1];
+    const next = track[i + 1];
+    const near = (q) => q && Math.abs(num(q.t) - num(p.t)) <= reach;
+    return near(prev) || near(next);
+  });
+}
+
 /** The browser's pointer position at a moment, interpolated between samples. */
 function sampleAt(track, t) {
   if (!track.length) return null;
@@ -538,7 +740,7 @@ function sampleAt(track, t) {
 export async function alignCapture({ video, capture = {}, duration = 0, sourceWidth = 1920, sourceHeight = 1080 }) {
   const track = Array.isArray(capture.track) ? capture.track : [];
   const motion = Array.isArray(capture.motion) ? capture.motion : [];
-  const bare = { track, motion, sync: { offset: 0, score: 0, margin: 0, confident: false, cursor_px: 0, parked: false, reason: "" } };
+  const bare = { track, motion, screen: null, sync: { offset: 0, score: 0, margin: 0, confident: false, cursor_px: 0, parked: false, spinners: 0, reason: "" } };
   if (!video || !motion.length) return { ...bare, sync: { ...bare.sync, reason: "nothing to align" } };
 
   let screen;
@@ -560,17 +762,29 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
   }
   const opened = fillOpening(shifted, parked);
 
+  /**
+   * ── SIGHTINGS INSIDE AN ANIMATION ARE NOT SIGHTINGS ──────────────────────
+   * A spinner out-competes the pointer for the tracker's attention, so any
+   * sample that lands on one is a spinner reported as a mouse. Dropping it
+   * leaves a gap, and a gap means "held where it was last seen" — which, while
+   * a page loads, is what the pointer was really doing.
+   */
+  const clean = dropLoners(opened.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y))));
+
   return {
-    track: opened,
+    track: clean,
     motion: shiftTimes(motion, offset, { duration }),
+    screen,
     sync: {
       ...found,
       offset,
       cursor_px: screen.cursorPx,
       parked: opened.length > shifted.length,
+      spinners: screen.busy ? screen.busy.length : 0,
+      dropped: opened.length - clean.length,
       reason: found.confident ? "" : "too little movement to line the two clocks up; left as recorded",
     },
   };
 }
 
-export default { readScreen, clockOffset, shiftTimes, fillOpening, alignCapture };
+export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, alignCapture };

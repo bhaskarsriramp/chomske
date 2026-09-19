@@ -46,6 +46,7 @@ import { cleanExportOptions, crfFor, SPEEDS } from "../exportOptions.js";
 import { zoomFilter, cameraKeys } from "./camera.js";
 import { renderOverlay } from "./overlay.js";
 import { videoBox, radiusFor, drawBackground, drawCornerMask } from "./frame.js";
+import { hideFilter } from "./hide.js";
 import { buildAss, buildSrt, missingFonts, FONTS_DIR } from "./ass.js";
 
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
@@ -176,6 +177,28 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   const graph = [];
   let v = "0:v";
 
+  // ── 1b. The captured pointer ──────────────────────────────────────────
+  /**
+   * Before anything else touches the picture, and before the camera, because
+   * the path is in the recording's own coordinates. One delogo whose rectangle
+   * follows the recovered path; see hide.js for why that is possible at all.
+   */
+  let hid = null;
+  if (timeline.cursor?.hide_real !== false && (timeline.captured || []).length > 1) {
+    hid = hideFilter(timeline.captured, lay, {
+      sourceWidth,
+      sourceHeight,
+      cursorPx: timeline.cursor?.captured_px || 22,
+      // The path that WILL be drawn: wherever it already stands over the
+      // captured pointer, there is nothing to erase.
+      drawn: timeline.cursor?.enabled === false ? null : timeline.track,
+    });
+    if (hid) {
+      graph.push(`[${v}]${hid.filter}[vhide]`);
+      v = "vhide";
+    }
+  }
+
   // ── 2. Blur ───────────────────────────────────────────────────────────
   const blurs = placedSpans(timeline.blurs || [], lay);
   if (blurs.length) {
@@ -304,7 +327,13 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   // people most want a GIF of.
   const videoOut = isGif ? path.join(workDir, "gifsource.mp4") : dest;
 
-  const args = [...inputs, "-filter_complex", graph.join(";"), "-map", "[vout]"];
+  // ── WHY THE GRAPH GOES IN A FILE ──────────────────────────────────────
+  // The pointer-erase expression is one term per recovered sighting, so a two
+  // minute demo is tens of kilobytes of filter. Windows will not take a command
+  // line that long, and the failure is a truncated argument rather than an
+  // error anyone could read.
+  await fsp.writeFile(path.join(workDir, "graph.txt"), graph.join(";"), "utf8");
+  const args = [...inputs, "-filter_complex_script", "graph.txt", "-map", "[vout]"];
   if (a && !isGif) args.push("-map", a.includes(":") ? a : `[${a}]`);
 
   if (isGif) {
@@ -362,6 +391,8 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
     ...drewCounts(timeline, lay),
     captions: captionCount,
     overlay_frames: overlay?.drawn || 0,
+    hid: hid ? hid.samples : 0,
+    hid_seconds: hid ? hid.covered : 0,
     zoom_keys: keys.length,
     supersample: zoom?.supersample || 1,
     format: o.format,

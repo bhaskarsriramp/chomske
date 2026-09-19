@@ -122,6 +122,31 @@ export async function startCapture({ mic = true, systemAudio = true } = {}) {
   const videoTrack = display.getVideoTracks()[0];
   const settings = videoTrack?.getSettings?.() || {};
 
+  /**
+   * ── COULD WE HAVE ASKED FOR NO CURSOR AT ALL? ─────────────────────────────
+   * Everything painful about the pointer comes from it being composited into
+   * the pixels: it has to be recovered from frame differences, and once the
+   * drawn path is composed rather than copied it has to be reconstructed away
+   * again (backend render/hide.js). A recording that never contained one would
+   * make all of that unnecessary.
+   *
+   * We cannot switch yet — the clicks the whole edit is built from are inferred
+   * from watching the pointer, so removing it would remove the evidence. But
+   * whether this browser WOULD honour the request is worth knowing, and it
+   * costs nothing to ask. Recorded per demo so the decision is made on what
+   * real browsers do rather than on what the specification says.
+   */
+  const cursorControl = (() => {
+    try {
+      const supported = !!navigator.mediaDevices?.getSupportedConstraints?.().cursor;
+      const caps = videoTrack?.getCapabilities?.() || {};
+      const offered = Array.isArray(caps.cursor) ? caps.cursor.join(",") : "";
+      return { supported, offered, applied: String(settings.cursor || "") };
+    } catch {
+      return { supported: false, offered: "", applied: "" };
+    }
+  })();
+
   let micStream = null;
   if (mic) {
     try {
@@ -157,6 +182,7 @@ export async function startCapture({ mic = true, systemAudio = true } = {}) {
     label: videoTrack?.label || "",
     width: settings.width || 0,
     height: settings.height || 0,
+    cursorControl,
     hasSystemAudio: systemTracks.length > 0,
     hasMic: !!micStream,
     videoTrack,

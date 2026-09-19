@@ -67,7 +67,7 @@ export default function Preview({
   );
 
   /* ── The frame the preview is drawn into ─────────────────────────────── */
-  const [AW, AH] = ASPECT_OF(tl.canvas?.aspect);
+  const [AW, AH] = ASPECT_OF(tl.canvas?.aspect, srcW, srcH);
   const ar = AW / AH;
   let fw = box.w;
   let fh = box.w / ar;
@@ -120,12 +120,12 @@ export default function Preview({
     const dy = vb.y * H;
     const dw = vb.w * W;
     const dh = vb.h * H;
-    const radius = Math.round((tl.canvas?.radius ?? 18) * (H / 1080));
+    const radius = Math.round((tl.canvas?.radius ?? 0) * (H / 1080));
 
     ctx.save();
     roundRect(ctx, dx, dy, dw, dh, radius);
-    if ((tl.canvas?.shadow ?? 0.5) > 0.01) {
-      ctx.shadowColor = `rgba(0,0,0,${0.55 * (tl.canvas?.shadow ?? 0.5)})`;
+    if ((tl.canvas?.shadow ?? 0) > 0.01) {
+      ctx.shadowColor = `rgba(0,0,0,${0.55 * (tl.canvas?.shadow ?? 0)})`;
       ctx.shadowBlur = 38 * (H / 1080) + 14;
       ctx.shadowOffsetY = 16 * (H / 1080);
       ctx.fillStyle = "#000";
@@ -142,6 +142,16 @@ export default function Preview({
       const sw = Math.max(1, cam.w * v.videoWidth);
       const sh = Math.max(1, cam.h * v.videoHeight);
       ctx.drawImage(v, sx, sy, sw, sh, dx, dy, dw, dh);
+
+      // ── The pointer the recording came with ──────────────────────────
+      // The exporter reconstructs it away with ffmpeg's delogo (render/hide.js).
+      // A canvas cannot do that, but it can smear the same rectangle, which
+      // looks close enough that what the editor shows and what comes out of the
+      // export are the same edit. Without it the preview shows two pointers and
+      // the finished file does not.
+      if (tl.cursor?.hide_real !== false && (tl.captured || []).length > 1) {
+        paintHide(ctx, v, tl, srcT, cam, { dx, dy, dw, dh }, srcW, srcH);
+      }
 
       // ── Blur, on top of the picture and inside the clip ──────────────
       for (const b of blurs) {
@@ -178,7 +188,7 @@ export default function Preview({
         onPlayingChange?.(false);
       }
     }
-  }, [tl, lay, vb, blurs, clicks, srcW, onTime, onPlayingChange]);
+  }, [tl, lay, vb, blurs, clicks, srcW, srcH, onTime, onPlayingChange]);
 
   useEffect(() => {
     let raf = 0;
@@ -252,10 +262,10 @@ export default function Preview({
    ──────────────────────────────────────────────────────────────────────────── */
 
 const ASPECTS = { "16:9": [1920, 1080], "9:16": [1080, 1920], "1:1": [1080, 1080], "4:5": [1080, 1350] };
-const ASPECT_OF = (a) => ASPECTS[a] || ASPECTS["16:9"];
+const ASPECT_OF = (a, sw, sh) => ASPECTS[a] || (a === "source" && sw > 0 && sh > 0 ? [sw, sh] : ASPECTS["16:9"]);
 
 function paintBackground(ctx, design, W, H) {
-  const bg = design?.background || { kind: "gradient", value: "dusk" };
+  const bg = design?.background || { kind: "none" };
   ctx.clearRect(0, 0, W, H);
   if (bg.kind === "none") {
     ctx.fillStyle = "#000";
@@ -284,6 +294,52 @@ function paintBackground(ctx, design, W, H) {
  * secret was covered when it was not.
  */
 let scratch = null;
+/**
+ * Smear over the captured pointer, the way the export reconstructs it away.
+ *
+ * Skipped wherever the drawn pointer is already standing on it: our own is a
+ * third larger from the same hotspot, so it covers a small displacement, and
+ * smearing there would take the label underneath with it for nothing. Mirrors
+ * render/hide.js needed().
+ */
+function paintHide(ctx, video, tl, srcT, cam, d, srcW, srcH) {
+  const p = cursorAt(tl.captured, srcT);
+  if (!p) return;
+  const drawn = cursorAt(tl.track, srcT);
+  const px = Math.max(12, tl.cursor?.captured_px || 22);
+  if (drawn && Math.hypot((drawn.x - p.x) * srcW, (drawn.y - p.y) * srcH) <= Math.max(6, px * 0.35)) return;
+
+  // The same rectangle the exporter uses: a pointer hangs down and right of its
+  // hotspot, so this is not centred on it.
+  const bx = (p.x * srcW - px * 0.6) / srcW;
+  const by = (p.y * srcH - px * 0.15) / srcH;
+  const bw = (px * 1.37) / srcW;
+  const bh = (px * 1.55) / srcH;
+
+  const x = ((bx - cam.x) / cam.w) * d.dw + d.dx;
+  const y = ((by - cam.y) / cam.h) * d.dh + d.dy;
+  const w = (bw / cam.w) * d.dw;
+  const h = (bh / cam.h) * d.dh;
+  if (w < 1 || h < 1) return;
+  if (x > d.dx + d.dw || y > d.dy + d.dh || x + w < d.dx || y + h < d.dy) return;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  // Drawing the whole picture again, blurred, through that little window. The
+  // blur is scaled to the patch so a zoomed-in preview smears by the same
+  // amount of PICTURE rather than the same number of screen pixels.
+  ctx.filter = `blur(${Math.max(2, w * 0.55).toFixed(1)}px)`;
+  const sx = cam.x * video.videoWidth;
+  const sy = cam.y * video.videoHeight;
+  const sw = Math.max(1, cam.w * video.videoWidth);
+  const sh = Math.max(1, cam.h * video.videoHeight);
+  ctx.drawImage(video, sx, sy, sw, sh, d.dx, d.dy, d.dw, d.dh);
+  ctx.filter = "none";
+  ctx.restore();
+}
+
 function paintBlur(ctx, video, b, cam, d) {
   // The region, in the source's fractions, through the camera, into the frame.
   const x = ((b.x - cam.x) / cam.w) * d.dw + d.dx;
