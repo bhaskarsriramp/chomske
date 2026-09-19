@@ -839,11 +839,26 @@ const ORBIT_BREAK = 0.25;
 /** Fewer sightings than this in one run says nothing either way. */
 const ORBIT_MIN = 7;
 /** How long it has to keep it up. Shorter than this is a hand being adjusted. */
-const ORBIT_SPAN = 0.5;
+const ORBIT_SPAN = 0.4;
 /** Spinners are small. A box bigger than this is somebody using the screen. */
 const ORBIT_BOX = 0.05;
-/** Path length as a multiple of the box it stays inside. */
-const ORBIT_WIND = 2.5;
+/**
+ * Path length as a multiple of the box it stays inside.
+ *
+ * Measured across two recordings: runs where the pointer was really resting or
+ * really travelling came in at 1.0 to 1.3. The spinner runs came in at 2.2,
+ * 2.7, 3.0 and 7.9. There is a wide empty gap between those two populations and
+ * this sits in it.
+ */
+const ORBIT_WIND = 2.0;
+/**
+ * Once a spinner is proven to be somewhere, sightings around it are its doing
+ * too — the short runs either side of a confirmed orbit, too brief to convict
+ * on their own. This is how long after the orbit that still applies.
+ */
+const ORBIT_HALO = 2.0;
+/** And how far outside its box. */
+const ORBIT_PAD = 0.02;
 
 export function dropOrbits(track, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
   if (track.length < ORBIT_MIN) return track;
@@ -887,8 +902,44 @@ export function dropOrbits(track, { sourceWidth = 1920, sourceHeight = 1080 } = 
     i = j;
   }
 
+  /**
+   * ── WHAT THE SPINNER DID EITHER SIDE OF ITS OWN ORBIT ────────────────────
+   * A spinner does not start and stop at the boundaries of a convictable run.
+   * Around each one sit shorter runs in the same tiny patch of screen — five
+   * sightings over a fifth of a second — that carry the same shape but not
+   * enough of it to convict alone.
+   *
+   * They do not need to stand alone. Once an animation is proven to be at a
+   * place and a time, a sighting in that same place moments later is far better
+   * explained by the animation than by a hand that happened to visit the exact
+   * pixels the spinner occupies and then leave again.
+   */
+  const zones = [];
+  for (let i = 0; i < track.length; i++) {
+    if (!spinning[i]) continue;
+    let j = i;
+    while (j + 1 < track.length && spinning[j + 1]) j++;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let k = i; k <= j; k++) {
+      x0 = Math.min(x0, num(track[k].x)); x1 = Math.max(x1, num(track[k].x));
+      y0 = Math.min(y0, num(track[k].y)); y1 = Math.max(y1, num(track[k].y));
+    }
+    zones.push({
+      x0: x0 - ORBIT_PAD, x1: x1 + ORBIT_PAD,
+      y0: y0 - ORBIT_PAD, y1: y1 + ORBIT_PAD,
+      from: num(track[i].t) - ORBIT_HALO, to: num(track[j].t) + ORBIT_HALO,
+    });
+    i = j;
+  }
+
   const out = [];
-  for (let i = 0; i < track.length; i++) if (!spinning[i]) out.push(track[i]);
+  for (let i = 0; i < track.length; i++) {
+    if (spinning[i]) continue;
+    const p = track[i];
+    const t = num(p.t), x = num(p.x), y = num(p.y);
+    if (zones.some((z) => t >= z.from && t <= z.to && x >= z.x0 && x <= z.x1 && y >= z.y0 && y <= z.y1)) continue;
+    out.push(p);
+  }
   return out;
 }
 
@@ -1036,9 +1087,22 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
    * leaves a gap, and a gap means "held where it was last seen" — which, while
    * a page loads, is what the pointer was really doing.
    */
-  const seen = dropLoners(opened.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y))));
-  const still = dropOrbits(seen, { sourceWidth, sourceHeight });
-  const clean = dropFliers(still, { sourceWidth, sourceHeight });
+  /**
+   * ── THE ORBIT TEST GOES FIRST, AND THAT IS NOT ARBITRARY ─────────────────
+   * It was written second and so it was bolted on at the end, after the busy
+   * filter and the lone-sighting filter had already had the track. That made
+   * it useless and it took a creator's report to notice: it found zero orbits
+   * in a recording that visibly had one, because the two filters ahead of it
+   * had removed a hundred and thirty samples first, breaking every run into
+   * pieces too short to recognise.
+   *
+   * An orbit is a property of a DENSE run of sightings. Thin the run and the
+   * shape is gone, whichever samples you remove. So it reads the track before
+   * anything else has touched it.
+   */
+  const still = dropOrbits(opened, { sourceWidth, sourceHeight });
+  const seen = dropLoners(still.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y))));
+  const clean = dropFliers(seen, { sourceWidth, sourceHeight });
 
   return {
     track: clean,
@@ -1050,9 +1114,9 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
       cursor_px: screen.cursorPx,
       parked: opened.length > shifted.length,
       spinners: screen.busy ? screen.busy.length : 0,
-      dropped: opened.length - seen.length,
-      orbits: seen.length - still.length,
-      fliers: still.length - clean.length,
+      orbits: opened.length - still.length,
+      dropped: still.length - seen.length,
+      fliers: seen.length - clean.length,
       reason: found.confident ? "" : "too little movement to line the two clocks up; left as recorded",
     },
   };

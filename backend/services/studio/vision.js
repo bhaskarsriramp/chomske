@@ -52,7 +52,20 @@ export const AUDIO_MODEL = process.env.GEMINI_AUDIO_MODEL || VISION_MODEL;
  * about a dozen. Six is where accuracy stopped falling and the number of calls
  * stopped mattering.
  */
-const FRAMES_PER_READ = 6;
+/**
+ * ── WHY THIS IS SMALL ────────────────────────────────────────────────────────
+ * Six frames at up to twenty-five elements each is a lot of JSON to ask for in
+ * one answer, and a reply that runs past the token limit does not come back
+ * half-parsed — it does not parse at all, and the whole batch is lost. That
+ * happened on a real recording: the first batch of six came back empty, so the
+ * first ten seconds of the demo had no elements, so the two most important
+ * clicks in it could not be judged and the gate had to wave them through.
+ *
+ * It was invisible because a lost batch looked exactly like six frames with
+ * nothing on them. See the answer-count check below, which is what makes the
+ * difference visible now.
+ */
+const FRAMES_PER_READ = 3;
 /** Concurrent Gemini calls. Bounded by the key pool's per-minute limits. */
 const CONCURRENCY = parseInt(process.env.STUDIO_VISION_CONCURRENCY || "4", 10);
 const ATTEMPTS = 3;
@@ -132,12 +145,43 @@ export async function readFrames(frames, { spend = newSpend(), onProgress = () =
     const parts = [{ text: `${UI_ANALYZER}\n\nYou are given ${batch.length} frames. Answer for EACH, in order, as an array under "frames".\n\n${frameIndex(batch)}` }];
     for (const f of batch) parts.push(await imagePart(f.file));
 
-    const json = await ask({ parts, spend, label: `readFrames batch ${bi + 1}`, maxOutputTokens: 8192 });
-    const answers = Array.isArray(json?.frames) ? json.frames : json ? [json] : [];
+    const json = await ask({ parts, spend, label: `readFrames batch ${bi + 1}`, maxOutputTokens: 16384 });
+    let answers = Array.isArray(json?.frames) ? json.frames : json ? [json] : [];
+
+    /**
+     * ── A MISSING ANSWER IS NOT AN EMPTY SCREEN ──────────────────────────────
+     * Silence and "there is nothing here" are the same shape in the reply and
+     * mean opposite things. Everything downstream that asks "was the pointer on
+     * a control?" needs to tell an answer of no from no answer, so a frame the
+     * model did not answer for is asked about again on its own, and if it still
+     * says nothing it is left out rather than filled in with a blank.
+     */
+    if (answers.length < batch.length) {
+      console.warn(
+        "[studio] vision batch " + (bi + 1) + " answered " + answers.length +
+          " of " + batch.length + " frames; asking again one at a time"
+      );
+      const retried = [];
+      for (let k = 0; k < batch.length; k++) {
+        if (answers[k]) { retried[k] = answers[k]; continue; }
+        const one = await ask({
+          parts: [{ text: UI_ANALYZER + "\n\nAnswer for this one frame." }, await imagePart(batch[k].file)],
+          spend,
+          label: "readFrames batch " + (bi + 1) + " frame " + (k + 1) + " (retry)",
+          maxOutputTokens: 8192,
+        }).catch(() => null);
+        retried[k] = one && Array.isArray(one.frames) ? one.frames[0] : one;
+      }
+      answers = retried;
+    }
 
     batch.forEach((f, k) => {
       const a = answers[k];
       const at = bi * FRAMES_PER_READ + k;
+      // Nothing came back for this frame even on a second ask. Leaving it null
+      // keeps it out of frames_read and out of every judgement that would
+      // otherwise read the blank as evidence.
+      if (!a) { results[at] = null; return; }
       results[at] = {
         t: f.t,
         file: f.file,

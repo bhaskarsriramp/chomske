@@ -939,6 +939,42 @@ export function controlUnder(shots, t, x, y) {
 }
 
 /**
+ * The pointer's shape, decided the way the operating system decides it.
+ *
+ * ── THE CREATOR'S RULE, FINALLY IMPLEMENTABLE ────────────────────────────────
+ * "A click only happens when hover happens, it turns into a hand shaped icon,
+ * then the user clicks it." That is exactly right, and it was not possible to
+ * act on until now, because the shape the tracker reports is not the shape of
+ * the cursor. It classifies the DENSITY of the patch of pixels that changed, so
+ * a compact spinner reads as "pointer" and a still cursor over a nav item that
+ * highlights underneath it reads as "default" — backwards on precisely the
+ * moments that matter.
+ *
+ * An operating system does not classify pixels. It draws a hand because the
+ * thing under the pointer is clickable, and that is a fact about the interface
+ * which the model has now written down. So the shape is taken from the same
+ * evidence the camera uses.
+ *
+ * ── WHY IT SHOWS UP AS A SECOND CURSOR ───────────────────────────────────────
+ * The drawn pointer is larger than the captured one specifically so that it
+ * covers it. Covering is a property of the silhouette, not of the area: an
+ * arrow drawn over a hand leaves the hand's fingers sticking out to the right,
+ * and what a viewer sees is not "the wrong icon", it is a small second cursor
+ * next to the big one. A frame of one export shows exactly that — our arrow on
+ * the Billing item with the real hand still visible beside it.
+ */
+export function shapeFromControls(track, shots) {
+  if (!shots || !shots.length) return track || [];
+  return (track || []).map((p) => {
+    // A text caret is a real reading of a real shape and is left alone; it is
+    // the arrow-or-hand decision that the blob classifier cannot make.
+    if (p.shape === "text") return p;
+    const on = controlUnder(shots, num(p.t), num(p.x, 0.5), num(p.y, 0.5));
+    return { ...p, shape: on ? "pointer" : "default" };
+  });
+}
+
+/**
  * Decide which clicks get to move the camera.
  *
  * Reads three things that were measured elsewhere and combines them once, here,

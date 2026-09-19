@@ -37,7 +37,7 @@ import { extractFrames } from "../media/ffmpeg.js";
 import {
   newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { confirmClicks, dropScrollZooms, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
+import { confirmClicks, dropScrollZooms, shapeFromControls, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
 import { alignCapture } from "./sync.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
@@ -246,7 +246,11 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * a better composer tomorrow can be run against a recording made today.
    */
   const composed = intentPath(events, { shots, track: capturedTrack, duration });
-  tl.track = smoothTrack(capturedTrack, { rate: 60, strength: tl.cursor.smoothing, duration });
+  // The drawn pointer holds a hand wherever the model says there is something
+  // to press, which is the rule the operating system itself follows and the one
+  // that makes our cursor the same silhouette as the one it has to cover.
+  const shaped = shapeFromControls(capturedTrack, shots);
+  tl.track = smoothTrack(shaped, { rate: 60, strength: tl.cursor.smoothing, duration });
   tl.composed = composed ? composed.path : [];
   tl.cursor = {
     ...tl.cursor,
@@ -278,7 +282,35 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // The camera is decided first and the cuts give way to it: a cut that lands
   // on a zoom's ramp deletes the frames the move was going to play on, and what
   // survives is a jump. See events.js partCuts.
-  tl.cuts = partCuts(mergeCuts([...dead, ...idleCuts(events, { duration })], duration), zooms);
+  /**
+   * ── NOTHING IS REMOVED FROM THE RECORDING UNLESS SOMEBODY ASKS ───────────
+   * These used to be applied on sight, and a creator watching their own demo
+   * described the result as "I felt fast forwarding" — a two second cut landing
+   * exactly between the click that opened API Keys and the click that went back
+   * to Billing. They were right, and the reason is worth stating because it is
+   * not obvious from the code that produced it.
+   *
+   * Dead air is only dead to something counting pixels. A pause while a page
+   * settles is the beat that tells a viewer the click worked, and the moment
+   * they read the screen they have just been taken to. Cutting it does not
+   * tighten the demo, it removes the part where the demo made sense — and the
+   * join is visible, because the pointer and the camera arrive somewhere they
+   * were not a frame ago.
+   *
+   * So they are worked out and offered, not taken. The editor already has Add
+   * cut and Restore cut, so a creator who does want the pause gone can have it
+   * in one gesture, and one who does not is never surprised by footage that
+   * went missing on its own.
+   */
+  const proposed = partCuts(mergeCuts([...dead, ...idleCuts(events, { duration })], duration), zooms);
+  tl.cuts = [];
+  tl.dead_air = proposed;
+  if (proposed.length) {
+    console.log(
+      "[studio] " + proposed.length + " quiet stretch(es) found and LEFT IN: " +
+        proposed.map((c) => c.start.toFixed(1) + "-" + c.end.toFixed(1) + "s").join(", ")
+    );
+  }
 
   tl.captions = {
     enabled: captions.cues.length > 0,
