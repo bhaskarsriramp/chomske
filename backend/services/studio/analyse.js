@@ -37,7 +37,7 @@ import { extractFrames } from "../media/ffmpeg.js";
 import {
   newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { confirmClicks, dropScrollZooms, shapeFromControls, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
+import { confirmClicks, dropScrollZooms, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
 import { alignCapture } from "./sync.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
@@ -249,7 +249,28 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // The drawn pointer holds a hand wherever the model says there is something
   // to press, which is the rule the operating system itself follows and the one
   // that makes our cursor the same silhouette as the one it has to cover.
-  const shaped = shapeFromControls(capturedTrack, shots);
+  /**
+   * ── THE DRAWN POINTER, IN THREE RULES ────────────────────────────────────
+   * Applied in this order, and the order matters:
+   *
+   *   1. steadyPath    it may only move somewhere it then stays, so no cause
+   *                    of a brief deviation — spinner, repaint, artefact, or
+   *                    something nobody has seen yet — can move it at all
+   *   2. restOnControls while it sits on a control it sits perfectly still, so
+   *                    a hand's small wobble cannot drift ours off the one
+   *                    burnt into the recording
+   *   3. shapeFromControls it holds a hand wherever there is something to
+   *                    press, which is the rule the operating system follows
+   *
+   * Steadying comes first because the other two read positions, and a position
+   * that was never real should not be snapped to a control or given a hand.
+   */
+  const wh = { sourceWidth: source?.width || 1920, sourceHeight: source?.height || 1080 };
+  const steady = steadyPath(capturedTrack, wh);
+  const rested = restOnControls(steady, shots, wh);
+  const shaped = shapeFromControls(rested, shots);
+  const stilled = capturedTrack.length - countMoves(steady, wh);
+  if (stilled > 0) console.log("[studio] " + stilled + " brief deviation(s) of the pointer were not drawn");
   tl.track = smoothTrack(shaped, { rate: 60, strength: tl.cursor.smoothing, duration });
   tl.composed = composed ? composed.path : [];
   tl.cursor = {
@@ -434,3 +455,16 @@ function mergeCuts(cuts, duration) {
 }
 
 export default { analyseRecording, generateCaptions };
+
+
+/** How many samples actually moved the pointer, for the log above. */
+function countMoves(track, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
+  const ratio = sourceHeight / Math.max(1, sourceWidth);
+  let n = 0;
+  for (let i = 1; i < track.length; i++) {
+    const a = track[i - 1];
+    const b = track[i];
+    if (Math.hypot(b.x - a.x, (b.y - a.y) * ratio) > 0.02) n++;
+  }
+  return n;
+}

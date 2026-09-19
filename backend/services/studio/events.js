@@ -975,6 +975,114 @@ export function shapeFromControls(track, shots) {
 }
 
 /**
+ * ── THE POINTER MAY NOT GO ANYWHERE IT DOES NOT STAY ─────────────────────────
+ * Every fix to the drawn pointer so far has named a cause: the spinner steals
+ * it, the repaint steals it, the compression artefact steals it. Each one was
+ * real and each one was fixed, and the creator's answer was the right one:
+ *
+ *   "it's not about the loader or spinner... for some user maybe some element
+ *    may cause this mouse to spin or hover around it, we should solve this
+ *    globally so that never happens."
+ *
+ * That is a request for an invariant rather than another special case, and
+ * there is one available that needs to know nothing about what caused a
+ * deviation:
+ *
+ *   The drawn pointer only moves somewhere it then REMAINS.
+ *
+ * A hand that moves a mouse to a place either stays there or carries on past
+ * it. It does not visit a point for a tenth of a second and return to exactly
+ * where it started. Every artefact this pipeline has ever drawn has been that
+ * shape — an excursion — and every real movement has not, whatever produced it.
+ *
+ * ── WHY IT IS NOT JUST A SMOOTHING FILTER ────────────────────────────────────
+ * Smoothing averages an excursion into the path, which drags the pointer
+ * partway towards the spinner and back: less obviously wrong, still wrong, and
+ * now wrong everywhere instead of somewhere. This does not average. It decides
+ * whether the evidence is good enough to move at all, and when it is not, the
+ * pointer holds exactly where it was. A held pointer is invisible. A pointer
+ * that wanders is the bug.
+ */
+
+/** How long a new position must hold before the pointer will move to it. */
+const STAY = 0.22;
+/** Within this, two positions are the same place. */
+const SAME = 0.02;
+
+export function steadyPath(track, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
+  if (!track || track.length < 3) return track || [];
+  const ratio = sourceHeight / Math.max(1, sourceWidth);
+  const apart = (a, b) => Math.hypot(num(b.x) - num(a.x), (num(b.y) - num(a.y)) * ratio);
+
+  const out = [track[0]];
+  let held = track[0];
+
+  for (let i = 1; i < track.length; i++) {
+    const p = track[i];
+    if (apart(held, p) <= SAME) { out.push({ ...p, x: held.x, y: held.y }); continue; }
+
+    /**
+     * It has moved. Is it going to stay moved? Look forward over the settling
+     * window: if the path comes back to where it started, this was an
+     * excursion and nothing is drawn. If it is still away — whether it stopped
+     * somewhere new or is travelling on through — it is real.
+     */
+    let returns = false;
+    for (let j = i + 1; j < track.length; j++) {
+      const q = track[j];
+      if (num(q.t) - num(p.t) > STAY) break;
+      if (apart(held, q) <= SAME) { returns = true; break; }
+    }
+    if (returns) { out.push({ ...p, x: held.x, y: held.y }); continue; }
+
+    held = p;
+    out.push(p);
+  }
+  return out;
+}
+
+/**
+ * While the pointer is resting on a control, hold it perfectly still.
+ *
+ * ── WHY THE JITTER MATTERS MORE THAN IT SOUNDS ───────────────────────────────
+ * A hand on a trackpad is never quite still. The recorded cursor wobbles a few
+ * pixels while somebody reads, and the tracker faithfully reports the wobble,
+ * and the drawn pointer wobbles with it — except a frame or two behind, because
+ * of smoothing. Two hands a few pixels apart, one lagging the other, is exactly
+ * what a viewer reports as seeing two cursors: ours no longer covers theirs.
+ *
+ * The creator asked for it directly: it "should ignore the little scrolls or
+ * movements of the mouse from the browser".
+ *
+ * The position held is the one FIRST seen inside the control, not its centre.
+ * That distinction is the whole point. The real cursor stopped where it
+ * stopped, and snapping ours to the middle of the button would invent an
+ * offset between the two rather than remove one.
+ */
+export function restOnControls(track, shots, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
+  if (!shots || !shots.length || !track || !track.length) return track || [];
+  const ratio = sourceHeight / Math.max(1, sourceWidth);
+  const apart = (a, b) => Math.hypot(num(b.x) - num(a.x), (num(b.y) - num(a.y)) * ratio);
+
+  const out = [];
+  let lock = null;
+
+  for (const p of track) {
+    const on = controlUnder(shots, num(p.t), num(p.x, 0.5), num(p.y, 0.5));
+    const label = on ? on.type + "|" + on.label : "";
+    // Leaving the control, or crossing to a different one, releases the hold.
+    // So does drifting far enough that holding would be the visible error.
+    if (!on || !lock || lock.label !== label || apart(lock, p) > 0.05) {
+      lock = on ? { label, x: num(p.x), y: num(p.y) } : null;
+      out.push(p);
+      continue;
+    }
+    out.push({ ...p, x: lock.x, y: lock.y });
+  }
+  return out;
+}
+
+/**
  * Decide which clicks get to move the camera.
  *
  * Reads three things that were measured elsewhere and combines them once, here,

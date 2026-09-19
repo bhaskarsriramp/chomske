@@ -88,7 +88,18 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         if (d.demo.timeline && !dirty.current) setTl(d.demo.timeline);
         if (!quiet) setError("");
       } catch (err) {
-        setError(err?.response?.data?.message || "We couldn't open this recording.");
+        /**
+         * A 404 here is almost always a link to a recording that has since
+         * been deleted or expired: the editor keeps its id in the URL, and a
+         * tab left open outlives the demo. The generic message made that read
+         * as a fault in the product. It is not one, and the creator can act on
+         * it, so it says which it is.
+         */
+        setError(
+          err?.response?.status === 404
+            ? "This recording is no longer here. It was deleted, or it expired."
+            : err?.response?.data?.message || "We couldn’t open this recording."
+        );
       }
     },
     [demoId]
