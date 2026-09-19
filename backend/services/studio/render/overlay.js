@@ -131,7 +131,7 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
               // nothing to point at, so nothing is drawn.
               if (pt.x > -80 && pt.y > -80 && pt.x < width + 80 && pt.y < height + 80) {
                 if (cur.trail > 0) drawTrail(ctx, timeline.track, srcT, cam, width, height, cur, theme);
-                drawCursor(ctx, pt, cam, cur, theme, baseCursorPx);
+                drawCursor(ctx, pt, cam, cur, theme, baseCursorPx, p.shape);
                 any = true;
               }
             }
@@ -181,7 +181,7 @@ function projectPoint(p, cam, W, H) {
    The pointer
    ──────────────────────────────────────────────────────────────────────────── */
 
-function drawCursor(ctx, pt, cam, cur, theme, basePx) {
+function drawCursor(ctx, pt, cam, cur, theme, basePx, shape) {
   // Scales with the zoom because the captured pointer does. A synthetic cursor
   // held at a constant size inside a 2× zoom sits in the middle of a pointer
   // twice its size, which looks exactly like the bug it is.
@@ -211,20 +211,17 @@ function drawCursor(ctx, pt, cam, cur, theme, basePx) {
   ctx.shadowOffsetY = size * 0.08;
 
   /**
-   * ── ONE POINTER, ALWAYS THE ARROW ─────────────────────────────────────────
-   * This used to follow the shape the tracker recovered: an arrow over a page,
-   * a hand over a link, an I-beam over text. That is what the operating system
-   * does, and it is wrong here. Watched back, a demo where the pointer becomes
-   * a hand on every hover and an arrow again on every click reads as several
-   * different cursors flickering between each other — which is exactly what it
-   * is, because each shape is a different drawing with a different silhouette
-   * and a different hotspot.
+   * ── TWO POINTERS, BOTH OURS ───────────────────────────────────────────────
+   * A hand over anything clickable, an arrow everywhere else. That is the
+   * gesture people already read, and following it is what makes a hover legible
+   * in a demo without an annotation pointing at it.
    *
-   * The creator picks ONE pointer in the Cursor panel and that is the pointer
-   * for the whole video. Theme, size, glow and weight are what change; the
-   * shape never does. The recovered `shape` is still stored on the track — it
-   * is good evidence for events.js that something clickable was under the
-   * pointer — it just does not decide what gets drawn.
+   * What it is NOT is the operating system's set. The OS draws four or five
+   * shapes and swaps between them per frame, and the captured one is twenty
+   * pixels of unstyleable bitmap. Both of these are drawn here, in the theme
+   * the creator chose, at the size they chose, from matching paths — and the
+   * shape they follow has already been decided over a window in timeline.js
+   * smoothTrack, so a steady hover cannot flicker between the two.
    */
   if (!theme.arrow) {
     ctx.beginPath();
@@ -235,6 +232,8 @@ function drawCursor(ctx, pt, cam, cur, theme, basePx) {
     ctx.lineWidth = Math.max(1.5, size * 0.09);
     ctx.strokeStyle = theme.line;
     ctx.stroke();
+  } else if (shape === "pointer" || shape === "hand") {
+    drawHand(ctx, size, theme);
   } else {
     drawArrow(ctx, size, theme);
   }
@@ -258,6 +257,56 @@ function drawArrow(ctx, s, theme) {
   ctx.lineTo(s * 0.57, s * 1.09);
   ctx.lineTo(s * 0.40, s * 0.72);
   ctx.lineTo(s * 0.70, s * 0.70);
+  ctx.closePath();
+  ctx.fillStyle = theme.fill;
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.lineWidth = Math.max(1, s * 0.055);
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = theme.line;
+  ctx.stroke();
+}
+
+/**
+ * The hand, for anything the operating system considered clickable.
+ *
+ * ── DRAWN, NOT BORROWED ──────────────────────────────────────────────────────
+ * The system's own hand is about twenty pixels and cannot be restyled, which is
+ * the whole reason this layer exists: the creator picks a theme, a size and a
+ * glow, and every pointer in the video has to honour them. So the hand is a
+ * path in units of the cursor's own size, same as the arrow, with the same fill,
+ * the same outline weight and the same shadow — a matched pair rather than two
+ * cursors that happen to appear in the same video.
+ *
+ * ── THE HOTSPOT IS THE FINGERTIP ─────────────────────────────────────────────
+ * The path is laid out from its bounding box, but the pixel the operating
+ * system calls "where the pointer is" is the tip of the extended finger, near
+ * the top middle. Without the shift the drawn hand sits down and to the right of
+ * the captured one it is meant to cover — which is two pointers again — and
+ * every click ripple fires off the thing that was clicked.
+ */
+function drawHand(ctx, s, theme) {
+  const u = s * 0.055;
+  ctx.translate(-s * 0.34, 0);
+  ctx.beginPath();
+  // The index finger, from its tip.
+  ctx.moveTo(s * 0.30, 0);
+  ctx.quadraticCurveTo(s * 0.44, 0, s * 0.44, u * 2.6);
+  ctx.lineTo(s * 0.44, s * 0.52);
+  // Three folded fingers.
+  ctx.lineTo(s * 0.52, s * 0.46);
+  ctx.quadraticCurveTo(s * 0.68, s * 0.40, s * 0.72, s * 0.56);
+  ctx.lineTo(s * 0.80, s * 0.98);
+  // The heel of the hand.
+  ctx.quadraticCurveTo(s * 0.84, s * 1.28, s * 0.58, s * 1.34);
+  ctx.lineTo(s * 0.34, s * 1.34);
+  ctx.quadraticCurveTo(s * 0.16, s * 1.32, s * 0.10, s * 1.10);
+  // The thumb.
+  ctx.lineTo(s * 0.02, s * 0.74);
+  ctx.quadraticCurveTo(s * 0.0, s * 0.56, s * 0.16, s * 0.58);
+  ctx.lineTo(s * 0.24, s * 0.64);
+  ctx.lineTo(s * 0.24, u * 2.6);
+  ctx.quadraticCurveTo(s * 0.24, 0, s * 0.30, 0);
   ctx.closePath();
   ctx.fillStyle = theme.fill;
   ctx.fill();

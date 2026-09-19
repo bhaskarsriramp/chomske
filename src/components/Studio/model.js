@@ -159,9 +159,19 @@ export function cursorAt(track, t) {
   const a = track[lo];
   const b = track[hi];
   const span = b.t - a.t;
+  // A gap longer than a few dropped samples is held, not crossed. Mirrors
+  // timeline.js cursorAt — see it for why interpolating one draws a second
+  // pointer gliding across the picture.
+  if (span > GAP_HOLD) {
+    const near = t - a.t <= span / 2 ? a : b;
+    return { x: near.x, y: near.y, shape: near.shape || "default" };
+  }
   const k = span > 0 ? (t - a.t) / span : 0;
   return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, shape: a.shape || "default" };
 }
+
+/** Longest gap in the track still worth interpolating across. */
+const GAP_HOLD = 0.2;
 
 /* ────────────────────────────────────────────────────────────────────────────
    The camera

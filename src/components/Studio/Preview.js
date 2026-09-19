@@ -372,13 +372,23 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     ctx.lineWidth = Math.max(1.5, s * 0.09);
     ctx.strokeStyle = "#fff";
     ctx.stroke();
-    // ── ONE POINTER, ALWAYS THE ARROW ───────────────────────────────────────
-    // The recovered shape used to pick the drawing here, so the pointer became
-    // a hand on hover and an arrow again on click. Watched back that is not one
-    // cursor behaving like an operating system, it is three cursors flickering
-    // between each other. The creator picks a pointer in the Cursor panel and
-    // that is the pointer; theme, size, glow and weight change, the silhouette
-    // never does. Mirrors render/overlay.js drawCursor.
+    // ── TWO POINTERS, BOTH OURS ─────────────────────────────────────────────
+    // Hand over anything clickable, arrow everywhere else — the gesture people
+    // already read. Neither is the system's: those are twenty unstyleable
+    // pixels and there are four of them. The shape was settled over a window in
+    // timeline.js smoothTrack, so a steady hover cannot flicker between the
+    // two. Mirrors render/overlay.js drawCursor.
+  } else if (p.shape === "pointer" || p.shape === "hand") {
+    // The hand's hotspot is the fingertip, not the corner of its box.
+    ctx.translate(-s * 0.34, 0);
+    handPath(ctx, s);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.lineWidth = Math.max(1, s * 0.055);
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = line;
+    ctx.stroke();
   } else {
     arrowPath(ctx, s);
     ctx.fillStyle = fill;
@@ -401,6 +411,28 @@ function arrowPath(ctx, s) {
   ctx.lineTo(s * 0.57, s * 1.09);
   ctx.lineTo(s * 0.4, s * 0.72);
   ctx.lineTo(s * 0.7, s * 0.7);
+  ctx.closePath();
+}
+
+/** The hand, matching render/overlay.js drawHand. Laid out from its box; the
+ *  caller shifts it so the fingertip lands on the pointer's real position. */
+function handPath(ctx, s) {
+  const u = s * 0.055;
+  ctx.beginPath();
+  ctx.moveTo(s * 0.3, 0);
+  ctx.quadraticCurveTo(s * 0.44, 0, s * 0.44, u * 2.6);
+  ctx.lineTo(s * 0.44, s * 0.52);
+  ctx.lineTo(s * 0.52, s * 0.46);
+  ctx.quadraticCurveTo(s * 0.68, s * 0.4, s * 0.72, s * 0.56);
+  ctx.lineTo(s * 0.8, s * 0.98);
+  ctx.quadraticCurveTo(s * 0.84, s * 1.28, s * 0.58, s * 1.34);
+  ctx.lineTo(s * 0.34, s * 1.34);
+  ctx.quadraticCurveTo(s * 0.16, s * 1.32, s * 0.1, s * 1.1);
+  ctx.lineTo(s * 0.02, s * 0.74);
+  ctx.quadraticCurveTo(0, s * 0.56, s * 0.16, s * 0.58);
+  ctx.lineTo(s * 0.24, s * 0.64);
+  ctx.lineTo(s * 0.24, u * 2.6);
+  ctx.quadraticCurveTo(s * 0.24, 0, s * 0.3, 0);
   ctx.closePath();
 }
 

@@ -23,10 +23,14 @@
  * Between two frames of a screen recording, almost nothing changes. Usually the
  * only thing that moved IS the pointer, and it shows up as exactly two small
  * patches of difference: where it was, and where it now is. Telling those apart
- * is the whole trick, and the answer is contrast — a cursor is white with a
- * black outline, which is a harder edge than almost anything a user interface
- * draws. The patch that looks most like a cursor is the arrival; the other is
- * the hole it left behind.
+ * is the whole trick.
+ *
+ * The answer is NOT "whichever looks more like a cursor". Both patches are the
+ * same size and shape, and the hole often sits over busier pixels than the
+ * arrival does. The answer is that the cursor is in the current frame and not in
+ * the previous one, so at the arrival the CURRENT frame has the harder edge and
+ * at the departure the PREVIOUS one does. Measuring contrast in both and taking
+ * the signed difference decides it outright. See findCursor.
  *
  * When a lot of the screen changes at once, no pointer is reported for that
  * frame. A page that just navigated has thousands of difference patches and the
@@ -49,7 +53,7 @@
  */
 
 /** Bumped when the recovery changes in a way that alters what it reports. */
-const VERSION = "px-1";
+const VERSION = "px-2";
 
 /** Per-channel difference that counts as "this pixel changed". */
 const DIFF = 18;
@@ -159,7 +163,7 @@ function handle({ bitmap, data, width, height, t }) {
   /* ── Where the pointer is ──────────────────────────────────────────────── */
   let cursor = null;
   if (changed > 0 && energy < BUSY) {
-    cursor = findCursor(mask, gray, changed);
+    cursor = findCursor(mask, gray, prev, changed);
     if (cursor) last = { x: cursor.px, y: cursor.py };
   } else if (energy >= BUSY) {
     // A whole new screen. The pointer is somewhere in it and there is no way to
@@ -190,7 +194,7 @@ function luma(rgba, w, h) {
  * above is what keeps it from costing everything on a frame where the whole
  * screen repainted.
  */
-function findCursor(mask, gray, changed) {
+function findCursor(mask, gray, before, changed) {
   const N = W * H;
   const seen = new Uint8Array(N);
   const stack = new Int32Array(Math.min(changed + 16, N));
@@ -243,21 +247,48 @@ function findCursor(mask, gray, changed) {
     // opening or a row highlighting, not a pointer.
     if (bw > bh * 4 || bh > bw * 5) continue;
 
-    // ── Does it LOOK like a cursor ───────────────────────────────────────
-    // The pointer is white with a black outline, which is a bigger swing of
-    // brightness across a dozen pixels than a user interface usually draws.
-    // This is what separates the patch the pointer arrived at from the patch it
-    // left, where the background has simply reappeared.
+    /**
+     * ── ARRIVAL OR DEPARTURE ───────────────────────────────────────────────
+     * This is the decision the whole tracker turns on, and getting it wrong is
+     * what put a second pointer in the finished video.
+     *
+     * A moving cursor produces TWO patches of difference: the place it now is,
+     * and the hole it left behind where the background has reappeared. They are
+     * the same size and the same shape. Scoring them on contrast alone picks
+     * whichever sits over busier pixels — and the hole often wins, because the
+     * background that came back may be text or an icon while the cursor landed
+     * on something plain. The drawn pointer then sits where the mouse WAS, a
+     * whole movement behind the real one burnt into the frame, and the viewer
+     * sees two cursors at opposite ends of the screen.
+     *
+     * Contrast in ONE frame cannot tell them apart. Contrast in BOTH can: at the
+     * arrival the cursor is in the current frame and was not in the previous
+     * one, so the current frame is the high-contrast one. At the departure it is
+     * the other way round. The difference between the two is signed, and its
+     * sign IS the answer.
+     */
     let lo = 255;
     let hi = 0;
+    let plo = 255;
+    let phi = 0;
     for (let y = by0; y <= by1; y++) {
       for (let x = bx0; x <= bx1; x++) {
-        const v = gray[y * W + x];
+        const i2 = y * W + x;
+        const v = gray[i2];
         if (v < lo) lo = v;
         if (v > hi) hi = v;
+        const p2 = before[i2];
+        if (p2 < plo) plo = p2;
+        if (p2 > phi) phi = p2;
       }
     }
     const contrast = hi - lo;
+    const wasContrast = phi - plo;
+    // Positive where the cursor arrived, negative where it left.
+    const arrival = contrast - wasContrast;
+
+    // A patch that clearly LOST contrast is the hole, whatever else it scores.
+    if (arrival < -12) continue;
 
     // Nearness to where the pointer was a frame ago, as a tie-break. A pointer
     // moves continuously, so the candidate closest to the last sighting is
@@ -270,9 +301,11 @@ function findCursor(mask, gray, changed) {
       near = 1 + 1.5 / (1 + Math.hypot(dx, dyy) / 40);
     }
 
-    const score = contrast * near;
+    // Arrival dominates; raw contrast only separates two candidates that both
+    // look like arrivals.
+    const score = (arrival * 3 + contrast) * near;
     if (!best || score > best.score) {
-      best = { bx0, by0, bx1, by1, bw, bh, area, contrast, score };
+      best = { bx0, by0, bx1, by1, bw, bh, area, contrast, arrival, score };
     }
   }
 

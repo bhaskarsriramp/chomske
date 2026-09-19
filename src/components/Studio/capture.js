@@ -26,7 +26,7 @@
 import { uploadFile } from "../Edit/uploads";
 
 /** Reported with every recording, so a demo can be told from a later tracker's. */
-export const TRACKER_VERSION = "px-1";
+export const TRACKER_VERSION = "px-2";
 
 /** Frames a second the tracker looks at. Not the recording's frame rate. */
 const TRACK_HZ = 24;

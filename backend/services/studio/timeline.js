@@ -261,6 +261,26 @@ export function cursorAt(track, t) {
   const a = track[lo];
   const b = track[hi];
   const span = b.t - a.t;
+
+  /**
+   * ── A LONG GAP IS HELD, NOT CROSSED ───────────────────────────────────────
+   * The tracker reports nothing while the screen is repainting, which is
+   * exactly what a page navigation is. That leaves a hole in the track, and
+   * interpolating across it draws the pointer gliding in a straight line from
+   * wherever it was to wherever it turns up next — usually right through the
+   * middle of the picture, while the real pointer burnt into the frames sat
+   * perfectly still on the link that was clicked. Two pointers, moving apart.
+   *
+   * Nobody knows where the pointer was during the hole. But the overwhelmingly
+   * common case is that it did not move: you click, the page loads, your hand
+   * stays put. So a gap longer than one dropped sample holds the last known
+   * position and snaps at the far end, where there is evidence again.
+   */
+  if (span > GAP_HOLD) {
+    const near = t - a.t <= span / 2 ? a : b;
+    return { x: near.x, y: near.y, shape: near.shape || "default" };
+  }
+
   const k = span > 0 ? (t - a.t) / span : 0;
   return {
     x: a.x + (b.x - a.x) * k,
@@ -270,6 +290,15 @@ export function cursorAt(track, t) {
     shape: a.shape || "default",
   };
 }
+
+/**
+ * Longest gap in the track still worth interpolating across.
+ *
+ * The tracker runs at 24 Hz, so a normal step is 42ms and one dropped frame is
+ * 83ms. Past a fifth of a second the pointer was not seen for five samples and
+ * there is no path to draw, only a guess.
+ */
+const GAP_HOLD = 0.2;
 
 /**
  * The track with jitter taken out, resampled to a fixed rate.
@@ -306,10 +335,43 @@ export function cursorAt(track, t) {
  */
 const MAX_DRIFT = 0.012;
 
+/**
+ * The two pointers this product draws, and nothing else.
+ *
+ * ── WHY THE SHAPE IS SMOOTHED AND WHY THERE ARE ONLY TWO ─────────────────────
+ * The tracker classifies the shape per frame from a handful of pixels, so its
+ * answer flickers: hand, arrow, hand, hand, arrow across six frames of a steady
+ * hover. Drawn literally that is a pointer changing silhouette five times a
+ * second, which is what "multiple mouse pointers" looked like in a finished
+ * video — not two cursors on screen at once, one cursor that would not stay
+ * still.
+ *
+ * So the shape is decided over a window rather than per frame, and it has to
+ * win that window by a margin before it changes. And it is two shapes, not
+ * four: hand over anything clickable, arrow for everything else. The I-beam was
+ * a third silhouette to flicker between for no gain — nobody watching a demo
+ * needs to be told the pointer is over a text field.
+ */
+const HOVER_SHAPES = new Set(["pointer", "hand"]);
+/** Samples either side that vote on what the pointer is at this instant. */
+const SHAPE_WINDOW = 5;
+/** Share of the window that must agree before the pointer becomes a hand. */
+const SHAPE_MAJORITY = 0.6;
+
+function shapeAt(pts, i) {
+  let hand = 0;
+  let n = 0;
+  for (let k = Math.max(0, i - SHAPE_WINDOW); k <= Math.min(pts.length - 1, i + SHAPE_WINDOW); k++) {
+    n++;
+    if (HOVER_SHAPES.has(pts[k].shape)) hand++;
+  }
+  return n > 0 && hand / n >= SHAPE_MAJORITY ? "pointer" : "default";
+}
+
 export function smoothTrack(track, { rate = 60, strength = 0.65, duration = 0, maxDrift = MAX_DRIFT } = {}) {
   if (!track?.length) return [];
   const pts = [...track].sort((a, b) => a.t - b.t);
-  if (pts.length < 3 || strength <= 0) return pts;
+  if (pts.length < 3 || strength <= 0) return pts.map((p, i) => ({ ...p, shape: shapeAt(pts, i) }));
 
   const end = duration > 0 ? duration : pts[pts.length - 1].t;
   const step = 1 / rate;
@@ -347,7 +409,7 @@ export function smoothTrack(track, { rate = 60, strength = 0.65, duration = 0, m
       t: round3(t),
       x: frac(rx + dx),
       y: frac(ry + dy),
-      shape: p1.shape || "default",
+      shape: shapeAt(pts, i),
     });
   }
   return out;
