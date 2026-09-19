@@ -91,7 +91,7 @@ export const defaultCursor = () => ({
   // path, smoothed. Composed is the default because a recovered path carries
   // every hesitation and twitch of a real hand, and none of them are what the
   // demo is about.
-  mode: "intent",
+  mode: "recorded",
   enabled: true,
   theme: "light",
   // Drawn larger than the captured pointer on purpose. The real cursor is burnt
@@ -154,6 +154,7 @@ export function emptyTimeline({ duration = 0, width = 1920, height = 1080, fps =
     zooms: [],
     cursor: defaultCursor(),
     track: [],
+    composed: [],
     captured: [],
     events: [],
     steps: [],
@@ -284,6 +285,31 @@ export function spanToOutput(start, end, lay) {
  * Returns null before the first sample and after the last, where there is
  * genuinely nothing to draw rather than a guess worth making.
  */
+/**
+ * The path that gets drawn.
+ *
+ * ── BOTH ARE KEPT, AND THE CHOICE IS MADE AT RENDER TIME ─────────────────────
+ * The recovered path and the composed one are both written at analysis time,
+ * because they cost nothing to keep and recomputing either means re-reading the
+ * recording. The cursor's `mode` picks between them when the frame is drawn, so
+ * switching is instant in the editor instead of another analysis.
+ *
+ * "recorded" is the default. A composed path is steadier and better aimed, but
+ * it goes where the pointer in the RECORDING does not, and that pointer is
+ * burnt into the pixels — so composing it only looks right if the original can
+ * also be removed, and removing it means reconstructing whatever it was sitting
+ * on. On a flat panel that is invisible; over a heading it takes a bite out of
+ * the text. Until the recording can be made without a cursor in it at all, the
+ * honest default is the one that puts our pointer exactly where theirs is and
+ * covers it.
+ */
+export function drawnTrack(tl) {
+  if (!tl || tl.cursor?.enabled === false) return null;
+  const composed = tl.composed;
+  if (tl.cursor?.mode === "intent" && composed && composed.length > 1) return composed;
+  return tl.track || null;
+}
+
 export function cursorAt(track, t) {
   if (!track?.length) return null;
   const first = track[0];
@@ -893,7 +919,7 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     trail: clamp(num(cur.trail, 0), 0, 1),
     ripple: cur.ripple !== false,
     hide_real: cur.hide_real !== false,
-    mode: pick(cur.mode, CURSOR_MODES, "intent"),
+    mode: pick(cur.mode, CURSOR_MODES, "recorded"),
     // How big the captured pointer actually measured, in source pixels. The
     // creator's display scaling decides it and nothing in the recording says,
     // so sync.js measures it and the erase patch is sized from it.
@@ -924,6 +950,18 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
    * Thinned hard, because it is only ever used to position a patch a little
    * larger than a cursor. Fifteen samples a second is finer than the patch is.
    */
+  // The composed path, kept alongside the recovered one so cursor.mode can
+  // switch between them without another analysis. See drawnTrack().
+  out.composed = (src.composed || [])
+    .slice(0, 120000)
+    .map((p) => ({
+      t: round3(clamp(num(p.t), 0, total)),
+      x: round4(frac(p.x)),
+      y: round4(frac(p.y)),
+      shape: text(p.shape, 16) || "default",
+    }))
+    .sort((a, b) => a.t - b.t);
+
   out.captured = (src.captured || [])
     .slice(0, 40000)
     .map((p) => ({ t: round3(clamp(num(p.t), 0, total)), x: round4(frac(p.x)), y: round4(frac(p.y)) }))
@@ -936,6 +974,9 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       id: text(e.id, 32) || newId("e"),
       t: round3(clamp(num(e.t), 0, total)),
       type: pick(e.type, ["click", "dblclick", "rightclick", "drag", "scroll", "type", "key", "nav", "hover", "idle"], "click"),
+      // Whether the recording showed a consequence. Only a corroborated click
+      // moves the camera; see events.js zoomsFromClicks.
+      corroborated: e.corroborated !== false,
       x: round4(frac(e.x, 0.5)),
       y: round4(frac(e.y, 0.5)),
       dy: round3(num(e.dy)),

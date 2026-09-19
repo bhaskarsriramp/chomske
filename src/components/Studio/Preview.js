@@ -27,7 +27,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  layout, toSource, toOutputSnapped, cameraAt, cursorAt, videoBox, backgroundCss,
+  layout, toSource, toOutputSnapped, cameraAt, cursorAt, drawnTrack, videoBox, backgroundCss,
   placedSpans, placedCues, captionPoint, captionLook, clamp, EASE,
 } from "./model";
 import { useBox } from "./ui";
@@ -110,7 +110,7 @@ export default function Preview({
     // Where in the OUTPUT we are, from the element's own clock.
     const srcT = v.currentTime;
     const outT = toOutputSnapped(srcT, lay);
-    const cam = cameraAt(tl, srcT, { track: tl.cursor?.enabled === false ? null : tl.track });
+    const cam = cameraAt(tl, srcT, { track: drawnTrack(tl) });
 
     // ── The ground ──────────────────────────────────────────────────────
     paintBackground(ctx, tl.canvas, W, H);
@@ -149,7 +149,8 @@ export default function Preview({
       // looks close enough that what the editor shows and what comes out of the
       // export are the same edit. Without it the preview shows two pointers and
       // the finished file does not.
-      if (tl.cursor?.hide_real !== false && (tl.captured || []).length > 1) {
+      // Only when the drawn path is somewhere the captured one is not.
+      if (tl.cursor?.mode === "intent" && tl.cursor?.hide_real !== false && (tl.captured || []).length > 1) {
         paintHide(ctx, v, tl, srcT, cam, { dx, dy, dw, dh }, srcW, srcH);
       }
 
@@ -166,11 +167,12 @@ export default function Preview({
     // ── The cursor and its ripples ──────────────────────────────────────
     for (const c of clicks) {
       if (outT >= c.t && outT <= c.t + RIPPLE && tl.cursor?.ripple !== false) {
-        paintRipple(ctx, c, outT, cam, { dx, dy, dw, dh }, srcW);
+        paintRipple(ctx, c, outT, cam, { dx, dy, dw, dh }, srcW, tl.cursor);
       }
     }
-    if (tl.cursor?.enabled !== false && tl.cursor?.theme !== "none" && tl.track?.length) {
-      const p = cursorAt(tl.track, srcT);
+    const drawnPath = drawnTrack(tl);
+    if (tl.cursor?.theme !== "none" && drawnPath?.length) {
+      const p = cursorAt(drawnPath, srcT);
       if (p) paintCursor(ctx, p, cam, tl.cursor, { dx, dy, dw, dh }, srcW);
     }
 
@@ -214,7 +216,7 @@ export default function Preview({
   /* ── What is on screen right now, for the HTML layer ─────────────────── */
   const cue = cues.find((c) => time >= c.start && time <= c.end) || null;
   const srcT = toSource(time, lay);
-  const cam = cameraAt(tl, srcT, { track: tl.cursor?.enabled === false ? null : tl.track });
+  const cam = cameraAt(tl, srcT, { track: drawnTrack(tl) });
 
   return (
     <div
@@ -305,7 +307,7 @@ let scratch = null;
 function paintHide(ctx, video, tl, srcT, cam, d, srcW, srcH) {
   const p = cursorAt(tl.captured, srcT);
   if (!p) return;
-  const drawn = cursorAt(tl.track, srcT);
+  const drawn = cursorAt(drawnTrack(tl) || tl.track, srcT);
   const px = Math.max(12, tl.cursor?.captured_px || 22);
   if (drawn && Math.hypot((drawn.x - p.x) * srcW, (drawn.y - p.y) * srcH) <= Math.max(6, px * 0.35)) return;
 
@@ -397,7 +399,7 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
   if (x < d.dx - 60 || y < d.dy - 60 || x > d.dx + d.dw + 60 || y > d.dy + d.dh + 60) return;
 
   const zoom = clamp(1 / cam.w, 1, 3);
-  const s = 22 * (d.dw / srcW) * (cur?.size || 1.35) * Math.min(zoom, 2.2);
+  const s = Math.max(22, Number(cur?.captured_px) || 22) * (d.dw / srcW) * (cur?.size || 1.35) * Math.min(zoom, 2.2);
   const dark = cur?.theme === "dark";
   const fill = dark ? "#18181b" : "#fff";
   const line = dark ? "#fff" : "#18181b";
@@ -436,7 +438,7 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     // two. Mirrors render/overlay.js drawCursor.
   } else if (p.shape === "pointer" || p.shape === "hand") {
     // The hand's hotspot is the fingertip, not the corner of its box.
-    ctx.translate(-s * 0.34, 0);
+    ctx.translate(-s * 0.3, 0);
     handPath(ctx, s);
     ctx.fillStyle = fill;
     ctx.fill();
@@ -472,31 +474,36 @@ function arrowPath(ctx, s) {
 
 /** The hand, matching render/overlay.js drawHand. Laid out from its box; the
  *  caller shifts it so the fingertip lands on the pointer's real position. */
+/** A pointing hand. Mirrors render/overlay.js drawHand exactly. */
 function handPath(ctx, s) {
-  const u = s * 0.055;
   ctx.beginPath();
-  ctx.moveTo(s * 0.3, 0);
-  ctx.quadraticCurveTo(s * 0.44, 0, s * 0.44, u * 2.6);
-  ctx.lineTo(s * 0.44, s * 0.52);
-  ctx.lineTo(s * 0.52, s * 0.46);
-  ctx.quadraticCurveTo(s * 0.68, s * 0.4, s * 0.72, s * 0.56);
-  ctx.lineTo(s * 0.8, s * 0.98);
-  ctx.quadraticCurveTo(s * 0.84, s * 1.28, s * 0.58, s * 1.34);
-  ctx.lineTo(s * 0.34, s * 1.34);
-  ctx.quadraticCurveTo(s * 0.16, s * 1.32, s * 0.1, s * 1.1);
-  ctx.lineTo(s * 0.02, s * 0.74);
-  ctx.quadraticCurveTo(0, s * 0.56, s * 0.16, s * 0.58);
-  ctx.lineTo(s * 0.24, s * 0.64);
-  ctx.lineTo(s * 0.24, u * 2.6);
-  ctx.quadraticCurveTo(s * 0.24, 0, s * 0.3, 0);
+  ctx.moveTo(s * 0.2, s * 0.46);
+  ctx.lineTo(s * 0.2, s * 0.09);
+  ctx.quadraticCurveTo(s * 0.2, 0, s * 0.3, 0);
+  ctx.quadraticCurveTo(s * 0.4, 0, s * 0.4, s * 0.09);
+  ctx.lineTo(s * 0.4, s * 0.44);
+  ctx.quadraticCurveTo(s * 0.43, s * 0.36, s * 0.5, s * 0.37);
+  ctx.quadraticCurveTo(s * 0.56, s * 0.38, s * 0.56, s * 0.47);
+  ctx.quadraticCurveTo(s * 0.59, s * 0.4, s * 0.655, s * 0.415);
+  ctx.quadraticCurveTo(s * 0.71, s * 0.43, s * 0.71, s * 0.52);
+  ctx.quadraticCurveTo(s * 0.74, s * 0.46, s * 0.795, s * 0.48);
+  ctx.quadraticCurveTo(s * 0.845, s * 0.5, s * 0.845, s * 0.6);
+  ctx.lineTo(s * 0.845, s * 0.98);
+  ctx.quadraticCurveTo(s * 0.83, s * 1.22, s * 0.6, s * 1.3);
+  ctx.lineTo(s * 0.3, s * 1.3);
+  ctx.quadraticCurveTo(s * 0.12, s * 1.27, s * 0.065, s * 1.09);
+  ctx.lineTo(s * 0.005, s * 0.79);
+  ctx.quadraticCurveTo(s * -0.035, s * 0.63, s * 0.085, s * 0.605);
+  ctx.quadraticCurveTo(s * 0.165, s * 0.595, s * 0.185, s * 0.665);
   ctx.closePath();
 }
 
-function paintRipple(ctx, c, t, cam, d, srcW) {
+
+function paintRipple(ctx, c, t, cam, d, srcW, cur) {
   const k = clamp((t - c.t) / RIPPLE, 0, 1);
   const x = ((c.x - cam.x) / cam.w) * d.dw + d.dx;
   const y = ((c.y - cam.y) / cam.h) * d.dh + d.dy;
-  const base = 22 * (d.dw / srcW) * Math.min(clamp(1 / cam.w, 1, 3), 2.2);
+  const base = Math.max(22, Number(cur?.captured_px) || 22) * (d.dw / srcW) * Math.min(clamp(1 / cam.w, 1, 3), 2.2);
   const r = base * (0.5 + EASE.smooth(k) * 2.6);
 
   ctx.save();

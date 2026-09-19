@@ -128,6 +128,11 @@ const NAV_REACTION = 1.1;
  */
 const REST_FRESH = 2.5;
 
+/** How long after a press its consequence may take to appear. */
+const CONSEQUENCE = 1.4;
+/** How much bigger that consequence has to be than the press's own flicker. */
+const CONSEQUENCE_GROWTH = 3;
+
 /**
  * The tracker's raw report, cleaned.
  *
@@ -363,7 +368,7 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
     if (rest.shape === "pointer" || rest.shape === "hand") confidence += 0.2;
     if (rest.end - rest.start > 0.2) confidence += 0.06;
 
-    events.push(event("click", at, rest.x, rest.y, { confidence: clamp(confidence, 0, 1), source: "nav" }));
+    events.push(event("click", at, rest.x, rest.y, { confidence: clamp(confidence, 0, 1), source: "nav", corroborated: true }));
     claim(at);
   }
 
@@ -399,7 +404,15 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
     // One press, however many passes found it.
     if (events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - rest.end) < 0.4 && Math.hypot(e.x - rest.x, e.y - rest.y) < 0.05)) continue;
 
-    events.push(event("click", rest.end, rest.x, rest.y, { confidence: clamp(confidence, 0, 1) }));
+    /**
+     * Did anything come of it? A press is followed by a change bigger than the
+     * one it made at the control itself — a menu opening, a panel filling, a
+     * row appearing. A hover's highlight is the whole story, and stops there.
+     */
+    const after = grewAfter(screen, mot, best.m, rest.end);
+    events.push(
+      event("click", rest.end, rest.x, rest.y, { confidence: clamp(confidence * (after ? 1 : 0.8), 0, 1), corroborated: after })
+    );
     spent.add(rest);
     claim(best.m.t);
     claim(rest.end);
@@ -481,6 +494,45 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
  * the answer is yes, and the browser's summary stands on its own as it always
  * did. This only ever removes a navigation nothing corroborates.
  */
+/**
+ * Whether something larger followed the little change under the pointer.
+ *
+ * Measured from the video where sync.js could read it, because that series has
+ * the animations taken out; from the browser's own summary otherwise. Either
+ * way the test is the same: within the window a press's consequence would land
+ * in, was there a change several times the size of the one at the control?
+ */
+function grewAfter(screen, mot, at, t) {
+  const from = t + 0.05;
+  const to = t + CONSEQUENCE;
+  const series = screen && screen.motion && screen.motion.length ? screen.motion : null;
+
+  if (series) {
+    const here = nearest(series, at.t);
+    const base = Math.max(0.01, here ? here.cover : 0.01);
+    for (const m of series) {
+      if (m.t < from || m.t > to) continue;
+      if (m.cover >= base * CONSEQUENCE_GROWTH && m.cover >= 0.05) return true;
+    }
+    return false;
+  }
+
+  const base = Math.max(RULES.noiseEnergy, at.energy);
+  for (const m of mot) {
+    if (m.t < from || m.t > to) continue;
+    if (m.energy >= base * CONSEQUENCE_GROWTH) return true;
+  }
+  return false;
+}
+
+function nearest(series, t) {
+  let best = null;
+  for (const m of series) {
+    if (!best || Math.abs(m.t - t) < Math.abs(best.t - t)) best = m;
+  }
+  return best;
+}
+
 function screenAgrees(screen, t) {
   const series = screen && screen.motion;
   if (!series || !series.length) return true;
@@ -639,10 +691,34 @@ const HOLD = 0.55;
 const RAMP_OUT = 0.42;
 /** Two clicks closer than this are one move; further apart, the camera resets. */
 const MERGE = 1.6;
+/**
+ * The widest a merged zoom may get before the merge is abandoned.
+ *
+ * 0.62 of the frame is about 1.6x, which is the shallowest move that still
+ * reads as the camera choosing something.
+ */
+const MERGE_MAX = 0.62;
 
+/**
+ * ── THE CAMERA MOVES FOR A PRESS, NEVER FOR A HOVER ──────────────────────────
+ * A hover and a click look almost the same from outside: the pointer settles on
+ * a control and something small changes under it. The operating system's own
+ * highlight is that small change, and reading it as a press is why demos came
+ * back with the camera diving at menu items nobody had clicked.
+ *
+ * What separates them is what happens NEXT. A press has a consequence beyond
+ * the control — a page arrives, a panel opens, a list refills. A hover has
+ * none: the highlight appears and that is the end of it.
+ *
+ * So a click still becomes an EVENT on the weaker evidence, because the editor
+ * shows it and the creator can keep it. It only becomes a CAMERA MOVE when the
+ * recording corroborates it. events.js marks that as it infers them.
+ */
 export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE } = {}) {
   const out = [];
-  const clicks = events.filter((e) => (e.type === "click" || e.type === "dblclick") && e.confidence >= 0.55);
+  const clicks = events.filter(
+    (e) => (e.type === "click" || e.type === "dblclick") && e.confidence >= 0.55 && e.corroborated !== false
+  );
 
   for (const c of clicks) {
     const start = Math.max(0, c.t - settle);
@@ -654,11 +730,26 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
     // pulling out and back in between two clicks a second apart is the reason
     // auto-zoom has a reputation for making people seasick. The rect grows to
     // hold both points rather than jumping between them.
+    /**
+     * ── MERGING HAS A LIMIT, AND IT IS THE POINT OF ZOOMING ─────────────────
+     * Two clicks close together are one camera move covering both: pulling out
+     * and back in between two presses a second apart is why auto-zoom has a
+     * reputation for making people seasick.
+     *
+     * But the rect grows to hold every point it merges, and a rect that has
+     * grown to nine tenths of the frame is not a zoom — it is the whole screen
+     * with the edges trimmed, which is exactly what one real demo exported.
+     * Past the point where the move would stop reading as emphasis, the clicks
+     * get their own zooms instead.
+     */
     if (prev && start < prev.end + merge) {
-      prev.end = round3(Math.max(prev.end, end));
-      prev.points.push({ x: c.x, y: c.y });
-      Object.assign(prev, containing(prev.points, prev.level));
-      continue;
+      const grown = containing([...prev.points, { x: c.x, y: c.y }], prev.level);
+      if (grown.w <= MERGE_MAX) {
+        prev.end = round3(Math.max(prev.end, end));
+        prev.points.push({ x: c.x, y: c.y });
+        Object.assign(prev, grown);
+        continue;
+      }
     }
 
     out.push({

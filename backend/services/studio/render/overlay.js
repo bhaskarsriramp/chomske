@@ -39,7 +39,7 @@
 
 import { createCanvas } from "@napi-rs/canvas";
 import { ffmpegFromFrames } from "../../media/ffmpeg.js";
-import { cursorAt, layout, EASE } from "../timeline.js";
+import { cursorAt, layout, drawnTrack, EASE } from "../timeline.js";
 import { cameraAtOutput } from "./camera.js";
 
 /** How long a click ripple lives. */
@@ -80,7 +80,8 @@ const THEMES = {
 export async function renderOverlay({ timeline, keys, width, height, fps, duration, dest, onProgress = () => {} }) {
   const lay = layout(timeline);
   const theme = THEMES[timeline.cursor?.theme || "light"];
-  const wantCursor = timeline.cursor?.enabled !== false && theme && timeline.track?.length > 0;
+  const path = drawnTrack(timeline);
+  const wantCursor = !!theme && !!path && path.length > 0;
 
   const clicks = clickMarks(timeline, lay);
   if (!wantCursor && !clicks.length) return null;
@@ -90,9 +91,17 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
   const total = Math.max(1, Math.round(duration * fps));
   const cur = timeline.cursor || {};
 
-  // The pointer's own pixel size at source scale, before zoom and before the
-  // creator's size setting. 22px is a macOS arrow; Windows is within a pixel.
-  const baseCursorPx = 22 * (width / Math.max(1, timeline.source?.width || width));
+  /**
+   * The captured pointer's own size, which is what ours has to beat.
+   *
+   * 22px is a macOS arrow at 100%, and Windows is within a pixel of it — but a
+   * creator on a scaled display records a cursor half again as big, and nothing
+   * in the recording says so. sync.js measures it off the frames. Never smaller
+   * than the old assumption: under-measuring would draw a pointer that does not
+   * cover the one underneath, which is the whole job.
+   */
+  const capturedPx = Math.max(22, Number(timeline.cursor?.captured_px) || 22);
+  const baseCursorPx = capturedPx * (width / Math.max(1, timeline.source?.width || width));
 
   let drawn = 0;
 
@@ -124,13 +133,13 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
           }
 
           if (wantCursor) {
-            const p = cursorAt(timeline.track, srcT);
+            const p = cursorAt(path, srcT);
             if (p) {
               const pt = projectPoint(p, cam, width, height);
               // Off the edge of the camera: there is nothing to cover and
               // nothing to point at, so nothing is drawn.
               if (pt.x > -80 && pt.y > -80 && pt.x < width + 80 && pt.y < height + 80) {
-                if (cur.trail > 0) drawTrail(ctx, timeline.track, srcT, cam, width, height, cur, theme);
+                if (cur.trail > 0) drawTrail(ctx, path, srcT, cam, width, height, cur, theme);
                 drawCursor(ctx, pt, cam, cur, theme, baseCursorPx, p.shape);
                 any = true;
               }
@@ -286,28 +295,41 @@ function drawArrow(ctx, s, theme) {
  * every click ripple fires off the thing that was clicked.
  */
 function drawHand(ctx, s, theme) {
-  const u = s * 0.055;
-  ctx.translate(-s * 0.34, 0);
+  // The fingertip is the hotspot, and the path is laid out from its own
+  // top-left, so the whole shape shifts left to put the fingertip on the point.
+  ctx.translate(-s * 0.3, 0);
   ctx.beginPath();
-  // The index finger, from its tip.
-  ctx.moveTo(s * 0.30, 0);
-  ctx.quadraticCurveTo(s * 0.44, 0, s * 0.44, u * 2.6);
-  ctx.lineTo(s * 0.44, s * 0.52);
-  // Three folded fingers.
-  ctx.lineTo(s * 0.52, s * 0.46);
-  ctx.quadraticCurveTo(s * 0.68, s * 0.40, s * 0.72, s * 0.56);
-  ctx.lineTo(s * 0.80, s * 0.98);
-  // The heel of the hand.
-  ctx.quadraticCurveTo(s * 0.84, s * 1.28, s * 0.58, s * 1.34);
-  ctx.lineTo(s * 0.34, s * 1.34);
-  ctx.quadraticCurveTo(s * 0.16, s * 1.32, s * 0.10, s * 1.10);
-  // The thumb.
-  ctx.lineTo(s * 0.02, s * 0.74);
-  ctx.quadraticCurveTo(s * 0.0, s * 0.56, s * 0.16, s * 0.58);
-  ctx.lineTo(s * 0.24, s * 0.64);
-  ctx.lineTo(s * 0.24, u * 2.6);
-  ctx.quadraticCurveTo(s * 0.24, 0, s * 0.30, 0);
+
+  // The index finger. Short and thick: drawn long and thin it stops reading as
+  // a hand pointing at something and starts reading as a single raised finger,
+  // which is what one export came back looking like.
+  ctx.moveTo(s * 0.2, s * 0.46);
+  ctx.lineTo(s * 0.2, s * 0.09);
+  ctx.quadraticCurveTo(s * 0.2, 0, s * 0.3, 0);
+  ctx.quadraticCurveTo(s * 0.4, 0, s * 0.4, s * 0.09);
+  ctx.lineTo(s * 0.4, s * 0.44);
+
+  // Three folded fingers, as knuckles stepping down to the right. These are
+  // what make it a fist rather than a stalk.
+  ctx.quadraticCurveTo(s * 0.43, s * 0.36, s * 0.5, s * 0.37);
+  ctx.quadraticCurveTo(s * 0.56, s * 0.38, s * 0.56, s * 0.47);
+  ctx.quadraticCurveTo(s * 0.59, s * 0.4, s * 0.655, s * 0.415);
+  ctx.quadraticCurveTo(s * 0.71, s * 0.43, s * 0.71, s * 0.52);
+  ctx.quadraticCurveTo(s * 0.74, s * 0.46, s * 0.795, s * 0.48);
+  ctx.quadraticCurveTo(s * 0.845, s * 0.5, s * 0.845, s * 0.6);
+
+  // The outside of the hand, down to the heel.
+  ctx.lineTo(s * 0.845, s * 0.98);
+  ctx.quadraticCurveTo(s * 0.83, s * 1.22, s * 0.6, s * 1.3);
+  ctx.lineTo(s * 0.3, s * 1.3);
+  ctx.quadraticCurveTo(s * 0.12, s * 1.27, s * 0.065, s * 1.09);
+
+  // The thumb, tucked across the front.
+  ctx.lineTo(s * 0.005, s * 0.79);
+  ctx.quadraticCurveTo(s * -0.035, s * 0.63, s * 0.085, s * 0.605);
+  ctx.quadraticCurveTo(s * 0.165, s * 0.595, s * 0.185, s * 0.665);
   ctx.closePath();
+
   ctx.fillStyle = theme.fill;
   ctx.fill();
   ctx.shadowColor = "transparent";
@@ -316,6 +338,7 @@ function drawHand(ctx, s, theme) {
   ctx.strokeStyle = theme.line;
   ctx.stroke();
 }
+
 
 /**
  * The trail: where the pointer has just been, fading out behind it.

@@ -214,19 +214,19 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * a better composer tomorrow can be run against a recording made today.
    */
   const composed = intentPath(events, { shots, track: capturedTrack, duration });
-  tl.track = composed
-    ? composed.path
-    : smoothTrack(capturedTrack, { rate: 60, strength: tl.cursor.smoothing, duration });
+  tl.track = smoothTrack(capturedTrack, { rate: 60, strength: tl.cursor.smoothing, duration });
+  tl.composed = composed ? composed.path : [];
   tl.cursor = {
     ...tl.cursor,
-    mode: composed ? "intent" : "recorded",
     captured_px: aligned.sync?.cursor_px > 0 ? aligned.sync.cursor_px : 22,
   };
 
   // Where the pointer really was, thinned, so the renderer can erase the one
   // burnt into the recording. Only worth carrying when the drawn path is not
   // the recovered one — otherwise the drawn pointer is already on top of it.
-  tl.captured = composed ? thin(capturedTrack) : [];
+  // Always kept: it is what the renderer reconstructs away if the creator
+  // switches to the composed path, and it is small.
+  tl.captured = thin(capturedTrack);
   if (composed) {
     console.log(
       `[studio] pointer composed from ${composed.anchors.length} clicks ` +

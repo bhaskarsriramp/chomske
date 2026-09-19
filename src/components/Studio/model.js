@@ -144,6 +144,18 @@ export function placedCues(tl, lay = layout(tl)) {
    The pointer
    ──────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * The path that gets drawn: the composed one when the creator asked for it,
+ * the recovered one otherwise. Mirrors timeline.js drawnTrack — see it for why
+ * "recorded" is the default.
+ */
+export function drawnTrack(tl) {
+  if (!tl || tl.cursor?.enabled === false) return null;
+  const composed = tl.composed;
+  if (tl.cursor?.mode === "intent" && composed && composed.length > 1) return composed;
+  return tl.track || null;
+}
+
 export function cursorAt(track, t) {
   if (!track?.length) return null;
   const first = track[0];

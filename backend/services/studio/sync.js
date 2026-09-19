@@ -58,8 +58,26 @@ const GRID_W = 40;
 const CELL_MIN = 3;
 /** The window over which a cell is judged to be animating rather than reacting. */
 const BUSY_WINDOW = 1.5;
-/** Share of that window a cell must change in before it counts as an animation. */
-const BUSY_SHARE = 0.32;
+/**
+ * Share of that window a cell must change in before it counts as an animation.
+ *
+ * Raised from a third after a real recording came back with FIVE HUNDRED AND
+ * FIFTY busy spans and two hundred of four hundred and sixty pointer sightings
+ * thrown away — nearly half the path, on a page with one spinner in it. At a
+ * third, ordinary things clear the bar: compression noise around text, a
+ * caret, a hover shadow, a chart tooltip. A spinner does not merely change
+ * often, it changes almost every frame.
+ */
+const BUSY_SHARE = 0.3;
+/**
+ * How many neighbouring cells must be busy together.
+ *
+ * The other half of the same fix. A real animation occupies a patch — a
+ * spinner is a disc, a progress bar is a strip — so it lights several adjacent
+ * cells at once. One cell on its own, however busy, is noise, and it was
+ * costing us the pointer every time it passed near one.
+ */
+const BUSY_CLUSTER = 2;
 /** Cells of margin around an animation, since a cursor drawn over one is lost. */
 const BUSY_PAD = 1;
 
@@ -294,7 +312,44 @@ function readGrids(grids, gw, gh, fps) {
     if (openFrom >= 0) busy.push({ c, start: round3(openFrom / fps), end: round3((n - 1) / fps) });
   }
 
-  // A cursor drawn over a spinner covers more than the spinner's own cells.
+  // Lone busy cells are dropped before anything is grown: noise does not come
+  // in patches, and an animation does.
+  for (let i = 0; i < n; i++) {
+    const f = busyFlags[i];
+    const keep = new Uint8Array(cells);
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        if (!f[y * gw + x]) continue;
+        let near = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const yy = y + dy;
+            const xx = x + dx;
+            if (yy >= 0 && yy < gh && xx >= 0 && xx < gw && f[yy * gw + xx]) near++;
+          }
+        }
+        if (near >= BUSY_CLUSTER) keep[y * gw + x] = 1;
+      }
+    }
+    busyFlags[i] = keep;
+  }
+
+  busy.length = 0;
+  for (let c = 0; c < cells; c++) {
+    let openFrom = -1;
+    for (let i = 0; i <= n; i++) {
+      const hot = i < n && busyFlags[i][c] === 1;
+      if (hot && openFrom < 0) openFrom = i;
+      else if (!hot && openFrom >= 0) {
+        busy.push({ c, start: round3(openFrom / fps), end: round3((i - 1) / fps) });
+        openFrom = -1;
+      }
+    }
+  }
+
+  // Grown only for the motion series below: a change touching a cell next to an
+  // animation is usually the animation. inBusy() applies its own margin.
   for (let i = 0; i < n; i++) {
     const src = busyFlags[i];
     const out = new Uint8Array(cells);

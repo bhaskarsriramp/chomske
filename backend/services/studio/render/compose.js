@@ -41,7 +41,7 @@
 import fsp from "fs/promises";
 import path from "path";
 import { ffmpeg, probe } from "../../media/ffmpeg.js";
-import { layout, placedSpans, drewCounts, activeZooms } from "../timeline.js";
+import { layout, placedSpans, drewCounts, activeZooms, drawnTrack } from "../timeline.js";
 import { cleanExportOptions, crfFor, SPEEDS } from "../exportOptions.js";
 import { zoomFilter, cameraKeys } from "./camera.js";
 import { renderOverlay } from "./overlay.js";
@@ -184,14 +184,16 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
    * follows the recovered path; see hide.js for why that is possible at all.
    */
   let hid = null;
-  if (timeline.cursor?.hide_real !== false && (timeline.captured || []).length > 1) {
+  // Only worth reconstructing the captured pointer away when the drawn one is
+  // somewhere else. In "recorded" mode it is drawn on top of it and larger.
+  if (timeline.cursor?.mode === "intent" && timeline.cursor?.hide_real !== false && (timeline.captured || []).length > 1) {
     hid = hideFilter(timeline.captured, lay, {
       sourceWidth,
       sourceHeight,
       cursorPx: timeline.cursor?.captured_px || 22,
       // The path that WILL be drawn: wherever it already stands over the
       // captured pointer, there is nothing to erase.
-      drawn: timeline.cursor?.enabled === false ? null : timeline.track,
+      drawn: drawnTrack(timeline),
     });
     if (hid) {
       graph.push(`[${v}]${hid.filter}[vhide]`);

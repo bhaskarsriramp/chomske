@@ -37,7 +37,7 @@
  * of rest and settle into place, and the eye reads a linear one as a fault in
  * the playback rather than a move.
  */
-import { EASE, RAMP, rampsOf, activeZooms, cameraAt, clampRect, layout, toSource } from "../timeline.js";
+import { EASE, RAMP, rampsOf, activeZooms, cameraAt, clampRect, layout, toSource, drawnTrack } from "../timeline.js";
 
 /** Samples per second for a zoom that follows the pointer. */
 const FOLLOW_HZ = 10;
@@ -78,7 +78,7 @@ export function supersampleFor({ sourceWidth, videoWidth }) {
 export function cameraKeys(tl, { fps = 30 } = {}) {
   const lay = layout(tl);
   const zooms = activeZooms(tl);
-  const track = tl.cursor?.enabled === false ? null : tl.track;
+  const track = drawnTrack(tl);
   if (!zooms.length) return [];
 
   const keys = [];
