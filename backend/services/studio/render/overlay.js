@@ -149,6 +149,22 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
           if (any) drawn++;
           await push(Buffer.from(ctx.getImageData(0, 0, width, height).data.buffer));
           if (i % 30 === 0) onProgress(i / total);
+
+          /**
+           * ── THIS LINE IS WHY THE SITE STAYS UP DURING AN EXPORT ─────────────
+           * push() resolves immediately whenever ffmpeg's stdin has room, and
+           * awaiting a promise that is already resolved does NOT give the event
+           * loop a turn — it only runs other microtasks. Timers, sockets and
+           * every incoming HTTP request wait. So for as long as ffmpeg kept up,
+           * this loop drew frame after frame without the server answering
+           * anything, and the whole site timed out in the browser while an
+           * export ran: "This site can't be reached", ERR_TIMED_OUT.
+           *
+           * Measured: three hundred frames of work awaiting resolved promises
+           * served zero requests; the same loop yielding here served them all
+           * and took two per cent longer.
+           */
+          await new Promise((r) => setImmediate(r));
         }
       },
     }

@@ -16,6 +16,7 @@
  * The event loop is never blocked either: a four-minute render is a child
  * process the server waits on, not work it does.
  */
+import os from "os";
 import { spawn } from "child_process";
 import path from "path";
 import fsp from "fs/promises";
@@ -38,9 +39,37 @@ const STDERR_TAIL = 16000;
  * @param {number}   [opts.timeoutMs]
  * @param {AbortSignal} [opts.signal]
  */
+/**
+ * ── THE ENCODER MAY USE EVERY CORE, BUT IT MAY NOT HAVE THEM FIRST ───────────
+ * ffmpeg runs as a child of the same server that answers the website, on the
+ * same machine. A render at x264 "medium" will happily take every core it can
+ * see, and on a small VM that leaves nothing for Node or the proxy in front of
+ * it: the site stops answering for as long as the export runs.
+ *
+ * Capping ffmpeg's threads would fix that by making every export slower, even
+ * on an idle server. Lowering its priority fixes it without that cost: the
+ * encoder still gets every spare cycle, but the moment a request arrives the
+ * operating system hands the CPU to the process that has to answer it.
+ *
+ * 0 is normal, 19 is lowest. STUDIO_FFMPEG_NICE=0 turns this off.
+ */
+const FFMPEG_NICE = Number.isFinite(Number(process.env.STUDIO_FFMPEG_NICE))
+  ? Math.max(0, Math.min(19, Number(process.env.STUDIO_FFMPEG_NICE)))
+  : 10;
+
+function yieldCpu(child) {
+  if (!FFMPEG_NICE || !child || !child.pid) return;
+  try {
+    os.setPriority(child.pid, FFMPEG_NICE);
+  } catch {
+    // Not permitted on some hosts, and never worth failing a render over.
+  }
+}
+
 export function runProcess(bin, args, { cwd, onStdoutLine, onStderrLine, keepStdout = 64000, timeoutMs = 60 * 60 * 1000, signal } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { cwd, windowsHide: true });
+    yieldCpu(child);
     let stdout = "";
     let stderr = "";
     let outBuf = "";
@@ -316,6 +345,7 @@ export function ffmpegFromFrames(args, { width, height, fps, pixelFormat = "rgba
 
   return new Promise((resolve, reject) => {
     const child = spawn(FFMPEG_PATH, full, { cwd: opts.cwd, windowsHide: true });
+    yieldCpu(child);
     let stderr = "";
     let settled = false;
 
@@ -385,6 +415,7 @@ export function ffmpegToFrames(src, { width, height, fps, pixelFormat = "gray", 
 
   return new Promise((resolve, reject) => {
     const child = spawn(FFMPEG_PATH, args, { cwd: opts.cwd, windowsHide: true });
+    yieldCpu(child);
     let stderr = "";
     let settled = false;
     let held = [];

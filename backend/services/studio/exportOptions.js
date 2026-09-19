@@ -55,7 +55,15 @@ export const DEFAULT_EXPORT = Object.freeze({
   format: "mp4",
   video_mbps: 0,
   audio_kbps: 192,
-  speed: "balanced",
+  /**
+   * "fast" (x264 veryfast), not "balanced" (medium). Measured on a real
+   * demo at CRF 18: medium cost twice the CPU for a file five per cent
+   * smaller, and the quality target is the CRF, not the preset. On the VM
+   * that serves the website that doubled cost was paid with every core
+   * pinned for the length of the export. A creator can still ask for
+   * balanced or best.
+   */
+  speed: "fast",
   captions: true,
 });
 

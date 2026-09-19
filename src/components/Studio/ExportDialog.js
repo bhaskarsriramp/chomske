@@ -186,7 +186,7 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
               <Row label="Quality">
                 <Segmented
                   size="xs"
-                  value={options.speed || "balanced"}
+                  value={options.speed || config?.export?.defaults?.speed || "fast"}
                   onChange={(v) => setOver((o) => ({ ...o, speed: v }))}
                   options={[
                     { value: "fast", label: "Fast" },
