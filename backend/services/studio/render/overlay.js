@@ -131,7 +131,7 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
               // nothing to point at, so nothing is drawn.
               if (pt.x > -80 && pt.y > -80 && pt.x < width + 80 && pt.y < height + 80) {
                 if (cur.trail > 0) drawTrail(ctx, timeline.track, srcT, cam, width, height, cur, theme);
-                drawCursor(ctx, pt, cam, cur, theme, baseCursorPx, p.shape);
+                drawCursor(ctx, pt, cam, cur, theme, baseCursorPx);
                 any = true;
               }
             }
@@ -181,7 +181,7 @@ function projectPoint(p, cam, W, H) {
    The pointer
    ──────────────────────────────────────────────────────────────────────────── */
 
-function drawCursor(ctx, pt, cam, cur, theme, basePx, shape) {
+function drawCursor(ctx, pt, cam, cur, theme, basePx) {
   // Scales with the zoom because the captured pointer does. A synthetic cursor
   // held at a constant size inside a 2× zoom sits in the middle of a pointer
   // twice its size, which looks exactly like the bug it is.
@@ -210,6 +210,22 @@ function drawCursor(ctx, pt, cam, cur, theme, basePx, shape) {
   ctx.shadowBlur = size * 0.36;
   ctx.shadowOffsetY = size * 0.08;
 
+  /**
+   * ── ONE POINTER, ALWAYS THE ARROW ─────────────────────────────────────────
+   * This used to follow the shape the tracker recovered: an arrow over a page,
+   * a hand over a link, an I-beam over text. That is what the operating system
+   * does, and it is wrong here. Watched back, a demo where the pointer becomes
+   * a hand on every hover and an arrow again on every click reads as several
+   * different cursors flickering between each other — which is exactly what it
+   * is, because each shape is a different drawing with a different silhouette
+   * and a different hotspot.
+   *
+   * The creator picks ONE pointer in the Cursor panel and that is the pointer
+   * for the whole video. Theme, size, glow and weight are what change; the
+   * shape never does. The recovered `shape` is still stored on the track — it
+   * is good evidence for events.js that something clickable was under the
+   * pointer — it just does not decide what gets drawn.
+   */
   if (!theme.arrow) {
     ctx.beginPath();
     ctx.arc(0, 0, size * 0.42, 0, Math.PI * 2);
@@ -219,10 +235,6 @@ function drawCursor(ctx, pt, cam, cur, theme, basePx, shape) {
     ctx.lineWidth = Math.max(1.5, size * 0.09);
     ctx.strokeStyle = theme.line;
     ctx.stroke();
-  } else if (shape === "text" || shape === "ibeam") {
-    drawIBeam(ctx, size, theme);
-  } else if (shape === "pointer" || shape === "hand") {
-    drawHand(ctx, size, theme);
   } else {
     drawArrow(ctx, size, theme);
   }
@@ -253,63 +265,6 @@ function drawArrow(ctx, s, theme) {
   ctx.lineWidth = Math.max(1, s * 0.055);
   ctx.lineJoin = "round";
   ctx.strokeStyle = theme.line;
-  ctx.stroke();
-}
-
-/**
- * The hand, for anything the OS considered clickable.
- *
- * The path below is drawn from the shape's top-left, but the HOTSPOT of a hand
- * cursor — the pixel the operating system considers "where the pointer is" — is
- * the tip of the extended finger. Without the shift, the ripple from a click
- * appeared up and to the left of the finger that made it, and the synthetic
- * cursor sat a few pixels off the captured one it is meant to cover.
- */
-function drawHand(ctx, s, theme) {
-  const u = s * 0.055;
-  ctx.translate(-s * 0.34, 0);
-  ctx.beginPath();
-  ctx.moveTo(s * 0.30, 0);
-  ctx.quadraticCurveTo(s * 0.44, 0, s * 0.44, u * 2.6);
-  ctx.lineTo(s * 0.44, s * 0.52);
-  ctx.lineTo(s * 0.52, s * 0.46);
-  ctx.quadraticCurveTo(s * 0.68, s * 0.40, s * 0.72, s * 0.56);
-  ctx.lineTo(s * 0.80, s * 0.98);
-  ctx.quadraticCurveTo(s * 0.84, s * 1.28, s * 0.58, s * 1.34);
-  ctx.lineTo(s * 0.34, s * 1.34);
-  ctx.quadraticCurveTo(s * 0.16, s * 1.32, s * 0.10, s * 1.10);
-  ctx.lineTo(s * 0.02, s * 0.74);
-  ctx.quadraticCurveTo(s * 0.0, s * 0.56, s * 0.16, s * 0.58);
-  ctx.lineTo(s * 0.24, s * 0.64);
-  ctx.lineTo(s * 0.24, u * 2.6);
-  ctx.quadraticCurveTo(s * 0.24, 0, s * 0.30, 0);
-  ctx.closePath();
-  ctx.fillStyle = theme.fill;
-  ctx.fill();
-  ctx.shadowColor = "transparent";
-  ctx.lineWidth = Math.max(1, s * 0.055);
-  ctx.lineJoin = "round";
-  ctx.strokeStyle = theme.line;
-  ctx.stroke();
-}
-
-/** The text caret, for anything over an input. */
-function drawIBeam(ctx, s, theme) {
-  const w = Math.max(2, s * 0.13);
-  ctx.strokeStyle = theme.fill;
-  ctx.lineWidth = w;
-  ctx.lineCap = "butt";
-  ctx.beginPath();
-  ctx.moveTo(0, -s * 0.62);
-  ctx.lineTo(0, s * 0.62);
-  ctx.moveTo(-s * 0.2, -s * 0.62);
-  ctx.lineTo(s * 0.2, -s * 0.62);
-  ctx.moveTo(-s * 0.2, s * 0.62);
-  ctx.lineTo(s * 0.2, s * 0.62);
-  ctx.stroke();
-  ctx.shadowColor = "transparent";
-  ctx.strokeStyle = theme.line;
-  ctx.lineWidth = w * 0.45;
   ctx.stroke();
 }
 

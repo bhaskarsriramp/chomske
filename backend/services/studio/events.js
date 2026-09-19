@@ -75,6 +75,17 @@ export const RULES = {
 };
 
 /**
+ * How long after the pointer stops a whole-screen change may still be that
+ * click's doing.
+ *
+ * Wider than `reactionMs` on purpose. A button darkening is instant; a page
+ * navigating has to fetch, render and paint, and on a real site that is most of
+ * a second. Holding the ordinary reaction window here is what made every
+ * navigation click invisible.
+ */
+const NAV_REACTION = 1.1;
+
+/**
  * The tracker's raw report, cleaned.
  *
  * Samples arrive from a browser and are used to build ffmpeg filter arguments
@@ -192,11 +203,70 @@ export function inferEvents({ samples, motion, duration = 0 }) {
   const claim = (t) => claimed.push(t);
 
   // ── Screen changes ────────────────────────────────────────────────────────
+  const navs = [];
   for (const m of mot) {
     if (m.energy >= RULES.navEnergy) {
       events.push(event("nav", m.t, m.x + m.w / 2, m.y + m.h / 2, { confidence: clamp(m.energy, 0, 1) }));
+      navs.push(m);
       claim(m.t);
     }
+  }
+
+  /**
+   * ── THE CLICKS THAT NAVIGATE ──────────────────────────────────────────────
+   * These were being thrown away, and they are the most important clicks in a
+   * product demo.
+   *
+   * The ordinary click test below looks for a SMALL change near where the
+   * pointer settled: a button darkening, a menu opening, a field filling. It
+   * explicitly rejects anything above `clickMaxEnergy`, and the loop above has
+   * already claimed the moment for a "nav". Both of those are correct in
+   * isolation and together they mean that clicking a menu item which replaces
+   * the whole page produces no click at all.
+   *
+   * That is exactly what a real recording showed: a twenty-two second demo of
+   * someone navigating a settings panel, and ONE click detected in it. The
+   * camera had nothing to zoom on, the click ripple never fired, and watching
+   * it back there was no moment where anything looked pressed — the screen
+   * simply became a different screen.
+   *
+   * A whole-screen change with the pointer resting somewhere the instant before
+   * it is not ambiguous. Nothing else does that. It is a click, and the size of
+   * the change is evidence FOR it rather than against it, so it is read here,
+   * before the subtle case, and given high confidence.
+   */
+  for (const nav of navs) {
+    /**
+     * The dwell the pointer was in when the page changed.
+     *
+     * ── THE POINTER DOES NOT MOVE AFTER A CLICK ─────────────────────────────
+     * The first version of this looked for a dwell that had ENDED shortly
+     * before the navigation, and found nothing, because that is not what
+     * people do. You click a menu item and your hand stays still while the
+     * page loads — so the dwell is still open when the navigation lands, and
+     * often runs to the end of the recording. Measuring from `rest.end` put
+     * the click seconds after the nav, or never.
+     *
+     * So the test is containment: the pointer had settled before the change
+     * and had not left by the time it happened.
+     */
+    const rest = rests
+      .filter((r) => nav.t >= r.start + RULES.reactionMs[0] / 1000 && nav.t <= r.end + NAV_REACTION)
+      .sort((a, b) => b.start - a.start)[0];
+    if (!rest) continue;
+
+    // The press is just before the change it caused, and inside the dwell.
+    const at = clamp(nav.t - 0.12, rest.start, Math.max(rest.start, rest.end));
+    if (events.some((e) => e.type === "click" && Math.abs(e.t - at) < 0.25)) continue;
+
+    // A page that changed under a resting pointer is strong evidence on its
+    // own; a hand cursor over the spot makes it near-certain.
+    let confidence = 0.72;
+    if (rest.shape === "pointer" || rest.shape === "hand") confidence += 0.2;
+    if (rest.end - rest.start > 0.2) confidence += 0.06;
+
+    events.push(event("click", at, rest.x, rest.y, { confidence: clamp(confidence, 0, 1), source: "nav" }));
+    claim(at);
   }
 
   // ── Clicks ────────────────────────────────────────────────────────────────
@@ -417,14 +487,35 @@ export function idleCuts(events, { duration = 0, minSeconds = 1.6, pad = 0.35 } 
  * after clamping, whatever the level or the edge.
  */
 
+/**
+ * ── THE NUMBERS, AND WHY THEY ARE NOT SMALLER ────────────────────────────────
+ * The first attempt at this read the brief "zoom out the instant the click
+ * happens" literally: settled 0.15s early, held 0.3s, left over 0.2s on a
+ * snappy curve. On paper that is exactly what was asked for. On screen it is a
+ * flash — six frames of movement with a page change happening inside them, so
+ * the camera move and the cut land at the same instant and the eye reads one
+ * event, not two. Nothing looks clicked; the screen just becomes another screen.
+ *
+ * A click has to be READABLE, which takes three separate beats:
+ *
+ *   arrive   the camera is there before the pointer is, and settled enough
+ *            that the viewer's eye has found the target
+ *   press    the pointer is on the target, the ripple fires, the interface
+ *            responds — all of it while still zoomed in
+ *   leave    a move the eye can follow, not a jump cut
+ *
+ * "Immediately" means the camera does not LINGER after the press. It does not
+ * mean the exit takes six frames. So the hold covers the press and the start of
+ * the response, and the exit is smooth and roughly as long as the entrance.
+ */
 /** Fully zoomed this long before the press, so the camera has settled. */
-const SETTLE = 0.15;
-/** Held after the press: long enough to register it, not long enough to wait. */
-const HOLD = 0.3;
-/** How fast the camera leaves once the click has landed. */
-const RAMP_OUT = 0.2;
+const SETTLE = 0.3;
+/** Held after the press: the ripple, and the interface beginning to respond. */
+const HOLD = 0.55;
+/** How long the camera takes to leave. Long enough to be a move, not a cut. */
+const RAMP_OUT = 0.42;
 /** Two clicks closer than this are one move; further apart, the camera resets. */
-const MERGE = 1.4;
+const MERGE = 1.6;
 
 export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE } = {}) {
   const out = [];
@@ -457,7 +548,7 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
       // Gentle in, hard out. See timeline.js rampsOf for why these are not the
       // same number.
       ramp_out: RAMP_OUT,
-      ease_out: "snappy",
+      ease_out: "smooth",
       camera: "cursor",
       follow: false,
       follow_strength: 0.7,
@@ -549,7 +640,7 @@ export function anticipateClicks(zooms, events, { duration = 0, settle = SETTLE,
       // the viewer looking at a crop of a page that has already changed.
       end: round3(clamp(Math.min(z.end, mine[mine.length - 1].t + HOLD), start + 0.2, duration || Infinity)),
       ramp_out: RAMP_OUT,
-      ease_out: "snappy",
+      ease_out: "smooth",
     };
   });
 }
