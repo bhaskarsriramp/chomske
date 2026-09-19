@@ -134,6 +134,50 @@ const CONSEQUENCE = 1.4;
 const CONSEQUENCE_GROWTH = 3;
 
 /**
+ * ── A SCROLL IS NOT A CONSEQUENCE ────────────────────────────────────────────
+ * The click test above asks "did the pointer rest, and did something change
+ * near it?". On a laptop that question has a false answer built into the
+ * hardware: two fingers on a trackpad scroll the page while the pointer sits
+ * perfectly still, wherever it happened to be left. The pointer rests, the
+ * screen changes enormously, and every rule fires. Six of the eleven clicks
+ * found in one real recording were this, and half the zooms in the export were
+ * aimed at a page the creator was only reading.
+ *
+ * What separates the two is the SHAPE of the change, not its size. A press
+ * repaints a region: a menu opens, a panel fills, a row lights up. A scroll
+ * TRANSLATES: every line of content moves the same distance in the same
+ * direction, and nothing else about the picture changes at all.
+ *
+ * The tracker already measures that translation — it has to, to tell a scroll
+ * from a pointer move — and reports it per frame as dy. It is a rare signal and
+ * a sharp one: across a twenty-five second recording only nine per cent of
+ * frames carried any vertical shift at all, and the clicks the creator named as
+ * scrolls carried between 0.18 and 0.60 of a frame height of it while every
+ * real press carried none.
+ */
+const SCROLL_SHIFT = 0.004;
+/** Frame heights of travel, summed over the reaction window, that mean scrolling. */
+const SCROLL_SUM = 0.05;
+
+/**
+ * How far the picture slid vertically in the moment after a press.
+ *
+ * Small shifts are ignored one at a time and summed: a slow trackpad scroll is
+ * many small steps, and a single step is indistinguishable from a text caret
+ * blinking a row over.
+ */
+function scrolledAfter(mot, t) {
+  let sum = 0;
+  for (const m of mot) {
+    if (m.t < t) continue;
+    if (m.t > t + CONSEQUENCE) break;
+    const dy = Math.abs(num(m.dy, 0));
+    if (dy >= SCROLL_SHIFT) sum += dy;
+  }
+  return sum;
+}
+
+/**
  * The tracker's raw report, cleaned.
  *
  * Samples arrive from a browser and are used to build ffmpeg filter arguments
@@ -288,6 +332,31 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
   let lastNav = -Infinity;
   for (const m of mot) {
     if (m.energy < RULES.navEnergy || m.w < RULES.navBox || m.h < RULES.navBox) continue;
+    /**
+     * ── A PAGE SCROLLING IS NOT A PAGE CHANGING ───────────────────────────
+     * The test above is a shape test: something changed in every corner, which
+     * nothing but a new screen does. Except one thing does, constantly, and it
+     * is the single most common thing anybody does to a page. Scrolling moves
+     * every line of content at once, so the changed region spans the frame and
+     * the energy clears the floor, and the rule fires on a creator who was
+     * only reading.
+     *
+     * Every one of those minted a click, because the block below reads a
+     * whole-screen change over a resting pointer as near-certain evidence of a
+     * press — and a pointer IS resting during a trackpad scroll, which is the
+     * whole reason a trackpad has two fingers.
+     *
+     * The difference is coherence. When a page navigates, the new content bears
+     * no relation to the old and the row-correlation finds no consistent shift.
+     * When it scrolls, every row moved the same distance, and that distance is
+     * dy. On the recording that prompted this, seven of eleven whole-screen
+     * changes carried a shift and four did not, and the four were the four real
+     * page changes.
+     *
+     * Nothing is lost by returning here: the scroll section further down emits
+     * a scroll event for exactly these frames.
+     */
+    if (Math.abs(num(m.dy, 0)) >= SCROLL_SHIFT) continue;
     if (!screenAgrees(screen, m.t)) continue;
     if (m.t - lastNav < RULES.navGap) {
       lastNav = m.t;
@@ -368,7 +437,16 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
     if (rest.shape === "pointer" || rest.shape === "hand") confidence += 0.2;
     if (rest.end - rest.start > 0.2) confidence += 0.06;
 
-    events.push(event("click", at, rest.x, rest.y, { confidence: clamp(confidence, 0, 1), source: "nav", corroborated: true }));
+    // The nav that produced this was already checked for translation above, so
+    // it is on the record as a press during a settled page rather than as one
+    // with no opinion attached.
+    events.push(event("click", at, rest.x, rest.y, {
+      confidence: clamp(confidence, 0, 1),
+      source: "nav",
+      corroborated: true,
+      scrolled: false,
+      scroll_shift: 0,
+    }));
     claim(at);
   }
 
@@ -410,8 +488,16 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
      * row appearing. A hover's highlight is the whole story, and stops there.
      */
     const after = grewAfter(screen, mot, best.m, rest.end);
+    // Measured, not judged: confirmClicks() below decides what it means once
+    // the model has said whether the pointer was on a control at the time.
+    const slid = scrolledAfter(mot, rest.end);
     events.push(
-      event("click", rest.end, rest.x, rest.y, { confidence: clamp(confidence * (after ? 1 : 0.8), 0, 1), corroborated: after })
+      event("click", rest.end, rest.x, rest.y, {
+        confidence: clamp(confidence * (after ? 1 : 0.8), 0, 1),
+        corroborated: after,
+        scrolled: slid >= SCROLL_SUM,
+        scroll_shift: round3(slid),
+      })
     );
     spent.add(rest);
     claim(best.m.t);
@@ -700,6 +786,140 @@ const MERGE = 1.6;
 const MERGE_MAX = 0.62;
 
 /**
+ * ── WAS IT A CONTROL, OR WAS IT JUST SOMEWHERE? ──────────────────────────────
+ * Everything above this line is pixels. It can tell that the pointer stopped
+ * and that the screen changed, and from those two facts alone it cannot tell a
+ * press from a person putting the mouse down to read with.
+ *
+ * People click on nothing all the time. It is a habit, not an intention: a tap
+ * on white space to dismiss a menu, to focus the window, to park the hand. A
+ * demo that zooms into the middle of a paragraph because somebody tapped there
+ * does not look clever, it looks broken — and it spends the zoom budget that
+ * the one click that mattered needed.
+ *
+ * The model has already read every sampled frame and named what was on it, with
+ * a box around each control. So the question can simply be asked: at the moment
+ * of this press, was the pointer on something a person can press?
+ *
+ * ── WHAT THIS FUNCTION MAY AND MAY NOT DO ────────────────────────────────────
+ * It may withhold the CAMERA. It may not delete the event. A click this
+ * function rejects still happened as far as anything else is concerned — it
+ * keeps its ripple, it stays in the editor, and the creator can turn the zoom
+ * back on. The camera is an editorial decision and is allowed to be
+ * conservative; the record of what the pointer did is not.
+ *
+ * ── AND IT ONLY RULES WHERE IT HAS EVIDENCE ──────────────────────────────────
+ * The vision pass samples frames every few seconds, and any one of them can
+ * come back empty. "No control found near this click" therefore has two very
+ * different meanings: the model looked and there was nothing there, or the
+ * model never looked. Only the first is a reason to withhold anything. Where
+ * there is no evidence either way the click keeps whatever the pixels earned
+ * it, which is what the whole pipeline did before this function existed.
+ */
+
+/** Element types a person can actually press. The rest are surfaces. */
+const PRESSABLE = new Set([
+  "button", "icon_button", "link", "nav_item", "tab", "list_item",
+  "text_field", "dropdown", "checkbox", "toggle", "menu",
+  "browser_tab", "browser_url",
+]);
+
+/** How far from a frame the model read a click may be and still be judged by it. */
+const SEEN_WITHIN = 1.4;
+/** Slop around a control's box, for a hotspot that sits a few pixels off. */
+const EDGE_SLOP = 0.02;
+/**
+ * A "button" filling a third of the screen is a mislabelled panel. Counting it
+ * would let one bad box wave every click through.
+ */
+const CONTROL_MAX_AREA = 0.2;
+
+/**
+ * What the pointer was on when it pressed, or null when nobody looked.
+ *
+ * @returns {{ label, type, area } | false | null}
+ *          the control, false for "looked and found nothing", null for no frame
+ */
+export function controlUnder(shots, t, x, y) {
+  let looked = false;
+  let best = null;
+  let bestArea = Infinity;
+
+  for (const shot of shots || []) {
+    if (Math.abs(num(shot.t) - t) > SEEN_WITHIN) continue;
+    const els = shot.elements || [];
+    // A frame with no pressable element on it at all is a frame the model did
+    // not really read. Counting it as evidence of absence would reject every
+    // click in a recording the vision pass failed on.
+    if (!els.some((e) => PRESSABLE.has(String(e.type)))) continue;
+    looked = true;
+
+    for (const el of els) {
+      if (!PRESSABLE.has(String(el.type))) continue;
+      const [ex, ey, ew, eh] = el.bbox || [];
+      if (!(ew > 0) || !(eh > 0)) continue;
+      const area = ew * eh;
+      if (area > CONTROL_MAX_AREA) continue;
+      const inside =
+        x >= ex - EDGE_SLOP && x <= ex + ew + EDGE_SLOP &&
+        y >= ey - EDGE_SLOP && y <= ey + eh + EDGE_SLOP;
+      if (!inside) continue;
+      // The smallest box containing the point is the control; the bigger ones
+      // around it are the row, the group and the panel it sits in.
+      if (area < bestArea) {
+        bestArea = area;
+        best = { label: String(el.label || ""), type: String(el.type), area: round4(area) };
+      }
+    }
+  }
+
+  if (best) return best;
+  return looked ? false : null;
+}
+
+/**
+ * Decide which clicks get to move the camera.
+ *
+ * Reads three things that were measured elsewhere and combines them once, here,
+ * so the rule can be read in one place:
+ *
+ *   on a named control          the camera moves, even if the page also
+ *                               scrolled — a link that jumps to an anchor is
+ *                               still a link somebody pressed
+ *   nothing was there           the camera stays put
+ *   nobody looked, no scroll    the camera moves, as it always did
+ *   nobody looked, but a scroll the camera stays put
+ *
+ * @param {Array} events  from inferEvents
+ * @param {Array} shots   from readFrames — per-frame elements the model named
+ */
+export function confirmClicks(events, shots, { onNote = () => {} } = {}) {
+  return (events || []).map((e) => {
+    if (e.type !== "click" && e.type !== "dblclick") return e;
+
+    const on = controlUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5));
+    const had = e.corroborated !== false;
+    const scrolled = e.scrolled === true;
+
+    let zoomable;
+    let why;
+    if (!had) { zoomable = false; why = "nothing came of it"; }
+    else if (on) { zoomable = true; why = "on " + (on.label ? '"' + on.label + '"' : on.type); }
+    else if (on === false) { zoomable = false; why = "not on a control"; }
+    else if (scrolled) { zoomable = false; why = "the page was scrolling"; }
+    else { zoomable = true; why = "no frame read here; allowed"; }
+
+    onNote({ t: num(e.t), zoomable, why });
+    return {
+      ...e,
+      zoomable,
+      on_control: on ? true : on === false ? false : null,
+      control: on ? on.label || on.type : "",
+    };
+  });
+}
+
+/**
  * ── THE CAMERA MOVES FOR A PRESS, NEVER FOR A HOVER ──────────────────────────
  * A hover and a click look almost the same from outside: the pointer settles on
  * a control and something small changes under it. The operating system's own
@@ -717,7 +937,12 @@ const MERGE_MAX = 0.62;
 export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE } = {}) {
   const out = [];
   const clicks = events.filter(
-    (e) => (e.type === "click" || e.type === "dblclick") && e.confidence >= 0.55 && e.corroborated !== false
+    // zoomable is set by confirmClicks() once the model has said what was under
+    // the pointer. Undefined means that pass never ran, and the old rule stands.
+    (e) => (e.type === "click" || e.type === "dblclick") &&
+      e.confidence >= 0.55 &&
+      e.corroborated !== false &&
+      e.zoomable !== false
   );
 
   for (const c of clicks) {

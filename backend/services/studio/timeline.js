@@ -977,6 +977,12 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       // Whether the recording showed a consequence. Only a corroborated click
       // moves the camera; see events.js zoomsFromClicks.
       corroborated: e.corroborated !== false,
+      // Set by confirmClicks(). undefined means that pass has not run against
+      // this demo yet, and every reader treats that as "no opinion".
+      zoomable: e.zoomable === false ? false : e.zoomable === true ? true : undefined,
+      on_control: e.on_control === true ? true : e.on_control === false ? false : undefined,
+      control: typeof e.control === "string" ? e.control.slice(0, 80) : undefined,
+      scrolled: e.scrolled === true ? true : undefined,
       x: round4(frac(e.x, 0.5)),
       y: round4(frac(e.y, 0.5)),
       dy: round3(num(e.dy)),

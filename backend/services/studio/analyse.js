@@ -37,7 +37,7 @@ import { extractFrames } from "../media/ffmpeg.js";
 import {
   newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
+import { confirmClicks, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
 import { alignCapture } from "./sync.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
@@ -91,7 +91,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
 
   /* ── What the pointer did ────────────────────────────────────────────── */
   onProgress(0.06, "Reading the pointer");
-  const events = inferEvents({
+  let events = inferEvents({
     samples: capturedTrack,
     motion: capturedMotion,
     duration,
@@ -137,6 +137,32 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
       : Promise.resolve({ language: "", language_label: "", cues: [] });
 
   const shots = await uiTask;
+
+  /**
+   * ── THE CAMERA WAITS FOR THE MODEL ──────────────────────────────────────
+   * inferEvents() above found the presses from pixels alone, which is all it
+   * can see: a pointer that stopped, and a screen that changed near it. That
+   * shape is also what somebody reading a page with the mouse parked on it
+   * produces, and what a trackpad scroll produces, and a demo that zooms into
+   * those is worse than one that never zooms at all.
+   *
+   * Now that every frame has been read there is a second opinion available —
+   * what was actually under the pointer — so the clicks are graded before
+   * anything aims at them. Nothing is deleted here; only the camera is
+   * withheld. See confirmClicks().
+   */
+  const graded = confirmClicks(events, shots);
+  const held = graded.filter((g) => g.zoomable === false && g.corroborated !== false);
+  if (held.length) {
+    console.log(
+      "[studio] " + held.length + " of " +
+        graded.filter((g) => g.type === "click" || g.type === "dblclick").length +
+        " presses will not move the camera: " +
+        held.map((g) => g.t.toFixed(2) + "s").join(", ")
+    );
+  }
+  events = graded;
+
   onProgress(0.46, "Working out the steps");
 
   /* ── What the person was doing ───────────────────────────────────────── */

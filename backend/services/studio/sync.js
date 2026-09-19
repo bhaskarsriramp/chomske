@@ -763,6 +763,123 @@ function dropLoners(track, { reach = 0.4 } = {}) {
   });
 }
 
+/**
+ * ── A HAND CANNOT DO THAT ────────────────────────────────────────────────────
+ * The tracker finds the pointer by differencing two frames and taking the most
+ * convincing patch of change. Most of the time the most convincing patch of
+ * change IS the pointer. When a page repaints, a menu opens or a list redraws,
+ * it is whichever piece of the new content happened to land on the busiest
+ * background, and the reported position jumps to the middle of the page.
+ *
+ * Read as a path, those jumps are the pointer crossing the screen and coming
+ * back inside two frames. On the recording that prompted this, thirty-two of
+ * two hundred and twenty-six consecutive sightings required between four and
+ * twenty-two THOUSAND pixels per second. A hand on a mouse peaks near four.
+ *
+ * This is what a viewer reports as "multiple cursors". The drawn pointer flicks
+ * to the middle of the page and back while the one burnt into the recording
+ * stays where it really was, so for a moment there are two — and because the
+ * flick lasts a frame or two, it reads as a second cursor blinking rather than
+ * as the first one moving.
+ *
+ * There is no need to guess which sighting is right. The constraint is
+ * physical, it is one-sided, and it costs nothing to apply: a position that
+ * could only be reached faster than a hand can move is not the pointer. Drop
+ * it, and the gap it leaves means "held where it was last seen", which is what
+ * every other gap in this file already means.
+ */
+
+/** Frame widths per second a hand can actually move a mouse. */
+const MAX_SPEED = 2.5;
+/**
+ * Past this long between sightings, nothing is impossible: the pointer had time
+ * to get anywhere, and the gap is the tracker losing it rather than a move.
+ */
+const FREE_AFTER = 0.35;
+
+export function dropFliers(track, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
+  if (track.length < 3) return track;
+  const ratio = sourceHeight / Math.max(1, sourceWidth);
+  // Distance in frame widths, so the limit means the same thing on any shape of
+  // screen: vertical travel is scaled by the aspect rather than counted as if
+  // the frame were square.
+  const apart = (a, b) => Math.hypot(num(b.x) - num(a.x), (num(b.y) - num(a.y)) * ratio);
+  const impossible = (a, b) => {
+    const dt = num(b.t) - num(a.t);
+    if (dt <= 0 || dt >= FREE_AFTER) return false;
+    return apart(a, b) / dt > MAX_SPEED;
+  };
+
+  /**
+   * ── THE EXCURSION IS THE SHAPE TO LOOK FOR ─────────────────────────────────
+   * A per-sample speed limit is not enough on its own, because the tracker does
+   * not fail one sample at a time. A repaint holds its attention for as long as
+   * it lasts, so the reported position leaves the pointer, sits somewhere else
+   * for several samples that agree with each other perfectly, and comes back.
+   * Judged pairwise, every sample in the middle of that is unremarkable.
+   *
+   * Judged as runs it is obvious, and it is obvious in one specific way: the
+   * path goes A, then B, then back to A. Run 8 of one real recording sat at
+   * (0.57, 0.23), run 9 was a single sighting 833 pixels away, and run 10 was
+   * back at (0.57, 0.23). A hand does not do that. A tracker distracted by one
+   * frame of a list redrawing does it constantly.
+   *
+   * So the test is comparative rather than absolute: if the run before and the
+   * run after agree with each other BETTER than either agrees with what is
+   * between them, what is between them is the odd one out. That needs no
+   * threshold for "how far is too far" — the recording's own two opinions
+   * either side supply it.
+   */
+  const runs = [[track[0]]];
+  for (let i = 1; i < track.length; i++) {
+    const p = track[i];
+    const prev = track[i - 1];
+    if (impossible(prev, p) || num(p.t) - num(prev.t) >= FREE_AFTER) runs.push([p]);
+    else runs[runs.length - 1].push(p);
+  }
+
+  const keep = runs.map(() => true);
+  for (let i = 1; i < runs.length - 1; i++) {
+    const r = runs[i];
+    const span = num(r[r.length - 1].t) - num(r[0].t);
+    // Long enough to be somebody's hand resting there is long enough to believe.
+    if (r.length > 3 || span > 0.25) continue;
+
+    // Only a run the path had to JUMP into and out of is a candidate. One
+    // reached across an ordinary gap is just the pointer being found again.
+    const before = runs[i - 1][runs[i - 1].length - 1];
+    const after = runs[i + 1][0];
+    if (!impossible(before, r[0]) || !impossible(r[r.length - 1], after)) continue;
+
+    const detourIn = apart(before, r[0]);
+    const detourOut = apart(r[r.length - 1], after);
+    if (apart(before, after) < Math.min(detourIn, detourOut)) keep[i] = false;
+  }
+
+  /* ── The pairwise limit, applied to what survives ─────────────────────── */
+  const surviving = [];
+  for (let i = 0; i < runs.length; i++) if (keep[i]) surviving.push(...runs[i]);
+
+  const out = [surviving[0]];
+  for (let i = 1; i < surviving.length; i++) {
+    const p = surviving[i];
+    const anchor = out[out.length - 1];
+    const dt = num(p.t) - num(anchor.t);
+    if (dt <= 0) continue;
+    if (dt >= FREE_AFTER || apart(anchor, p) / dt <= MAX_SPEED) { out.push(p); continue; }
+
+    /**
+     * A single sighting cannot outvote the anchor, but a run that keeps
+     * agreeing with itself can: that is what a genuinely fast flick across the
+     * screen looks like. Without this a stale anchor would swallow a real move.
+     */
+    const next = surviving[i + 1];
+    const gap = next ? num(next.t) - num(p.t) : Infinity;
+    if (next && gap < FREE_AFTER && apart(p, next) / Math.max(1e-3, gap) <= MAX_SPEED) out.push(p);
+  }
+  return out;
+}
+
 /** The browser's pointer position at a moment, interpolated between samples. */
 function sampleAt(track, t) {
   if (!track.length) return null;
@@ -824,7 +941,8 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
    * leaves a gap, and a gap means "held where it was last seen" — which, while
    * a page loads, is what the pointer was really doing.
    */
-  const clean = dropLoners(opened.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y))));
+  const seen = dropLoners(opened.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y))));
+  const clean = dropFliers(seen, { sourceWidth, sourceHeight });
 
   return {
     track: clean,
@@ -836,10 +954,11 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
       cursor_px: screen.cursorPx,
       parked: opened.length > shifted.length,
       spinners: screen.busy ? screen.busy.length : 0,
-      dropped: opened.length - clean.length,
+      dropped: opened.length - seen.length,
+      fliers: seen.length - clean.length,
       reason: found.confident ? "" : "too little movement to line the two clocks up; left as recorded",
     },
   };
 }
 
-export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, alignCapture };
+export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, dropFliers, alignCapture };
