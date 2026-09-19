@@ -382,48 +382,68 @@ export function idleCuts(events, { duration = 0, minSeconds = 1.6, pad = 0.35 } 
 }
 
 /**
- * Zoom targets from the clicks: the camera move every screen recorder wants.
+ * ════════════════════════════════════════════════════════════════════════════
+ * THE CLICK CAMERA
+ * ════════════════════════════════════════════════════════════════════════════
  *
- * ── THE ZOOM ARRIVES BEFORE THE CLICK, NOT AFTER IT ──────────────────────────
- * This is the whole trick, and it is the one thing hand-edited demos get right
- * and automatic ones get wrong. A zoom that starts ON the click shows the
- * viewer a button that has already been pressed. The viewer needs to see the
- * button, see the pointer arrive at it, and see it pressed — so the camera has
- * to be settled on the target BEFORE the pointer gets there.
+ * This is the shape of the move, and it is the whole product:
  *
- * In this timeline a zoom's `start` is the moment it is fully in: the ease-in
- * runs over RAMP seconds BEFORE `start` (see timeline.js cameraAt). So the
- * anchor is the click itself, less a couple of frames of settle, and the
- * ease-in falls naturally into the approach. `hold` then keeps the frame on
- * the target just long enough to read what the click did — a menu opening, a
- * field filling — before it releases.
+ *     full frame ──ease in──► [ CLICK ] ──snap out──► full frame
+ *                  ~0.5s        held        ~0.2s
+ *                             0.3s
  *
- * `hold` is deliberately short. The instinct is to linger, and lingering is
- * what makes an automatic edit feel slow: the interesting thing is the next
- * action, and the camera should already be on its way there.
+ * The camera is settled on the target BEFORE the pointer reaches it, so the
+ * viewer sees the button, sees the pointer arrive, and sees it pressed. The
+ * instant the press lands the camera leaves, because what the click produced —
+ * a page, a menu, a dialog — is the next thing worth seeing and it needs the
+ * whole frame.
+ *
+ * ── WHAT THE FIRST VERSION GOT WRONG ─────────────────────────────────────────
+ * Three things, all visible frame by frame in a real export:
+ *
+ *   1. The rect did not contain the click. It was built as a fixed 0.28 × 0.2
+ *      box offset from the pointer and then clamped into frame, so a click near
+ *      an edge — which is where navigation lives, and navigation is what people
+ *      click — ended up outside the crop. The recording showed eleven seconds
+ *      of a left nav being clicked with the left nav cropped off.
+ *   2. It held for most of a second after the press, so the result of the click
+ *      played out inside a crop of the previous screen.
+ *   3. Consecutive zooms merged into one another with no gap, so the camera
+ *      never returned to the full frame at all and the "zoom" was a static
+ *      crop for the length of the demo.
+ *
+ * So the rect is now DERIVED FROM the click rather than merely near it: the
+ * click is the centre, and `containing()` below guarantees it stays inside
+ * after clamping, whatever the level or the edge.
  */
-export function zoomsFromClicks(events, { duration = 0, level = 1.8, settle = 0.12, hold = 0.9, merge = 1.2 } = {}) {
+
+/** Fully zoomed this long before the press, so the camera has settled. */
+const SETTLE = 0.15;
+/** Held after the press: long enough to register it, not long enough to wait. */
+const HOLD = 0.3;
+/** How fast the camera leaves once the click has landed. */
+const RAMP_OUT = 0.2;
+/** Two clicks closer than this are one move; further apart, the camera resets. */
+const MERGE = 1.4;
+
+export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE } = {}) {
   const out = [];
   const clicks = events.filter((e) => (e.type === "click" || e.type === "dblclick") && e.confidence >= 0.55);
 
   for (const c of clicks) {
-    // Fully zoomed a couple of frames before the button is pressed.
     const start = Math.max(0, c.t - settle);
     const end = Math.min(duration || Infinity, c.t + hold);
-    if (end - start < 0.3) continue;
+    if (end - start < 0.2) continue;
 
     const prev = out[out.length - 1];
     // Two clicks close together are one camera move covering both, not two:
     // pulling out and back in between two clicks a second apart is the reason
-    // auto-zoom has a reputation for making people seasick.
+    // auto-zoom has a reputation for making people seasick. The rect grows to
+    // hold both points rather than jumping between them.
     if (prev && start < prev.end + merge) {
       prev.end = round3(Math.max(prev.end, end));
-      const x0 = Math.min(prev.x, c.x - 0.14);
-      const y0 = Math.min(prev.y, c.y - 0.1);
-      prev.w = round4(Math.max(prev.x + prev.w, c.x + 0.14) - x0);
-      prev.h = round4(Math.max(prev.y + prev.h, c.y + 0.1) - y0);
-      prev.x = round4(clamp(x0, 0, 1));
-      prev.y = round4(clamp(y0, 0, 1));
+      prev.points.push({ x: c.x, y: c.y });
+      Object.assign(prev, containing(prev.points, prev.level));
       continue;
     }
 
@@ -431,50 +451,150 @@ export function zoomsFromClicks(events, { duration = 0, level = 1.8, settle = 0.
       id: newId("z"),
       start: round3(start),
       end: round3(end),
-      x: round4(clamp(c.x - 0.14, 0, 1)),
-      y: round4(clamp(c.y - 0.1, 0, 1)),
-      w: 0.28, h: 0.2,
+      ...containing([{ x: c.x, y: c.y }], level),
       level,
       easing: "smooth",
+      // Gentle in, hard out. See timeline.js rampsOf for why these are not the
+      // same number.
+      ramp_out: RAMP_OUT,
+      ease_out: "snappy",
       camera: "cursor",
       follow: false,
       follow_strength: 0.7,
       label: "click",
       auto: true,
+      points: [{ x: c.x, y: c.y }],
     });
+  }
+
+  // `points` is working state, not part of the timeline schema.
+  return out.map(({ points, ...z }) => z);
+}
+
+/**
+ * A rect at `level` that is guaranteed to contain every point given, after the
+ * clamp into frame.
+ *
+ * ── THIS IS THE FUNCTION THE BROKEN EXPORT NEEDED ────────────────────────────
+ * The camera shows a window of 1/level of the frame. Centring that window on a
+ * point near an edge pushes it off the picture, and clamping it back moves it
+ * AWAY from the point — which is how a click at x = 0.05 ended up outside its
+ * own zoom. Clamping the CENTRE into the range the window can legally occupy,
+ * before building the rect, cannot do that: the worst case is the point sitting
+ * against the inside edge of the frame, which is still on screen.
+ *
+ * The level is also lowered, never the framing sacrificed, when the points are
+ * too far apart to hold at the asked-for level. A wider shot that contains what
+ * was clicked beats a tighter one that does not.
+ */
+export function containing(points, level) {
+  const xs = points.map((p) => frac(p.x, 0.5));
+  const ys = points.map((p) => frac(p.y, 0.5));
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+
+  // The window must hold the spread of points plus a margin, or the level drops.
+  const MARGIN = 0.12;
+  const need = Math.max(maxX - minX, maxY - minY) + MARGIN * 2;
+  const w = clamp(Math.max(1 / Math.max(1, level), need), 0.08, 1);
+
+  // Centre, then clamp the CENTRE — not the rect — into where it may legally sit.
+  const cx = clamp((minX + maxX) / 2, w / 2, 1 - w / 2);
+  const cy = clamp((minY + maxY) / 2, w / 2, 1 - w / 2);
+  return { x: round4(cx - w / 2), y: round4(cy - w / 2), w: round4(w), h: round4(w) };
+}
+
+/**
+ * The model's planned zooms, retimed AND re-aimed around the clicks inside them.
+ *
+ * The planner reads frames and knows what is worth looking at; it has no feel
+ * for the tenth of a second on either side of a press, and no idea where the
+ * pointer is. Left alone it opens a zoom at the moment of the action, aimed at
+ * whatever looked important in the frame — which in a real recording was the
+ * content area while every click happened in the nav.
+ *
+ * So the planner keeps its judgement about WHAT a stretch is about, and the
+ * pointer log corrects WHEN the camera arrives and WHETHER the thing being
+ * clicked is actually in shot.
+ */
+export function anticipateClicks(zooms, events, { duration = 0, settle = SETTLE, reach = 1.1 } = {}) {
+  const clicks = events
+    .filter((e) => (e.type === "click" || e.type === "dblclick") && e.confidence >= 0.5)
+    .sort((a, b) => a.t - b.t);
+  if (!clicks.length) return zooms;
+
+  return zooms.map((z) => {
+    // The clicks this zoom is plausibly about: inside it, or just after it
+    // opens. `reach` is how late a click may be and still be the thing planned
+    // for.
+    const mine = clicks.filter((c) => c.t >= z.start - 0.25 && c.t <= Math.max(z.start + reach, z.end));
+    if (!mine.length) return z;
+
+    const first = mine[0];
+    const start = Math.max(0, Math.min(z.start, first.t - settle));
+    if (z.end - start < 0.2) return z;
+
+    // Re-aim only when the plan does not already have the click in shot.
+    const holds = mine.every((c) => c.x >= z.x && c.x <= z.x + z.w && c.y >= z.y && c.y <= z.y + z.h);
+    const rect = holds ? { x: z.x, y: z.y, w: z.w, h: z.h } : containing(mine.map((c) => ({ x: c.x, y: c.y })), z.level);
+
+    return {
+      ...z,
+      ...rect,
+      start: round3(start),
+      // Released as soon as the last click it covers has landed. A planned
+      // zoom that ran on for four seconds after the press is four seconds of
+      // the viewer looking at a crop of a page that has already changed.
+      end: round3(clamp(Math.min(z.end, mine[mine.length - 1].t + HOLD), start + 0.2, duration || Infinity)),
+      ramp_out: RAMP_OUT,
+      ease_out: "snappy",
+    };
+  });
+}
+
+/**
+ * The camera, guaranteed to come back to the full frame between moves.
+ *
+ * ── WHY THIS EXISTS AND spaceZooms DOES NOT COVER IT ─────────────────────────
+ * vision.js spaceZooms enforces a gap between a zoom's `end` and the next
+ * `start`. That is not the same thing, because a zoom's influence extends a
+ * ramp beyond each edge: with a 0.8s gap and a 0.55s ramp on both sides, the
+ * previous zoom is still pulling out as the next one starts pulling in and the
+ * picture never reaches 1.0×. Watched back, that is a permanent crop that
+ * wobbles — which is exactly what came out of the first real export.
+ *
+ * So the gap required here is measured between INFLUENCES, and it includes a
+ * beat at the full frame. Anything that cannot be given that beat is dropped:
+ * one clean zoom reads better than two that never let go.
+ */
+export function restToFull(zooms, { rest = 0.35 } = {}) {
+  const out = [];
+  for (const z of [...zooms].sort((a, b) => a.start - b.start)) {
+    const prev = out[out.length - 1];
+    if (!prev) {
+      out.push(z);
+      continue;
+    }
+    const prevOut = prev.end + (Number(prev.ramp_out) || RAMP_OUT);
+    const thisIn = z.start - rampIn(z);
+    if (thisIn >= prevOut + rest) {
+      out.push(z);
+      continue;
+    }
+    // Too close to let go between them. Keep the stronger one; when they are
+    // the same strength keep the earlier, because the first of two rapid
+    // clicks is the one the viewer has not seen yet.
+    if (z.level > prev.level + 0.15) out[out.length - 1] = z;
   }
   return out;
 }
 
-/**
- * The model's planned zooms, retimed so each one lands before the click it is
- * about.
- *
- * The planner reads frames and describes what should be on screen; it has no
- * feel for the tenth of a second on either side of a press, and left alone it
- * tends to open a zoom at the moment of the action. Where a planned zoom has a
- * click just inside its front edge, the zoom is pulled back so the camera is
- * already there — the planner keeps its judgement about WHAT to look at, and
- * the pointer log decides WHEN.
- */
-export function anticipateClicks(zooms, events, { duration = 0, settle = 0.12, reach = 1.1 } = {}) {
-  const clicks = events
-    .filter((e) => (e.type === "click" || e.type === "dblclick") && e.confidence >= 0.5)
-    .map((e) => e.t)
-    .sort((a, b) => a - b);
-  if (!clicks.length) return zooms;
+const rampIn = (z) => (Number.isFinite(Number(z?.ramp_in)) ? Number(z.ramp_in) : RAMP_SECONDS[z?.easing] || 0.55);
+const RAMP_SECONDS = { smooth: 0.55, snappy: 0.32, slow: 0.9, linear: 0.5 };
 
-  return zooms.map((z) => {
-    // The first click at or just after this zoom opens; `reach` is how late a
-    // click may be and still be the thing the zoom was planned for.
-    const c = clicks.find((t) => t >= z.start - 0.25 && t <= z.start + reach);
-    if (c === undefined) return z;
-    const start = Math.max(0, Math.min(z.start, c - settle));
-    // Never inverted, and never so long the ruler shows a zoom over the whole
-    // recording because one click sat near a badly-timed plan.
-    if (z.end - start < 0.3) return z;
-    return { ...z, start: round3(start), end: round3(Math.min(duration || Infinity, z.end)) };
-  });
-}
-
-export default { RULES, cleanSamples, cleanMotion, speeds, dwells, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks };
+export default {
+  RULES, cleanSamples, cleanMotion, speeds, dwells, inferEvents, idleCuts,
+  zoomsFromClicks, anticipateClicks, containing, restToFull,
+};

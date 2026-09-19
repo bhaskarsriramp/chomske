@@ -37,7 +37,7 @@
  * of rest and settle into place, and the eye reads a linear one as a fault in
  * the playback rather than a move.
  */
-import { EASE, RAMP, activeZooms, cameraAt, clampRect, layout, toSource } from "../timeline.js";
+import { EASE, RAMP, rampsOf, activeZooms, cameraAt, clampRect, layout, toSource } from "../timeline.js";
 
 /** Samples per second for a zoom that follows the pointer. */
 const FOLLOW_HZ = 10;
@@ -111,14 +111,17 @@ export function cameraKeys(tl, { fps = 30 } = {}) {
   const at = (srcT) => cameraAt(tl, srcT, { track });
 
   for (const z of zooms) {
-    const ramp = RAMP[z.easing] || RAMP.smooth;
-    const inStart = Math.max(0, z.start - ramp);
-    const outEnd = Math.min(tl.duration, z.end + ramp);
+    // In and out are separate moves with separate lengths and curves: see
+    // timeline.js rampsOf. A click zoom eases in over half a second and snaps
+    // out in a fifth of one.
+    const r = rampsOf(z);
+    const inStart = Math.max(0, z.start - r.in);
+    const outEnd = Math.min(tl.duration, z.end + r.out);
 
     // ── The move in ───────────────────────────────────────────────────────
     for (const span of spansOf(inStart, z.start, lay)) {
       push(span.start, FULL, "linear");
-      push(span.end, at(span.src_end), z.easing);
+      push(span.end, at(span.src_end), r.easeIn);
     }
 
     // ── The hold ──────────────────────────────────────────────────────────
@@ -131,7 +134,7 @@ export function cameraKeys(tl, { fps = 30 } = {}) {
         push(span.end, at(span.src_end), "linear");
       } else {
         const rect = at((span.src_start + span.src_end) / 2);
-        push(span.start, rect, z.easing);
+        push(span.start, rect, r.easeIn);
         push(span.end, rect, "hold");
       }
     }
@@ -139,7 +142,7 @@ export function cameraKeys(tl, { fps = 30 } = {}) {
     // ── The move out ──────────────────────────────────────────────────────
     for (const span of spansOf(z.end, outEnd, lay)) {
       push(span.start, at(span.src_start), "hold");
-      push(span.end, FULL, z.easing);
+      push(span.end, FULL, r.easeOut);
     }
   }
 

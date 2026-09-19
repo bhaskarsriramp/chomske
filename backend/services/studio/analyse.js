@@ -35,9 +35,9 @@ import path from "path";
 import fsp from "fs/promises";
 import { extractFrames } from "../media/ffmpeg.js";
 import {
-  newSpend, readFrames, detectSteps, planZooms, spaceZooms, findSensitive, writeCaptions, writeNarration,
+  newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { inferEvents, idleCuts, zoomsFromClicks, anticipateClicks } from "./events.js";
+import { inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull } from "./events.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
 
@@ -131,30 +131,34 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     : [];
 
   /**
-   * ── THE CAMERA IS THE PLAN, PLUS EVERY CLICK THE PLAN MISSED ──────────────
-   * Three things happen here, in order, and all three matter:
+   * ── THE CLICKS DECIDE THE CAMERA; THE PLANNER FILLS THE GAPS ──────────────
+   * The first version of this trusted the planner and used the clicks only as
+   * a fallback, and the result was an eleven-second export that was a single
+   * static crop: the planner had aimed at the content area, every click in the
+   * recording happened in the left nav, and the nav was outside the frame the
+   * whole time. Nobody watching could see a single thing being clicked.
    *
-   *   1. The planner's zooms are kept. It read the frames and knows what is
-   *      worth looking at; the pointer log does not.
-   *   2. Every one of them is pulled back so the camera is settled BEFORE the
-   *      click it was planned for, not arriving after it.
-   *   3. Clicks the planner said nothing about get a zoom of their own.
+   * The order is now the other way round, because a click is the one moment in
+   * a demo where the viewer is guaranteed to be looking for something
+   * specific:
    *
-   * Step 3 is the one that was missing, and it is most of what a screen
-   * recorder is for. A click is the only moment in a demo where the viewer is
-   * guaranteed to be looking for something specific — the button being
-   * pressed — and a demo that zooms on some of them and not others reads as
-   * inattentive. spaceZooms() then drops any that land on top of a planned
-   * one, so the camera never pulls out and back in inside a second.
+   *   1. Every click gets a zoom, centred ON the click (events.js containing).
+   *   2. The planner's zooms are kept only where they do not collide with one,
+   *      re-aimed at any click inside them, and released as soon as it lands.
+   *   3. restToFull() guarantees the camera reaches 1.0× between moves, which
+   *      is the difference between a zoom and a crop.
+   *   4. A demo may not be zoomed for more than MAX_ZOOMED of its length. Past
+   *      that it stops reading as emphasis and starts reading as a mistake.
    */
-  if (!zooms.length) zooms = zoomsFromClicks(events, { duration });
-  zooms = anticipateClicks(zooms, events, { duration });
+  const clickZooms = zoomsFromClicks(events, { duration });
+  const aimed = anticipateClicks(zooms, events, { duration });
 
-  const covered = (t) => zooms.some((z) => t >= z.start - 0.7 && t <= z.end + 0.7);
-  const extra = zoomsFromClicks(events, { duration }).filter((z) => !covered((z.start + z.end) / 2));
-  if (extra.length) {
-    zooms = spaceZooms([...zooms, ...extra].sort((a, b) => a.start - b.start));
-  }
+  const collides = (z) =>
+    clickZooms.some((c) => z.start < c.end + REST && c.start < z.end + REST);
+  zooms = restToFull([...clickZooms, ...aimed.filter((z) => !collides(z))], { rest: REST });
+
+  zooms = capZoomed(zooms, duration);
+  if (!zooms.length) zooms = restToFull(clickZooms, { rest: REST });
 
   /* ── Narration ───────────────────────────────────────────────────────── */
   onProgress(0.68, "Writing the narration");
@@ -232,6 +236,38 @@ export async function generateCaptions({ audio, duration }) {
   if (!audio) return { cues: [], language: "", language_label: "", spend };
   const res = await writeCaptions(audio, { duration, spend });
   return { ...res, spend };
+}
+
+/** Seconds the camera must sit at the full frame between two zooms. */
+const REST = 0.35;
+/** The most of a recording that may be under a zoom. */
+const MAX_ZOOMED = 0.6;
+
+/**
+ * Zooms, trimmed until the demo is not mostly zoomed.
+ *
+ * A zoom is emphasis, and emphasis on everything is emphasis on nothing. Past
+ * about sixty per cent the video stops reading as "this bit matters" and starts
+ * reading as "this recording is cropped wrong" — which is precisely how a real
+ * export looked when the planner returned two zooms that covered all of it.
+ *
+ * The weakest are dropped first: a 1.3× zoom contributes almost nothing and
+ * costs the same screen time as a 2.5× one that actually shows something.
+ */
+function capZoomed(zooms, duration) {
+  if (!(duration > 0) || zooms.length < 2) return zooms;
+  const span = (z) => z.end - z.start + (Number(z.ramp_out) || 0.2);
+  let kept = [...zooms];
+  let total = kept.reduce((a, z) => a + span(z), 0);
+  if (total <= duration * MAX_ZOOMED) return kept;
+
+  const order = [...kept].sort((a, b) => a.level - b.level || span(b) - span(a));
+  for (const weakest of order) {
+    if (total <= duration * MAX_ZOOMED || kept.length <= 1) break;
+    kept = kept.filter((z) => z !== weakest);
+    total -= span(weakest);
+  }
+  return kept.sort((a, b) => a.start - b.start);
 }
 
 /**

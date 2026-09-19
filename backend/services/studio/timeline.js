@@ -386,6 +386,40 @@ export const easeFn = (name) => EASE[name] || EASE.smooth;
 export const RAMP = { smooth: 0.55, snappy: 0.32, slow: 0.9, linear: 0.5 };
 
 /**
+ * A zoom's two ramps, which are NOT the same length.
+ *
+ * ── GOING IN AND COMING OUT ARE DIFFERENT MOVES ──────────────────────────────
+ * A zoom onto a button has to arrive gently: the viewer is being asked to look
+ * somewhere, and a hard push-in reads as a jump cut. Coming out is the
+ * opposite. The click has happened, the screen has changed underneath, and
+ * what the viewer needs is the whole page NOW. Easing out over half a second
+ * means half a second of watching a crop of a page that has already moved on,
+ * and it is the single thing that makes an automatic edit feel laggy.
+ *
+ * So a zoom carries its own `ramp_in` / `ramp_out` in seconds, and its own
+ * `ease_out` curve. Nothing is required to set them — without them a zoom
+ * behaves exactly as it always did, symmetric on its easing — but the camera
+ * built from clicks (events.js clickCamera) sets a fast snappy way out.
+ */
+export function rampsOf(z) {
+  const base = RAMP[z?.easing] || RAMP.smooth;
+  // `== null` and not Number.isFinite(Number(v)): Number(null) is 0, which IS
+  // finite, so the obvious version silently turned every unset ramp into the
+  // 0.05s minimum. The symptom was a zoom that jumped from 1× to 2× inside a
+  // frame and a half — the exact opposite of the eased approach this whole
+  // file exists to guarantee.
+  const given = (v) => v != null && v !== "" && Number.isFinite(Number(v));
+  const inR = given(z?.ramp_in) ? clamp(Number(z.ramp_in), 0.05, 2) : base;
+  const outR = given(z?.ramp_out) ? clamp(Number(z.ramp_out), 0.05, 2) : base;
+  return {
+    in: inR,
+    out: outR,
+    easeIn: z?.easing || "smooth",
+    easeOut: EASE[z?.ease_out] ? z.ease_out : z?.easing || "smooth",
+  };
+}
+
+/**
  * The camera rect at a moment of the RECORDING: which part of the source frame
  * fills the output, as fractions.
  *
@@ -402,21 +436,20 @@ export function cameraAt(tl, t, { track = null } = {}) {
   // The last zoom whose influence (ramp in + hold + ramp out) covers t.
   let z = null;
   for (const cand of zooms) {
-    const ramp = RAMP[cand.easing] || RAMP.smooth;
-    if (t >= cand.start - ramp && t <= cand.end + ramp) z = cand;
+    const r = rampsOf(cand);
+    if (t >= cand.start - r.in && t <= cand.end + r.out) z = cand;
   }
   if (!z) return full;
 
-  const ramp = RAMP[z.easing] || RAMP.smooth;
-  const ease = easeFn(z.easing);
+  const r = rampsOf(z);
   const target = zoomRect(z, tl, t, track);
 
   if (t < z.start) {
-    const k = ease(clamp((t - (z.start - ramp)) / ramp, 0, 1));
+    const k = easeFn(r.easeIn)(clamp((t - (z.start - r.in)) / r.in, 0, 1));
     return lerpRect(full, target, k);
   }
   if (t > z.end) {
-    const k = ease(clamp((t - z.end) / ramp, 0, 1));
+    const k = easeFn(r.easeOut)(clamp((t - z.end) / r.out, 0, 1));
     return lerpRect(target, full, k);
   }
   return target;
@@ -630,6 +663,12 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       ...rect(x),
       level: clamp(num(x.level, 1.6), 1, 5),
       easing: pick(x.easing, EASINGS, "smooth"),
+      // Going in and coming out are separate moves. Null means "same as the
+      // easing", which is how every zoom behaved before this existed. See
+      // rampsOf() above.
+      ramp_in: x.ramp_in == null ? null : clamp(num(x.ramp_in, 0.55), 0.05, 2),
+      ramp_out: x.ramp_out == null ? null : clamp(num(x.ramp_out, 0.2), 0.05, 2),
+      ease_out: x.ease_out == null ? null : pick(x.ease_out, EASINGS, "snappy"),
       camera: pick(x.camera, CAMERA_MODES, "element"),
       follow: !!x.follow,
       follow_strength: clamp(num(x.follow_strength, 0.7), 0, 1),

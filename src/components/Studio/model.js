@@ -206,6 +206,21 @@ export function zoomRect(z, tl, t, track) {
   return clampRect({ x: cx - w / 2, y: cy - w / 2, w, h: w });
 }
 
+/**
+ * A zoom's two ramps. Mirrors timeline.js rampsOf — see it for why going in and
+ * coming out are different moves, and why `== null` rather than isFinite.
+ */
+export function rampsOf(z) {
+  const base = RAMP[z?.easing] || RAMP.smooth;
+  const given = (v) => v != null && v !== "" && Number.isFinite(Number(v));
+  return {
+    in: given(z?.ramp_in) ? clamp(Number(z.ramp_in), 0.05, 2) : base,
+    out: given(z?.ramp_out) ? clamp(Number(z.ramp_out), 0.05, 2) : base,
+    easeIn: EASE[z?.easing] ? z.easing : "smooth",
+    easeOut: EASE[z?.ease_out] ? z.ease_out : EASE[z?.easing] ? z.easing : "smooth",
+  };
+}
+
 /** The camera at a moment of the RECORDING. */
 export function cameraAt(tl, t, { track = null } = {}) {
   const FULL = { x: 0, y: 0, w: 1, h: 1 };
@@ -214,17 +229,16 @@ export function cameraAt(tl, t, { track = null } = {}) {
 
   let z = null;
   for (const cand of zooms) {
-    const ramp = RAMP[cand.easing] || RAMP.smooth;
-    if (t >= cand.start - ramp && t <= cand.end + ramp) z = cand;
+    const r = rampsOf(cand);
+    if (t >= cand.start - r.in && t <= cand.end + r.out) z = cand;
   }
   if (!z) return FULL;
 
-  const ramp = RAMP[z.easing] || RAMP.smooth;
-  const ease = EASE[z.easing] || EASE.smooth;
+  const r = rampsOf(z);
   const target = zoomRect(z, tl, t, track);
 
-  if (t < z.start) return lerpRect(FULL, target, ease(clamp((t - (z.start - ramp)) / ramp, 0, 1)));
-  if (t > z.end) return lerpRect(target, FULL, ease(clamp((t - z.end) / ramp, 0, 1)));
+  if (t < z.start) return lerpRect(FULL, target, EASE[r.easeIn](clamp((t - (z.start - r.in)) / r.in, 0, 1)));
+  if (t > z.end) return lerpRect(target, FULL, EASE[r.easeOut](clamp((t - z.end) / r.out, 0, 1)));
   return target;
 }
 
@@ -388,7 +402,7 @@ export function fmtBytes(n) {
 const model = {
   ASPECTS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, BLUR_KINDS, GRADIENTS,
   newId, clamp, layout, mergedCuts, toOutput, toOutputSnapped, toSource, spanToOutput,
-  placedSpans, placedCues, cursorAt, EASE, RAMP, clampRect, activeZooms, zoomRect,
+  placedSpans, placedCues, cursorAt, EASE, RAMP, rampsOf, clampRect, activeZooms, zoomRect,
   cameraAt, cameraAtOutput, project, projectRect, videoBox, backgroundCss,
   CAPTION_SIZES, CAPTION_LOOKS, captionPoint, captionLook, drewCounts, fmtTime, fmtBytes,
 }
