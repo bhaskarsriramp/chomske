@@ -56,6 +56,8 @@ Importance:
 Rules:
 - Report at most 25 elements. When there are more, keep the high and medium ones and drop the low.
 - A dialog or modal that is open is ALWAYS high importance, and report its full bounding box as one "modal" element as well as the controls inside it.
+- NEVER report a sidebar, nav, menu, toolbar, tab bar, list or table as a single element INSTEAD of what is inside it. Report every individual item in it separately — each nav_item, tab, list_item, button or link with its own label and its own box. A sidebar reported as one box tells the reader nothing about which item a person was pointing at, and that is the single most important thing this tool needs from you. Report the container as well if it helps, but never on its own.
+- Every item a person could click MUST have its own box, even when the items are stacked in a list and look alike. Six nav items in a sidebar are six elements, not one.
 - Read labels exactly as written, including capitalisation. Do not translate them.
 - "screen" is a short name for what this view IS, in two or three words, as a product person would say it: "project dashboard", "API keys settings", "code editor", "signup form", "loading".
 - "busy" is true when the screen is mid-transition: a spinner, a skeleton, a half-painted page, a progress bar. A busy frame is one this tool will consider cutting, so be accurate.

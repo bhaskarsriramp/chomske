@@ -37,7 +37,7 @@ import { extractFrames } from "../media/ffmpeg.js";
 import {
   newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { confirmClicks, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
+import { confirmClicks, dropScrollZooms, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
 import { alignCapture } from "./sync.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
@@ -201,7 +201,13 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    *      that it stops reading as emphasis and starts reading as a mistake.
    */
   const clickZooms = zoomsFromClicks(events, { duration });
-  const aimed = anticipateClicks(zooms, events, { duration });
+  // The model's own plan does not know a press from a page being read, so the
+  // stretches the creator spent scrolling are taken off it before it competes.
+  const planned = dropScrollZooms(anticipateClicks(zooms, events, { duration }), events, {
+    motion: capturedMotion,
+    onNote: (n) => console.log("[studio] planned zoom at " + n.start.toFixed(2) + "s dropped: the creator was scrolling"),
+  });
+  const aimed = planned;
 
   const collides = (z) =>
     clickZooms.some((c) => z.start < c.end + REST && c.start < z.end + REST);
@@ -291,7 +297,16 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     product,
     language: captions.language,
     language_label: captions.language_label,
-    frames_read: shots.length,
+    // Only what the gate reads: the box, what it is, and what it said.
+    elements: shots.map((s) => ({
+      t: Math.round(Number(s.t) * 1000) / 1000,
+      elements: (s.elements || []).map((el) => ({
+        type: el.type,
+        label: el.label,
+        bbox: (el.bbox || []).map((v) => Math.round(Number(v) * 1000) / 1000),
+      })),
+    })),
+        frames_read: shots.length,
     frames_failed: Math.max(0, frames.length - shots.length),
     sync: aligned.sync,
     spend,

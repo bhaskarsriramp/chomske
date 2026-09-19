@@ -797,6 +797,101 @@ const MAX_SPEED = 2.5;
  */
 const FREE_AFTER = 0.35;
 
+/**
+ * ── THE POINTER DOES NOT GO ROUND IN CIRCLES ─────────────────────────────────
+ * A loading spinner is the tracker's worst enemy and has been through every
+ * round of this. It is small, it is high contrast, it sits on a plain
+ * background, and unlike almost anything else on a screen it changes on EVERY
+ * frame. Whatever the tracker scores, a spinner wins.
+ *
+ * Two previous attempts worked from the video: find the cells that keep
+ * changing and refuse sightings inside them. The trouble is that a ROTATING
+ * spinner does not keep changing any one cell. The arc sweeps past a given cell
+ * for two frames out of eighteen and is somewhere else the rest of the time, so
+ * a threshold set high enough to ignore text shimmer is far too high to catch
+ * it — which is exactly what happened: four hundred and seventy-six animated
+ * spans were found in one recording and the spinner in the middle of it was not
+ * one of them.
+ *
+ * Looked at as a PATH rather than as a region, it is unmistakable, and it needs
+ * no threshold tuned against anything. The pointer went:
+ *
+ *     (0.578, 0.363) (0.573, 0.372) (0.570, 0.372) (0.563, 0.363)
+ *     (0.562, 0.358) (0.581, 0.353) (0.581, 0.357) (0.577, 0.365) ...
+ *
+ * round and round, twice a second, for two and a half seconds. That is a circle
+ * two per cent of the frame across, and the reported path around it was three
+ * times the width of the box that contains it.
+ *
+ * Nothing a hand does looks like that. A pointer at rest has a path length of
+ * nearly zero. A pointer travelling has a path length about equal to the box it
+ * covers, because it goes from one side of that box to the other. Only
+ * something going round and round stays inside a small box while travelling
+ * several times its width, so the test is the ratio of the two, and it does not
+ * care about contrast, colour, size or frame rate.
+ *
+ * What is dropped becomes a gap, and a gap means "held where it was last seen",
+ * which is what the pointer was really doing while the page loaded.
+ */
+
+/** A gap longer than this ends a run: the tracker lost whatever it was on. */
+const ORBIT_BREAK = 0.25;
+/** Fewer sightings than this in one run says nothing either way. */
+const ORBIT_MIN = 7;
+/** How long it has to keep it up. Shorter than this is a hand being adjusted. */
+const ORBIT_SPAN = 0.5;
+/** Spinners are small. A box bigger than this is somebody using the screen. */
+const ORBIT_BOX = 0.05;
+/** Path length as a multiple of the box it stays inside. */
+const ORBIT_WIND = 2.5;
+
+export function dropOrbits(track, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
+  if (track.length < ORBIT_MIN) return track;
+  const ratio = sourceHeight / Math.max(1, sourceWidth);
+  const apart = (a, b) => Math.hypot(num(b.x) - num(a.x), (num(b.y) - num(a.y)) * ratio);
+
+  const spinning = new Uint8Array(track.length);
+  for (let i = 0; i < track.length; i++) {
+    /**
+     * The run is grown by the BOX, not by the clock. A fixed time window was
+     * the first attempt and it let arcs through: one sighting elsewhere falling
+     * inside the window stretches the box, the ratio collapses, and a spinner
+     * the tracker had been circling for half a second reads as ordinary travel.
+     * Growing only while the path stays inside a spinner-sized box means the
+     * run ends where the pointer actually left, which is the honest boundary.
+     */
+    let x0 = num(track[i].x), x1 = x0;
+    let y0 = num(track[i].y), y1 = y0;
+    let j = i;
+    let path = 0;
+
+    while (j + 1 < track.length) {
+      const next = track[j + 1];
+      if (num(next.t) - num(track[j].t) > ORBIT_BREAK) break;
+      const nx0 = Math.min(x0, num(next.x));
+      const nx1 = Math.max(x1, num(next.x));
+      const ny0 = Math.min(y0, num(next.y));
+      const ny1 = Math.max(y1, num(next.y));
+      if (Math.hypot(nx1 - nx0, (ny1 - ny0) * ratio) > ORBIT_BOX) break;
+      path += apart(track[j], next);
+      x0 = nx0; x1 = nx1; y0 = ny0; y1 = ny1;
+      j++;
+    }
+
+    const n = j - i + 1;
+    const span = num(track[j].t) - num(track[i].t);
+    const box = Math.hypot(x1 - x0, (y1 - y0) * ratio);
+    if (n < ORBIT_MIN || span < ORBIT_SPAN || !(box > 0)) continue;
+    if (path < box * ORBIT_WIND) continue;
+    for (let k = i; k <= j; k++) spinning[k] = 1;
+    i = j;
+  }
+
+  const out = [];
+  for (let i = 0; i < track.length; i++) if (!spinning[i]) out.push(track[i]);
+  return out;
+}
+
 export function dropFliers(track, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
   if (track.length < 3) return track;
   const ratio = sourceHeight / Math.max(1, sourceWidth);
@@ -942,7 +1037,8 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
    * a page loads, is what the pointer was really doing.
    */
   const seen = dropLoners(opened.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y))));
-  const clean = dropFliers(seen, { sourceWidth, sourceHeight });
+  const still = dropOrbits(seen, { sourceWidth, sourceHeight });
+  const clean = dropFliers(still, { sourceWidth, sourceHeight });
 
   return {
     track: clean,
@@ -955,10 +1051,11 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
       parked: opened.length > shifted.length,
       spinners: screen.busy ? screen.busy.length : 0,
       dropped: opened.length - seen.length,
-      fliers: seen.length - clean.length,
+      orbits: seen.length - still.length,
+      fliers: still.length - clean.length,
       reason: found.confident ? "" : "too little movement to line the two clocks up; left as recorded",
     },
   };
 }
 
-export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, dropFliers, alignCapture };
+export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, dropOrbits, dropFliers, alignCapture };

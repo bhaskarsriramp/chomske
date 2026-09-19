@@ -443,6 +443,7 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
     events.push(event("click", at, rest.x, rest.y, {
       confidence: clamp(confidence, 0, 1),
       source: "nav",
+      shape: rest.shape || "default",
       corroborated: true,
       scrolled: false,
       scroll_shift: 0,
@@ -494,6 +495,7 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
     events.push(
       event("click", rest.end, rest.x, rest.y, {
         confidence: clamp(confidence * (after ? 1 : 0.8), 0, 1),
+        shape: rest.shape || "default",
         corroborated: after,
         scrolled: slid >= SCROLL_SUM,
         scroll_shift: round3(slid),
@@ -824,10 +826,51 @@ const PRESSABLE = new Set([
   "browser_tab", "browser_url",
 ]);
 
+/**
+ * Things that CONTAIN controls rather than being one.
+ *
+ * ── WHY THESE MATTER MORE THAN THE CONTROLS DO ──────────────────────────────
+ * Asked to describe a frame in at most twenty-five elements, the model will
+ * sometimes answer "there is a sidebar here" and leave it at that. Tested on a
+ * real frame it did exactly that: ten elements, of which the entire left
+ * navigation — six items, one of which the creator was pointing at — was a
+ * single box labelled "sidebar".
+ *
+ * Read naively that means "the pointer was not on a control", and the most
+ * important click in the demo loses its zoom. But the model did not look at
+ * those six items and decide none was under the pointer; it never broke them
+ * out in the first place. That is absence of evidence, and this function's
+ * whole contract is that it only rules where it has some.
+ *
+ * So a press inside one of these, with nothing enumerated within it, is
+ * reported as "nobody looked" rather than "nothing there".
+ */
+const CONTAINER = new Set([
+  "sidebar", "toolbar", "menu", "table", "list", "card", "modal", "dialog",
+  "nav", "tab_bar", "empty_state",
+]);
+
 /** How far from a frame the model read a click may be and still be judged by it. */
 const SEEN_WITHIN = 1.4;
-/** Slop around a control's box, for a hotspot that sits a few pixels off. */
-const EDGE_SLOP = 0.02;
+/**
+ * How far outside a control's box the pointer may be and still be on it.
+ *
+ * ── THE MODEL KNOWS WHAT, NOT EXACTLY WHERE ─────────────────────────────────
+ * Generous, and deliberately so. Asked to box the items in a left navigation
+ * rail, the model named all six correctly and placed them about a twentieth of
+ * a frame to the right of where they actually were — and put one of them near
+ * the bottom of the screen when it was at the top. The labels were right every
+ * time; the geometry was approximately right.
+ *
+ * That is the tool being used for what it is good at. A vision model reading a
+ * screenshot is an excellent judge of WHAT is on it and a rough judge of
+ * exactly WHERE, and a hit test built on strict containment throws the first
+ * away because of the second. With this tolerance the press that matters lands
+ * on its nav item, and a press in the middle of an empty content pane — a third
+ * of a frame from the nearest control — still lands on nothing, which is the
+ * distinction the whole gate exists to draw.
+ */
+const EDGE_SLOP = 0.06;
 /**
  * A "button" filling a third of the screen is a mislabelled panel. Counting it
  * would let one bad box wave every click through.
@@ -860,21 +903,39 @@ export function controlUnder(shots, t, x, y) {
       if (!(ew > 0) || !(eh > 0)) continue;
       const area = ew * eh;
       if (area > CONTROL_MAX_AREA) continue;
-      const inside =
-        x >= ex - EDGE_SLOP && x <= ex + ew + EDGE_SLOP &&
-        y >= ey - EDGE_SLOP && y <= ey + eh + EDGE_SLOP;
-      if (!inside) continue;
-      // The smallest box containing the point is the control; the bigger ones
-      // around it are the row, the group and the panel it sits in.
-      if (area < bestArea) {
-        bestArea = area;
-        best = { label: String(el.label || ""), type: String(el.type), area: round4(area) };
+      // Distance from the point to the box, zero when inside it.
+      const dx = Math.max(ex - x, 0, x - (ex + ew));
+      const dy = Math.max(ey - y, 0, y - (ey + eh));
+      const off = Math.hypot(dx, dy);
+      if (off > EDGE_SLOP) continue;
+      /**
+       * Containment beats proximity, and among equals the smaller box wins:
+       * the smallest thing containing the point is the control, and the bigger
+       * ones around it are the row, the group and the panel it sits in.
+       */
+      const rank = off * 10 + area;
+      if (rank < bestArea) {
+        bestArea = rank;
+        best = { label: String(el.label || ""), type: String(el.type), area: round4(area), off: round4(off) };
       }
     }
   }
 
   if (best) return best;
-  return looked ? false : null;
+  if (!looked) return null;
+
+  // Nothing pressable was found here. Before calling that a miss, check whether
+  // the point is inside something the model described but did not open up.
+  for (const shot of shots || []) {
+    if (Math.abs(num(shot.t) - t) > SEEN_WITHIN) continue;
+    for (const el of shot.elements || []) {
+      if (!CONTAINER.has(String(el.type))) continue;
+      const [ex, ey, ew, eh] = el.bbox || [];
+      if (!(ew > 0) || !(eh > 0)) continue;
+      if (x >= ex && x <= ex + ew && y >= ey && y <= ey + eh) return null;
+    }
+  }
+  return false;
 }
 
 /**
@@ -920,20 +981,100 @@ export function confirmClicks(events, shots, { onNote = () => {} } = {}) {
 }
 
 /**
- * ── THE CAMERA MOVES FOR A PRESS, NEVER FOR A HOVER ──────────────────────────
- * A hover and a click look almost the same from outside: the pointer settles on
- * a control and something small changes under it. The operating system's own
- * highlight is that small change, and reading it as a press is why demos came
- * back with the camera diving at menu items nobody had clicked.
+ * Planned zooms that land on somebody reading, removed.
  *
- * What separates them is what happens NEXT. A press has a consequence beyond
- * the control — a page arrives, a panel opens, a list refills. A hover has
- * none: the highlight appears and that is the end of it.
+ * ── THE CLICKS ARE NOT THE ONLY THING THAT AIMS THE CAMERA ──────────────────
+ * zoomsFromClicks() above is now careful about what counts as a press, but it
+ * is only one of the two things that move the camera. The other is the model's
+ * own plan — it watches the recording and proposes emphasis of its own, and
+ * that plan has no idea whether the creator was pressing anything.
  *
- * So a click still becomes an EVENT on the weaker evidence, because the editor
- * shows it and the creator can keep it. It only becomes a CAMERA MOVE when the
- * recording corroborates it. events.js marks that as it infers them.
+ * On one recording the creator scrolled a billing page from seventeen to
+ * twenty-one seconds and the planner put a three and a half second zoom right
+ * across it. No click was involved, so no amount of care about clicks would
+ * have prevented it, and to the person watching it is the same bug: the camera
+ * pushed in on a page they were only reading.
+ *
+ * Scrolling is already detected, from the same vertical translation the click
+ * rules use. A planned zoom sitting mostly on top of it is dropped.
  */
+/**
+ * Frame heights of travel per second that mean the page is moving under the
+ * viewer rather than the viewer moving through the page.
+ */
+const SCROLL_RATE = 0.06;
+/** How much of a zoom has to sit on that before the zoom is the problem. */
+const SCROLL_SHARE = 0.4;
+
+export function dropScrollZooms(zooms, events, { motion = [], onNote = () => {} } = {}) {
+  /**
+   * ── MEASURED, NOT COUNTED ────────────────────────────────────────────────
+   * The first version of this counted scroll EVENTS inside the zoom, and a
+   * three and a half second zoom over a page the creator was visibly scrolling
+   * survived it, because only two events had been emitted in that stretch and
+   * two events' worth of window came to forty-six per cent of the span.
+   *
+   * The events are a summary; the translation is the evidence. A long slow
+   * scroll produces one event and four seconds of movement, and it is the four
+   * seconds that the viewer sees. So this reads the same per-frame vertical
+   * shift the click rules use and asks how much of the zoom is sitting on top
+   * of it.
+   */
+  /**
+   * How far the page travelled during a stretch, in frame heights per second.
+   *
+   * The share of FRAMES that moved was the obvious measure and it is the wrong
+   * one, because a trackpad scroll is bursty: a flick, a glide, a pause, another
+   * flick. Over one real three and a half second zoom only eighteen per cent of
+   * frames carried a shift — and they added up to the page moving more than half
+   * a screen height, which is not something a viewer fails to notice. Distance
+   * is what they see, so distance is what is measured.
+   */
+  const travel = (from, to) => {
+    let sum = 0;
+    for (const m of motion || []) {
+      const t = num(m.t);
+      if (t < from) continue;
+      if (t > to) break;
+      const dy = Math.abs(num(m.dy, 0));
+      if (dy >= SCROLL_SHIFT) sum += dy;
+    }
+    return sum / Math.max(0.001, to - from);
+  };
+
+  /** Fall back to the events when there is no motion series to read. */
+  const spans = [];
+  for (const ev of events || []) {
+    if (ev.type !== "scroll") continue;
+    const start = num(ev.t) - 0.4;
+    const end = num(ev.t) + 0.4;
+    const prev = spans[spans.length - 1];
+    if (prev && start <= prev.end) prev.end = Math.max(prev.end, end);
+    else spans.push({ start, end });
+  }
+
+  return (zooms || []).filter((z) => {
+    const span = num(z.end) - num(z.start);
+    if (!(span > 0)) return true;
+
+    let share;
+    if (motion && motion.length) {
+      const rate = travel(num(z.start), num(z.end));
+      if (rate < SCROLL_RATE) return true;
+      onNote({ start: num(z.start), end: num(z.end), rate });
+      return false;
+    }
+    {
+      let over = 0;
+      for (const sp of spans) over += Math.max(0, Math.min(z.end, sp.end) - Math.max(z.start, sp.start));
+      share = over / span;
+    }
+    if (share < SCROLL_SHARE) return true;
+    onNote({ start: num(z.start), end: num(z.end), share });
+    return false;
+  });
+}
+
 export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE } = {}) {
   const out = [];
   const clicks = events.filter(

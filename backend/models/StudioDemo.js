@@ -95,6 +95,19 @@ const AnalysisSchema = new Schema(
     // How far the browser's clock turned out to be from the video's, and
     // whether the opening could be filled in. services/studio/sync.js.
     sync: { type: Schema.Types.Mixed, default: null },
+
+    /**
+     * The controls the model named, one entry per frame it read: t, and each
+     * element's type, label and box.
+     *
+     * Kept because it is EVIDENCE, not a conclusion. Whether a press was on
+     * something clickable is decided from this (events.js confirmClicks), and
+     * that judgement has already been changed twice. Without the boxes on
+     * record, changing it again means paying for the whole vision pass a second
+     * time and hoping the model answers the same way — and it means nobody can
+     * check why a particular click did or did not earn a zoom.
+     */
+    elements: { type: Schema.Types.Mixed, default: null },
     // What the model cost us, against what the creator was charged. The two
     // are not the same number and the gap is the thing worth watching.
     usd: { type: Number, default: 0 },
