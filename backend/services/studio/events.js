@@ -53,8 +53,30 @@ export const RULES = {
   dwellMs: 90,
   /** The window after the pointer settles in which a change counts as its doing. */
   reactionMs: [40, 520],
-  /** Change big enough to be a new screen rather than a widget reacting. */
-  navEnergy: 0.45,
+  /**
+   * What a new screen looks like.
+   *
+   * ── IT IS A SHAPE, NOT AN AMOUNT ──────────────────────────────────────────
+   * This used to be "45% of the pixels changed", and on a real product it never
+   * once fired. Modern interfaces are mostly white, and navigating from one
+   * white page to another white page changes a tenth of the pixels: the text
+   * moves, the background does not. A twenty-five second recording of somebody
+   * clicking through a billing console peaked at fourteen per cent, so no
+   * navigation was ever detected, so no click was, so the camera had nothing to
+   * zoom on and no ripple ever fired. The creator's words were "the actual
+   * click is missing", and it was.
+   *
+   * What separates a new screen from a button lighting up is not how many
+   * pixels moved but WHERE: a navigation changes something in every corner,
+   * a widget changes one place. So the test is the bounding box — most of the
+   * width and most of the height — with a modest floor to rule out noise.
+   */
+  navBox: 0.6,
+  navEnergy: 0.02,
+  /** Repaints closer together than this are one navigation, not several. */
+  navGap: 0.4,
+  /** A scroll changes a lot of the screen too; this is its ceiling. */
+  scrollMaxEnergy: 0.42,
   /** Below this, nothing happened worth calling an event. */
   noiseEnergy: 0.0015,
   /** A click's change is local: this much of the frame at most. */
@@ -84,6 +106,15 @@ export const RULES = {
  * navigation click invisible.
  */
 const NAV_REACTION = 1.1;
+
+/**
+ * How long ago the pointer may have settled and the change still be its doing.
+ *
+ * Generous — people hover before they press, and a slow page takes a moment —
+ * but finite, which is what stops a parked pointer collecting a click for every
+ * repaint of a page that is busy on its own account.
+ */
+const REST_FRESH = 2.5;
 
 /**
  * The tracker's raw report, cleaned.
@@ -152,6 +183,29 @@ export function speeds(samples) {
  */
 export function dwells(samples, v = speeds(samples)) {
   const out = [];
+  /**
+   * ── THE GAPS ARE THE DWELLS ───────────────────────────────────────────────
+   * The single most important line in this file, and it was missing.
+   *
+   * The tracker finds the pointer by differencing frames, so a pointer that is
+   * not moving produces no difference and is not reported at all. A creator
+   * resting the pointer on a menu item therefore does not appear in the track
+   * as a run of slow samples — it appears as a HOLE. Looking for dwells among
+   * the samples finds only the moments the pointer was drifting slowly, which
+   * is almost never: a real recording of twenty-five seconds and two hundred
+   * samples yielded two.
+   *
+   * A hole in the track is the pointer standing still, at the last place it was
+   * seen, until the moment it was seen again. That is the definition of a
+   * dwell, and every click in a demo happens during one.
+   */
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1];
+    const b = samples[i];
+    if (b.t - a.t < GAP_REST) continue;
+    out.push({ start: a.t, end: b.t, x: a.x, y: a.y, shape: a.shape, n: 2, blind: true });
+  }
+
   let open = null;
   for (let i = 0; i < samples.length; i++) {
     if (v[i] <= RULES.stillSpeed) {
@@ -172,8 +226,16 @@ export function dwells(samples, v = speeds(samples)) {
     }
   }
   if (open && (open.end ?? open.start) - open.start >= RULES.dwellMs / 1000) out.push({ ...open, end: open.end ?? open.start });
-  return out;
+  return out.sort((a, b) => a.start - b.start);
 }
+
+/**
+ * How long the tracker must lose the pointer before that counts as it resting.
+ *
+ * It runs at 24 Hz, so a couple of dropped samples is ordinary and means
+ * nothing. A quarter of a second of silence means the pointer stopped.
+ */
+const GAP_REST = 0.25;
 
 /* ────────────────────────────────────────────────────────────────────────────
    Inference
@@ -203,13 +265,20 @@ export function inferEvents({ samples, motion, duration = 0 }) {
   const claim = (t) => claimed.push(t);
 
   // ── Screen changes ────────────────────────────────────────────────────────
+  // A page repainting takes several samples; they are one navigation, and only
+  // the first matters, because that is the moment the old screen went away.
   const navs = [];
+  let lastNav = -Infinity;
   for (const m of mot) {
-    if (m.energy >= RULES.navEnergy) {
-      events.push(event("nav", m.t, m.x + m.w / 2, m.y + m.h / 2, { confidence: clamp(m.energy, 0, 1) }));
-      navs.push(m);
-      claim(m.t);
+    if (m.energy < RULES.navEnergy || m.w < RULES.navBox || m.h < RULES.navBox) continue;
+    if (m.t - lastNav < RULES.navGap) {
+      lastNav = m.t;
+      continue;
     }
+    lastNav = m.t;
+    events.push(event("nav", m.t, m.x + m.w / 2, m.y + m.h / 2, { confidence: clamp(0.5 + m.energy * 3, 0, 1) }));
+    navs.push(m);
+    claim(m.t);
   }
 
   /**
@@ -235,6 +304,14 @@ export function inferEvents({ samples, motion, duration = 0 }) {
    * the change is evidence FOR it rather than against it, so it is read here,
    * before the subtle case, and given high confidence.
    */
+  /**
+   * A rest can only have been clicked once. Without this, a page that repaints
+   * in stages while the pointer sits still — a chart drawing itself, a list
+   * filling in — hands out a click for every stage, and the end of a demo fills
+   * with presses nobody made.
+   */
+  const spent = new Set();
+
   for (const nav of navs) {
     /**
      * The dwell the pointer was in when the page changed.
@@ -251,9 +328,17 @@ export function inferEvents({ samples, motion, duration = 0 }) {
      * and had not left by the time it happened.
      */
     const rest = rests
+      .filter((r) => !spent.has(r))
       .filter((r) => nav.t >= r.start + RULES.reactionMs[0] / 1000 && nav.t <= r.end + NAV_REACTION)
+      // ── THE REST HAS TO BE FRESH ────────────────────────────────────────
+      // A press and the change it causes are seconds apart at most. A pointer
+      // that has been parked for half a minute while a dashboard loads itself
+      // in stages did not click anything, and attributing one to it is how a
+      // demo ends up with a ripple firing at nothing.
+      .filter((r) => nav.t - r.start <= REST_FRESH)
       .sort((a, b) => b.start - a.start)[0];
     if (!rest) continue;
+    spent.add(rest);
 
     // The press is just before the change it caused, and inside the dwell.
     const at = clamp(nav.t - 0.12, rest.start, Math.max(rest.start, rest.end));
@@ -271,6 +356,7 @@ export function inferEvents({ samples, motion, duration = 0 }) {
 
   // ── Clicks ────────────────────────────────────────────────────────────────
   for (const rest of rests) {
+    if (spent.has(rest)) continue;
     const from = rest.start + RULES.reactionMs[0] / 1000;
     const to = rest.end + RULES.reactionMs[1] / 1000;
 
@@ -297,7 +383,11 @@ export function inferEvents({ samples, motion, duration = 0 }) {
     if (rest.end - rest.start > 0.25) confidence += 0.1;
     if (best.m.energy > 0.02) confidence += 0.05;
 
+    // One press, however many passes found it.
+    if (events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - rest.end) < 0.4 && Math.hypot(e.x - rest.x, e.y - rest.y) < 0.05)) continue;
+
     events.push(event("click", rest.end, rest.x, rest.y, { confidence: clamp(confidence, 0, 1) }));
+    spent.add(rest);
     claim(best.m.t);
     claim(rest.end);
   }
@@ -332,7 +422,7 @@ export function inferEvents({ samples, motion, duration = 0 }) {
   };
   for (const m of mot) {
     const still = pointerStill(pts, v, m.t);
-    if (still && m.h >= RULES.scrollMinHeight && m.energy > RULES.noiseEnergy && m.energy < RULES.navEnergy) run.push(m);
+    if (still && m.h >= RULES.scrollMinHeight && m.energy > RULES.noiseEnergy && m.energy < RULES.scrollMaxEnergy) run.push(m);
     else flushScroll();
   }
   flushScroll();

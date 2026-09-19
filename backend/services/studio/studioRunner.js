@@ -354,6 +354,7 @@ const analyse = {
           "analysis.language_label": result.language_label,
           "analysis.frames_read": result.frames_read,
           "analysis.frames_failed": result.frames_failed,
+          "analysis.sync": result.sync || null,
           "analysis.usd": result.spend.usd,
           "analysis.calls": result.spend.calls,
           "analysis.finished_at": new Date(),
@@ -367,6 +368,8 @@ const analyse = {
 
     console.log(
       `[studio] analysed ${demo._id}: ${result.frames_read} frames (${result.frames_failed} missed), ` +
+        `clock ${result.sync?.confident ? `${result.sync.offset >= 0 ? "+" : ""}${result.sync.offset}s` : "unchecked"}` +
+        `${result.sync?.parked ? " (opening filled)" : ""}, ` +
         `${result.timeline.steps.length} steps, ${result.timeline.zooms.length} zooms, ` +
         `${result.timeline.blurs.length} blurs, ${result.timeline.cues.length} cues, $${result.spend.usd.toFixed(4)}`
     );

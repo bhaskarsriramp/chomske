@@ -356,6 +356,86 @@ export function ffmpegFromFrames(args, { width, height, fps, pixelFormat = "rgba
 }
 
 /**
+ * ffmpeg handing raw frames BACK to this process, over a pipe.
+ *
+ * The mirror of ffmpegFromFrames, and it exists for the same reason: some
+ * questions can only be answered by looking at the finished pixels. What
+ * actually changed between two frames of a recording, and when, is one of them
+ * — the browser's tracker answers it live, under recording-time pressure, on a
+ * clock of its own, and services/studio/sync.js has to check that answer
+ * against the video itself.
+ *
+ * Decoded, scaled and rate-limited by ffmpeg; `onFrame` is awaited before the
+ * next frame is read, so a slow reader throttles the decoder rather than
+ * filling memory with frames it has not looked at yet. At 480x270 grey that is
+ * 130 kB a frame, which is the whole reason this is affordable on a half hour
+ * recording.
+ */
+export function ffmpegToFrames(src, { width, height, fps, pixelFormat = "gray", start = 0, duration = 0, onFrame, ...opts } = {}) {
+  const bytes = width * height * (pixelFormat === "gray" ? 1 : pixelFormat === "rgb24" ? 3 : 4);
+  const args = [
+    "-hide_banner", "-nostdin",
+    ...(start > 0 ? ["-ss", String(start)] : []),
+    "-i", src,
+    ...(duration > 0 ? ["-t", String(duration)] : []),
+    "-an", "-sn",
+    "-vf", `fps=${fps},scale=${width}:${height}:flags=bilinear`,
+    "-pix_fmt", pixelFormat, "-f", "rawvideo", "pipe:1",
+  ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(FFMPEG_PATH, args, { cwd: opts.cwd, windowsHide: true });
+    let stderr = "";
+    let settled = false;
+    let held = [];
+    let heldBytes = 0;
+    let index = 0;
+    let pending = Promise.resolve();
+
+    const finish = (fn) => (v) => { if (settled) return; settled = true; fn(v); };
+    const done = finish(resolve);
+    const fail = finish(reject);
+
+    child.stderr.on("data", (d) => { stderr = (stderr + d.toString()).slice(-STDERR_TAIL); });
+    child.on("error", fail);
+
+    child.stdout.on("data", (chunk) => {
+      held.push(chunk);
+      heldBytes += chunk.length;
+      if (heldBytes < bytes) return;
+
+      // One decoded frame is worth more than the reader can usually keep up
+      // with, so the decoder is paused for as long as onFrame takes. Without
+      // this a half hour recording arrives faster than it can be read and the
+      // backlog is measured in gigabytes.
+      child.stdout.pause();
+      const all = held.length === 1 ? held[0] : Buffer.concat(held, heldBytes);
+      const whole = Math.floor(all.length / bytes);
+      const rest = all.subarray(whole * bytes);
+      held = rest.length ? [Buffer.from(rest)] : [];
+      heldBytes = rest.length;
+
+      pending = pending.then(async () => {
+        for (let i = 0; i < whole; i++) {
+          await onFrame(all.subarray(i * bytes, (i + 1) * bytes), index++);
+        }
+      });
+      pending.then(() => { if (!settled) child.stdout.resume(); }, fail);
+    });
+
+    child.on("close", (code) => {
+      pending.then(
+        () => {
+          if (code === 0) done({ frames: index, stderr });
+          else fail(Object.assign(new Error(`ffmpeg exited with ${code}: ${stderr.slice(-900)}`), { exitCode: code, stderr }));
+        },
+        fail
+      );
+    });
+  });
+}
+
+/**
  * A browser recording, made into a file the rest of the pipeline can trust.
  *
  * ── WHAT MediaRecorder HANDS OVER ────────────────────────────────────────────
@@ -520,5 +600,5 @@ const round3 = (n) => Math.round(n * 1000) / 1000;
 export default {
   FFMPEG_PATH, FFPROBE_PATH, runProcess, ffmpeg, ffmpegFromFrames, probe,
   makeVideoProxy, makeAudioProxy, extractSpeechAudio, makeThumbnail, cutAudio, detectSpeech,
-  extractFrames, extractFrameAt, remuxRecording,
+  extractFrames, extractFrameAt, remuxRecording, ffmpegToFrames,
 };

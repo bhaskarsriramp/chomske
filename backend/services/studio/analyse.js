@@ -38,6 +38,7 @@ import {
   newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
 import { inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull } from "./events.js";
+import { alignCapture } from "./sync.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
 
@@ -68,11 +69,30 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     });
   }
 
+  /* ── The browser's report, checked against the video ─────────────────── */
+  /**
+   * ── TWO RECORDINGS, TWO CLOCKS, ONE TRUTH ────────────────────────────────
+   * The pointer path was recorded by the browser; the video was recorded by
+   * MediaRecorder. Nothing ties their timestamps together, and everything below
+   * is a position looked up by time. This re-reads the finished file, lines the
+   * two up on what actually changed on screen, and recovers where the pointer
+   * was parked before it first moved — which the browser's tracker cannot see,
+   * because it finds the pointer by differencing frames and a still pointer
+   * makes no difference at all. See sync.js.
+   */
+  onProgress(0.04, "Checking the pointer against the recording");
+  const aligned = await alignCapture({ video, capture, duration, sourceWidth: source?.width || 1920, sourceHeight: source?.height || 1080 }).catch((err) => {
+    console.error("[studio] capture alignment failed:", err);
+    return { track: capture.track || [], motion: capture.motion || [], sync: { offset: 0, confident: false, reason: "the check could not be run" } };
+  });
+  const capturedTrack = aligned.track;
+  const capturedMotion = aligned.motion;
+
   /* ── What the pointer did ────────────────────────────────────────────── */
   onProgress(0.06, "Reading the pointer");
   const events = inferEvents({
-    samples: capture.track || [],
-    motion: capture.motion || [],
+    samples: capturedTrack,
+    motion: capturedMotion,
     duration,
   });
 
@@ -180,7 +200,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // The pointer path, smoothed once here rather than at render time: the editor
   // draws the same path the export will, and re-smoothing on every preview
   // frame in the browser would cost more than it is worth.
-  tl.track = smoothTrack(capture.track || [], {
+  tl.track = smoothTrack(capturedTrack, {
     rate: 60,
     strength: tl.cursor.smoothing,
     duration,
@@ -216,6 +236,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     language_label: captions.language_label,
     frames_read: shots.length,
     frames_failed: Math.max(0, frames.length - shots.length),
+    sync: aligned.sync,
     spend,
   };
 }

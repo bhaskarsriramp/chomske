@@ -145,8 +145,14 @@ export function placedCues(tl, lay = layout(tl)) {
 
 export function cursorAt(track, t) {
   if (!track?.length) return null;
-  if (t <= track[0].t) return { x: track[0].x, y: track[0].y, shape: track[0].shape || "default" };
+  const first = track[0];
   const last = track[track.length - 1];
+  // Nothing before the first sighting, held after the last. The tracker cannot
+  // see a pointer that is not moving, so the first sample is where it ARRIVED,
+  // not where it started; holding it backwards draws a second pointer at the
+  // top of every demo. Mirrors timeline.js cursorAt, which explains it in full.
+  if (t < first.t - EDGE_GRACE) return null;
+  if (t <= first.t) return { x: first.x, y: first.y, shape: first.shape || "default" };
   if (t >= last.t) return { x: last.x, y: last.y, shape: last.shape || "default" };
 
   let lo = 0;
@@ -172,6 +178,9 @@ export function cursorAt(track, t) {
 
 /** Longest gap in the track still worth interpolating across. */
 const GAP_HOLD = 0.2;
+
+/** How far before the first sighting the pointer may still be drawn. */
+const EDGE_GRACE = 0.1;
 
 /* ────────────────────────────────────────────────────────────────────────────
    The camera
@@ -201,7 +210,9 @@ export function activeZooms(tl) {
 
 export function zoomRect(z, tl, t, track) {
   const level = Math.max(1, num(z.level, 1.6));
-  const w = clamp(1 / level, 0.05, 1);
+  // Never crop tighter than the zoom's own rectangle: it was sized to hold the
+  // clicks this zoom exists to show. Mirrors timeline.js zoomRect.
+  const w = clamp(Math.max(1 / level, num(z.w, 0), num(z.h, 0)), 0.05, 1);
   let cx = clamp(num(z.x) + num(z.w) / 2, 0, 1);
   let cy = clamp(num(z.y) + num(z.h) / 2, 0, 1);
 

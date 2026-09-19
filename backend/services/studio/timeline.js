@@ -247,8 +247,33 @@ export function spanToOutput(start, end, lay) {
  */
 export function cursorAt(track, t) {
   if (!track?.length) return null;
-  if (t <= track[0].t) return { x: track[0].x, y: track[0].y, shape: track[0].shape || "default" };
+  const first = track[0];
   const last = track[track.length - 1];
+
+  /**
+   * ── THE TWO ENDS ARE NOT THE SAME QUESTION ────────────────────────────────
+   * This looks like an off-by-one and is the reason finished demos opened with
+   * two pointers on screen.
+   *
+   * The tracker finds the pointer by differencing frames, so it cannot see one
+   * that is not moving — and a demo begins with the pointer parked while the
+   * creator gets ready. The first sample is therefore not "where the pointer
+   * started". It is the first place it was seen MOVING, which is where it
+   * ARRIVED. Holding it backwards asserts the pointer spent the opening of the
+   * demo somewhere it had not reached yet, and on a real recording that put our
+   * pointer on a sidebar item for five seconds while the one burnt into the
+   * video sat two hundred and sixty pixels away. Two cursors, neither moving.
+   *
+   * The other end is the opposite case and holding IS right there: the tracker
+   * stopped seeing the pointer because it stopped moving, so it is still where
+   * it was last seen.
+   *
+   * So: nothing before the first sighting, held after the last. Where nothing
+   * is known the renderer draws nothing, which leaves the captured pointer on
+   * its own rather than putting a second one next to it.
+   */
+  if (t < first.t - EDGE_GRACE) return null;
+  if (t <= first.t) return { x: first.x, y: first.y, shape: first.shape || "default" };
   if (t >= last.t) return { x: last.x, y: last.y, shape: last.shape || "default" };
 
   let lo = 0;
@@ -299,6 +324,14 @@ export function cursorAt(track, t) {
  * there is no path to draw, only a guess.
  */
 const GAP_HOLD = 0.2;
+
+/**
+ * How far before the first sighting the pointer may still be drawn.
+ *
+ * Only enough to stop it blinking on at a frame boundary. Anything longer is
+ * the guess this function exists not to make.
+ */
+const EDGE_GRACE = 0.1;
 
 /**
  * The track with jitter taken out, resampled to a fixed rate.
@@ -368,52 +401,110 @@ function shapeAt(pts, i) {
   return n > 0 && hand / n >= SHAPE_MAJORITY ? "pointer" : "default";
 }
 
+/**
+ * ── A GAP IN THE TRACK IS NOT A STRAIGHT LINE ────────────────────────────────
+ * Resampling used to run from the first sample to the end of the recording at a
+ * steady rate, which quietly filled every hole in the track with interpolated
+ * points. The holes are not noise. The tracker reports nothing while the
+ * pointer is perfectly still, because a still pointer makes no difference
+ * between two frames — so the holes are exactly the moments the pointer was
+ * parked, which are the moments a viewer is most likely to be looking at it.
+ *
+ * Interpolating across one draws our pointer gliding slowly from where it was
+ * to wherever it turns up next, usually straight across the picture, while the
+ * pointer burnt into the recording sits motionless. Two cursors, drifting
+ * apart. The guard in cursorAt was written for this and never fired, because
+ * smoothing ran first and left it nothing to find.
+ *
+ * So the track is split into RUNS at every gap. Each run is smoothed on its
+ * own, and between two runs the last known position is HELD, because that is
+ * what the pointer was actually doing. The move is bridged over the final
+ * fraction of a second so it reads as a fast movement rather than a teleport —
+ * and after a still gap that move is a few pixels anyway, since the pointer
+ * becomes visible again the instant it starts moving.
+ */
 export function smoothTrack(track, { rate = 60, strength = 0.65, duration = 0, maxDrift = MAX_DRIFT } = {}) {
   if (!track?.length) return [];
-  const pts = [...track].sort((a, b) => a.t - b.t);
-  if (pts.length < 3 || strength <= 0) return pts.map((p, i) => ({ ...p, shape: shapeAt(pts, i) }));
+  const pts = [...track].sort((a, b) => a.t - b.t).map((p, i, arr) => ({ ...p, shape: shapeAt(arr, i) }));
+  if (pts.length < 3 || strength <= 0) return pts;
 
   const end = duration > 0 ? duration : pts[pts.length - 1].t;
   const step = 1 / rate;
   const out = [];
-  let i = 0;
 
-  for (let t = pts[0].t; t <= end + 1e-6; t += step) {
-    while (i < pts.length - 2 && pts[i + 1].t < t) i++;
-    const p0 = pts[Math.max(0, i - 1)];
-    const p1 = pts[i];
-    const p2 = pts[Math.min(pts.length - 1, i + 1)];
-    const p3 = pts[Math.min(pts.length - 1, i + 2)];
-    const span = p2.t - p1.t;
-    const k = span > 0 ? clamp((t - p1.t) / span, 0, 1) : 0;
+  // Runs of samples with no gap longer than one dropped frame between them.
+  const runs = [];
+  let run = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].t - pts[i - 1].t > GAP_HOLD) {
+      runs.push(run);
+      run = [];
+    }
+    run.push(pts[i]);
+  }
+  runs.push(run);
 
-    const sx = catmull(p0.x, p1.x, p2.x, p3.x, k);
-    const sy = catmull(p0.y, p1.y, p2.y, p3.y, k);
-    const rx = p1.x + (p2.x - p1.x) * k;
-    const ry = p1.y + (p2.y - p1.y) * k;
+  for (let r = 0; r < runs.length; r++) {
+    const seg = runs[r];
+    const stop = r + 1 < runs.length ? runs[r + 1][0].t : end;
 
-    // Smoothed, then pulled back onto the real path if it wandered too far.
-    // Scaling the whole offset rather than clamping each axis keeps the
-    // direction of the correction, so the pointer stays on the curve it was
-    // drawing instead of snapping square against one axis.
-    let dx = (sx - rx) * strength;
-    let dy = (sy - ry) * strength;
-    const drift = Math.hypot(dx, dy);
-    if (drift > maxDrift) {
-      const k2 = maxDrift / drift;
-      dx *= k2;
-      dy *= k2;
+    if (seg.length < 3) {
+      for (const q of seg) out.push({ t: round3(q.t), x: frac(q.x), y: frac(q.y), shape: q.shape });
+    } else {
+      let i = 0;
+      for (let t = seg[0].t; t <= seg[seg.length - 1].t + 1e-6; t += step) {
+        while (i < seg.length - 2 && seg[i + 1].t < t) i++;
+        const p0 = seg[Math.max(0, i - 1)];
+        const p1 = seg[i];
+        const p2 = seg[Math.min(seg.length - 1, i + 1)];
+        const p3 = seg[Math.min(seg.length - 1, i + 2)];
+        const span = p2.t - p1.t;
+        const k = span > 0 ? clamp((t - p1.t) / span, 0, 1) : 0;
+
+        const sx = catmull(p0.x, p1.x, p2.x, p3.x, k);
+        const sy = catmull(p0.y, p1.y, p2.y, p3.y, k);
+        const rx = p1.x + (p2.x - p1.x) * k;
+        const ry = p1.y + (p2.y - p1.y) * k;
+
+        // Smoothed, then pulled back onto the real path if it wandered too far.
+        // Scaling the whole offset rather than clamping each axis keeps the
+        // direction of the correction, so the pointer stays on the curve it was
+        // drawing instead of snapping square against one axis.
+        let dx = (sx - rx) * strength;
+        let dy = (sy - ry) * strength;
+        const drift = Math.hypot(dx, dy);
+        if (drift > maxDrift) {
+          const k2 = maxDrift / drift;
+          dx *= k2;
+          dy *= k2;
+        }
+        out.push({ t: round3(t), x: frac(rx + dx), y: frac(ry + dy), shape: shapeAt(seg, i) });
+      }
     }
 
-    out.push({
-      t: round3(t),
-      x: frac(rx + dx),
-      y: frac(ry + dy),
-      shape: shapeAt(pts, i),
-    });
+    // ── The hold ──────────────────────────────────────────────────────────
+    const held = out[out.length - 1];
+    if (!held || stop <= held.t + step) continue;
+    const next = r + 1 < runs.length ? runs[r + 1][0] : null;
+    const reach = next ? Math.hypot(next.x - held.x, next.y - held.y) : 0;
+    // Only a move worth seeing gets a bridge; a few pixels is a jump nobody
+    // can perceive and easing it just delays the truth.
+    const bridge = next && reach > 0.02 ? Math.min(BRIDGE, (stop - held.t) / 2) : 0;
+    for (let t = held.t + step; t < stop - 1e-6; t += step) {
+      if (bridge > 0 && t > stop - bridge) {
+        const k = clamp((t - (stop - bridge)) / bridge, 0, 1);
+        const e = EASE.smooth(k);
+        out.push({ t: round3(t), x: frac(held.x + (next.x - held.x) * e), y: frac(held.y + (next.y - held.y) * e), shape: held.shape });
+      } else {
+        out.push({ t: round3(t), x: held.x, y: held.y, shape: held.shape });
+      }
+    }
   }
   return out;
 }
+
+/** How long a move across a gap is given, when there is one worth showing. */
+const BRIDGE = 0.18;
 
 function catmull(p0, p1, p2, p3, t) {
   const t2 = t * t;
@@ -535,7 +626,20 @@ export function activeZooms(tl) {
  */
 export function zoomRect(z, tl, t, track) {
   const level = Math.max(1, num(z.level, 1.6));
-  const w = clamp(1 / level, 0.05, 1);
+  /**
+   * ── THE RECT WINS WHEN IT IS WIDER THAN THE LEVEL ─────────────────────────
+   * The frame used to be sized from `level` alone and the zoom's own rectangle
+   * was used only for its centre. But a rectangle is not decoration: a zoom
+   * built from several clicks is sized by events.js containing() so that every
+   * one of those clicks is inside the frame when it happens. Throwing that size
+   * away and cropping to 1/level put the clicks back outside — the exact fault
+   * that shipped a demo where nothing could be seen being pressed.
+   *
+   * So `level` is the intent and the rectangle is the floor. A zoom never
+   * crops tighter than the thing it was built to show.
+   */
+  const need = Math.max(num(z.w, 0), num(z.h, 0));
+  const w = clamp(Math.max(1 / level, need), 0.05, 1);
   const h = w;
 
   let cx = frac(z.x + z.w / 2, 0.5);

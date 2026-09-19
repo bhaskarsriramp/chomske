@@ -92,6 +92,9 @@ const AnalysisSchema = new Schema(
     language_label: { type: String, default: "" },
     frames_read: { type: Number, default: 0 },
     frames_failed: { type: Number, default: 0 },
+    // How far the browser's clock turned out to be from the video's, and
+    // whether the opening could be filled in. services/studio/sync.js.
+    sync: { type: Schema.Types.Mixed, default: null },
     // What the model cost us, against what the creator was charged. The two
     // are not the same number and the gap is the thing worth watching.
     usd: { type: Number, default: 0 },
