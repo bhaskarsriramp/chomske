@@ -17,6 +17,8 @@
  * process the server waits on, not work it does.
  */
 import { spawn } from "child_process";
+import path from "path";
+import fsp from "fs/promises";
 import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
@@ -229,6 +231,161 @@ export function makeThumbnail(src, dest, { at = 0, isImage = false } = {}) {
   ]);
 }
 
+/**
+ * Frames for the model to read, written into `destDir` as frame_000001.jpg…
+ *
+ * ── WHY ONE SPAWN AND NOT ONE PER FRAME ──────────────────────────────────────
+ * Sampling a twenty minute recording every two seconds is 600 frames. Six
+ * hundred ffmpeg processes, each seeking a fresh copy of the file, takes minutes
+ * and most of it is process startup. `fps=1/2` in a single pass decodes the file
+ * once and writes all of them, and the numbering is then contiguous, which is
+ * what lets the caller map a file name back to a timestamp without asking.
+ *
+ * ── SIZE IS THE BILL ─────────────────────────────────────────────────────────
+ * These go to Gemini, and a frame's token cost scales with its area. 1280 on the
+ * long side reads every label a 4K frame does — screen text is large relative to
+ * the frame — at roughly a sixth of the tokens. q:v 3 rather than 2 because JPEG
+ * ringing around UI text is what actually hurts OCR, and 3 is where the file
+ * stops shrinking usefully.
+ *
+ * @param {number} opts.every  seconds between frames
+ * @param {number} [opts.start]
+ * @param {number} [opts.duration]
+ * @returns {Promise<Array<{ file: string, t: number }>>}
+ */
+export async function extractFrames(src, destDir, { every = 2, start = 0, duration = 0, longEdge = 1280, onProgress } = {}) {
+  const pattern = path.join(destDir, "frame_%06d.jpg");
+  const scale = `scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))'`;
+  await ffmpeg(
+    [
+      ...(start > 0 ? ["-ss", String(start)] : []),
+      ...(duration > 0 ? ["-t", String(duration)] : []),
+      "-i", src,
+      "-vf", `fps=1/${every},${scale}`,
+      "-q:v", "3",
+      "-fps_mode", "passthrough",
+      pattern,
+    ],
+    { duration, onProgress }
+  );
+
+  // ffmpeg's fps filter emits its first frame at the MIDDLE of the first
+  // interval, not at zero. Reading the timestamps back from the file names
+  // without that offset puts every analysis half an interval early, which is
+  // exactly enough to plan a zoom onto the previous screen.
+  const names = (await fsp.readdir(destDir)).filter((n) => /^frame_\d{6}\.jpg$/.test(n)).sort();
+  return names.map((name, i) => ({
+    file: path.join(destDir, name),
+    t: round3(start + i * every),
+  }));
+}
+
+/** One still at an exact moment, at analysis size. For a second look at a frame. */
+export function extractFrameAt(src, dest, at, { longEdge = 1280 } = {}) {
+  return ffmpeg([
+    "-ss", String(Math.max(0, at)),
+    "-i", src,
+    "-frames:v", "1",
+    "-vf", `scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))'`,
+    "-q:v", "3",
+    dest,
+  ]);
+}
+
+/**
+ * ffmpeg reading raw frames from this process, over a pipe.
+ *
+ * The cursor and annotation layer is drawn frame by frame on a canvas here in
+ * Node (services/studio/render/overlay.js) and has to reach ffmpeg somehow.
+ * A PNG sequence on disk is ten thousand files for a three minute demo; a pipe
+ * is none, and ffmpeg consumes frames as fast as it can encode them, so the
+ * writer is throttled by backpressure rather than by a guess at the rate.
+ *
+ * `write(push)` is called with a function that takes one Buffer of RGBA and
+ * resolves when the pipe is ready for the next. It must return a promise that
+ * settles when there are no more frames; the pipe is then closed, which is what
+ * tells ffmpeg the input has ended.
+ */
+export function ffmpegFromFrames(args, { width, height, fps, pixelFormat = "rgba", write, ...opts } = {}) {
+  const full = [
+    "-hide_banner", "-nostdin", "-y",
+    "-f", "rawvideo", "-pixel_format", pixelFormat, "-video_size", `${width}x${height}`, "-framerate", String(fps),
+    "-i", "pipe:0",
+    ...args,
+  ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(FFMPEG_PATH, full, { cwd: opts.cwd, windowsHide: true });
+    let stderr = "";
+    let settled = false;
+
+    const finish = (fn) => (v) => {
+      if (settled) return;
+      settled = true;
+      fn(v);
+    };
+    const done = finish(resolve);
+    const fail = finish(reject);
+
+    child.stderr.on("data", (d) => { stderr = (stderr + d.toString()).slice(-STDERR_TAIL); });
+    child.on("error", fail);
+    child.on("close", (code) => {
+      if (code === 0) done({ stderr });
+      else fail(Object.assign(new Error(`ffmpeg exited with ${code}: ${stderr.slice(-900)}`), { exitCode: code, stderr }));
+    });
+
+    // EPIPE is normal here: ffmpeg failing on its arguments closes stdin before
+    // the first frame is written. The close handler above carries the real
+    // reason, so this one must not overwrite it with "write after end".
+    child.stdin.on("error", () => {});
+
+    const push = (buf) =>
+      new Promise((res, rej) => {
+        if (settled) return rej(new Error("ffmpeg ended early"));
+        if (child.stdin.write(buf)) res();
+        else child.stdin.once("drain", res);
+      });
+
+    Promise.resolve(write(push))
+      .then(() => child.stdin.end())
+      .catch((err) => {
+        try { child.kill("SIGKILL"); } catch { /* already gone */ }
+        fail(err);
+      });
+  });
+}
+
+/**
+ * A browser recording, made into a file the rest of the pipeline can trust.
+ *
+ * ── WHAT MediaRecorder HANDS OVER ────────────────────────────────────────────
+ * A WebM whose header says the duration is unknown, because the browser was
+ * writing it live and never went back to fill it in. ffprobe reports 0, or
+ * sometimes a number out by an hour. Every downstream step — the proxy, the
+ * frame sampling, the timeline, the progress bar — is arithmetic on a duration,
+ * so this is the first thing that has to be made true.
+ *
+ * `-fflags +genpts` rebuilds the timestamps and the remux writes a real header.
+ * The picture is copied, never re-encoded: it is already H.264 or VP9 and a
+ * second encode at this stage would cost the demo its text sharpness for nothing.
+ * The audio is re-encoded to AAC because Opus in MP4 is not something every
+ * later filter graph will accept.
+ */
+export function remuxRecording(src, dest, { duration, onProgress } = {}) {
+  return ffmpeg(
+    [
+      "-fflags", "+genpts",
+      "-i", src,
+      "-map", "0:v:0", "-map", "0:a:0?",
+      "-c:v", "copy",
+      "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+      "-movflags", "+faststart",
+      dest,
+    ],
+    { duration, onProgress }
+  );
+}
+
 /** A stretch of the speech track, re-encoded so it starts on a clean frame. */
 export function cutAudio(src, dest, start, end) {
   return ffmpeg([
@@ -361,6 +518,7 @@ function tidy(islands) {
 const round3 = (n) => Math.round(n * 1000) / 1000;
 
 export default {
-  FFMPEG_PATH, FFPROBE_PATH, runProcess, ffmpeg, probe,
+  FFMPEG_PATH, FFPROBE_PATH, runProcess, ffmpeg, ffmpegFromFrames, probe,
   makeVideoProxy, makeAudioProxy, extractSpeechAudio, makeThumbnail, cutAudio, detectSpeech,
+  extractFrames, extractFrameAt, remuxRecording,
 };

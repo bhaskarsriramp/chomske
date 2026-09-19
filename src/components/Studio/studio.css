@@ -1,0 +1,254 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   studio.css: the demo studio's own surface.
+
+   ── WHY THE STUDIO IS DARK ────────────────────────────────────────────────
+   Every other screen in this product is light, and this one is not, for the
+   reason every video tool is dark: a preview is judged against whatever
+   surrounds it. Light chrome around a screen recording makes the recording
+   look washed out and makes a colour decision inside it impossible to trust.
+   The palette is the one already defined for the landing page (.hg-dark in
+   src/index.css) — this file adds only what a video editor needs on top:
+   a range input that can be styled, a timeline, and the recording overlay.
+
+   Class prefix `st-`, so nothing here can collide with `hg-` or `lp-`.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.st-root {
+  min-height: 100%;
+  background: var(--d-bg);
+  color: var(--d-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbars ────────────────────────────────────────────────────────────
+   A default light scrollbar down the side of a dark panel is the single most
+   obvious sign that a dark theme was painted on rather than designed. */
+.st-scroll { overflow: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .16) transparent; }
+.st-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.st-scroll::-webkit-scrollbar-track { background: transparent; }
+.st-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .13); border: 3px solid transparent; background-clip: content-box; border-radius: 99px; }
+.st-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .22); background-clip: content-box; }
+
+/* ── Range inputs ──────────────────────────────────────────────────────────
+   Written out for both engines because there is no shared syntax. `--fill` is
+   set inline by Slider() in ui.js, so the filled part of the track tracks the
+   value without a second element behind it. */
+.st-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+  display: block;
+}
+.st-range:disabled { cursor: default; }
+
+.st-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 99px;
+  background: linear-gradient(to right, var(--d-blue) var(--fill, 50%), rgba(255, 255, 255, .13) var(--fill, 50%));
+}
+.st-range::-moz-range-track { height: 4px; border-radius: 99px; background: rgba(255, 255, 255, .13); }
+.st-range::-moz-range-progress { height: 4px; border-radius: 99px; background: var(--d-blue); }
+
+.st-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px; height: 15px;
+  margin-top: -5.5px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .55);
+  transition: transform var(--dur-press) var(--ease-out);
+}
+.st-range::-moz-range-thumb {
+  width: 15px; height: 15px; border: none; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .55);
+}
+.st-range:active::-webkit-slider-thumb { transform: scale(1.18); }
+.st-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(145, 141, 255, .35); }
+
+/* ── The timeline ──────────────────────────────────────────────────────────
+   One horizontal ruler with a lane per kind of thing. Lanes rather than one
+   mixed row because a creator looks for "the zooms" or "the blurs", never for
+   "everything at 0:14". */
+.st-timeline { position: relative; user-select: none; }
+.st-lane {
+  position: relative;
+  height: 30px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .028);
+}
+.st-lane + .st-lane { margin-top: 6px; }
+
+.st-chip {
+  position: absolute;
+  top: 3px; bottom: 3px;
+  min-width: 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  display: flex; align-items: center;
+  padding: 0 7px;
+  overflow: hidden;
+  font-size: 10.5px; font-weight: 700; letter-spacing: -.01em;
+  white-space: nowrap;
+  color: #fff;
+  cursor: grab;
+  transition: filter var(--dur-hover) var(--ease-out), box-shadow var(--dur-hover) var(--ease-out);
+}
+.st-chip:hover { filter: brightness(1.16); }
+.st-chip.is-on { box-shadow: 0 0 0 2px var(--d-bg), 0 0 0 3.5px currentColor; }
+.st-chip:active { cursor: grabbing; }
+
+/* The drag handles on a chip's edges. Eight pixels is the smallest target
+   that can be hit reliably with a mouse; they widen on hover rather than
+   being permanently visible, which would make every chip look like a form. */
+.st-grip {
+  position: absolute; top: 0; bottom: 0; width: 8px;
+  cursor: ew-resize; background: transparent;
+}
+.st-grip::after {
+  content: ""; position: absolute; top: 25%; bottom: 25%; left: 50%;
+  width: 2px; margin-left: -1px; border-radius: 2px;
+  background: rgba(255, 255, 255, .0);
+  transition: background var(--dur-hover) var(--ease-out);
+}
+.st-chip:hover .st-grip::after, .st-chip.is-on .st-grip::after { background: rgba(255, 255, 255, .6); }
+.st-grip.is-start { left: 0; }
+.st-grip.is-end { right: 0; }
+
+.st-playhead {
+  position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+  background: #fff; pointer-events: none; z-index: 5;
+  box-shadow: 0 0 8px rgba(0, 0, 0, .8);
+}
+.st-playhead::before {
+  content: ""; position: absolute; top: -5px; left: 50%; transform: translateX(-50%);
+  border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #fff;
+}
+
+/* A cut is drawn as a gap in the ruler rather than a block on a lane: it is
+   time that will not exist in the export, and showing it as an object on a
+   track suggests it is something that plays. */
+.st-cut {
+  position: absolute; top: 0; bottom: 0;
+  background: repeating-linear-gradient(-45deg, rgba(255, 90, 90, .16) 0 5px, rgba(255, 90, 90, .05) 5px 10px);
+  border-left: 1px solid rgba(255, 120, 120, .5);
+  border-right: 1px solid rgba(255, 120, 120, .5);
+  cursor: pointer;
+}
+.st-cut:hover { background: repeating-linear-gradient(-45deg, rgba(255, 90, 90, .26) 0 5px, rgba(255, 90, 90, .09) 5px 10px); }
+
+/* ── The preview ───────────────────────────────────────────────────────────
+   Handles for dragging a blur or an annotation directly on the picture. */
+.st-handle {
+  position: absolute;
+  border: 2px solid var(--d-blue);
+  border-radius: 4px;
+  cursor: move;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(0, 0, 0, .4);
+}
+.st-handle-knob {
+  position: absolute; width: 11px; height: 11px; border-radius: 3px;
+  background: #fff; border: 1.5px solid var(--d-blue);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+}
+.st-handle-knob.nw { top: -6px; left: -6px; cursor: nwse-resize; }
+.st-handle-knob.ne { top: -6px; right: -6px; cursor: nesw-resize; }
+.st-handle-knob.sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.st-handle-knob.se { bottom: -6px; right: -6px; cursor: nwse-resize; }
+
+/* ── The recording overlay ─────────────────────────────────────────────────
+   Deliberately almost nothing: a timer, pause, stop, and the microphone. It
+   sits over the thing being demonstrated, so every pixel of it is a pixel of
+   the creator's product that the viewer cannot see. */
+.st-overlay {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 9px;
+  border-radius: 99px;
+  background: rgba(12, 13, 20, .93);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, .13);
+  box-shadow: 0 18px 44px -16px rgba(0, 0, 0, .8), inset 0 1px 0 rgba(255, 255, 255, .07);
+  animation: st-rise var(--dur-modal) var(--ease-out) both;
+}
+@keyframes st-rise { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+.st-overlay-btn {
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border: none; border-radius: 50%;
+  background: transparent; color: var(--d-body);
+  cursor: pointer; font-family: inherit;
+  transition: background var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out);
+}
+.st-overlay-btn:hover { background: rgba(255, 255, 255, .1); color: var(--d-ink); }
+.st-overlay-btn.is-stop { background: #FF5A5A; color: #fff; }
+.st-overlay-btn.is-stop:hover { background: #ff7070; }
+.st-overlay-rule { width: 1px; height: 18px; margin: 0 5px; background: rgba(255, 255, 255, .14); }
+
+.st-dot {
+  width: 9px; height: 9px; border-radius: 50%; background: #FF5A5A;
+  animation: st-pulse 1.6s var(--ease-in-out) infinite;
+}
+@keyframes st-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .st-dot { animation: none; }
+  .st-overlay { animation: none; }
+}
+
+/* The live level meter. Bars rather than a number, because what a creator
+   needs to know is "is it hearing me", which is a shape, not a value. */
+.st-level { display: flex; align-items: center; gap: 2px; height: 16px; }
+.st-level i {
+  width: 2.5px; border-radius: 2px; background: var(--d-green);
+  transition: height 90ms linear, opacity 90ms linear;
+}
+
+/* ── Processing ────────────────────────────────────────────────────────────
+   The steps of the analysis, told honestly: what is happening now, what is
+   done, what is still to come. A single indeterminate bar for three minutes
+   of work reads as a hang. */
+.st-step { display: flex; align-items: center; gap: 12px; padding: 9px 0; }
+.st-step-dot {
+  flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1.5px solid var(--d-line); color: var(--d-mute);
+}
+.st-step.is-done .st-step-dot { border-color: transparent; background: rgba(116, 221, 176, .16); color: var(--d-green); }
+.st-step.is-now .st-step-dot { border-color: var(--d-blue); color: var(--d-blue); }
+.st-step.is-now .st-step-dot::after {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+  animation: st-pulse 1.3s var(--ease-in-out) infinite;
+}
+.st-step-label { font-size: 13.5px; color: var(--d-mute); }
+.st-step.is-now .st-step-label { color: var(--d-ink); font-weight: 620; }
+.st-step.is-done .st-step-label { color: var(--d-body); }
+
+.st-bar { height: 4px; border-radius: 99px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.st-bar > i { display: block; height: 100%; border-radius: 99px; background: var(--d-blue); transition: width 400ms var(--ease-out); }
+
+/* ── The library ───────────────────────────────────────────────────────── */
+.st-card {
+  display: block; width: 100%; text-align: left; padding: 0; cursor: pointer;
+  border: 1px solid var(--d-line-soft); border-radius: 15px; overflow: hidden;
+  background: var(--d-panel); color: inherit; font-family: inherit;
+  transition: border-color var(--dur-hover) var(--ease-out), transform var(--dur-hover) var(--ease-out);
+}
+.st-card:hover { border-color: var(--d-line-strong); transform: translateY(-2px); }
+.st-card-shot { aspect-ratio: 16 / 9; background: #0B0D14 center/cover no-repeat; position: relative; }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-card:hover { transform: none; }
+  .st-bar > i { transition: none; }
+}

@@ -24,38 +24,33 @@ import CreditsCard from "./CreditsCard";
 // rather than covering it, so the header's own close button stays reachable.
 export const MOBILE_HEADER_H = 54;
 
+/**
+ * ── WHAT THE RAIL OFFERS NOW ─────────────────────────────────────────────────
+ * The product is the demo studio. The screens the app began as — Create, My
+ * voice, My scripts, Edit videos, Dashboard — are parked: still routed, still
+ * rendering, their data untouched, and reachable by anybody holding a link
+ * (components/Dashboard/Dashboard.js PARKED_TABS says why). They are simply not
+ * offered here any more, because a rail that lists eight destinations for a
+ * product with one says nothing about where to go.
+ *
+ * Putting one back is putting one line back.
+ */
 const SECTIONS = [
   {
     label: "Studio",
     items: [
-      // ── ONE ITEM, THREE MODES ──────────────────────────────────────────
-      // Create opens on Discover and stays lit while the creator is on Import
-      // or Idea, because those are the same destination reached by the switch
-      // at the top of it. Three sidebar rows would say they are three separate
-      // places and put the choice in two competing controls; `match` is what
-      // keeps the rail honest about where you are.
-      //
-      // Named Create rather than Topics because Topics is now a third of what
-      // the screen does, and a label that describes one mode of three is a
-      // label that misleads on two of them.
-      { id: "discover", label: "Create", icon: TargetIcon, match: ["discover", "import", "idea"] },
-      { id: "voice", label: "My voice", icon: WaveIcon },
-      { id: "scripts", label: "My scripts", icon: ScriptIcon },
-      // Edits of any video: started here with New project, or from a script's
-      // Edit video button, and found again here either way. Lit while one is
-      // open, since that is where it lives.
-      { id: "videos", label: "Edit videos", icon: FilmIcon, match: ["videos", "edit"] },
+      // One destination, and the whole product. `match` keeps it lit while a
+      // recording is open, since that is still where it lives.
+      { id: "studio", label: "Demo Studio", icon: FilmIcon, match: ["studio"] },
     ],
   },
   {
     label: "Account",
     items: [
-      { id: "dashboard", label: "Dashboard", icon: ChartIcon },
       { id: "profile", label: "Profile", icon: UserIcon },
       // Last in the rail on purpose. Support is the row you look for when
       // something is wrong, and the place people look for it is the bottom of
-      // the list; putting it above Profile would push the account row down for
-      // everyone whose account is fine, which is nearly everyone.
+      // the list.
       { id: "support", label: "Support", icon: LifebuoyIcon },
     ],
   },
@@ -259,15 +254,6 @@ function LifebuoyIcon() {
   );
 }
 
-function ChartIcon() {
-  return (
-    <svg {...svg} aria-hidden="true">
-      <path d="M4 20V4" />
-      <path d="M4 20h16" />
-      <path d="M8 16v-4M13 16V8M18 16v-6" />
-    </svg>
-  );
-}
 
 function UserIcon() {
   return (

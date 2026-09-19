@@ -25,8 +25,10 @@ import profileRoutes from "./routes/profiles.js";
 import adminRoutes from "./routes/admin.js";
 import showcaseRoutes from "./routes/showcase.js";
 import editRoutes from "./routes/edit.js";
+import studioRoutes from "./routes/studio.js";
 import mediaRoutes from "./routes/media.js";
 import { startEditRunner } from "./services/edit/editRunner.js";
+import { startStudioRunner } from "./services/studio/studioRunner.js";
 import VoiceProfile from "./models/VoiceProfile.js";
 import User from "./models/User.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
@@ -70,6 +72,12 @@ app.use(
 // An edit carries its captions and their translations, which for a twenty-minute
 // video in three languages is past the 1 MB every other route is held to.
 app.use("/edit", express.json({ limit: "8mb" }));
+// A demo carries more again. The recovered pointer path is sixty samples a
+// second — a twenty minute recording is tens of thousands of points — and it
+// arrives in one body when the capture finishes. It is sent ONCE per recording,
+// not on every autosave (routes/studio.js deliberately refuses it there), so
+// this ceiling is reached exactly once in a demo's life.
+app.use("/studio", express.json({ limit: "48mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
@@ -156,6 +164,18 @@ app.use(
   "/edit",
   rateLimit({ windowMs: 60 * 1000, max: 90, standardHeaders: true, legacyHeaders: false }),
   editRoutes
+);
+
+// ── The AI demo studio ──────────────────────────────────────────────────────
+// Screen recordings analysed and edited automatically. Same shape as /edit:
+// the expensive steps are queued jobs with a price and a daily cap inside the
+// route, and what arrives here is polling, uploads being started, and autosaves
+// of a zoom being dragged. The ceiling is higher than /edit's because the
+// editor polls while an analysis runs and a demo has more moving parts.
+app.use(
+  "/studio",
+  rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false }),
+  studioRoutes
 );
 
 // ── Outreach showcases ──────────────────────────────────────────────────────
@@ -245,6 +265,10 @@ function assertConfig() {
       // Picks up uploads, matching and exports, including any a restart
       // interrupted: their leases lapse and they are claimed again.
       startEditRunner();
+      // The demo studio's own queue: preparing captures, the Gemini analysis,
+      // and exports. Separate from the editor's so one product's backlog is
+      // never the other's ceiling.
+      startStudioRunner();
       // Load the key pool once at boot. Without this, isApidirectConfigured()
       // stays false until something forces a load, and nothing would, because
       // the duration gate is itself behind that check, so it would silently

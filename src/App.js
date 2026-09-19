@@ -94,7 +94,7 @@ export default function App() {
             {/* Each screen owns a URL, so back/forward work, a tab can be linked to
                 and a refresh lands where you were. `/app` alone redirects rather
                 than rendering, so there is exactly one address per screen. */}
-            <Route path="/app" element={<Navigate to="/app/discover" replace />} />
+            <Route path="/app" element={<Navigate to="/app/studio" replace />} />
 
             {/* The category picker replaces the app rather than overlaying it.
                 Until it is answered there is nothing to collect and nothing to
@@ -163,6 +163,9 @@ function warmAppChunks() {
   if (warmed) return;
   warmed = true;
   import("./components/Dashboard/Dashboard").catch(() => {});
+  // The studio is where /app lands, so its chunk is wanted on the same trip as
+  // the shell that will render it.
+  import("./components/Studio/StudioPage").catch(() => {});
   import("./components/Onboarding/CategoryPicker").catch(() => {});
 }
 

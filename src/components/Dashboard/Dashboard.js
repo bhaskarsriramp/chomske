@@ -21,6 +21,12 @@ import { CreditsPill } from "../Shell/CreditsCard";
 // client are the largest screen in the app, and most visits never open it.
 const EditorPage = lazy(() => import("../Edit/EditorPage"));
 
+// The demo studio is the product now, and it is also the heaviest screen in the
+// app: a canvas preview, a capture engine and a pointer tracker. Lazy, so the
+// rest of the shell is not waiting on it, and eagerly prefetched below because
+// it is where nearly every visit is going.
+const StudioPage = lazy(() => import("../Studio/StudioPage"));
+
 /**
  * The app shell.
  *
@@ -53,7 +59,22 @@ export const CREATE_TABS = ["discover", "import", "idea"];
 // Discover. Shell below sends a human who lands there to Discover instead.
 // "edit" is the editor, full screen over the shell, with the project in ?p=.
 // "videos" is its list, Edit videos, where a project for any video starts too.
-export const TAB_IDS = [...CREATE_TABS, "analysis", "voice", "scripts", "videos", "edit", "dashboard", "profile", "support"];
+export const TAB_IDS = ["studio", ...CREATE_TABS, "analysis", "voice", "scripts", "videos", "edit", "dashboard", "profile", "support"];
+
+/**
+ * ── THE OLD PRODUCT IS PARKED, NOT DELETED ───────────────────────────────────
+ * Lipi began as a news-to-script writer with a video editor attached. It is now
+ * a demo recorder, and these screens are no longer in the navigation. They are
+ * still HERE: the routes resolve, the panels render, the data and the scripts
+ * are untouched, and anybody holding a link to one still lands on it. Only the
+ * sidebar stopped offering them (components/Shell/Sidebar.js).
+ *
+ * That is deliberate and it is reversible. Deleting the news collector, the
+ * voice profiles and the script writer would be a week of work to undo and
+ * would throw away every script a creator has written. Taking them out of the
+ * rail costs nothing and can be undone by putting one line back.
+ */
+export const PARKED_TABS = [...CREATE_TABS, "voice", "scripts", "videos", "edit", "dashboard"];
 
 /**
  * All three providers wrap the whole shell rather than individual panels.
@@ -147,7 +168,7 @@ function Shell({ user, onSignOut }) {
   // A typo or a stale bookmark shouldn't render an empty shell. /app/topics is
   // the specific stale bookmark we know exists, and it lands on Discover, which
   // is what it used to show.
-  if (!TAB_IDS.includes(tabParam)) return <Navigate to="/app/discover" replace />;
+  if (!TAB_IDS.includes(tabParam)) return <Navigate to="/app/studio" replace />;
 
   // Three screens exist only for one of the two session kinds, and landing on
   // the wrong one should move you rather than render an empty shell: a showcase
@@ -155,7 +176,7 @@ function Shell({ user, onSignOut }) {
   // signed-in creator has no showcase to analyse.
   // The editor is refused to a showcase too: it stores footage and spends
   // render minutes, which a demo link is not an account for.
-  if (isShowcase && ["dashboard", "profile", "support", "videos", "edit"].includes(tab)) {
+  if (isShowcase && ["studio", "dashboard", "profile", "support", "videos", "edit"].includes(tab)) {
     return <Navigate to="/app/discover" replace />;
   }
   if (!isShowcase && tab === "analysis") {
@@ -302,6 +323,21 @@ function Shell({ user, onSignOut }) {
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
               <SupportPanel user={user} />
             </div>
+          )}
+
+          {/* The studio owns the whole viewport: a video editor with a 336px
+              inspector does not fit inside a padded content column, and the
+              preview has to be as large as the window allows. Remounted on each
+              visit, because its list of recordings is a record and a stale one
+              is a record that quietly stopped being true. */}
+          {tab === "studio" && (
+            <Suspense fallback={null}>
+              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+                <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+                  <StudioPage />
+                </div>
+              </div>
+            </Suspense>
           )}
 
           {/* Full screen over everything, so the edit gets the whole viewport.

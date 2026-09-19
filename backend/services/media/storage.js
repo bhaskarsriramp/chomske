@@ -166,10 +166,24 @@ export async function readUrl(key, { baseUrl, filename, contentType, expiresSec 
   return `${baseUrl}/media/file/${token}`;
 }
 
+/**
+ * The only prefixes a delete is ever allowed to name.
+ *
+ * Exactly one product's folder for exactly one user's one project — never the
+ * section, never the user, never the root. The bucket is shared with another
+ * project entirely (see the header), so a bug in a retention sweep must not be
+ * ABLE to reach anything else, rather than merely be unlikely to.
+ *
+ * `studio` was added beside `edit` when the demo recorder arrived. Adding a
+ * section here is the deliberate act; that is the point of the list.
+ */
+const DELETABLE_SECTIONS = ["edit", "studio"];
+
 /** Remove everything under a prefix. */
 export async function removePrefix(prefix) {
   // Never anything shallower than one project's own folder: the bucket is shared.
-  if (!prefix || !new RegExp(`^${KEY_ROOT}/edit/[^/]+/[^/]+/?$`).test(String(prefix))) {
+  const allowed = new RegExp(`^${KEY_ROOT}/(${DELETABLE_SECTIONS.join("|")})/[^/]+/[^/]+/?$`);
+  if (!prefix || !allowed.test(String(prefix))) {
     throw new Error(`refusing to delete prefix ${prefix}`);
   }
   if (storageKind() === "gcs") {
