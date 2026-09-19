@@ -382,30 +382,48 @@ export function idleCuts(events, { duration = 0, minSeconds = 1.6, pad = 0.35 } 
 }
 
 /**
- * Zoom targets from clicks alone: the fallback plan.
+ * Zoom targets from the clicks: the camera move every screen recorder wants.
  *
- * Used when the model's zoom pass failed or returned nothing, so a demo always
- * comes out edited rather than flat. Not as good as a planned camera — it knows
- * where the pointer was and not what it was pointing at — but a demo that zooms
- * on every click still reads as a demo, and it costs nothing.
+ * ── THE ZOOM ARRIVES BEFORE THE CLICK, NOT AFTER IT ──────────────────────────
+ * This is the whole trick, and it is the one thing hand-edited demos get right
+ * and automatic ones get wrong. A zoom that starts ON the click shows the
+ * viewer a button that has already been pressed. The viewer needs to see the
+ * button, see the pointer arrive at it, and see it pressed — so the camera has
+ * to be settled on the target BEFORE the pointer gets there.
+ *
+ * In this timeline a zoom's `start` is the moment it is fully in: the ease-in
+ * runs over RAMP seconds BEFORE `start` (see timeline.js cameraAt). So the
+ * anchor is the click itself, less a couple of frames of settle, and the
+ * ease-in falls naturally into the approach. `hold` then keeps the frame on
+ * the target just long enough to read what the click did — a menu opening, a
+ * field filling — before it releases.
+ *
+ * `hold` is deliberately short. The instinct is to linger, and lingering is
+ * what makes an automatic edit feel slow: the interesting thing is the next
+ * action, and the camera should already be on its way there.
  */
-export function zoomsFromClicks(events, { duration = 0, level = 1.8, lead = 0.55, hold = 1.5 } = {}) {
+export function zoomsFromClicks(events, { duration = 0, level = 1.8, settle = 0.12, hold = 0.9, merge = 1.2 } = {}) {
   const out = [];
   const clicks = events.filter((e) => (e.type === "click" || e.type === "dblclick") && e.confidence >= 0.55);
 
   for (const c of clicks) {
-    const start = Math.max(0, c.t - lead);
+    // Fully zoomed a couple of frames before the button is pressed.
+    const start = Math.max(0, c.t - settle);
     const end = Math.min(duration || Infinity, c.t + hold);
-    if (end - start < 0.8) continue;
+    if (end - start < 0.3) continue;
 
     const prev = out[out.length - 1];
-    // Two clicks close together are one camera move covering both, not two.
-    if (prev && start < prev.end + 0.8) {
-      prev.end = Math.max(prev.end, end);
-      prev.x = Math.min(prev.x, c.x - 0.14);
-      prev.y = Math.min(prev.y, c.y - 0.1);
-      prev.w = Math.max(prev.x + prev.w, c.x + 0.14) - prev.x;
-      prev.h = Math.max(prev.y + prev.h, c.y + 0.1) - prev.y;
+    // Two clicks close together are one camera move covering both, not two:
+    // pulling out and back in between two clicks a second apart is the reason
+    // auto-zoom has a reputation for making people seasick.
+    if (prev && start < prev.end + merge) {
+      prev.end = round3(Math.max(prev.end, end));
+      const x0 = Math.min(prev.x, c.x - 0.14);
+      const y0 = Math.min(prev.y, c.y - 0.1);
+      prev.w = round4(Math.max(prev.x + prev.w, c.x + 0.14) - x0);
+      prev.h = round4(Math.max(prev.y + prev.h, c.y + 0.1) - y0);
+      prev.x = round4(clamp(x0, 0, 1));
+      prev.y = round4(clamp(y0, 0, 1));
       continue;
     }
 
@@ -428,4 +446,35 @@ export function zoomsFromClicks(events, { duration = 0, level = 1.8, lead = 0.55
   return out;
 }
 
-export default { RULES, cleanSamples, cleanMotion, speeds, dwells, inferEvents, idleCuts, zoomsFromClicks };
+/**
+ * The model's planned zooms, retimed so each one lands before the click it is
+ * about.
+ *
+ * The planner reads frames and describes what should be on screen; it has no
+ * feel for the tenth of a second on either side of a press, and left alone it
+ * tends to open a zoom at the moment of the action. Where a planned zoom has a
+ * click just inside its front edge, the zoom is pulled back so the camera is
+ * already there — the planner keeps its judgement about WHAT to look at, and
+ * the pointer log decides WHEN.
+ */
+export function anticipateClicks(zooms, events, { duration = 0, settle = 0.12, reach = 1.1 } = {}) {
+  const clicks = events
+    .filter((e) => (e.type === "click" || e.type === "dblclick") && e.confidence >= 0.5)
+    .map((e) => e.t)
+    .sort((a, b) => a - b);
+  if (!clicks.length) return zooms;
+
+  return zooms.map((z) => {
+    // The first click at or just after this zoom opens; `reach` is how late a
+    // click may be and still be the thing the zoom was planned for.
+    const c = clicks.find((t) => t >= z.start - 0.25 && t <= z.start + reach);
+    if (c === undefined) return z;
+    const start = Math.max(0, Math.min(z.start, c - settle));
+    // Never inverted, and never so long the ruler shows a zoom over the whole
+    // recording because one click sat near a badly-timed plan.
+    if (z.end - start < 0.3) return z;
+    return { ...z, start: round3(start), end: round3(Math.min(duration || Infinity, z.end)) };
+  });
+}
+
+export default { RULES, cleanSamples, cleanMotion, speeds, dwells, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks };

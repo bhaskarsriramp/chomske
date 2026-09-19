@@ -27,7 +27,6 @@ export const ASPECTS = {
 export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
 export const CAPTION_STYLES = ["trylipi", "hormozi", "apple", "minimal", "neon"];
 export const EASINGS = ["smooth", "snappy", "slow", "linear"];
-export const NOTE_KINDS = ["tooltip", "arrow", "circle", "spotlight", "underline"];
 export const BLUR_KINDS = ["blur", "pixelate", "box"];
 
 /** Ids are minted in the browser so a new zoom is selectable before it saves. */
@@ -367,7 +366,6 @@ export function drewCounts(tl, lay = layout(tl)) {
     zooms: placedSpans(activeZooms(tl), lay).length,
     clicks: (tl.events || []).filter((e) => e.type === "click" || e.type === "dblclick").length,
     captions: placedCues(tl, lay).length,
-    notes: placedSpans(tl.notes || [], lay).length,
     blurs: placedSpans(tl.blurs || [], lay).length,
   };
 }
@@ -388,7 +386,7 @@ export function fmtBytes(n) {
 }
 
 const model = {
-  ASPECTS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, NOTE_KINDS, BLUR_KINDS, GRADIENTS,
+  ASPECTS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, BLUR_KINDS, GRADIENTS,
   newId, clamp, layout, mergedCuts, toOutput, toOutputSnapped, toSource, spanToOutput,
   placedSpans, placedCues, cursorAt, EASE, RAMP, clampRect, activeZooms, zoomRect,
   cameraAt, cameraAtOutput, project, projectRect, videoBox, backgroundCss,

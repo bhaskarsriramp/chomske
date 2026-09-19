@@ -261,56 +261,12 @@ Schema:
 }`;
 
 /* ────────────────────────────────────────────────────────────────────────────
-   7. Annotation Planner — what to point at
-   ──────────────────────────────────────────────────────────────────────────── */
-
-export const ANNOTATION_PLANNER = `You are adding on-screen annotations to a product demo: the arrows, labels and highlights that make a step obvious without narration.
-
-You are given the steps and the elements visible in each. Propose annotations.
-
-Be sparing. An annotation is expensive attention. At most one on screen at a time, and typically 1 per 15 seconds of recording — a demo covered in arrows reads as a slide deck, not software.
-
-Annotate when:
-- the thing to look at is small, or is not where the eye naturally goes
-- what just happened needs a word to be understood ("your key is generated once and never shown again")
-- a value has to be typed or pasted and the viewer needs to know what goes there
-- a result appeared somewhere other than where the click was
-
-Do not annotate:
-- a large obvious primary button that the cursor is already on
-- anything the caption or narration already says in the same moment
-- to restate the step title
-
-Kinds:
-- "tooltip"    a short label in a bubble near the target. The default.
-- "arrow"      points at the target from a direction. Use when the target is small or off to one side.
-- "circle"     a ring around the target. Use for "this one, not the others".
-- "spotlight"  darkens everything else. Use once per demo at most, for the single most important moment.
-- "underline"  under a line of text being read out.
-
-Rules:
-- "text" is at most 8 words. It is a label, not a sentence. Sentence case, no full stop.
-- "bbox" is the TARGET being pointed at, not where the bubble goes; the renderer places the bubble.
-- An annotation lasts between 1.2 and 4 seconds and sits inside its step.
-- ${COORDS}
-
-${JSON_ONLY}
-
-Schema:
-{
-  "annotations": [
-    { "start": 0.0, "end": 0.0, "kind": "tooltip|arrow|circle|spotlight|underline",
-      "text": "string", "bbox": [0,0,0,0], "anchor": "top|bottom|left|right|auto" }
-  ]
-}`;
-
-/* ────────────────────────────────────────────────────────────────────────────
-   8. Quality Reviewer — what to fix
+   7. Quality Reviewer — what to fix
    ──────────────────────────────────────────────────────────────────────────── */
 
 export const QUALITY_REVIEWER = `You are reviewing a finished automatic edit of a product demo, as an experienced video editor would, and proposing changes.
 
-You are given the edit: its steps, cuts, zooms, annotations and blurs, with timings, plus frames from the result.
+You are given the edit: its steps, cuts, zooms and blurs, with timings, plus frames from the result.
 
 Propose concrete changes. Each one is something the creator can accept with one click, so it must be specific and complete — never "consider tightening the pacing".
 
@@ -337,7 +293,7 @@ Schema:
     { "title": "short imperative, under 8 words",
       "why": "one sentence",
       "severity": "high|medium|low",
-      "change": { "op": "add_cut|remove_cut|add_zoom|adjust_zoom|remove_zoom|add_blur|add_annotation|adjust_step",
+      "change": { "op": "add_cut|remove_cut|add_zoom|adjust_zoom|remove_zoom|add_blur|adjust_step",
                   "id": "target id or \\"\\"",
                   "start": 0.0, "end": 0.0, "bbox": [0,0,0,0], "level": 0.0, "text": "" } }
   ]
@@ -399,6 +355,6 @@ export function elementLog(shots, { limit = 40 } = {}) {
 export default {
   ANALYSIS_LONG_EDGE,
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
-  CAPTION_GENERATOR, NARRATION_WRITER, ANNOTATION_PLANNER, QUALITY_REVIEWER,
+  CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
   frameIndex, eventLog, elementLog,
 };

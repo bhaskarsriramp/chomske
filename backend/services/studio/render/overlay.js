@@ -1,13 +1,14 @@
 /**
- * overlay.js: everything drawn ON the picture, rendered frame by frame.
+ * overlay.js: the cursor layer, rendered frame by frame.
  *
  * ── WHY A CANVAS AND NOT MORE FFMPEG FILTERS ─────────────────────────────────
- * The cursor, its glow and trail, click ripples, arrows, rounded tooltip
- * bubbles and a spotlight mask are vector drawing with text in it. FFmpeg can
- * draw a box and it can draw a string; everything else on that list is either
- * impossible or a `geq` expression nobody will ever be able to change. A canvas
- * does all of it in a few lines each, at a quality the filter graph could not
- * reach, and the result is one ordinary video input to the main render.
+ * The cursor, its outline, its glow, its trail and the click ripples are vector
+ * drawing. FFmpeg can draw a box and it can draw a string; a soft-edged pointer
+ * with an outline, following a path and scaling with a zoom, is either
+ * impossible in a filter graph or a `geq` expression nobody will ever be able
+ * to change. A canvas does all of it in a few lines each, at a quality the
+ * filter graph could not reach, and the result is one ordinary video input to
+ * the main render.
  *
  * ── THE LAYER IS DRAWN IN OUTPUT SPACE, AFTER THE CAMERA ─────────────────────
  * Every position in the timeline is a fraction of the SOURCE frame. Here each
@@ -34,33 +35,13 @@
  * or at a fixed size inside a 2× zoom, the original peeks out from under ours
  * on every fast move.
  */
-import path from "path";
-import { fileURLToPath } from "url";
-import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
+
+
+import { createCanvas } from "@napi-rs/canvas";
 import { ffmpegFromFrames } from "../../media/ffmpeg.js";
-import { cursorAt, placedSpans, layout, EASE } from "../timeline.js";
+import { cursorAt, layout, EASE } from "../timeline.js";
 import { cameraAtOutput } from "./camera.js";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FONTS_DIR = path.resolve(process.env.EDIT_FONTS_DIR || path.join(HERE, "..", "..", "..", "assets", "fonts"));
-
-let fontsReady = false;
-/**
- * The annotation font. Registered once per process; a second call is a no-op.
- * The same Noto family the captions use, so a tooltip and a caption in Telugu
- * are the same letterforms rather than two different fallbacks.
- */
-function ensureFonts() {
-  if (fontsReady) return "Noto Sans";
-  for (const file of ["NotoSans-Bold.ttf", "NotoSansDevanagari-Bold.ttf", "NotoSansTelugu-Bold.ttf", "NotoSansTamil-Bold.ttf", "NotoSansBengali-Bold.ttf"]) {
-    try { GlobalFonts.registerFromPath(path.join(FONTS_DIR, file)); } catch { /* absent is survivable: the fallback still draws Latin */ }
-  }
-  fontsReady = true;
-  return "Noto Sans";
-}
-
-/** How long an annotation takes to appear and to go. */
-const FADE = 0.22;
 /** How long a click ripple lives. */
 const RIPPLE = 0.5;
 /** Trail samples kept behind the pointer, at full rate. */
@@ -97,14 +78,12 @@ const THEMES = {
  * @returns {Promise<{ drawn: number, frames: number }>} null when nothing would be drawn
  */
 export async function renderOverlay({ timeline, keys, width, height, fps, duration, dest, onProgress = () => {} }) {
-  const font = ensureFonts();
   const lay = layout(timeline);
   const theme = THEMES[timeline.cursor?.theme || "light"];
   const wantCursor = timeline.cursor?.enabled !== false && theme && timeline.track?.length > 0;
 
-  const notes = placedSpans(timeline.notes || [], lay);
   const clicks = clickMarks(timeline, lay);
-  if (!wantCursor && !notes.length && !clicks.length) return null;
+  if (!wantCursor && !clicks.length) return null;
 
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext("2d");
@@ -114,13 +93,6 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
   // The pointer's own pixel size at source scale, before zoom and before the
   // creator's size setting. 22px is a macOS arrow; Windows is within a pixel.
   const baseCursorPx = 22 * (width / Math.max(1, timeline.source?.width || width));
-
-  // ── EVERY ANNOTATION SIZE IS AGAINST THE FRAME, NOT AGAINST PIXELS ───────
-  // Tooltip text, stroke weights and padding were all in raw pixels, which made
-  // them correct at 1080p and half the size they should be at 4K: the same
-  // design drawn on four times the area. `ui` is the frame's height against the
-  // 1080 reference every one of those numbers was chosen for.
-  const ui = height / 1080;
 
   let drawn = 0;
 
@@ -144,26 +116,9 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
           ctx.clearRect(0, 0, width, height);
           let any = false;
 
-          // Spotlight first: it darkens everything, including anything drawn
-          // before it, so it has to be under the rest of the layer.
-          for (const n of notes) {
-            if (n.kind === "spotlight" && t >= n.start - FADE && t <= n.end + FADE) {
-              drawSpotlight(ctx, n, t, cam, width, height);
-              any = true;
-            }
-          }
-
           for (const c of clicks) {
             if (t >= c.t && t <= c.t + RIPPLE && cur.ripple !== false) {
               drawRipple(ctx, c, t, cam, width, height, baseCursorPx);
-              any = true;
-            }
-          }
-
-          for (const n of notes) {
-            if (n.kind === "spotlight") continue;
-            if (t >= n.start - FADE && t <= n.end + FADE) {
-              drawNote(ctx, n, t, cam, width, height, font, ui);
               any = true;
             }
           }
@@ -220,19 +175,6 @@ function clickMarks(tl, lay) {
 /** A source-frame fraction, as a pixel of the output frame, under the camera. */
 function projectPoint(p, cam, W, H) {
   return { x: ((p.x - cam.x) / cam.w) * W, y: ((p.y - cam.y) / cam.h) * H };
-}
-
-function projectRect(r, cam, W, H) {
-  const a = projectPoint({ x: r.x, y: r.y }, cam, W, H);
-  const b = projectPoint({ x: r.x + r.w, y: r.y + r.h }, cam, W, H);
-  return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
-}
-
-/** Opacity at the edges of a span, so nothing snaps on or off. */
-function fadeAt(t, start, end) {
-  if (t < start) return ease(clamp((t - (start - FADE)) / FADE, 0, 1));
-  if (t > end) return 1 - ease(clamp((t - end) / FADE, 0, 1));
-  return 1;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -440,279 +382,6 @@ function drawRipple(ctx, c, t, cam, W, H, basePx) {
       ctx.restore();
     }
   }
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
-   Annotations
-   ──────────────────────────────────────────────────────────────────────────── */
-
-const ACCENT = "#2A7C13";
-const INK = "#0f1115";
-
-function drawNote(ctx, n, t, cam, W, H, font, ui = 1) {
-  const alpha = fadeAt(t, n.start, n.end);
-  if (alpha <= 0.01) return;
-  const r = projectRect(n, cam, W, H);
-  const color = n.color || ACCENT;
-  // Resolution first, then a gentle growth under zoom. The zoom term is capped
-  // well below the camera's own factor on purpose: a label is a fixed piece of
-  // interface sitting on top of the video, not part of the picture being
-  // magnified, so at 3x it should be a little larger and not three times larger.
-  const scale = ui * clamp(1 / cam.w, 1, 1.5);
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-
-  if (n.kind === "circle") drawCircle(ctx, r, color, scale, t, n);
-  else if (n.kind === "underline") drawUnderline(ctx, r, color, scale);
-  else if (n.kind === "arrow") drawArrowNote(ctx, r, n, color, scale, W, H, font, alpha);
-  else drawTooltip(ctx, r, n, color, scale, W, H, font);
-
-  ctx.restore();
-}
-
-function drawCircle(ctx, r, color, scale, t, n) {
-  const cx = r.x + r.w / 2;
-  const cy = r.y + r.h / 2;
-  // A slow pulse, one cycle a second, so a ring that sits for three seconds
-  // still reads as "look here" rather than as part of the interface.
-  const pulse = 1 + Math.sin((t - n.start) * Math.PI * 2) * 0.02;
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, (r.w / 2 + 10 * scale) * pulse, (r.h / 2 + 8 * scale) * pulse, 0, 0, Math.PI * 2);
-  ctx.lineWidth = Math.max(2.5, 5 * scale);
-  ctx.strokeStyle = color;
-  ctx.shadowColor = "rgba(0,0,0,0.3)";
-  ctx.shadowBlur = 8 * scale;
-  ctx.stroke();
-}
-
-function drawUnderline(ctx, r, color, scale) {
-  const y = r.y + r.h + 5 * scale;
-  ctx.beginPath();
-  ctx.moveTo(r.x, y);
-  ctx.lineTo(r.x + r.w, y);
-  ctx.lineWidth = Math.max(3, 6 * scale);
-  ctx.lineCap = "round";
-  ctx.strokeStyle = color;
-  ctx.shadowColor = "rgba(0,0,0,0.25)";
-  ctx.shadowBlur = 6 * scale;
-  ctx.stroke();
-}
-
-/**
- * The spotlight: everything except the subject, darkened.
- *
- * Drawn as a full-frame fill with the subject punched out using
- * destination-out, rather than as four rectangles around it, because four
- * rectangles cannot have a soft edge and a hard-edged spotlight looks like a
- * rendering error.
- */
-function drawSpotlight(ctx, n, t, cam, W, H) {
-  const alpha = fadeAt(t, n.start, n.end);
-  if (alpha <= 0.01) return;
-  const r = projectRect(n, cam, W, H);
-  const cx = r.x + r.w / 2;
-  const cy = r.y + r.h / 2;
-  const rad = Math.max(r.w, r.h) * 0.75 + 30;
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = "rgba(6,8,12,0.62)";
-  ctx.fillRect(0, 0, W, H);
-
-  ctx.globalCompositeOperation = "destination-out";
-  const g = ctx.createRadialGradient(cx, cy, rad * 0.62, cx, cy, rad);
-  g.addColorStop(0, "rgba(0,0,0,1)");
-  g.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-/**
- * A label in a bubble, placed beside the thing it names.
- *
- * The side is chosen from where there is room, not from the model's suggestion
- * alone: an annotation the model anchored "top" on an element at the top of the
- * screen has to go below or it is drawn off the frame.
- */
-function drawTooltip(ctx, r, n, color, scale, W, H, font) {
-  const pad = 15 * scale;
-  const fs = Math.round(clamp(30 * scale, 18, H * 0.055));
-  ctx.font = `600 ${fs}px "${font}", sans-serif`;
-  const lines = wrapText(ctx, n.text, Math.min(W * 0.4, 520 * scale));
-  const lh = fs * 1.32;
-  const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + pad * 2;
-  const bh = lines.length * lh + pad * 1.5;
-
-  const place = choosePlacement(n.anchor, r, bw, bh, W, H, 16 * scale);
-  const { x, y, side } = place;
-
-  ctx.shadowColor = "rgba(0,0,0,0.35)";
-  ctx.shadowBlur = 20 * scale;
-  ctx.shadowOffsetY = 5 * scale;
-  roundRect(ctx, x, y, bw, bh, 12 * scale);
-  ctx.fillStyle = "rgba(255,255,255,0.97)";
-  ctx.fill();
-  ctx.shadowColor = "transparent";
-
-  // The accent bar is what ties the bubble to the annotation colour without
-  // tinting the text background, which would cost the label its legibility.
-  ctx.fillStyle = color;
-  roundRect(ctx, x, y, 4.5 * scale, bh, 3 * scale);
-  ctx.fill();
-
-  drawPointer(ctx, place, r, color);
-
-  ctx.fillStyle = INK;
-  ctx.textBaseline = "top";
-  lines.forEach((line, i) => ctx.fillText(line, x + pad + 4 * scale, y + pad * 0.72 + i * lh));
-  void side;
-}
-
-/** The little triangle joining a bubble to its subject. */
-function drawPointer(ctx, place, r, color) {
-  const { x, y, w, h, side, scale = 1 } = place;
-  const s = 9 * scale;
-  const cx = r.x + r.w / 2;
-  const cy = r.y + r.h / 2;
-  ctx.beginPath();
-  if (side === "bottom") {
-    const px = clamp(cx, x + 16, x + w - 16);
-    ctx.moveTo(px - s, y);
-    ctx.lineTo(px + s, y);
-    ctx.lineTo(px, y - s);
-  } else if (side === "top") {
-    const px = clamp(cx, x + 16, x + w - 16);
-    ctx.moveTo(px - s, y + h);
-    ctx.lineTo(px + s, y + h);
-    ctx.lineTo(px, y + h + s);
-  } else if (side === "right") {
-    const py = clamp(cy, y + 16, y + h - 16);
-    ctx.moveTo(x, py - s);
-    ctx.lineTo(x, py + s);
-    ctx.lineTo(x - s, py);
-  } else {
-    const py = clamp(cy, y + 16, y + h - 16);
-    ctx.moveTo(x + w, py - s);
-    ctx.lineTo(x + w, py + s);
-    ctx.lineTo(x + w + s, py);
-  }
-  ctx.closePath();
-  ctx.fillStyle = "rgba(255,255,255,0.97)";
-  ctx.fill();
-  void color;
-}
-
-function choosePlacement(anchor, r, bw, bh, W, H, gap) {
-  const fits = {
-    bottom: { x: clamp(r.x + r.w / 2 - bw / 2, 12, W - bw - 12), y: r.y + r.h + gap, ok: r.y + r.h + gap + bh < H - 12 },
-    top: { x: clamp(r.x + r.w / 2 - bw / 2, 12, W - bw - 12), y: r.y - gap - bh, ok: r.y - gap - bh > 12 },
-    right: { x: r.x + r.w + gap, y: clamp(r.y + r.h / 2 - bh / 2, 12, H - bh - 12), ok: r.x + r.w + gap + bw < W - 12 },
-    left: { x: r.x - gap - bw, y: clamp(r.y + r.h / 2 - bh / 2, 12, H - bh - 12), ok: r.x - gap - bw > 12 },
-  };
-  const order = anchor && anchor !== "auto" ? [anchor, "bottom", "top", "right", "left"] : ["bottom", "top", "right", "left"];
-  for (const side of order) {
-    const f = fits[side];
-    if (f?.ok) return { ...f, w: bw, h: bh, side, scale: gap / 16 };
-  }
-  return { x: clamp(r.x, 12, W - bw - 12), y: clamp(r.y + r.h + gap, 12, H - bh - 12), w: bw, h: bh, side: "bottom", scale: gap / 16 };
-}
-
-/**
- * A curved arrow into the target, with its label at the tail.
- *
- * Curved rather than straight because a straight line from a label to a button
- * reads as a table rule; a curve reads as a gesture. The control point is
- * offset perpendicular to the run, so the bow is always on the outside.
- */
-function drawArrowNote(ctx, r, n, color, scale, W, H, font, alpha) {
-  const tx = r.x + r.w / 2;
-  const ty = r.y + r.h / 2;
-  const len = 165 * scale;
-  const fromRight = tx < W / 2;
-  const sx = fromRight ? tx + r.w / 2 + len : tx - r.w / 2 - len;
-  const sy = ty + (ty < H / 2 ? len * 0.55 : -len * 0.55);
-
-  const ex = tx + (fromRight ? r.w / 2 + 12 * scale : -(r.w / 2 + 12 * scale));
-  const ey = ty;
-  const mx = (sx + ex) / 2;
-  const my = (sy + ey) / 2 + (fromRight ? -1 : 1) * len * 0.3;
-
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(3, 5.5 * scale);
-  ctx.lineCap = "round";
-  ctx.shadowColor = "rgba(0,0,0,0.3)";
-  ctx.shadowBlur = 8 * scale;
-  ctx.beginPath();
-  ctx.moveTo(sx, sy);
-  ctx.quadraticCurveTo(mx, my, ex, ey);
-  ctx.stroke();
-
-  // The head is aimed along the curve's own tangent at the end point, which is
-  // the direction from the control point, not from the start.
-  const ang = Math.atan2(ey - my, ex - mx);
-  const head = 20 * scale;
-  ctx.beginPath();
-  ctx.moveTo(ex, ey);
-  ctx.lineTo(ex - head * Math.cos(ang - 0.42), ey - head * Math.sin(ang - 0.42));
-  ctx.lineTo(ex - head * Math.cos(ang + 0.42), ey - head * Math.sin(ang + 0.42));
-  ctx.closePath();
-  ctx.fillStyle = color;
-  ctx.fill();
-  ctx.restore();
-
-  if (n.text) {
-    const fs = Math.round(clamp(30 * scale, 18, H * 0.055));
-    ctx.font = `600 ${fs}px "${font}", sans-serif`;
-    const lines = wrapText(ctx, n.text, 360 * scale);
-    const pad = 12 * scale;
-    const lh = fs * 1.3;
-    const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + pad * 2;
-    const bh = lines.length * lh + pad * 1.4;
-    const bx = clamp(sx - (fromRight ? 0 : bw), 12, W - bw - 12);
-    const by = clamp(sy - bh / 2, 12, H - bh - 12);
-
-    ctx.globalAlpha = alpha;
-    ctx.shadowColor = "rgba(0,0,0,0.32)";
-    ctx.shadowBlur = 18 * scale;
-    roundRect(ctx, bx, by, bw, bh, 11 * scale);
-    ctx.fillStyle = "rgba(255,255,255,0.97)";
-    ctx.fill();
-    ctx.shadowColor = "transparent";
-    ctx.fillStyle = INK;
-    ctx.textBaseline = "top";
-    lines.forEach((line, i) => ctx.fillText(line, bx + pad, by + pad * 0.7 + i * lh));
-  }
-}
-
-function roundRect(ctx, x, y, w, h, r) {
-  const rr = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
-}
-
-function wrapText(ctx, text, maxWidth) {
-  const words = String(text || "").split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = "";
-  for (const w of words) {
-    const test = line ? `${line} ${w}` : w;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      lines.push(line);
-      line = w;
-    } else line = test;
-  }
-  if (line) lines.push(line);
-  return lines.slice(0, 3);
 }
 
 export default { renderOverlay };

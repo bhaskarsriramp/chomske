@@ -33,7 +33,6 @@
  *   steps    [{ id, start, end, title, detail, importance, camera }]
  *   captions { enabled, style, position, size, px, color, x, y, lang }
  *   cues     [{ id, start, end, text, emphasis, custom }]  custom: one line styled alone
- *   notes    [{ id, start, end, kind, text, x, y, w, h, anchor }]   annotations
  *   blurs    [{ id, start, end, x, y, w, h, kind, strength, label, auto }]
  *   canvas   { aspect, background, padding, radius, shadow }
  *   audio    { voice, music: [...] }
@@ -52,7 +51,6 @@ export const ASPECTS = {
 export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
 export const CAPTION_STYLES = ["trylipi", "hormozi", "apple", "minimal", "neon"];
 export const EASINGS = ["smooth", "snappy", "slow", "linear"];
-export const NOTE_KINDS = ["tooltip", "arrow", "circle", "spotlight", "underline"];
 export const BLUR_KINDS = ["blur", "pixelate", "box"];
 
 /** What a zoom is for. Drives the default rect and how the camera behaves. */
@@ -122,7 +120,6 @@ export function emptyTimeline({ duration = 0, width = 1920, height = 1080, fps =
     steps: [],
     captions: defaultCaptions(),
     cues: [],
-    notes: [],
     blurs: [],
     narration: [],
     audio: defaultAudio(),
@@ -288,7 +285,28 @@ export function cursorAt(track, t) {
  * measurement noise in it, and the creator is really asking "how much of that
  * noise do I want to see".
  */
-export function smoothTrack(track, { rate = 60, strength = 0.65, duration = 0 } = {}) {
+/**
+ * How far the drawn pointer may ever sit from the captured one, as a fraction
+ * of the frame's width.
+ *
+ * ── THIS IS WHAT STOPS THE VIDEO SHOWING TWO CURSORS ─────────────────────────
+ * The pointer in the recording is burnt into the pixels and cannot be removed.
+ * The drawn one covers it — that is the entire reason it is drawn larger than
+ * life (defaultCursor.size). Covering only works while the two are in the same
+ * place, and smoothing is precisely a licence to put them in different places:
+ * a Catmull-Rom spline rounds the corner on a fast direction change, and at a
+ * sharp turn the smoothed path can leave the real path by fifty pixels. What
+ * the viewer sees then is a crisp pointer and, a thumb's width away, the
+ * original: two cursors, which is worse than no cursor at all.
+ *
+ * So smoothing is now a preference expressed WITHIN a budget rather than a free
+ * hand. A 22px cursor on a 1920-wide frame is about 0.0115 of the width, so a
+ * drift of one cursor-width still leaves the two overlapping. Below that the
+ * rounding is invisible; above it the recording develops a second mouse.
+ */
+const MAX_DRIFT = 0.012;
+
+export function smoothTrack(track, { rate = 60, strength = 0.65, duration = 0, maxDrift = MAX_DRIFT } = {}) {
   if (!track?.length) return [];
   const pts = [...track].sort((a, b) => a.t - b.t);
   if (pts.length < 3 || strength <= 0) return pts;
@@ -312,10 +330,23 @@ export function smoothTrack(track, { rate = 60, strength = 0.65, duration = 0 } 
     const rx = p1.x + (p2.x - p1.x) * k;
     const ry = p1.y + (p2.y - p1.y) * k;
 
+    // Smoothed, then pulled back onto the real path if it wandered too far.
+    // Scaling the whole offset rather than clamping each axis keeps the
+    // direction of the correction, so the pointer stays on the curve it was
+    // drawing instead of snapping square against one axis.
+    let dx = (sx - rx) * strength;
+    let dy = (sy - ry) * strength;
+    const drift = Math.hypot(dx, dy);
+    if (drift > maxDrift) {
+      const k2 = maxDrift / drift;
+      dx *= k2;
+      dy *= k2;
+    }
+
     out.push({
       t: round3(t),
-      x: frac(rx + (sx - rx) * strength),
-      y: frac(ry + (sy - ry) * strength),
+      x: frac(rx + dx),
+      y: frac(ry + dy),
       shape: p1.shape || "default",
     });
   }
@@ -690,21 +721,6 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     }))
     .filter((q) => q.text && q.end - q.start > 0.05);
 
-  // ── Annotations ───────────────────────────────────────────────────────────
-  out.notes = (src.notes || [])
-    .slice(0, 300)
-    .map((a) => ({
-      id: text(a.id, 32) || newId("n"),
-      ...span(a),
-      kind: pick(a.kind, NOTE_KINDS, "tooltip"),
-      text: text(a.text, 200),
-      ...rect(a),
-      anchor: pick(a.anchor, ["top", "bottom", "left", "right", "auto"], "auto"),
-      color: /^#[0-9a-f]{6}$/i.test(a.color || "") ? a.color : "",
-      auto: !!a.auto,
-    }))
-    .filter((a) => a.end - a.start > 0.05);
-
   // ── Blur ──────────────────────────────────────────────────────────────────
   out.blurs = (src.blurs || [])
     .slice(0, 500)
@@ -758,7 +774,6 @@ export function drewCounts(tl, lay = layout(tl)) {
     cursor: tl.cursor?.enabled && tl.track?.length ? tl.track.length : 0,
     clicks: (tl.events || []).filter((e) => e.type === "click" || e.type === "dblclick").length,
     captions: placedCues(tl, lay).length,
-    notes: placedSpans(tl.notes || [], lay).length,
     blurs: placedSpans(tl.blurs || [], lay).length,
     music: (tl.audio?.music || []).length,
   };
@@ -774,7 +789,7 @@ export function outputSize(aspect, resolution = 1080) {
 }
 
 export default {
-  ASPECTS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, NOTE_KINDS, BLUR_KINDS, CAMERA_MODES,
+  ASPECTS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, BLUR_KINDS, CAMERA_MODES,
   newId, emptyTimeline, defaultCursor, defaultCaptions, defaultCanvas, defaultAudio,
   layout, mergedCuts, toOutput, toOutputSnapped, toSource, spanToOutput,
   cursorAt, smoothTrack, EASE, easeFn, RAMP, cameraAt, activeZooms, zoomRect, clampRect, project,

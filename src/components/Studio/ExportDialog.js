@@ -96,18 +96,18 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
         className="st-scroll"
         style={{
           width: "min(560px, 100%)", maxHeight: "86vh",
-          borderRadius: 18, border: "1px solid var(--d-line)", background: "var(--d-bg-alt)",
+          borderRadius: 18, border: "1px solid var(--line)", background: "var(--paper)",
           boxShadow: "0 40px 100px -30px rgba(0,0,0,.9)",
         }}
       >
-        <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "18px 20px 14px", borderBottom: "1px solid var(--d-line-soft)", position: "sticky", top: 0, background: "var(--d-bg-alt)", zIndex: 1 }}>
-          <h2 style={{ margin: 0, flex: 1, fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--d-ink)" }}>Export</h2>
+        <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "18px 20px 14px", borderBottom: "1px solid var(--line)", position: "sticky", top: 0, background: "var(--paper)", zIndex: 1 }}>
+          <h2 style={{ margin: 0, flex: 1, fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--ink)" }}>Export</h2>
           <button
             ref={closeRef}
             type="button"
             onClick={onClose}
             aria-label="Close"
-            style={{ width: 30, height: 30, display: "grid", placeItems: "center", borderRadius: 8, border: "none", background: "transparent", color: "var(--d-mute)", cursor: "pointer" }}
+            style={{ width: 30, height: 30, display: "grid", placeItems: "center", borderRadius: 8, border: "none", background: "transparent", color: "var(--ink-mute)", cursor: "pointer" }}
           >
             <Icon name="close" size={15} />
           </button>
@@ -130,13 +130,13 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
                     }}
                     style={{
                       textAlign: "left", padding: "11px 13px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
-                      border: "1px solid", borderColor: on ? "var(--d-blue)" : "var(--d-line-soft)",
-                      background: on ? "rgba(145,141,255,.1)" : "rgba(255,255,255,.02)",
+                      border: "1px solid", borderColor: on ? "var(--ink)" : "var(--line)",
+                      background: on ? "var(--made-tint)" : "var(--card)",
                       color: "inherit",
                     }}
                   >
-                    <div style={{ fontSize: 13, fontWeight: 660, color: "var(--d-ink)" }}>{p.label}</div>
-                    <div style={{ marginTop: 2, fontSize: 11, color: "var(--d-mute)" }}>{p.hint}</div>
+                    <div style={{ fontSize: 13, fontWeight: 660, color: "var(--ink)" }}>{p.label}</div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: "var(--ink-mute)" }}>{p.hint}</div>
                   </button>
                 );
               })}
@@ -148,7 +148,7 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
             onClick={() => setAdvanced((a) => !a)}
             style={{
               display: "flex", alignItems: "center", gap: 7, border: "none", background: "transparent", padding: 0,
-              color: "var(--d-mute)", fontFamily: "inherit", fontSize: 12.5, fontWeight: 620, cursor: "pointer",
+              color: "var(--ink-mute)", fontFamily: "inherit", fontSize: 12.5, fontWeight: 620, cursor: "pointer",
             }}
           >
             <Icon name="chevron" size={13} style={{ transform: advanced ? "rotate(90deg)" : "none", transition: "transform var(--dur-pop) var(--ease-out)" }} />
@@ -156,7 +156,7 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
           </button>
 
           {advanced && (
-            <div style={{ display: "grid", gap: 15, padding: 15, borderRadius: 13, background: "rgba(0,0,0,.25)", border: "1px solid var(--d-line-soft)" }}>
+            <div style={{ display: "grid", gap: 15, padding: 15, borderRadius: 13, background: "rgba(0,0,0,.25)", border: "1px solid var(--line)" }}>
               <Row label="Shape">
                 <Segmented
                   size="xs"
@@ -205,7 +205,7 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
           )}
 
           {error && (
-            <div style={{ padding: "11px 13px", borderRadius: 10, border: "1px solid rgba(255,148,130,.3)", background: "rgba(255,90,90,.07)", color: "var(--d-red)", fontSize: 12.5, lineHeight: 1.5 }}>
+            <div style={{ padding: "11px 13px", borderRadius: 10, border: "1px solid #F5C7C3", background: "#FCE8E6", color: "var(--bad)", fontSize: 12.5, lineHeight: 1.5 }}>
               {error}
             </div>
           )}
@@ -214,13 +214,13 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
             <Btn kind="primary" size="l" onClick={run} disabled={busy} icon={<Icon name="download" size={15} />}>
               {busy ? "Starting…" : `Export · ${cost} credits`}
             </Btn>
-            <span style={{ fontSize: 12, color: "var(--d-mute)" }}>
+            <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>
               {fmtTime(outputSeconds, false)} · {options.resolution}p{options.fps >= 60 ? " 60fps" : ""}
             </span>
           </div>
 
           {(running.length > 0 || finished.length > 0) && (
-            <div style={{ borderTop: "1px solid var(--d-line-soft)", paddingTop: 16, display: "grid", gap: 9 }}>
+            <div style={{ borderTop: "1px solid var(--line)", paddingTop: 16, display: "grid", gap: 9 }}>
               <Label>Exports</Label>
               {[...running, ...finished].map((r) => (
                 <RenderRow key={r.id} demoId={demo.id} render={r} onChanged={onChanged} />
@@ -250,13 +250,13 @@ function RenderRow({ demoId, render, onChanged }) {
   const label = `${render.options?.label || render.options?.preset || "Export"} · ${render.width}×${render.height}`;
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 11, border: "1px solid var(--d-line-soft)", background: "rgba(255,255,255,.02)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 11, border: "1px solid var(--line)", background: "var(--card)" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ fontSize: 12.5, fontWeight: 640, color: "var(--d-ink)" }}>{label}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 640, color: "var(--ink)" }}>{label}</span>
           {render.stale && render.status === "done" && <Badge tone="warn">Older engine</Badge>}
         </div>
-        <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--d-mute)" }}>
+        <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--ink-mute)" }}>
           {render.status === "done"
             ? `${fmtBytes(render.size)} · ${fmtTime(render.duration)}`
             : render.status === "failed"
@@ -290,7 +290,7 @@ function RenderRow({ demoId, render, onChanged }) {
           await deleteRender(demoId, render.id).catch(() => {});
           onChanged?.();
         }}
-        style={{ width: 26, height: 26, display: "grid", placeItems: "center", borderRadius: 7, border: "none", background: "transparent", color: "var(--d-mute)", cursor: "pointer" }}
+        style={{ width: 26, height: 26, display: "grid", placeItems: "center", borderRadius: 7, border: "none", background: "transparent", color: "var(--ink-mute)", cursor: "pointer" }}
       >
         <Icon name="trash" size={13} />
       </button>
@@ -301,7 +301,7 @@ function RenderRow({ demoId, render, onChanged }) {
 function Row({ label, children }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-      <span style={{ minWidth: 88, fontSize: 11.5, fontWeight: 650, color: "var(--d-mute)" }}>{label}</span>
+      <span style={{ minWidth: 88, fontSize: 11.5, fontWeight: 650, color: "var(--ink-mute)" }}>{label}</span>
       {children}
     </div>
   );
@@ -309,7 +309,7 @@ function Row({ label, children }) {
 
 function Label({ children }) {
   return (
-    <div style={{ marginBottom: 9, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--d-mute)" }}>
+    <div style={{ marginBottom: 9, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-mute)" }}>
       {children}
     </div>
   );

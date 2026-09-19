@@ -49,6 +49,10 @@ export const completeUpload = (id, capture) => api.post(`/studio/demos/${id}/upl
 export const startAnalysis = (id, { expectedCost, captions }) =>
   api.post(`/studio/demos/${id}/analyse`, { expected_cost: expectedCost, captions }).then(data);
 export const requestCaptions = (id) => api.post(`/studio/demos/${id}/captions`).then((r) => r.data);
+// Captions from the voiceover script the analysis already wrote. Synchronous
+// and free — it is a chunking pass over text the demo already holds, not a
+// second reading of the recording — so it answers with the whole demo.
+export const captionsFromScript = (id) => api.post(`/studio/demos/${id}/captions/from-script`).then(data);
 export const requestReview = (id) => api.post(`/studio/demos/${id}/review`).then((r) => r.data);
 export const resolveSuggestion = (id, sid, action) =>
   api.post(`/studio/demos/${id}/suggestions/${sid}`, { action }).then(data);
@@ -65,7 +69,7 @@ export const deleteRender = (id, rid) => api.delete(`/studio/demos/${id}/renders
 const studioApi = {
   getStudioConfig, listDemos, createDemo, getDemo, renameDemo, deleteDemo,
   startUpload, resumeUpload, completeUpload,
-  startAnalysis, requestCaptions, requestReview, resolveSuggestion,
+  startAnalysis, requestCaptions, captionsFromScript, requestReview, resolveSuggestion,
   saveTimeline, startRender, renderDownloadUrl, deleteRender,
 }
 export default studioApi;

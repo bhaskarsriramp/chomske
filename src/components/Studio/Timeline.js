@@ -31,7 +31,6 @@ import { Icon } from "./ui";
 const LANES = [
   { key: "zooms", label: "Zoom", color: "#918DFF", icon: "zoom" },
   { key: "blurs", label: "Blur", color: "#FF9482", icon: "blur" },
-  { key: "notes", label: "Notes", color: "#74DDB0", icon: "note" },
   { key: "cues", label: "Captions", color: "#F09BE5", icon: "caption" },
 ];
 
@@ -170,7 +169,7 @@ export default function Timeline({
                 left: `${(t / total) * 100}%`,
                 fontSize: 9.5,
                 fontWeight: 650,
-                color: "var(--d-mute)",
+                color: "var(--ink-mute)",
                 transform: t === 0 ? "none" : "translateX(-50%)",
                 fontVariantNumeric: "tabular-nums",
                 pointerEvents: "none",
@@ -195,7 +194,7 @@ export default function Timeline({
               style={{
                 width: LABEL_W, flexShrink: 0, display: "flex", alignItems: "center", gap: 6,
                 fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase",
-                color: items[lane.key].length ? "var(--d-body)" : "var(--d-mute)",
+                color: items[lane.key].length ? "var(--ink-body)" : "var(--ink-mute)",
                 opacity: items[lane.key].length ? 1 : 0.55,
               }}
             >
@@ -236,7 +235,7 @@ export default function Timeline({
                       width: `${width}%`,
                       background: on ? lane.color : `${lane.color}55`,
                       borderColor: lane.color,
-                      color: on ? "#0B0D14" : "var(--d-ink)",
+                      color: on ? "#fff" : "var(--ink-body)",
                     }}
                   >
                     <span className="st-grip is-start" onPointerDown={beginDrag(lane.key, item, "start")} />
@@ -274,8 +273,8 @@ export default function Timeline({
       </div>
 
       {/* ── What the ruler is showing ──────────────────────────────────── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 11, paddingLeft: LABEL_W + 10, fontSize: 11.5, color: "var(--d-mute)" }}>
-        <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--d-body)", fontWeight: 650 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 11, paddingLeft: LABEL_W + 10, fontSize: 11.5, color: "var(--ink-mute)" }}>
+        <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--ink-body)", fontWeight: 650 }}>
           {fmtTime(time, true)} / {fmtTime(total, true)}
         </span>
         {lay.removed > 0.05 && (
@@ -289,7 +288,7 @@ export default function Timeline({
             onClick={() => onAddCut(time)}
             style={{
               marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
-              border: "1px solid var(--d-line)", background: "var(--d-panel)", color: "var(--d-body)",
+              border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-body)",
               borderRadius: 8, padding: "4px 9px", fontSize: 11.5, fontWeight: 620, cursor: "pointer", fontFamily: "inherit",
             }}
             title="Cut two seconds from here"
@@ -305,7 +304,7 @@ export default function Timeline({
 
 const LABEL_W = 74;
 
-const SINGULAR = { zooms: "zoom", blurs: "blur", notes: "note", cues: "cue" };
+const SINGULAR = { zooms: "zoom", blurs: "blur", cues: "cue" };
 
 /** Recording time → output time, snapping a moment inside a cut forward. */
 function outOf(srcT, lay) {
@@ -319,7 +318,6 @@ function outOf(srcT, lay) {
 function chipLabel(lane, item) {
   if (lane === "zooms") return `${Number(item.level || 1).toFixed(1)}×`;
   if (lane === "blurs") return item.label || "Blur";
-  if (lane === "notes") return item.text || item.kind;
   return item.text || "";
 }
 
@@ -327,7 +325,6 @@ function chipTitle(lane, item) {
   const when = `${fmtTime(item.start, true)} – ${fmtTime(item.end, true)}`;
   if (lane === "zooms") return `${item.label || "Zoom"} ${Number(item.level || 1).toFixed(2)}× · ${when}`;
   if (lane === "blurs") return `${item.label || "Blur"} · ${when}`;
-  if (lane === "notes") return `${item.kind}: ${item.text} · ${when}`;
   return `${item.text} · ${when}`;
 }
 

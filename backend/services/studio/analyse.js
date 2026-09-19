@@ -3,7 +3,7 @@
  *
  * This is the product. Everything else is plumbing around it: the browser hands
  * over pixels and a tracker report, and what comes back is a timeline with the
- * cuts, camera moves, captions, annotations and blur already decided.
+ * cuts, camera moves, captions and blur already decided.
  *
  * ── THE ORDER IS A DEPENDENCY CHAIN ──────────────────────────────────────────
  *   frames          sampled once, and read by two different passes
@@ -14,7 +14,6 @@
  *   zooms           the camera — needs the steps to know what matters
  *   blur            runs against every frame, in parallel with the rest
  *   captions        from the audio, independent of all of it
- *   annotations     needs the steps
  *   narration       needs the steps
  *
  * The independent halves run together: blur and captions do not wait for the
@@ -36,9 +35,9 @@ import path from "path";
 import fsp from "fs/promises";
 import { extractFrames } from "../media/ffmpeg.js";
 import {
-  newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, planNotes, writeNarration,
+  newSpend, readFrames, detectSteps, planZooms, spaceZooms, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { inferEvents, idleCuts, zoomsFromClicks } from "./events.js";
+import { inferEvents, idleCuts, zoomsFromClicks, anticipateClicks } from "./events.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
 
@@ -90,7 +89,10 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     return [];
   });
 
-  const blurTask = findSensitive(frames, { every, duration, spend }).catch((err) => {
+  // The pointer log goes in with the frames: a blur is released when the screen
+  // changes under it, not when the model happens to miss a sample. See
+  // vision.js joinRegions.
+  const blurTask = findSensitive(frames, { every, duration, events, spend }).catch((err) => {
     console.error("[studio] blur pass failed:", err);
     return [];
   });
@@ -128,21 +130,37 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
       })
     : [];
 
-  // Always an edited demo, never a flat one. The click fallback knows where the
-  // pointer was and not what it was pointing at, which is worse camera work
-  // than the planner's and much better than none.
+  /**
+   * ── THE CAMERA IS THE PLAN, PLUS EVERY CLICK THE PLAN MISSED ──────────────
+   * Three things happen here, in order, and all three matter:
+   *
+   *   1. The planner's zooms are kept. It read the frames and knows what is
+   *      worth looking at; the pointer log does not.
+   *   2. Every one of them is pulled back so the camera is settled BEFORE the
+   *      click it was planned for, not arriving after it.
+   *   3. Clicks the planner said nothing about get a zoom of their own.
+   *
+   * Step 3 is the one that was missing, and it is most of what a screen
+   * recorder is for. A click is the only moment in a demo where the viewer is
+   * guaranteed to be looking for something specific — the button being
+   * pressed — and a demo that zooms on some of them and not others reads as
+   * inattentive. spaceZooms() then drops any that land on top of a planned
+   * one, so the camera never pulls out and back in inside a second.
+   */
   if (!zooms.length) zooms = zoomsFromClicks(events, { duration });
+  zooms = anticipateClicks(zooms, events, { duration });
 
-  /* ── Annotations and narration ───────────────────────────────────────── */
-  onProgress(0.68, "Writing the annotations");
-  const [notes, narration] = await Promise.all([
-    steps.length
-      ? planNotes({ steps, shots, duration, spend }).catch(() => [])
-      : Promise.resolve([]),
-    steps.length
-      ? writeNarration({ steps, summary, product, duration, spend }).catch(() => [])
-      : Promise.resolve([]),
-  ]);
+  const covered = (t) => zooms.some((z) => t >= z.start - 0.7 && t <= z.end + 0.7);
+  const extra = zoomsFromClicks(events, { duration }).filter((z) => !covered((z.start + z.end) / 2));
+  if (extra.length) {
+    zooms = spaceZooms([...zooms, ...extra].sort((a, b) => a.start - b.start));
+  }
+
+  /* ── Narration ───────────────────────────────────────────────────────── */
+  onProgress(0.68, "Writing the narration");
+  const narration = steps.length
+    ? await writeNarration({ steps, summary, product, duration, spend }).catch(() => [])
+    : [];
 
   /* ── The passes that were running all along ──────────────────────────── */
   onProgress(0.82, "Checking for anything private");
@@ -166,7 +184,6 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   tl.events = events;
   tl.steps = steps;
   tl.zooms = zooms;
-  tl.notes = notes;
   tl.blurs = blurs;
   tl.narration = narration;
 
@@ -203,7 +220,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
  * Captions for a demo that was analysed without them.
  *
  * Deliberately a separate entry point rather than a re-analysis. Everything
- * else in the edit — the steps, the camera, the blur, the annotations — came
+ * else in the edit — the steps, the camera, the blur — came
  * from reading hundreds of frames, and none of it changes because somebody
  * wants subtitles. This reads the audio and nothing else, so the button in the
  * editor is a few seconds and a few cents rather than the whole pipeline again.

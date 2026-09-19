@@ -126,25 +126,13 @@ export function applySuggestion(timeline, suggestion, { duration }) {
       return ok();
     }
 
-    case "add_annotation": {
-      if (!rect) return no("We couldn't tell what that note should point at.");
-      if (!c.text) return no("That note has nothing to say.");
-      tl.notes = [
-        ...(tl.notes || []),
-        {
-          id: newId("n"),
-          start,
-          end: end > start ? Math.min(end, start + 4) : start + 2.5,
-          kind: "tooltip",
-          text: c.text,
-          ...rect,
-          anchor: "auto",
-          color: "",
-          auto: false,
-        },
-      ];
-      return ok();
-    }
+    // "add_annotation" used to live here. On-screen arrows, circles and tooltip
+    // bubbles were cut from the product: this is a tool for solo founders
+    // shipping a product demo, and a demo covered in callouts reads as a
+    // training video. A reviewer that still asks for one is told so rather than
+    // silently ignored, because a suggestion that disappears looks like a bug.
+    case "add_annotation":
+      return no("On-screen notes aren't part of the studio any more.");
 
     case "adjust_step": {
       const i = found("steps");

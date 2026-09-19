@@ -1,16 +1,18 @@
 /**
- * ui.js: the studio's small controls, on a dark ground.
+ * ui.js: the studio's small controls.
  *
  * ── WHY A SECOND SET AND NOT src/components/Edit/ui.js ───────────────────────
- * The script editor's controls are built for the app's light surfaces. The
- * studio is dark, for the same reason every video tool is: a preview is judged
- * against what surrounds it, and light chrome around a screen recording makes
- * the recording look washed out. So the controls are the same shapes and sizes
- * with the dark palette's tokens (--d-* in src/index.css, already defined for
- * the landing page), rather than a second design.
+ * The shapes, sizes, tokens and weights are deliberately the script editor's:
+ * same paper, same ink, same borders, same segmented control. A creator moving
+ * between Edit Videos and the studio in one session should not be able to tell
+ * where one design ends. What is here and not there is what only a screen
+ * recorder needs — a record button, a level meter, drag maths for a rectangle
+ * on a video — and the pieces both products share (the caption colour, size
+ * and look pickers) live in src/components/Edit/captionStyle.js and are
+ * imported by both rather than written twice.
  *
  * Nothing here knows what a zoom or a blur is. It is sliders, buttons, rows and
- * fields; the panels in StudioEditor.js decide what they mean.
+ * fields; the panels in panels.js decide what they mean.
  */
 import { forwardRef, useCallback, useEffect, useId, useRef, useState } from "react";
 
@@ -28,11 +30,11 @@ const SIZES = {
 };
 
 const KINDS = {
-  primary: { border: "1px solid transparent", background: "var(--d-blue)", color: "#0A0B12", fontWeight: 700 },
-  record: { border: "1px solid transparent", background: "#FF5A5A", color: "#fff", fontWeight: 700 },
-  ghost: { border: "1px solid var(--d-line)", background: "var(--d-panel)", color: "var(--d-ink)" },
-  quiet: { border: "1px solid transparent", background: "transparent", color: "var(--d-body)" },
-  danger: { border: "1px solid rgba(255,148,130,.35)", background: "rgba(255,90,90,.08)", color: "var(--d-red)" },
+  primary: { border: "1px solid transparent", background: "var(--primary)", color: "#fff", fontWeight: 700 },
+  record: { border: "1px solid transparent", background: "#E5484D", color: "#fff", fontWeight: 700 },
+  ghost: { border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink)" },
+  quiet: { border: "1px solid transparent", background: "transparent", color: "var(--ink-body)" },
+  danger: { border: "1px solid #F1C4C0", background: "var(--card)", color: "var(--bad)" },
 };
 
 export const Btn = forwardRef(function Btn(
@@ -83,7 +85,7 @@ export function Segmented({ value, options, onChange, size = "m", full = false, 
       aria-label={label}
       style={{
         display: full ? "flex" : "inline-flex", gap: 2, padding: 2, maxWidth: "100%", flexWrap: "wrap",
-        borderRadius: 10, background: "rgba(0,0,0,.28)", border: "1px solid var(--d-line-soft)",
+        borderRadius: 10, background: "var(--paper)", border: "1px solid var(--line)",
       }}
     >
       {options.map((o) => {
@@ -100,9 +102,11 @@ export function Segmented({ value, options, onChange, size = "m", full = false, 
               fontSize: size === "xs" ? 11 : 12.5, fontWeight: 650, lineHeight: 1.3,
               padding: pad, minHeight, borderRadius: 8, border: "none", cursor: "pointer", whiteSpace: "nowrap",
               fontFamily: "inherit",
-              background: on ? "var(--d-panel-strong)" : "transparent",
-              color: on ? "var(--d-ink)" : "var(--d-mute)",
-              boxShadow: on ? "var(--d-highlight)" : "none",
+              // Solid ink for the chosen one, exactly as src/components/Edit/ui.js
+              // does it. A tinted-background selection was legible on the dark
+              // ground this started on and is nearly invisible on paper.
+              background: on ? "var(--ink)" : "transparent",
+              color: on ? "#fff" : "var(--ink-mute)",
               transition: "background var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out)",
             }}
           >
@@ -132,10 +136,10 @@ export function Slider({ label, value, min, max, step = 0.01, onChange, format, 
   return (
     <div style={{ opacity: disabled ? 0.45 : 1 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 7 }}>
-        <label htmlFor={id} style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--d-mute)" }}>
+        <label htmlFor={id} style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-mute)" }}>
           {label}
         </label>
-        <span style={{ fontSize: 12.5, fontWeight: 650, color: "var(--d-ink)", fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 650, color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
           {format ? format(value) : value}
         </span>
       </div>
@@ -151,7 +155,7 @@ export function Slider({ label, value, min, max, step = 0.01, onChange, format, 
         className="st-range"
         style={{ "--fill": `${pct}%` }}
       />
-      {hint && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--d-mute)", lineHeight: 1.45 }}>{hint}</div>}
+      {hint && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.45 }}>{hint}</div>}
     </div>
   );
 }
@@ -178,22 +182,22 @@ export function Toggle({ label, hint, checked, onChange, disabled }) {
         aria-hidden
         style={{
           flexShrink: 0, width: 36, height: 21, marginTop: 1, borderRadius: 99,
-          background: checked ? "var(--d-blue)" : "rgba(255,255,255,.12)",
-          border: "1px solid", borderColor: checked ? "transparent" : "var(--d-line)",
+          background: checked ? "var(--ink)" : "#D5D5D5",
+          border: "1px solid", borderColor: checked ? "transparent" : "var(--line)",
           position: "relative", transition: "background var(--dur-hover) var(--ease-out)",
         }}
       >
         <span
           style={{
             position: "absolute", top: 2, left: checked ? 17 : 2, width: 15, height: 15, borderRadius: "50%",
-            background: checked ? "#0A0B12" : "var(--d-body)",
+            background: "#fff",
             transition: "left var(--dur-pop) var(--ease-out)",
           }}
         />
       </span>
       <span style={{ minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: 13, fontWeight: 620, color: "var(--d-ink)" }}>{label}</span>
-        {hint && <span style={{ display: "block", marginTop: 3, fontSize: 11.5, color: "var(--d-mute)", lineHeight: 1.45 }}>{hint}</span>}
+        <span style={{ display: "block", fontSize: 13, fontWeight: 620, color: "var(--ink)" }}>{label}</span>
+        {hint && <span style={{ display: "block", marginTop: 3, fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.45 }}>{hint}</span>}
       </span>
     </label>
   );
@@ -205,7 +209,7 @@ export function Field({ label, value, onChange, placeholder, hint, multiline, ma
   return (
     <div>
       {label && (
-        <label htmlFor={id} style={{ display: "block", marginBottom: 6, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--d-mute)" }}>
+        <label htmlFor={id} style={{ display: "block", marginBottom: 6, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-mute)" }}>
           {label}
         </label>
       )}
@@ -219,13 +223,13 @@ export function Field({ label, value, onChange, placeholder, hint, multiline, ma
         style={{
           width: "100%", fontFamily: "inherit", fontSize: 13.5, lineHeight: 1.5,
           padding: "9px 12px", borderRadius: 10, resize: multiline ? "vertical" : undefined,
-          background: "rgba(0,0,0,.3)", border: "1px solid var(--d-line)", color: "var(--d-ink)",
+          background: "rgba(0,0,0,.3)", border: "1px solid var(--line)", color: "var(--ink)",
           outline: "none",
         }}
-        onFocus={(e) => { e.target.style.borderColor = "var(--d-blue)"; }}
-        onBlur={(e) => { e.target.style.borderColor = "var(--d-line)"; }}
+        onFocus={(e) => { e.target.style.borderColor = "var(--ink)"; }}
+        onBlur={(e) => { e.target.style.borderColor = "var(--line)"; }}
       />
-      {hint && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--d-mute)", lineHeight: 1.45 }}>{hint}</div>}
+      {hint && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.45 }}>{hint}</div>}
     </div>
   );
 }
@@ -246,7 +250,7 @@ export function Swatches({ value, options, onChange, size = 26 }) {
             style={{
               width: size, height: size, borderRadius: 8, cursor: "pointer", padding: 0,
               background: c,
-              border: on ? "2px solid var(--d-ink)" : "1px solid var(--d-line)",
+              border: on ? "2px solid var(--ink)" : "1px solid var(--line)",
               boxShadow: on ? "0 0 0 2px rgba(0,0,0,.5)" : "none",
             }}
           />
@@ -264,13 +268,13 @@ export function Panel({ title, action, children, style }) {
   return (
     <section
       style={{
-        border: "1px solid var(--d-line-soft)", borderRadius: 16, background: "var(--d-panel)",
-        boxShadow: "var(--d-highlight)", overflow: "hidden", ...style,
+        border: "1px solid var(--line)", borderRadius: 16, background: "var(--card)",
+        boxShadow: "none", overflow: "hidden", ...style,
       }}
     >
       {title && (
-        <header style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px 11px", borderBottom: "1px solid var(--d-line-soft)" }}>
-          <h3 style={{ margin: 0, flex: 1, fontSize: 11, fontWeight: 750, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--d-mute)" }}>
+        <header style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px 11px", borderBottom: "1px solid var(--line)" }}>
+          <h3 style={{ margin: 0, flex: 1, fontSize: 11, fontWeight: 750, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--ink-mute)" }}>
             {title}
           </h3>
           {action}
@@ -281,7 +285,7 @@ export function Panel({ title, action, children, style }) {
   );
 }
 
-/** A selectable row in a list of zooms, blurs, notes or steps. */
+/** A selectable row in a list of zooms, blurs, captions or steps. */
 export function Row({ selected, onClick, onRemove, accent, title, sub, right, badge }) {
   const [hover, setHover] = useState(false);
   return (
@@ -294,20 +298,20 @@ export function Row({ selected, onClick, onRemove, accent, title, sub, right, ba
       onMouseLeave={() => setHover(false)}
       style={{
         display: "flex", alignItems: "center", gap: 11, padding: "9px 11px", borderRadius: 11, cursor: "pointer",
-        border: "1px solid", borderColor: selected ? "var(--d-line-strong)" : "transparent",
-        background: selected ? "var(--d-panel-strong)" : hover ? "rgba(255,255,255,.035)" : "transparent",
+        border: "1px solid", borderColor: selected ? "var(--line-strong)" : "transparent",
+        background: selected ? "var(--hover)" : hover ? "var(--hover)" : "transparent",
         transition: "background var(--dur-hover) var(--ease-out)",
       }}
     >
       {accent && <span aria-hidden style={{ flexShrink: 0, width: 3, height: 26, borderRadius: 2, background: accent }} />}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ fontSize: 13, fontWeight: 620, color: "var(--d-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 620, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {title}
           </span>
           {badge}
         </div>
-        {sub && <div style={{ marginTop: 2, fontSize: 11.5, color: "var(--d-mute)", fontVariantNumeric: "tabular-nums" }}>{sub}</div>}
+        {sub && <div style={{ marginTop: 2, fontSize: 11.5, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}>{sub}</div>}
       </div>
       {right}
       {onRemove && (
@@ -318,8 +322,8 @@ export function Row({ selected, onClick, onRemove, accent, title, sub, right, ba
           style={{
             flexShrink: 0, width: 26, height: 26, display: "grid", placeItems: "center", borderRadius: 7,
             border: "none", cursor: "pointer", fontFamily: "inherit",
-            background: hover || selected ? "rgba(255,255,255,.07)" : "transparent",
-            color: hover || selected ? "var(--d-red)" : "transparent",
+            background: hover || selected ? "var(--hover)" : "transparent",
+            color: hover || selected ? "var(--bad)" : "transparent",
             transition: "color var(--dur-hover) var(--ease-out)",
           }}
         >
@@ -332,10 +336,10 @@ export function Row({ selected, onClick, onRemove, accent, title, sub, right, ba
 
 export function Badge({ children, tone = "mute" }) {
   const tones = {
-    mute: { bg: "rgba(255,255,255,.07)", fg: "var(--d-mute)" },
-    ai: { bg: "rgba(145,141,255,.16)", fg: "var(--d-blue)" },
-    good: { bg: "rgba(116,221,176,.15)", fg: "var(--d-green)" },
-    warn: { bg: "rgba(255,148,130,.15)", fg: "var(--d-red)" },
+    mute: { bg: "var(--hover)", fg: "var(--ink-mute)" },
+    ai: { bg: "rgba(145,141,255,.16)", fg: "var(--ink)" },
+    good: { bg: "rgba(116,221,176,.15)", fg: "var(--ok)" },
+    warn: { bg: "#FBF5E8", fg: "var(--bad)" },
   };
   const t = tones[tone] || tones.mute;
   return (
@@ -347,9 +351,9 @@ export function Badge({ children, tone = "mute" }) {
 
 export function Empty({ icon = "sparkle", title, children, action }) {
   return (
-    <div style={{ padding: "26px 18px", textAlign: "center", color: "var(--d-mute)" }}>
+    <div style={{ padding: "26px 18px", textAlign: "center", color: "var(--ink-mute)" }}>
       <div style={{ opacity: 0.5, marginBottom: 10 }}><Icon name={icon} size={22} /></div>
-      <div style={{ fontSize: 13.5, fontWeight: 620, color: "var(--d-body)" }}>{title}</div>
+      <div style={{ fontSize: 13.5, fontWeight: 620, color: "var(--ink-body)" }}>{title}</div>
       {children && <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.55, maxWidth: 280, marginInline: "auto" }}>{children}</div>}
       {action && <div style={{ marginTop: 14 }}>{action}</div>}
     </div>

@@ -84,25 +84,41 @@ export default function StudioPage() {
     [analyse, refresh]
   );
 
+  // The editor is full-bleed: its own header, stage, inspector and ruler each
+  // own their edge, exactly as the script editor's workspace does. The library
+  // and the recorder are pages, and pages have margins.
+  const bleed = view.name === "edit";
+
   return (
-    <div className="st-root hg-dark" style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", padding: "18px 20px 20px" }}>
+    <div
+      className="st-root"
+      style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", padding: bleed ? 0 : "18px 20px 20px" }}
+    >
       {notice && (
         <div
           role="status"
           style={{
-            marginBottom: 14, padding: "11px 14px", borderRadius: 11, fontSize: 12.5, lineHeight: 1.5,
-            border: "1px solid rgba(255,148,130,.3)", background: "rgba(255,90,90,.07)", color: "var(--d-red)",
-            display: "flex", gap: 10, alignItems: "center",
+            margin: bleed ? 0 : "0 0 14px", padding: "11px 14px", borderRadius: bleed ? 0 : 11, fontSize: 12.5, lineHeight: 1.5,
+            border: "1px solid #F5C7C3", background: "#FCE8E6", color: "var(--bad)",
+            display: "flex", gap: 10, alignItems: "center", flexShrink: 0,
           }}
         >
           <span style={{ flex: 1 }}>{notice}</span>
-          <button type="button" onClick={() => setNotice("")} style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer" }}>
+          <button type="button" onClick={() => setNotice("")} aria-label="Dismiss" style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer" }}>
             <Icon name="close" size={13} />
           </button>
         </div>
       )}
 
-      <div style={{ flex: 1, minHeight: 0 }}>
+      {/* ── WHY flex AND NOT height: 100% ──────────────────────────────────
+          Everything below has to fit the viewport and scroll inside itself:
+          the inspector holds a voiceover script longer than any screen. A
+          percentage height only resolves when every ancestor has a definite
+          one, and this tree is mounted inside the dashboard's flex column
+          where that is not guaranteed — so the script simply ran off the
+          bottom of the window with nothing to scroll. A flex item with
+          minHeight: 0 needs no such promise. */}
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
         {view.name === "record" && (
           <RecordPage config={config} onOpen={opened} onCancel={() => setView({ name: "library" })} />
         )}
@@ -145,10 +161,10 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
     <div style={{ maxWidth: 1080, margin: "0 auto" }}>
       <header style={{ display: "flex", alignItems: "flex-end", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <h1 style={{ margin: 0, fontSize: 25, fontWeight: 720, letterSpacing: "-0.035em", color: "var(--d-ink)" }}>
+          <h1 style={{ margin: 0, fontSize: 25, fontWeight: 720, letterSpacing: "-0.035em", color: "var(--ink)" }}>
             Demo Studio
           </h1>
-          <p style={{ margin: "7px 0 0", fontSize: 14, lineHeight: 1.6, color: "var(--d-mute)" }}>
+          <p style={{ margin: "7px 0 0", fontSize: 14, lineHeight: 1.6, color: "var(--ink-mute)" }}>
             Record your screen. The zooms, cuts, cursor and blur are decided for you.
           </p>
         </div>
@@ -157,10 +173,10 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
         </Btn>
       </header>
 
-      {demos === null && <div style={{ fontSize: 13, color: "var(--d-mute)" }}>Loading…</div>}
+      {demos === null && <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>Loading…</div>}
 
       {demos?.length === 0 && (
-        <div style={{ border: "1px dashed var(--d-line)", borderRadius: 18, padding: "10px 0" }}>
+        <div style={{ border: "1px dashed var(--line)", borderRadius: 18, padding: "10px 0" }}>
           <Empty
             icon="film"
             title="No recordings yet"
@@ -185,7 +201,7 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
       )}
 
       {demos?.length > 0 && (
-        <p style={{ marginTop: 26, fontSize: 12, color: "var(--d-mute)" }}>
+        <p style={{ marginTop: 26, fontSize: 12, color: "var(--ink-mute)" }}>
           Recordings and their files are deleted {config?.limits?.retention_days || 7} days after you last touch them.
           Exports you have downloaded are yours to keep.
         </p>
@@ -217,7 +233,7 @@ function Card({ demo, onOpen, onDelete }) {
           {busy && (
             <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(5,6,12,.62)" }}>
               <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--d-blue)" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink)" }}>
                   {status.label}
                 </div>
                 <div className="st-bar" style={{ width: 110, marginTop: 9 }}>
@@ -227,7 +243,7 @@ function Card({ demo, onOpen, onDelete }) {
             </div>
           )}
           {demo.purged && (
-            <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(5,6,12,.72)", color: "var(--d-mute)", fontSize: 12 }}>
+            <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(5,6,12,.72)", color: "#C9CAD2", fontSize: 12 }}>
               Files deleted
             </div>
           )}
@@ -248,7 +264,7 @@ function Card({ demo, onOpen, onDelete }) {
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <span
               style={{
-                flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 650, color: "var(--d-ink)",
+                flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 650, color: "var(--ink)",
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}
             >
@@ -257,7 +273,7 @@ function Card({ demo, onOpen, onDelete }) {
             {demo.status === "failed" && <Badge tone="warn">Failed</Badge>}
             {demo.renders > 0 && <Badge tone="good">{demo.renders}</Badge>}
           </div>
-          <div style={{ marginTop: 5, fontSize: 11.5, lineHeight: 1.5, color: "var(--d-mute)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          <div style={{ marginTop: 5, fontSize: 11.5, lineHeight: 1.5, color: "var(--ink-mute)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
             {demo.summary || new Date(demo.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
           </div>
         </div>
@@ -275,7 +291,7 @@ function Card({ demo, onOpen, onDelete }) {
         style={{
           position: "absolute", top: 8, right: 8, width: 28, height: 28, display: "grid", placeItems: "center",
           borderRadius: 8, border: "none", cursor: "pointer",
-          background: "rgba(6,8,14,.72)", color: "var(--d-mute)", backdropFilter: "blur(6px)",
+          background: "rgba(6,8,14,.72)", color: "#fff", backdropFilter: "blur(6px)",
         }}
       >
         <Icon name="trash" size={13} />

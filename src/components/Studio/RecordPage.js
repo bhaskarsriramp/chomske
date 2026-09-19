@@ -250,28 +250,28 @@ export default function RecordPage({ config, onOpen, onCancel }) {
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "10px 0 40px" }}>
       <header style={{ marginBottom: 22 }}>
-        <h1 style={{ margin: 0, fontSize: 25, fontWeight: 720, letterSpacing: "-0.035em", color: "var(--d-ink)" }}>
+        <h1 style={{ margin: 0, fontSize: 25, fontWeight: 720, letterSpacing: "-0.035em", color: "var(--ink)" }}>
           New recording
         </h1>
-        <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.6, color: "var(--d-mute)" }}>
+        <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.6, color: "var(--ink-mute)" }}>
           Choose a screen, window or tab when your browser asks. Recording starts straight away — everything else is
           decided afterwards.
         </p>
       </header>
 
       {!support.ok && (
-        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid rgba(255,148,130,.3)", background: "rgba(255,90,90,.07)", color: "var(--d-red)", fontSize: 13, lineHeight: 1.55 }}>
+        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid #F5C7C3", background: "#FCE8E6", color: "var(--bad)", fontSize: 13, lineHeight: 1.55 }}>
           {support.why}
         </div>
       )}
 
       {error && (
-        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid rgba(255,148,130,.3)", background: "rgba(255,90,90,.07)", color: "var(--d-red)", fontSize: 13, lineHeight: 1.55 }}>
+        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid #F5C7C3", background: "#FCE8E6", color: "var(--bad)", fontSize: 13, lineHeight: 1.55 }}>
           {error}
         </div>
       )}
       {notice && !error && (
-        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid var(--d-line)", background: "var(--d-panel)", color: "var(--d-body)", fontSize: 13, lineHeight: 1.55 }}>
+        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-body)", fontSize: 13, lineHeight: 1.55 }}>
           {notice}
         </div>
       )}
@@ -325,13 +325,13 @@ export default function RecordPage({ config, onOpen, onCancel }) {
       </div>
 
       {!support.tracking && support.ok && (
-        <p style={{ marginTop: 18, fontSize: 12, lineHeight: 1.6, color: "var(--d-mute)" }}>
+        <p style={{ marginTop: 18, fontSize: 12, lineHeight: 1.6, color: "var(--ink-mute)" }}>
           This browser can't recover the pointer from the recording, so cursor effects and click zooms won't be
           available. Everything else will work. Chrome or Edge on a desktop can do it.
         </p>
       )}
 
-      <p style={{ marginTop: 18, fontSize: 12, lineHeight: 1.6, color: "var(--d-mute)" }}>
+      <p style={{ marginTop: 18, fontSize: 12, lineHeight: 1.6, color: "var(--ink-mute)" }}>
         Recordings are kept for {config?.limits?.retention_days || 7} days, and can be up to{" "}
         {Math.round((config?.limits?.max_recording_seconds || 1800) / 60)} minutes.
       </p>
@@ -356,27 +356,27 @@ function RecordingStage({ elapsed, samples, label, notice }) {
       <div>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 11, marginBottom: 20 }}>
           <span className="st-dot" />
-          <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--d-red)" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--bad)" }}>
             Recording
           </span>
         </div>
-        <div style={{ fontSize: 58, fontWeight: 300, letterSpacing: "-0.04em", color: "var(--d-ink)", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+        <div style={{ fontSize: 58, fontWeight: 300, letterSpacing: "-0.04em", color: "var(--ink)", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
           {clock(elapsed)}
         </div>
         {label && (
-          <div style={{ marginTop: 14, fontSize: 13, color: "var(--d-mute)", maxWidth: 380, marginInline: "auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ marginTop: 14, fontSize: 13, color: "var(--ink-mute)", maxWidth: 380, marginInline: "auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {label}
           </div>
         )}
-        <div style={{ marginTop: 10, fontSize: 12, color: "var(--d-mute)" }}>
+        <div style={{ marginTop: 10, fontSize: 12, color: "var(--ink-mute)" }}>
           {samples > 0 ? `Following the pointer — ${samples.toLocaleString()} points` : "Watching the screen"}
         </div>
         {notice && (
-          <div style={{ marginTop: 20, maxWidth: 380, marginInline: "auto", fontSize: 12.5, lineHeight: 1.6, color: "var(--d-mute)" }}>
+          <div style={{ marginTop: 20, maxWidth: 380, marginInline: "auto", fontSize: 12.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
             {notice}
           </div>
         )}
-        <p style={{ marginTop: 28, fontSize: 12.5, color: "var(--d-mute)" }}>
+        <p style={{ marginTop: 28, fontSize: 12.5, color: "var(--ink-mute)" }}>
           Go to the app you're demonstrating. The controls stay on top.
         </p>
       </div>
@@ -467,7 +467,7 @@ function ControlPill({ elapsed, paused, muted, level, hasMic, onPause, onMute, o
       style={floating ? undefined : { position: "static", transform: "none", margin: "0 auto", width: "fit-content", animation: "none" }}
     >
       <span className="st-dot" style={{ margin: "0 7px 0 5px", opacity: paused ? 0.3 : 1 }} />
-      <span style={{ minWidth: 46, fontSize: 14, fontWeight: 650, color: "var(--d-ink)", fontVariantNumeric: "tabular-nums" }}>
+      <span style={{ minWidth: 46, fontSize: 14, fontWeight: 650, color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
         {clock(elapsed)}
       </span>
 
@@ -484,7 +484,7 @@ function ControlPill({ elapsed, paused, muted, level, hasMic, onPause, onMute, o
           onClick={onMute}
           title={muted ? "Unmute microphone" : "Mute microphone"}
           aria-label={muted ? "Unmute microphone" : "Mute microphone"}
-          style={{ color: muted ? "var(--d-red)" : undefined }}
+          style={{ color: muted ? "var(--bad)" : undefined }}
         >
           <Icon name={muted ? "micOff" : "mic"} size={16} />
         </button>
@@ -516,10 +516,10 @@ function SendingStage({ sent, waiting, done }) {
   return (
     <div style={{ display: "grid", placeItems: "center", minHeight: "56vh", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 380, textAlign: "center" }}>
-        <h2 style={{ margin: "0 0 10px", fontSize: 19, fontWeight: 680, letterSpacing: "-0.025em", color: "var(--d-ink)" }}>
+        <h2 style={{ margin: "0 0 10px", fontSize: 19, fontWeight: 680, letterSpacing: "-0.025em", color: "var(--ink)" }}>
           {done ? "Saved" : "Saving your recording"}
         </h2>
-        <p style={{ margin: "0 0 22px", fontSize: 13.5, lineHeight: 1.6, color: "var(--d-mute)" }}>
+        <p style={{ margin: "0 0 22px", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
           {waiting
             ? "Waiting for the network. This will carry on by itself — keep this tab open."
             : done
@@ -529,7 +529,7 @@ function SendingStage({ sent, waiting, done }) {
         <div className="st-bar">
           <i style={{ width: `${Math.round((done ? 1 : sent) * 100)}%` }} />
         </div>
-        <div style={{ marginTop: 10, fontSize: 12, color: "var(--d-mute)", fontVariantNumeric: "tabular-nums" }}>
+        <div style={{ marginTop: 10, fontSize: 12, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}>
           {Math.round((done ? 1 : sent) * 100)}%
         </div>
       </div>
@@ -568,10 +568,10 @@ export function Thinking({ stage, progress, error, onRetry }) {
   return (
     <div style={{ display: "grid", placeItems: "center", minHeight: "56vh", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 420 }}>
-        <h2 style={{ margin: "0 0 6px", fontSize: 19, fontWeight: 680, letterSpacing: "-0.025em", color: "var(--d-ink)" }}>
+        <h2 style={{ margin: "0 0 6px", fontSize: 19, fontWeight: 680, letterSpacing: "-0.025em", color: "var(--ink)" }}>
           Editing your demo
         </h2>
-        <p style={{ margin: "0 0 20px", fontSize: 13.5, lineHeight: 1.6, color: "var(--d-mute)" }}>
+        <p style={{ margin: "0 0 20px", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
           {error || "This takes a minute or two. You can leave this page — it carries on without you."}
         </p>
 

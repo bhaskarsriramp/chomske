@@ -20,13 +20,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onLiveEvent } from "../../realtime/socket";
-import { getDemo, saveTimeline, renameDemo, requestCaptions, requestReview, resolveSuggestion } from "./studioApi";
+import { getDemo, saveTimeline, renameDemo, requestCaptions, captionsFromScript, requestReview, resolveSuggestion } from "./studioApi";
 import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
-import { ZoomPanel, BlurPanel, CaptionsPanel, NotesPanel, CursorPanel, CanvasPanel, StepsPanel, SuggestionsPanel } from "./panels";
-import { Btn, Icon, Segmented } from "./ui";
+import { ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, CanvasPanel, StepsPanel, SuggestionsPanel } from "./panels";
+import { Btn, Icon } from "./ui";
 import { layout, newId, clamp, fmtTime, mergedCuts } from "./model";
 import "./studio.css";
 
@@ -35,7 +35,6 @@ const TABS = [
   { id: "zoom", label: "Zoom", icon: "zoom" },
   { id: "blur", label: "Blur", icon: "blur" },
   { id: "captions", label: "Captions", icon: "caption" },
-  { id: "notes", label: "Notes", icon: "note" },
   { id: "cursor", label: "Cursor", icon: "cursor" },
   { id: "canvas", label: "Canvas", icon: "canvas" },
   { id: "review", label: "Review", icon: "sparkle" },
@@ -59,6 +58,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const [exporting, setExporting] = useState(false);
   const [captioning, setCaptioning] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const narrow = useNarrow();
 
   const undo = useRef([]);
   const redo = useRef([]);
@@ -68,6 +69,10 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const revRef = useRef(0);
   const tlRef = useRef(null);
   tlRef.current = tl;
+  // Read by the poll below, which must not be re-created every time the demo
+  // changes or the interval restarts on every answer it receives.
+  const demoRef = useRef(null);
+  demoRef.current = demo;
 
   /* ── Loading ──────────────────────────────────────────────────────────── */
 
@@ -93,9 +98,21 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     load();
   }, [load]);
 
-  // The server says when something it is running has moved on. Polling as a
-  // safety net only, and slowly: the socket is the real mechanism and a poll
-  // every four seconds is what covers a dropped connection.
+  /**
+   * ── THE POLL MUST NOT DEPEND ON THE THING IT IS POLLING FOR ────────────────
+   * This used to poll only while `demo.status` was "analysing" or "preparing",
+   * which deadlocks the moment the status this tab is holding is stale — and
+   * it always is, right after the creator presses "Edit it automatically". The
+   * server flipped the demo to "analysing"; this tab still had "ready" with no
+   * timeline; so `busy` was false; so it never re-read; so it never learned the
+   * status had changed. The analysis finished, the server logged it, and the
+   * screen sat on "Ready to edit" until the page was reloaded by hand. That is
+   * exactly what it looked like from the outside: "nothing is happening".
+   *
+   * So the condition now includes the state that MEANS we are out of date — a
+   * demo with no timeline — rather than only the states that say so explicitly.
+   * A demo that genuinely has nothing to wait for has a timeline, and stops.
+   */
   useEffect(() => {
     const off = onLiveEvent("studio:update", (e) => {
       if (String(e?.demo) !== String(demoId)) return;
@@ -105,14 +122,23 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       load(true);
     });
     const id = setInterval(() => {
-      const busy = demo?.status === "analysing" || demo?.status === "preparing" || demo?.renders?.some((r) => r.status === "queued" || r.status === "rendering") || captioning || reviewing;
+      const d = demoRef.current;
+      const busy =
+        !d ||
+        !d.timeline ||
+        d.status === "analysing" ||
+        d.status === "preparing" ||
+        d.recording?.status === "processing" ||
+        d.renders?.some((r) => r.status === "queued" || r.status === "rendering") ||
+        captioning ||
+        reviewing;
       if (busy) load(true);
-    }, 4000);
+    }, 3000);
     return () => {
       off();
       clearInterval(id);
     };
-  }, [demoId, load, demo?.status, demo?.renders, captioning, reviewing]);
+  }, [demoId, load, captioning, reviewing]);
 
   /* ── Editing ──────────────────────────────────────────────────────────── */
 
@@ -206,7 +232,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   const changeItem = useCallback(
     ({ kind, id, patch }) => {
-      const list = { zoom: "zooms", blur: "blurs", note: "notes", cue: "cues" }[kind];
+      const list = { zoom: "zooms", blur: "blurs", cue: "cues" }[kind];
       if (!list) return;
       edit(
         { [list]: (tlRef.current?.[list] || []).map((x) => (x.id === id ? { ...x, ...patch } : x)) },
@@ -215,6 +241,30 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     },
     [edit]
   );
+
+  /**
+   * Remove whatever is selected.
+   *
+   * One function because the Delete key, the bin button in a panel row and the
+   * bin on a timeline chip must do exactly the same thing, including which
+   * undo label they leave behind. A cut is the odd one out: removing a cut
+   * restores time rather than deleting an object, so it says "Restore cut".
+   */
+  const removeSelected = useCallback(() => {
+    const sel = selection;
+    const cur = tlRef.current;
+    if (!sel || !cur) return;
+    if (sel.kind === "cut") {
+      const cut = (cur.cuts || []).find((c) => c.id === sel.id);
+      if (cut) removeCutRef.current?.(cut);
+      setSelection(null);
+      return;
+    }
+    const list = { zoom: "zooms", blur: "blurs", cue: "cues" }[sel.kind];
+    if (!list) return;
+    edit({ [list]: (cur[list] || []).filter((x) => x.id !== sel.id) }, `Remove ${sel.kind === "cue" ? "caption" : sel.kind}`);
+    setSelection(null);
+  }, [selection, edit]);
 
   /* ── Cuts ─────────────────────────────────────────────────────────────── */
 
@@ -231,6 +281,10 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     [edit, lay]
   );
 
+  // Held in a ref so removeSelected() above can reach it without the two
+  // callbacks having to be declared in dependency order.
+  const removeCutRef = useRef(null);
+
   const removeCut = useCallback(
     (cut) => {
       const cuts = (tlRef.current?.cuts || []).filter(
@@ -243,6 +297,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     },
     [edit]
   );
+  removeCutRef.current = removeCut;
 
   /* ── Actions ──────────────────────────────────────────────────────────── */
 
@@ -254,6 +309,46 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     } catch (err) {
       setCaptioning(false);
       setNotice(err?.response?.data?.message || "We couldn't write captions for this recording.");
+    }
+  }, [demoId]);
+
+  /**
+   * Start the automatic edit, and show that it started.
+   *
+   * The page owns the credit confirmation (StudioPage.js), but the screen that
+   * has to change is this one, and it will not change on its own: the demo in
+   * hand still says "ready" until something re-reads it. So this awaits the
+   * call and reloads, which is what turns the button into the processing
+   * screen. Without the reload the poll above eventually catches up, and "the
+   * button did nothing for three seconds" is indistinguishable from broken.
+   */
+  const startAnalyse = useCallback(async () => {
+    setStarting(true);
+    setNotice("");
+    try {
+      await onAnalyse(demo);
+    } finally {
+      await load(true);
+      setStarting(false);
+    }
+  }, [onAnalyse, demo, load]);
+
+  const onCaptionsFromScript = useCallback(async () => {
+    setCaptioning(true);
+    setNotice("");
+    try {
+      const d = await captionsFromScript(demoId);
+      setDemo(d.demo);
+      revRef.current = d.demo.rev;
+      dirty.current = false;
+      if (d.demo.timeline) {
+        tlRef.current = d.demo.timeline;
+        setTl(d.demo.timeline);
+      }
+    } catch (err) {
+      setNotice(err?.response?.data?.message || "We couldn't build captions from the script.");
+    } finally {
+      setCaptioning(false);
     }
   }, [demoId]);
 
@@ -304,30 +399,37 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         setSeekTo(clamp(time + (e.key === "ArrowRight" ? step : -step), 0, lay?.duration || 0));
       } else if (e.key === "Escape") {
         setSelection(null);
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        // Delete removes whatever is selected — a blur, a zoom, a caption, a
+        // cut. Every one of them is undoable, so this needs no confirmation;
+        // asking on each would make clearing six auto-blurs six dialogs.
+        if (!selection) return;
+        e.preventDefault();
+        removeSelected();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stepBack, stepForward, time, lay]);
+  }, [stepBack, stepForward, time, lay, selection, removeSelected]);
 
   /* ── Screens before the editor ────────────────────────────────────────── */
 
   if (error) {
     return (
       <Centred>
-        <p style={{ color: "var(--d-red)", fontSize: 14, marginBottom: 16 }}>{error}</p>
+        <p style={{ color: "var(--bad)", fontSize: 14, marginBottom: 16 }}>{error}</p>
         <Btn onClick={onExit}>Back to recordings</Btn>
       </Centred>
     );
   }
 
-  if (!demo) return <Centred><span style={{ color: "var(--d-mute)", fontSize: 13 }}>Opening…</span></Centred>;
+  if (!demo) return <Centred><span style={{ color: "var(--ink-mute)", fontSize: 13 }}>Opening…</span></Centred>;
 
   if (demo.status === "preparing" || demo.recording.status === "processing") {
     return (
       <Centred>
-        <h2 style={{ margin: "0 0 8px", fontSize: 19, fontWeight: 680, color: "var(--d-ink)" }}>Getting the recording ready</h2>
-        <p style={{ margin: 0, fontSize: 13.5, color: "var(--d-mute)" }}>{demo.stage || "This takes a few seconds."}</p>
+        <h2 style={{ margin: "0 0 8px", fontSize: 19, fontWeight: 680, color: "var(--ink)" }}>Getting the recording ready</h2>
+        <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink-mute)" }}>{demo.stage || "This takes a few seconds."}</p>
         <div className="st-bar" style={{ width: 300, marginTop: 20 }}>
           <i style={{ width: `${Math.round((demo.progress || 0) * 100)}%` }} />
         </div>
@@ -342,7 +444,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   if (demo.status === "failed" && !tl) {
     return (
       <Centred>
-        <p style={{ color: "var(--d-red)", fontSize: 14, marginBottom: 6, maxWidth: 380, textAlign: "center", lineHeight: 1.6 }}>
+        <p style={{ color: "var(--bad)", fontSize: 14, marginBottom: 6, maxWidth: 380, textAlign: "center", lineHeight: 1.6 }}>
           {demo.error || "Something went wrong with this recording."}
         </p>
         <Btn onClick={onExit} style={{ marginTop: 14 }}>Back to recordings</Btn>
@@ -353,13 +455,13 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   if (!tl) {
     return (
       <Centred>
-        <h2 style={{ margin: "0 0 8px", fontSize: 19, fontWeight: 680, color: "var(--d-ink)" }}>Ready to edit</h2>
-        <p style={{ margin: "0 0 20px", fontSize: 13.5, lineHeight: 1.6, color: "var(--d-mute)", maxWidth: 380, textAlign: "center" }}>
+        <h2 style={{ margin: "0 0 8px", fontSize: 19, fontWeight: 680, color: "var(--ink)" }}>Ready to edit</h2>
+        <p style={{ margin: "0 0 20px", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)", maxWidth: 380, textAlign: "center" }}>
           This recording hasn't been analysed yet. The studio will find the steps, cut the waiting, plan the zooms and
           blur anything private.
         </p>
-        <Btn kind="primary" size="l" icon={<Icon name="wand" size={15} />} onClick={() => onAnalyse(demo)}>
-          Edit it automatically
+        <Btn kind="primary" size="l" icon={<Icon name="wand" size={15} />} disabled={starting} onClick={startAnalyse}>
+          {starting ? "Starting…" : "Edit it automatically"}
         </Btn>
       </Centred>
     );
@@ -370,168 +472,260 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const total = lay?.duration || 0;
   const panelProps = { tl, selection, onSelect: setSelection, edit, time, seek: setSeekTo };
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      {/* ── Header ───────────────────────────────────────────────────── */}
-      <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 4px 14px", flexWrap: "wrap" }}>
-        <Btn kind="quiet" size="s" icon={<Icon name="back" size={14} />} onClick={onExit}>
-          Recordings
-        </Btn>
-        <input
-          value={demo.title}
-          onChange={(e) => setDemo({ ...demo, title: e.target.value })}
-          onBlur={(e) => renameDemo(demoId, e.target.value).catch(() => {})}
-          placeholder="Untitled recording"
-          style={{
-            flex: "1 1 220px", minWidth: 140, background: "transparent", border: "1px solid transparent",
-            borderRadius: 8, padding: "5px 8px", fontFamily: "inherit", fontSize: 16, fontWeight: 680,
-            letterSpacing: "-0.02em", color: "var(--d-ink)", outline: "none",
-          }}
-          onFocus={(e) => { e.target.style.borderColor = "var(--d-line)"; }}
-          onBlurCapture={(e) => { e.target.style.borderColor = "transparent"; }}
-        />
-        <Btn size="s" onClick={stepBack} disabled={!undo.current.length} title="Undo (Ctrl+Z)">
-          Undo
-        </Btn>
-        <Btn size="s" onClick={stepForward} disabled={!redo.current.length} title="Redo (Ctrl+Shift+Z)">
-          Redo
-        </Btn>
-        <Btn kind="primary" size="m" icon={<Icon name="download" size={14} />} onClick={() => setExporting(true)}>
-          Export
-        </Btn>
-      </header>
+  const header = (
+    <header
+      style={{
+        flexShrink: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+        padding: narrow ? "8px 10px" : "9px 14px", borderBottom: "1px solid var(--line)",
+        background: "var(--card)", minHeight: 54,
+      }}
+    >
+      <Btn kind="quiet" size="s" icon={<Icon name="back" size={14} />} onClick={onExit}>
+        {narrow ? "" : "Recordings"}
+      </Btn>
+      <input
+        value={demo.title}
+        onChange={(e) => setDemo({ ...demo, title: e.target.value })}
+        onBlur={(e) => renameDemo(demoId, e.target.value).catch(() => {})}
+        placeholder="Untitled recording"
+        style={{
+          flex: "1 1 160px", minWidth: 110, background: "transparent", border: "1px solid transparent",
+          borderRadius: 8, padding: "5px 8px", fontFamily: "inherit", fontSize: 15.5, fontWeight: 680,
+          letterSpacing: "-0.02em", color: "var(--ink)", outline: "none",
+        }}
+        onFocus={(e) => { e.target.style.borderColor = "var(--line)"; }}
+        onBlurCapture={(e) => { e.target.style.borderColor = "transparent"; }}
+      />
+      <Btn size="s" kind="quiet" onClick={stepBack} disabled={!undo.current.length} title="Undo (Ctrl+Z)" icon={<Icon name="undo" size={15} />}>
+        {narrow ? "" : "Undo"}
+      </Btn>
+      <Btn size="s" kind="quiet" onClick={stepForward} disabled={!redo.current.length} title="Redo (Ctrl+Shift+Z)" icon={<Icon name="redo" size={15} />}>
+        {narrow ? "" : "Redo"}
+      </Btn>
+      <Btn kind="primary" size="s" icon={<Icon name="download" size={14} />} onClick={() => setExporting(true)}>
+        Export
+      </Btn>
+    </header>
+  );
 
-      {notice && (
-        <div
-          role="status"
-          style={{
-            margin: "0 4px 12px", padding: "10px 13px", borderRadius: 10, fontSize: 12.5, lineHeight: 1.5,
-            border: "1px solid var(--d-line)", background: "var(--d-panel)", color: "var(--d-body)",
-            display: "flex", alignItems: "center", gap: 10,
-          }}
-        >
-          <span style={{ flex: 1 }}>{notice}</span>
-          <button type="button" onClick={() => setNotice("")} style={{ border: "none", background: "transparent", color: "var(--d-mute)", cursor: "pointer", fontFamily: "inherit" }}>
-            <Icon name="close" size={13} />
-          </button>
-        </div>
+  const banner = notice ? (
+    <div
+      role="status"
+      style={{
+        flexShrink: 0, display: "flex", alignItems: "center", gap: 10,
+        padding: "9px 14px", fontSize: 12.5, lineHeight: 1.5,
+        borderBottom: "1px solid var(--line)", background: "var(--made-tint)", color: "var(--ink-body)",
+      }}
+    >
+      <span style={{ flex: 1 }}>{notice}</span>
+      <button
+        type="button"
+        onClick={() => setNotice("")}
+        aria-label="Dismiss"
+        style={{ border: "none", background: "transparent", color: "var(--ink-mute)", cursor: "pointer", fontFamily: "inherit", display: "grid", placeItems: "center" }}
+      >
+        <Icon name="close" size={13} />
+      </button>
+    </div>
+  ) : null;
+
+  const preview = (
+    <div
+      style={{ flex: 1, minHeight: 0, display: "flex" }}
+      onPointerDown={(e) => {
+        // Clicking the empty space around the frame clears the selection,
+        // which is how a creator stops a blur rectangle following them
+        // around without hunting for a Deselect button.
+        if (e.target === e.currentTarget) setSelection(null);
+      }}
+    >
+      <Preview
+        tl={tl}
+        proxyUrl={demo.recording.proxy_url}
+        playing={playing}
+        onPlayingChange={setPlaying}
+        time={time}
+        onTime={setTime}
+        seekTo={seekTo}
+        selection={selection}
+        onSelect={setSelection}
+        onChange={changeItem}
+      />
+    </div>
+  );
+
+  const transport = (
+    <div
+      className="st-stage"
+      style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: narrow ? "8px 14px" : "10px 2px 2px" }}
+    >
+      <Btn
+        kind="primary"
+        size="s"
+        onClick={() => setPlaying((p) => !p)}
+        aria-label={playing ? "Pause" : "Play"}
+        title="Play / pause (Space)"
+        icon={<Icon name={playing ? "pause" : "play"} size={14} />}
+        style={{ width: 40, height: 34, padding: 0 }}
+      />
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+        {fmtTime(time, true)} <span style={{ color: "var(--ink-mute)", fontWeight: 500 }}>/ {fmtTime(total, true)}</span>
+      </span>
+      {selection && (
+        <Btn size="s" kind="danger" icon={<Icon name="trash" size={13} />} onClick={removeSelected} title="Delete (Del)">
+          Delete
+        </Btn>
       )}
+      <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--ink-mute)" }}>{counts(tl)}</span>
+    </div>
+  );
 
-      {/* ── Body ─────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1fr) 336px", gap: 16 }}>
-        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, gap: 14 }}>
-          <div
+  const tabs = (
+    <div
+      role="tablist"
+      aria-label="Edit"
+      className="st-scroll"
+      style={{
+        flexShrink: 0, display: "flex", gap: 2, overflowX: "auto", overflowY: "hidden",
+        padding: "0 8px", borderBottom: "1px solid var(--line)", background: "var(--card)",
+      }}
+    >
+      {TABS.map((t) => {
+        const on = tab === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            onClick={() => setTab(t.id)}
             style={{
-              flex: 1, minHeight: 240, display: "flex", borderRadius: 16, overflow: "hidden",
-              border: "1px solid var(--d-line-soft)", background: "#07080C",
-            }}
-            onPointerDown={(e) => {
-              // Clicking the empty space around the frame clears the selection,
-              // which is how a creator stops a blur rectangle following them
-              // around without hunting for a Deselect button.
-              if (e.target === e.currentTarget) setSelection(null);
+              flexShrink: 0, padding: "11px 11px 9px", fontSize: 12.5, fontWeight: on ? 680 : 600,
+              color: on ? "var(--ink)" : "var(--ink-mute)", fontFamily: "inherit",
+              border: "none", borderBottom: `2px solid ${on ? "var(--ink)" : "transparent"}`,
+              marginBottom: -1, background: "none", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >
-            <Preview
-              tl={tl}
-              proxyUrl={demo.recording.proxy_url}
-              playing={playing}
-              onPlayingChange={setPlaying}
-              time={time}
-              onTime={setTime}
-              seekTo={seekTo}
-              selection={selection}
-              onSelect={setSelection}
-              onChange={changeItem}
-            />
-          </div>
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 
-          {/* ── Transport ─────────────────────────────────────────── */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 4px" }}>
-            <Btn
-              size="s"
-              icon={<Icon name={playing ? "pause" : "play"} size={14} />}
-              onClick={() => setPlaying((p) => !p)}
-              title="Play / pause (Space)"
-            >
-              {playing ? "Pause" : "Play"}
-            </Btn>
-            <span style={{ fontSize: 12.5, color: "var(--d-mute)", fontVariantNumeric: "tabular-nums" }}>
-              {fmtTime(time, true)} / {fmtTime(total, true)}
-            </span>
-            <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--d-mute)" }}>
-              {counts(tl)}
-            </span>
-          </div>
-
-          <div style={{ padding: "14px 16px", borderRadius: 16, border: "1px solid var(--d-line-soft)", background: "var(--d-panel)" }}>
-            <Timeline
-              tl={tl}
-              time={time}
-              onSeek={setSeekTo}
-              selection={selection}
-              onSelect={setSelection}
-              onChange={changeItem}
-              onAddCut={addCut}
-              onRemoveCut={removeCut}
-            />
-          </div>
-        </div>
-
-        {/* ── Inspector ────────────────────────────────────────────── */}
-        <aside style={{ display: "flex", flexDirection: "column", minHeight: 0, gap: 12 }}>
-          <Segmented
-            full
-            size="xs"
-            value={tab}
-            onChange={setTab}
-            options={TABS.map((t) => ({ value: t.id, label: t.label }))}
-          />
-          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", paddingRight: 2 }}>
-            {tab === "steps" && (
-              <StepsPanel tl={tl} time={time} seek={setSeekTo} summary={demo.analysis?.summary} narration={tl.narration} />
-            )}
-            {tab === "zoom" && <ZoomPanel {...panelProps} />}
-            {tab === "blur" && <BlurPanel {...panelProps} />}
-            {tab === "captions" && (
-              <CaptionsPanel
-                {...panelProps}
-                onGenerate={onCaptions}
-                generating={captioning}
-                hasAudio={demo.recording.has_audio}
-              />
-            )}
-            {tab === "notes" && <NotesPanel {...panelProps} />}
-            {tab === "cursor" && <CursorPanel tl={tl} edit={edit} />}
-            {tab === "canvas" && <CanvasPanel tl={tl} edit={edit} />}
-            {tab === "review" && (
-              <SuggestionsPanel
-                analysis={demo.analysis}
-                busy={reviewing}
-                onRefresh={onReview}
-                onApply={(sid) => onSuggestion(sid, "apply")}
-                onDismiss={(sid) => onSuggestion(sid, "dismiss")}
-              />
-            )}
-          </div>
-        </aside>
-      </div>
-
-      {exporting && (
-        <ExportDialog
-          demo={demo}
-          config={config}
-          outputSeconds={total}
-          onClose={() => setExporting(false)}
-          onChanged={() => load(true)}
-          beforeExport={save}
+  const panel = (
+    <>
+      {tab === "steps" && (
+        <StepsPanel tl={tl} time={time} seek={setSeekTo} summary={demo.analysis?.summary} narration={tl.narration} />
+      )}
+      {tab === "zoom" && <ZoomPanel {...panelProps} />}
+      {tab === "blur" && <BlurPanel {...panelProps} />}
+      {tab === "captions" && (
+        <CaptionsPanel
+          {...panelProps}
+          onGenerate={onCaptions}
+          onGenerateFromScript={onCaptionsFromScript}
+          generating={captioning}
+          hasAudio={demo.recording.has_audio}
         />
       )}
+      {tab === "cursor" && <CursorPanel tl={tl} edit={edit} />}
+      {tab === "canvas" && <CanvasPanel tl={tl} edit={edit} />}
+      {tab === "review" && (
+        <SuggestionsPanel
+          analysis={demo.analysis}
+          busy={reviewing}
+          onRefresh={onReview}
+          onApply={(sid) => onSuggestion(sid, "apply")}
+          onDismiss={(sid) => onSuggestion(sid, "dismiss")}
+        />
+      )}
+    </>
+  );
+
+  const ruler = (
+    <Timeline
+      tl={tl}
+      time={time}
+      onSeek={setSeekTo}
+      selection={selection}
+      onSelect={setSelection}
+      onChange={changeItem}
+      onAddCut={addCut}
+      onRemoveCut={removeCut}
+      onDelete={removeSelected}
+    />
+  );
+
+  const dialog = exporting ? (
+    <ExportDialog
+      demo={demo}
+      config={config}
+      outputSeconds={total}
+      onClose={() => setExporting(false)}
+      onChanged={() => load(true)}
+      beforeExport={save}
+    />
+  ) : null;
+
+  /**
+   * ── TWO LAYOUTS, NOT ONE THAT REFLOWS ────────────────────────────────────
+   * The same arrangement as src/components/Edit/Workspace.js, for the same
+   * reason: on a phone the inspector cannot be a column beside the picture, it
+   * has to be a sheet under it, and the timeline has to come out of the way
+   * entirely. A single grid with media queries produces a layout that is wrong
+   * at both ends; two explicit ones are each right.
+   *
+   * Every scrolling region is marked. The inspector is the one that mattered —
+   * a voiceover script is longer than any screen and it had no scrollbar, so
+   * the end of it was simply unreachable.
+   */
+  if (narrow) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        {header}
+        {banner}
+        <div className="st-stage" style={{ flexShrink: 0, height: "min(42vh, 380px)", padding: "10px 12px 4px", display: "flex" }}>
+          {preview}
+        </div>
+        {transport}
+        {tabs}
+        <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", padding: "12px 14px 28px", background: "var(--paper)" }}>
+          {panel}
+        </div>
+        <div style={{ flexShrink: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "10px 12px 12px", overflowX: "auto" }}>
+          {ruler}
+        </div>
+        {dialog}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      {header}
+      {banner}
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(330px, 400px)", gridTemplateRows: "minmax(0,1fr) auto" }}>
+        <div className="st-stage" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "14px 18px 8px" }}>
+          {preview}
+          {transport}
+        </div>
+        <aside style={{ gridColumn: 2, gridRow: "1 / span 2", minHeight: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
+          {tabs}
+          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", padding: "14px 16px 28px" }}>
+            {panel}
+          </div>
+        </aside>
+        <div style={{ gridColumn: 1, gridRow: 2, minWidth: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "12px 16px 14px" }}>
+          {ruler}
+        </div>
+      </div>
+      {dialog}
     </div>
   );
 }
 
-const LABELS = { zoom: "Zoom", blur: "Blur", note: "Annotation", cue: "Caption" };
+const LABELS = { zoom: "Zoom", blur: "Blur", cue: "Caption" };
 
 function counts(tl) {
   const bits = [];
@@ -549,6 +743,19 @@ function sourceOf(outT, lay) {
     if (outT >= s.out_start && outT <= s.out_end) return s.src_start + (outT - s.out_start);
   }
   return lay.segments.length ? lay.segments[lay.segments.length - 1].src_end : 0;
+}
+
+/** True while the window is too narrow for a picture and an inspector side by side. */
+function useNarrow(px = 900) {
+  const [narrow, setNarrow] = useState(() => (typeof window === "undefined" ? false : window.innerWidth < px));
+  useEffect(() => {
+    const q = window.matchMedia(`(max-width: ${px - 1}px)`);
+    const on = () => setNarrow(q.matches);
+    on();
+    q.addEventListener("change", on);
+    return () => q.removeEventListener("change", on);
+  }, [px]);
+  return narrow;
 }
 
 function Centred({ children }) {

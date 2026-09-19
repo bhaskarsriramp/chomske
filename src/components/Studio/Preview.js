@@ -11,7 +11,7 @@
  * ── CANVAS FOR THE PICTURE, HTML FOR THE WORDS ───────────────────────────────
  * The zoom, the blur and the cursor are drawn on a canvas, because the zoom IS
  * a source rectangle passed to drawImage and doing it any other way would mean
- * re-deriving it. Captions and annotation bubbles are HTML on top, because they
+ * re-deriving it. Captions are HTML on top, because they
  * are text that has to be legible, selectable and draggable, and because the
  * browser's text layout is better than anything worth writing here.
  *
@@ -32,8 +32,7 @@ import {
 } from "./model";
 import { useBox } from "./ui";
 
-/** How long an annotation takes to appear and to go. Matches overlay.js. */
-const FADE = 0.22;
+/** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
 
 export default function Preview({
@@ -57,7 +56,6 @@ export default function Preview({
 
   const lay = useMemo(() => layout(tl), [tl]);
   const cues = useMemo(() => placedCues(tl, lay), [tl, lay]);
-  const notes = useMemo(() => placedSpans(tl.notes || [], lay), [tl, lay]);
   const blurs = useMemo(() => placedSpans(tl.blurs || [], lay), [tl, lay]);
   const clicks = useMemo(() => clickMarks(tl, lay), [tl, lay]);
 
@@ -166,14 +164,6 @@ export default function Preview({
       if (p) paintCursor(ctx, p, cam, tl.cursor, { dx, dy, dw, dh }, srcW);
     }
 
-    // Ring highlights and spotlights are picture, not text, so they stay here.
-    for (const n of notes) {
-      if (outT < n.start - FADE || outT > n.end + FADE) continue;
-      if (n.kind === "circle" || n.kind === "underline" || n.kind === "spotlight" || n.kind === "arrow") {
-        paintNote(ctx, n, outT, cam, { dx, dy, dw, dh }, H);
-      }
-    }
-
     ctx.restore();
 
     if (onTime && Math.abs(outT - timeRef.current) > 0.012) onTime(outT);
@@ -188,7 +178,7 @@ export default function Preview({
         onPlayingChange?.(false);
       }
     }
-  }, [tl, lay, vb, blurs, notes, clicks, srcW, onTime, onPlayingChange]);
+  }, [tl, lay, vb, blurs, clicks, srcW, onTime, onPlayingChange]);
 
   useEffect(() => {
     let raf = 0;
@@ -213,7 +203,6 @@ export default function Preview({
 
   /* ── What is on screen right now, for the HTML layer ─────────────────── */
   const cue = cues.find((c) => time >= c.start && time <= c.end) || null;
-  const bubbles = notes.filter((n) => (n.kind === "tooltip") && time >= n.start - FADE && time <= n.end + FADE);
   const srcT = toSource(time, lay);
   const cam = cameraAt(tl, srcT, { track: tl.cursor?.enabled === false ? null : tl.track });
 
@@ -243,18 +232,13 @@ export default function Preview({
             dragged where it should sit rather than typed as a number. */}
         {cue && <CaptionLine tl={tl} cue={cue} frame={{ w: fw, h: fh }} onChange={onChange} selected={selection?.kind === "cue" && selection.id === cue.id} onSelect={onSelect} />}
 
-        {/* ── Annotation bubbles ────────────────────────────────────── */}
-        {bubbles.map((n) => (
-          <Bubble key={n.id} note={n} time={time} cam={cam} vb={vb} frame={{ w: fw, h: fh }} />
-        ))}
-
         {/* ── Editing handles ───────────────────────────────────────── */}
         {selection && onChange && (
           <RectHandle tl={tl} selection={selection} time={time} cam={cam} vb={vb} frame={{ w: fw, h: fh }} onChange={onChange} />
         )}
 
         {showChrome && !ready && (
-          <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "var(--d-mute)", fontSize: 13 }}>
+          <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "var(--ink-mute)", fontSize: 13 }}>
             Loading the recording…
           </div>
         )}
@@ -477,77 +461,6 @@ function paintRipple(ctx, c, t, cam, d, srcW) {
   ctx.restore();
 }
 
-function paintNote(ctx, n, t, cam, d, H) {
-  const alpha = n.start > t ? EASE.smooth(clamp((t - (n.start - FADE)) / FADE, 0, 1)) : t > n.end ? 1 - EASE.smooth(clamp((t - n.end) / FADE, 0, 1)) : 1;
-  if (alpha <= 0.02) return;
-
-  const x = ((n.x - cam.x) / cam.w) * d.dw + d.dx;
-  const y = ((n.y - cam.y) / cam.h) * d.dh + d.dy;
-  const w = (n.w / cam.w) * d.dw;
-  const h = (n.h / cam.h) * d.dh;
-  const color = n.color || "#2A7C13";
-  const ui = (H / 1080) * clamp(1 / cam.w, 1, 1.5);
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-
-  if (n.kind === "spotlight") {
-    const cx = x + w / 2;
-    const cy = y + h / 2;
-    const rad = Math.max(w, h) * 0.75 + 30 * ui;
-    ctx.fillStyle = "rgba(6,8,12,.62)";
-    ctx.fillRect(d.dx, d.dy, d.dw, d.dh);
-    ctx.globalCompositeOperation = "destination-out";
-    const g = ctx.createRadialGradient(cx, cy, rad * 0.62, cx, cy, rad);
-    g.addColorStop(0, "rgba(0,0,0,1)");
-    g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (n.kind === "circle") {
-    ctx.beginPath();
-    ctx.ellipse(x + w / 2, y + h / 2, w / 2 + 10 * ui, h / 2 + 8 * ui, 0, 0, Math.PI * 2);
-    ctx.lineWidth = Math.max(2.5, 5 * ui);
-    ctx.strokeStyle = color;
-    ctx.stroke();
-  } else if (n.kind === "underline") {
-    ctx.beginPath();
-    ctx.moveTo(x, y + h + 5 * ui);
-    ctx.lineTo(x + w, y + h + 5 * ui);
-    ctx.lineWidth = Math.max(3, 6 * ui);
-    ctx.lineCap = "round";
-    ctx.strokeStyle = color;
-    ctx.stroke();
-  } else if (n.kind === "arrow") {
-    const fromRight = x + w / 2 < d.dx + d.dw / 2;
-    const len = 165 * ui;
-    const ex = x + (fromRight ? w + 12 * ui : -12 * ui);
-    const ey = y + h / 2;
-    const sx = ex + (fromRight ? len : -len);
-    const sy = ey + (ey < d.dy + d.dh / 2 ? len * 0.55 : -len * 0.55);
-    const mx = (sx + ex) / 2;
-    const my = (sy + ey) / 2 + (fromRight ? -1 : 1) * len * 0.3;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(3, 5.5 * ui);
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.quadraticCurveTo(mx, my, ex, ey);
-    ctx.stroke();
-    const ang = Math.atan2(ey - my, ex - mx);
-    const head = 20 * ui;
-    ctx.beginPath();
-    ctx.moveTo(ex, ey);
-    ctx.lineTo(ex - head * Math.cos(ang - 0.42), ey - head * Math.sin(ang - 0.42));
-    ctx.lineTo(ex - head * Math.cos(ang + 0.42), ey - head * Math.sin(ang + 0.42));
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
 function roundRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -640,48 +553,6 @@ function CaptionLine({ tl, cue, frame, onChange, selected, onSelect }) {
   );
 }
 
-/** An annotation label, in a bubble beside what it points at. */
-function Bubble({ note, time, cam, vb, frame }) {
-  const alpha = note.start > time
-    ? EASE.smooth(clamp((time - (note.start - FADE)) / FADE, 0, 1))
-    : time > note.end
-      ? 1 - EASE.smooth(clamp((time - note.end) / FADE, 0, 1))
-      : 1;
-  if (alpha <= 0.02 || !note.text) return null;
-
-  // The target, projected the same way the canvas projects it.
-  const cx = (((note.x + note.w / 2) - cam.x) / cam.w) * vb.w + vb.x;
-  const cy = ((note.y + note.h - cam.y) / cam.h) * vb.h + vb.y;
-  const below = cy < 0.78;
-  const size = Math.max(11, frame.h * 0.026 * clamp(1 / cam.w, 1, 1.5));
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left: `${clamp(cx, 0.06, 0.94) * 100}%`,
-        top: `${clamp(below ? cy + 0.025 : cy - note.h / cam.h - 0.06, 0.02, 0.9) * 100}%`,
-        transform: "translateX(-50%)",
-        maxWidth: "42%",
-        padding: `${size * 0.48}px ${size * 0.72}px`,
-        borderRadius: size * 0.6,
-        background: "rgba(255,255,255,.97)",
-        borderLeft: `${Math.max(3, size * 0.22)}px solid ${note.color || "#2A7C13"}`,
-        color: "#0f1115",
-        fontSize: size,
-        fontWeight: 640,
-        lineHeight: 1.32,
-        boxShadow: "0 12px 30px -10px rgba(0,0,0,.6)",
-        opacity: alpha,
-        pointerEvents: "none",
-        textAlign: "left",
-      }}
-    >
-      {note.text}
-    </div>
-  );
-}
-
 /**
  * The rectangle of whatever is selected, draggable on the picture.
  *
@@ -690,7 +561,7 @@ function Bubble({ note, time, cam, vb, frame }) {
  * and watching the key disappear is.
  */
 function RectHandle({ tl, selection, time, cam, vb, frame, onChange }) {
-  const list = selection.kind === "blur" ? tl.blurs : selection.kind === "note" ? tl.notes : selection.kind === "zoom" ? tl.zooms : null;
+  const list = selection.kind === "blur" ? tl.blurs : selection.kind === "zoom" ? tl.zooms : null;
   const item = list?.find((x) => x.id === selection.id);
   const drag = useRef(null);
   if (!item || !frame.w) return null;
@@ -751,7 +622,7 @@ function RectHandle({ tl, selection, time, cam, vb, frame, onChange }) {
         top: `${y * 100}%`,
         width: `${w * 100}%`,
         height: `${h * 100}%`,
-        borderColor: selection.kind === "blur" ? "#FF9482" : "var(--d-blue)",
+        borderColor: selection.kind === "blur" ? "#FF9482" : "var(--ink)",
       }}
     >
       {["nw", "ne", "sw", "se"].map((k) => (
@@ -762,7 +633,7 @@ function RectHandle({ tl, selection, time, cam, vb, frame, onChange }) {
           onPointerMove={move}
           onPointerUp={end}
           onPointerCancel={end}
-          style={{ borderColor: selection.kind === "blur" ? "#FF9482" : "var(--d-blue)" }}
+          style={{ borderColor: selection.kind === "blur" ? "#FF9482" : "var(--ink)" }}
         />
       ))}
     </div>

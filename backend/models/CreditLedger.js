@@ -42,7 +42,11 @@ const CreditLedgerSchema = new Schema({
     // called. Every paid voice rebuild ever run is missing from the ledger.
     // "edit" is the video editor: matching a recording and exporting. Added in
     // the same change that first spends with it, for the reason above.
-    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase", "voice_analysis", "edit"],
+    // "studio" is the demo studio: analysing a screen recording and exporting
+    // it. Added after shipping without it reproduced the voice_analysis bug
+    // exactly — wallets debited, ledger silent — because spend()'s insert is
+    // .catch()-swallowed by design. ANY NEW SPEND REASON MUST LAND HERE FIRST.
+    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase", "voice_analysis", "edit", "studio"],
     index: true,
   },
 

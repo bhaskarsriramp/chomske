@@ -7,14 +7,11 @@ import {
   splitIntoSentences, hasIndic,
 } from "./model";
 import { Btn, Icon, Notice, Section, Segmented, Spinner, Switch, fmtTime } from "./ui";
+// The colour and size controls are shared with the demo studio; only the look
+// tiles below are this product's own. See captionStyle.js.
+import { ColorPicker, SizePicker, HEX } from "./captionStyle";
 
 const INDIC = /[ऀ-෿]/;
-const HEX = /^#[0-9a-f]{6}$/i;
-const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-
-// Bright enough to read over any shot, with the outline or box behind them.
-// Anything else is typed as hex.
-const COLORS = [["#FFFFFF", "White"], ["#FFD400", "Yellow"], ["#FF8A1F", "Orange"], ["#FF3B30", "Red"]];
 
 const LOOKS = [
   ["bold", "Bold", { fontWeight: 800, textShadow: "1.5px 0 #000,-1.5px 0 #000,0 1.5px #000,0 -1.5px #000" }],
@@ -22,7 +19,6 @@ const LOOKS = [
   ["box", "Box", { fontWeight: 700, background: "rgba(0,0,0,.7)", padding: "2px 6px", borderRadius: 4 }],
 ];
 const TILE = "linear-gradient(135deg,#6B7F95,#C9A27A)";
-const SIZES = [{ value: "s", label: "S", title: "Small" }, { value: "m", label: "M", title: "Medium" }, { value: "l", label: "L", title: "Large" }];
 
 const given = (v) => v !== null && v !== undefined;
 const styledOwn = (c) => !!c && ["style", "size", "px", "color"].some((k) => given(c[k]));
@@ -415,7 +411,7 @@ export default function CaptionsPanel({
               </Section>
 
               <Section title="Size">
-                <SizePicker look={current} onPreset={(v) => set({ size: v, px: null })} onPx={(px) => set({ px }, "px:all")} />
+                <SizePicker size={current.size} px={captionPx(current)} min={CAPTION_PX.min} max={CAPTION_PX.max} onPreset={(v) => set({ size: v, px: null })} onPx={(px) => set({ px }, "px:all")} />
               </Section>
 
               <Section
@@ -533,7 +529,7 @@ const CaptionRow = memo(function CaptionRow({
         >
           <ColorPicker compact value={color} keyId={id} onChange={(hex, key) => onStyle(id, { color: hex }, key)} />
           <LookPicker value={look.style} onChange={(v) => onStyle(id, { style: v })} />
-          <SizePicker compact look={look} onPreset={(v) => onStyle(id, { size: v, px: null })} onPx={(px) => onStyle(id, { px }, `px:${id}`)} />
+          <SizePicker compact size={look.size} px={captionPx(look)} min={CAPTION_PX.min} max={CAPTION_PX.max} onPreset={(v) => onStyle(id, { size: v, px: null })} onPx={(px) => onStyle(id, { px }, `px:${id}`)} />
         </div>
       )}
     </li>
@@ -551,71 +547,6 @@ function RowIcon({ label, danger = false, onClick, children }) {
     >
       {children}
     </button>
-  );
-}
-
-/** The four colours, and a hex code for any other. */
-function ColorPicker({ value, onChange, keyId, compact = false }) {
-  const d = compact ? 16 : 30;
-  return (
-    <div role="group" aria-label="Caption color" style={{ display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: compact ? 6 : 10, flexShrink: 0 }}>
-      {COLORS.map(([hex, name]) => {
-        const on = value === hex;
-        return (
-          <button
-            key={hex}
-            type="button"
-            aria-label={name}
-            aria-pressed={on}
-            title={name}
-            onClick={() => onChange(hex)}
-            style={{
-              width: d, height: d, borderRadius: "50%", padding: 0, cursor: "pointer", background: hex, flexShrink: 0,
-              border: "1px solid rgba(0,0,0,.2)",
-              boxShadow: on ? `0 0 0 2px ${compact ? "var(--card)" : "var(--paper)"}, 0 0 0 ${compact ? 3.5 : 4}px var(--ink)` : "none",
-            }}
-          />
-        );
-      })}
-      <HexInput value={value} compact={compact} onChange={(hex) => onChange(hex, `color:${keyId}`)} />
-    </div>
-  );
-}
-
-/** "#" is fixed; only the six digits are typed. A colour applies once all six are in. */
-function HexInput({ value, onChange, compact }) {
-  const code = String(value || "#FFFFFF").slice(1).toUpperCase();
-  const [draft, setDraft] = useState(code);
-  const [focus, setFocus] = useState(false);
-  useEffect(() => { setDraft(code); }, [code]);
-  const fs = compact ? 11.5 : 13;
-  return (
-    <label
-      title="Hex color"
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 2, height: compact ? 26 : 34, padding: compact ? "0 6px" : "0 9px",
-        borderRadius: compact ? 6 : 8, border: `1px solid ${focus ? "var(--ink)" : "var(--line)"}`, background: "var(--card)", cursor: "text", flexShrink: 0,
-      }}
-    >
-      {!compact && <span aria-hidden="true" style={{ width: 14, height: 14, borderRadius: 4, background: value, border: "1px solid rgba(0,0,0,.2)", marginRight: 5 }} />}
-      <span aria-hidden="true" style={{ fontSize: fs, color: "var(--ink-mute)", fontFamily: MONO }}>#</span>
-      <input
-        value={draft}
-        maxLength={6}
-        spellCheck={false}
-        autoComplete="off"
-        aria-label="Hex color code"
-        onFocus={() => setFocus(true)}
-        onChange={(e) => {
-          const v = e.target.value.replace(/[^0-9a-f]/gi, "").slice(0, 6).toUpperCase();
-          setDraft(v);
-          if (v.length === 6 && v !== code) onChange(`#${v}`);
-        }}
-        onBlur={() => { setFocus(false); setDraft(code); }}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur(); }}
-        style={{ width: "6.3ch", border: "none", outline: "none", padding: 0, background: "transparent", color: "var(--ink)", fontSize: fs, fontWeight: 600, fontFamily: MONO }}
-      />
-    </label>
   );
 }
 
@@ -646,62 +577,3 @@ function LookPicker({ value, onChange }) {
   );
 }
 
-/** S, M, L, or pixels. The pixel field always shows the size in use, preset or not. */
-function SizePicker({ look, onPreset, onPx, compact = false }) {
-  const own = look.px !== null && look.px !== undefined;
-  return (
-    <div role="group" aria-label="Caption size" style={{ display: "inline-flex", alignItems: "center", gap: compact ? 4 : 8, flexShrink: 0 }}>
-      <Segmented size={compact ? "xs" : "s"} label="Size preset" value={own ? null : look.size} onChange={onPreset} options={SIZES} />
-      <PxInput value={captionPx(look)} compact={compact} onChange={onPx} />
-    </div>
-  );
-}
-
-function PxInput({ value, onChange, compact }) {
-  const [draft, setDraft] = useState(String(value));
-  const [focus, setFocus] = useState(false);
-  useEffect(() => { setDraft(String(value)); }, [value]);
-  const fit = (n) => Math.min(CAPTION_PX.max, Math.max(CAPTION_PX.min, n));
-  const commit = () => {
-    const n = parseInt(draft, 10);
-    const px = Number.isFinite(n) ? fit(n) : value;
-    if (px !== value) onChange(px);
-    setDraft(String(px));
-  };
-  const fs = compact ? 11.5 : 13;
-  return (
-    <label
-      title={`Size in pixels, ${CAPTION_PX.min} to ${CAPTION_PX.max}`}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 2, height: compact ? 26 : 36, padding: compact ? "0 6px" : "0 9px",
-        borderRadius: compact ? 6 : 8, border: `1px solid ${focus ? "var(--ink)" : "var(--line)"}`, background: "var(--card)", cursor: "text", flexShrink: 0,
-      }}
-    >
-      <input
-        value={draft}
-        inputMode="numeric"
-        maxLength={2}
-        aria-label="Caption size in pixels"
-        onFocus={(e) => { setFocus(true); e.target.select(); }}
-        onChange={(e) => {
-          const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-          setDraft(v);
-          const n = parseInt(v, 10);
-          if (n >= CAPTION_PX.min && n <= CAPTION_PX.max && n !== value) onChange(n);
-        }}
-        onBlur={() => { setFocus(false); commit(); }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
-          else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-            e.preventDefault();
-            const n = fit((parseInt(draft, 10) || value) + (e.key === "ArrowUp" ? 1 : -1));
-            setDraft(String(n));
-            if (n !== value) onChange(n);
-          }
-        }}
-        style={{ width: "2.2ch", textAlign: "right", border: "none", outline: "none", padding: 0, background: "transparent", color: "var(--ink)", fontSize: fs, fontWeight: 600, fontFamily: "inherit", fontVariantNumeric: "tabular-nums" }}
-      />
-      <span aria-hidden="true" style={{ fontSize: fs, color: "var(--ink-mute)" }}>px</span>
-    </label>
-  );
-}

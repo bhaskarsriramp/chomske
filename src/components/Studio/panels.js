@@ -15,7 +15,9 @@
  */
 import { useMemo } from "react";
 import { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Empty, Icon } from "./ui";
-import { fmtTime, newId, clamp, layout, GRADIENTS, CAPTION_STYLES } from "./model";
+import { fmtTime, newId, clamp, layout, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
+// Caption colour and size are the script editor's controls, not a second set.
+import { ColorPicker, SizePicker } from "../Edit/captionStyle";
 
 const pct = (v) => `${Math.round(v * 100)}%`;
 const secs = (v) => `${v.toFixed(1)}s`;
@@ -209,7 +211,7 @@ export function BlurPanel({ tl, selection, onSelect, edit, time, seek }) {
         ) : (
           <>
             {auto > 0 && (
-              <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--d-mute)", marginTop: -4 }}>
+              <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--ink-mute)", marginTop: -4 }}>
                 {auto} found automatically. Click one to see it on the picture, and check each before you export.
               </div>
             )}
@@ -309,17 +311,32 @@ const KIND_LABEL = { blur: "Blurred", pixelate: "Pixelated", box: "Covered" };
    ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * ── CAPTIONS ARE OPT-IN ──────────────────────────────────────────────────────
+ * ── CAPTIONS ARE OPT-IN, AND THERE ARE THREE WAYS TO GET THEM ────────────────
  * A silent screen recording transcribed produces captions of room tone, and
  * burning those onto a clean demo is worse than having none: it is now a thing
  * to find and turn off. So a demo arrives here with no captions unless they
- * were asked for, and this panel is where they are asked for — at which point
- * only the audio is read again, not the whole recording.
+ * were asked for, and this panel is where they are asked for.
+ *
+ *   from the script   the voiceover the studio already wrote for this demo,
+ *                     chunked into lines. Free and instant — no audio needed,
+ *                     which is what a silent product demo actually has.
+ *   from my voice     transcribed, for a demo that was narrated live.
+ *   by hand           typed here.
+ *
+ * ── THE CONTROLS ARE THE SCRIPT EDITOR'S ─────────────────────────────────────
+ * Colour and size come from src/components/Edit/captionStyle.js, unchanged, so
+ * a founder who styled a caption in Edit Videos finds the same swatches, the
+ * same hex field and the same pixel box here. Placement is by hand on the
+ * picture for the same reason: a Top / Middle / Bottom control cannot put a
+ * caption beside the thing it is about, and every demo has one screen where
+ * the bottom of the frame is the part that matters.
  */
-export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGenerate, generating, hasAudio }) {
+export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGenerate, onGenerateFromScript, generating, hasAudio }) {
   const cues = [...(tl.cues || [])].sort((a, b) => a.start - b.start);
   const cap = tl.captions || {};
   const current = cues.find((c) => c.id === selection?.id && selection.kind === "cue") || null;
+  const hasScript = (tl.narration || []).length > 0;
+  const placed = cap.x != null || cues.some((c) => c.custom?.x != null);
 
   const addCue = () => {
     const start = clamp(time, 0, Math.max(0, (tl.duration || 0) - 1));
@@ -328,14 +345,27 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
     onSelect({ kind: "cue", id: c.id });
   };
 
+  const setCap = (fields, label) => edit({ captions: { ...cap, ...fields } }, label);
+  const setOne = (fields, label) =>
+    edit(patch(tl, "cues", current.id, { custom: { ...(current.custom || {}), ...fields } }), label);
+
+  // What one line is actually drawn at, whether it was given a size of its own
+  // or is following the track. The pixel field must never go blank.
+  const lookOf = (cue) => {
+    const size = cue?.custom?.size || cap.size || "m";
+    const px = cue?.custom?.px ?? cap.px ?? null;
+    return { size, px, shown: px != null ? px : Math.round((CAPTION_SIZES[size] || CAPTION_SIZES.m) * 1080) };
+  };
+  const track = lookOf(null);
+
   return (
     <>
       <Panel title="Captions">
         <Toggle
           label="Show captions"
-          hint={cues.length ? `${cues.length} lines.` : "Nothing to show yet — write them from your voice, or add them by hand."}
+          hint={cues.length ? `${cues.length} line${cues.length === 1 ? "" : "s"}.` : "None yet. Write them from the script, from your voice, or by hand."}
           checked={!!cap.enabled}
-          onChange={(v) => edit({ captions: { ...cap, enabled: v } }, v ? "Captions on" : "Captions off")}
+          onChange={(v) => setCap({ enabled: v }, v ? "Captions on" : "Captions off")}
           disabled={!cues.length}
         />
 
@@ -343,6 +373,20 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
           <div style={{ display: "grid", gap: 9 }}>
             <Btn
               kind="primary"
+              icon={<Icon name="caption" size={14} />}
+              onClick={onGenerateFromScript}
+              disabled={!hasScript || generating}
+              full
+            >
+              Add captions from the script
+            </Btn>
+            <Hint>
+              {hasScript
+                ? "Uses the voiceover script already written for this demo, split into lines and timed to the steps. Free, and it matches what you will say if you record the voiceover."
+                : "There is no voiceover script for this recording yet. It is written during the automatic edit."}
+            </Hint>
+
+            <Btn
               icon={<Icon name="wand" size={14} />}
               onClick={onGenerate}
               disabled={!hasAudio || generating}
@@ -350,7 +394,8 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
             >
               {generating ? "Listening…" : "Write captions from my voice"}
             </Btn>
-            {!hasAudio && <Hint>This recording has no sound, so there is nothing to transcribe. You can still write them by hand.</Hint>}
+            {!hasAudio && <Hint>This recording has no sound, so there is nothing to transcribe.</Hint>}
+
             <Btn size="s" icon={<Icon name="plus" size={12} />} onClick={addCue} full>
               Add a caption by hand
             </Btn>
@@ -360,53 +405,49 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
         {cap.enabled && cues.length > 0 && (
           <>
             <div>
-              <Label>Style</Label>
-              <Segmented
-                full
-                size="xs"
-                value={cap.style}
-                onChange={(v) => edit({ captions: { ...cap, style: v } }, "Caption style")}
-                options={CAPTION_STYLES.map((s) => ({ value: s, label: STYLE_LABEL[s] || s }))}
-              />
+              <Label>Look</Label>
+              <CaptionLooks value={cap.style} color={cap.color || "#FFFFFF"} onChange={(v) => setCap({ style: v }, "Caption look")} />
             </div>
             <div>
-              <Label>Position</Label>
-              <Segmented
-                full
-                size="s"
-                value={cap.position}
-                onChange={(v) => edit({ captions: { ...cap, position: v, x: null, y: null } }, "Caption position")}
-                options={[
-                  { value: "top", label: "Top" },
-                  { value: "middle", label: "Middle" },
-                  { value: "bottom", label: "Bottom" },
-                ]}
+              <Label>Colour</Label>
+              <ColorPicker
+                value={cap.color || "#FFFFFF"}
+                keyId="all"
+                onChange={(hex, key) => setCap({ color: hex === "#FFFFFF" ? null : hex }, key || "Caption colour")}
               />
             </div>
             <div>
               <Label>Size</Label>
-              <Segmented
-                full
-                size="s"
-                value={cap.size}
-                onChange={(v) => edit({ captions: { ...cap, size: v, px: null } }, "Caption size")}
-                options={[
-                  { value: "s", label: "S" },
-                  { value: "m", label: "M" },
-                  { value: "l", label: "L" },
-                  { value: "xl", label: "XL" },
-                ]}
+              <SizePicker
+                size={track.size}
+                px={track.shown}
+                min={CAPTION_PX.min}
+                max={CAPTION_PX.max}
+                onPreset={(v) => setCap({ size: v, px: null }, "Caption size")}
+                onPx={(px) => setCap({ px }, "px:all")}
               />
             </div>
             <div>
-              <Label>Colour</Label>
-              <Swatches
-                value={cap.color || "#FFFFFF"}
-                options={["#FFFFFF", "#70FFD2", "#FFD400", "#FF9482", "#918DFF", "#F09BE5"]}
-                onChange={(c) => edit({ captions: { ...cap, color: c === "#FFFFFF" ? null : c } }, "Caption colour")}
-              />
+              <Label>Placement</Label>
+              <Hint>
+                Drag the captions on the picture, anywhere you want. Moving the first one moves them all; moving any
+                other moves only that line.
+              </Hint>
+              {placed && (
+                <Btn
+                  size="xs"
+                  icon={<Icon name="reset" size={12} />}
+                  onClick={() =>
+                    edit(
+                      { captions: { ...cap, x: null, y: null }, cues: cues.map((c) => (c.custom ? { ...c, custom: { ...c.custom, x: null, y: null } } : c)) },
+                      "Reset placement"
+                    )
+                  }
+                >
+                  Put them back at the bottom
+                </Btn>
+              )}
             </div>
-            <Hint>Drag a caption on the preview to move that one line on its own.</Hint>
           </>
         )}
       </Panel>
@@ -424,7 +465,7 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
             {cues.map((c) => (
               <Row
                 key={c.id}
-                accent="#F09BE5"
+                accent="#C77DFF"
                 selected={current?.id === c.id}
                 onClick={() => {
                   onSelect({ kind: "cue", id: c.id });
@@ -459,33 +500,41 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
                 "Caption emphasis"
               )
             }
-            hint="Drawn in the style's accent colour. Usually the product name or the action."
+            hint="Drawn in the look's accent colour. Usually the product name or the action."
           />
           <TimeRange tl={tl} item={current} time={time} onChange={(p) => edit(patch(tl, "cues", current.id, p), "Caption timing")} />
 
           <div>
             <Label>Just this line</Label>
-            <div style={{ display: "grid", gap: 11 }}>
-              <Swatches
-                value={current.custom?.color || ""}
-                options={["#FFFFFF", "#70FFD2", "#FFD400", "#FF9482", "#918DFF"]}
-                onChange={(c) => edit(patch(tl, "cues", current.id, { custom: { ...(current.custom || {}), color: c } }), "Line colour")}
+            <div style={{ display: "grid", gap: 11, justifyItems: "start" }}>
+              <ColorPicker
+                compact
+                value={current.custom?.color || cap.color || "#FFFFFF"}
+                keyId={current.id}
+                onChange={(hex, key) => setOne({ color: hex }, key || "Line colour")}
               />
-              <Segmented
-                full
-                size="xs"
-                value={current.custom?.size || ""}
-                onChange={(v) => edit(patch(tl, "cues", current.id, { custom: { ...(current.custom || {}), size: v || null } }), "Line size")}
-                options={[
-                  { value: "", label: "Default" },
-                  { value: "s", label: "S" },
-                  { value: "m", label: "M" },
-                  { value: "l", label: "L" },
-                  { value: "xl", label: "XL" },
-                ]}
+              <SizePicker
+                compact
+                size={lookOf(current).size}
+                px={lookOf(current).shown}
+                min={CAPTION_PX.min}
+                max={CAPTION_PX.max}
+                onPreset={(v) => setOne({ size: v, px: null }, "Line size")}
+                onPx={(px) => setOne({ px }, `px:${current.id}`)}
+              />
+              <CaptionLooks
+                compact
+                value={current.custom?.style || cap.style}
+                color={current.custom?.color || cap.color || "#FFFFFF"}
+                onChange={(v) => setOne({ style: v }, "Line look")}
+              />
+              <Toggle
+                label="Bold"
+                checked={current.custom?.bold !== false}
+                onChange={(v) => setOne({ bold: v ? null : false }, "Line weight")}
               />
               {current.custom && (
-                <Btn size="xs" onClick={() => edit(patch(tl, "cues", current.id, { custom: null }), "Reset line style")}>
+                <Btn size="xs" icon={<Icon name="reset" size={12} />} onClick={() => edit(patch(tl, "cues", current.id, { custom: null }), "Reset line style")}>
                   Match the rest
                 </Btn>
               )}
@@ -497,110 +546,70 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
   );
 }
 
-const STYLE_LABEL = { trylipi: "TryLipi", hormozi: "Bold", apple: "Quiet", minimal: "Minimal", neon: "Neon" };
-
-/* ────────────────────────────────────────────────────────────────────────────
-   Annotations
-   ──────────────────────────────────────────────────────────────────────────── */
-
-export function NotesPanel({ tl, selection, onSelect, edit, time, seek }) {
-  const notes = [...(tl.notes || [])].sort((a, b) => a.start - b.start);
-  const current = notes.find((n) => n.id === selection?.id && selection.kind === "note") || null;
-
-  const add = () => {
-    const start = clamp(time, 0, Math.max(0, (tl.duration || 0) - 1));
-    const n = {
-      id: newId("n"),
-      start,
-      end: Math.min(tl.duration || start + 2.5, start + 2.5),
-      kind: "tooltip",
-      text: "Look here",
-      x: 0.36, y: 0.42, w: 0.28, h: 0.1,
-      anchor: "auto",
-      color: "",
-      auto: false,
-    };
-    edit({ notes: [...notes, n] }, "Add annotation");
-    onSelect({ kind: "note", id: n.id });
-  };
-
+/**
+ * The five caption looks, each tile drawn in its own look over a scrap of
+ * picture — the same idea as the script editor's, with this product's styles.
+ * A named list of styles tells a creator nothing; seeing "Sale leak" in Hormozi
+ * yellow tells them everything.
+ */
+function CaptionLooks({ value, color, onChange, compact = false }) {
   return (
-    <>
-      <Panel
-        title={`Annotations · ${notes.length}`}
-        action={
-          <Btn size="xs" icon={<Icon name="plus" size={12} />} onClick={add}>
-            Add
-          </Btn>
-        }
-      >
-        {notes.length === 0 ? (
-          <Empty icon="note" title="No annotations" action={<Btn size="s" onClick={add}>Add one</Btn>}>
-            Sparing is the point. One label on screen at a time; a demo covered in arrows reads as a slide deck.
-          </Empty>
-        ) : (
-          <div style={{ display: "grid", gap: 2, margin: -6 }}>
-            {notes.map((n) => (
-              <Row
-                key={n.id}
-                accent="#74DDB0"
-                selected={current?.id === n.id}
-                onClick={() => {
-                  onSelect({ kind: "note", id: n.id });
-                  seek(n.start + 0.05);
-                }}
-                onRemove={() => edit({ notes: notes.filter((x) => x.id !== n.id) }, "Remove annotation")}
-                title={n.text || n.kind}
-                sub={`${fmtTime(n.start, true)} · ${n.kind}`}
-                badge={n.auto ? <Badge tone="ai">AI</Badge> : null}
-              />
-            ))}
-          </div>
-        )}
-      </Panel>
-
-      {current && (
-        <Panel title="Selected annotation">
-          <div>
-            <Label>Kind</Label>
-            <Segmented
-              full
-              size="xs"
-              value={current.kind}
-              onChange={(v) => edit(patch(tl, "notes", current.id, { kind: v }), "Annotation kind")}
-              options={[
-                { value: "tooltip", label: "Label" },
-                { value: "arrow", label: "Arrow" },
-                { value: "circle", label: "Ring" },
-                { value: "underline", label: "Underline" },
-                { value: "spotlight", label: "Spotlight" },
-              ]}
-            />
-          </div>
-          {current.kind !== "circle" && current.kind !== "underline" && current.kind !== "spotlight" && (
-            <Field
-              label="Text"
-              value={current.text}
-              maxLength={200}
-              onChange={(v) => edit(patch(tl, "notes", current.id, { text: v }), "Annotation text")}
-              hint="At most eight words. It is a label, not a sentence."
-            />
-          )}
-          <TimeRange tl={tl} item={current} time={time} onChange={(p) => edit(patch(tl, "notes", current.id, p), "Annotation timing")} />
-          <div>
-            <Label>Colour</Label>
-            <Swatches
-              value={current.color || "#2A7C13"}
-              options={["#2A7C13", "#918DFF", "#FF9482", "#FFD400", "#00B7CD", "#F09BE5"]}
-              onChange={(c) => edit(patch(tl, "notes", current.id, { color: c }), "Annotation colour")}
-            />
-          </div>
-          <Hint>Drag the rectangle on the preview to choose what it points at.</Hint>
-        </Panel>
-      )}
-    </>
+    <div
+      role="group"
+      aria-label="Caption look"
+      style={
+        compact
+          ? { display: "inline-flex", gap: 3, flexWrap: "wrap" }
+          : { display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: 6 }
+      }
+    >
+      {CAPTION_STYLES.map((name) => {
+        const look = CAPTION_LOOKS[name] || CAPTION_LOOKS.trylipi;
+        const on = value === name;
+        const text = {
+          fontWeight: look.weight,
+          color: look.color === "#fff" ? color : look.color,
+          textTransform: look.caps ? "uppercase" : "none",
+          textShadow: look.shadow === "none" ? "none" : look.shadow,
+          background: look.box ? "rgba(0,0,0,.6)" : "transparent",
+          padding: look.box ? "1px 4px" : 0,
+          borderRadius: look.box ? 3 : 0,
+          ...(look.stroke ? { WebkitTextStroke: `0.4px ${look.stroke}` } : {}),
+        };
+        return (
+          <button
+            key={name}
+            type="button"
+            aria-pressed={on}
+            title={STYLE_LABEL[name] || name}
+            onClick={() => onChange(name)}
+            style={{
+              padding: 0, overflow: "hidden", cursor: "pointer", fontFamily: "inherit",
+              borderRadius: compact ? 6 : 9,
+              border: `1.5px solid ${on ? "var(--ink)" : "var(--line)"}`,
+              background: "var(--card)",
+              ...(compact ? { width: 30, height: 26 } : {}),
+            }}
+          >
+            <span style={{ display: "grid", placeItems: "center", height: compact ? 22 : 40, background: LOOK_TILE }}>
+              <span style={{ fontSize: compact ? 11 : 12, lineHeight: 1, ...text }}>{compact ? "A" : "Aa"}</span>
+            </span>
+            {!compact && (
+              <span style={{ display: "block", padding: "5px 0", fontSize: 10.5, fontWeight: 650, color: on ? "var(--ink)" : "var(--ink-mute)" }}>
+                {STYLE_LABEL[name] || name}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
+
+const LOOK_TILE = "linear-gradient(135deg,#6B7F95,#C9A27A)";
+const STYLE_LABEL = { trylipi: "TryLipi", hormozi: "Bold", apple: "Quiet", minimal: "Minimal", neon: "Neon" };
+/** Caption pixels are measured against a 1080-short-side frame. See render/ass.js. */
+const CAPTION_PX = { min: 12, max: 96 };
 
 /* ────────────────────────────────────────────────────────────────────────────
    Cursor
@@ -620,7 +629,7 @@ export function CursorPanel({ tl, edit }) {
         </Empty>
       ) : (
         <>
-          <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--d-mute)", marginTop: -4 }}>
+          <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--ink-mute)", marginTop: -4 }}>
             {points.toLocaleString()} points recovered, {clicks} click{clicks === 1 ? "" : "s"} detected.
           </div>
           <Toggle
@@ -748,7 +757,7 @@ export function CanvasPanel({ tl, edit }) {
                 style={{
                   aspectRatio: "1", borderRadius: 9, cursor: "pointer", padding: 0,
                   background: `linear-gradient(135deg, ${stops[0]}, ${stops[1]} 55%, ${stops[2]})`,
-                  border: on ? "2px solid var(--d-ink)" : "1px solid var(--d-line)",
+                  border: on ? "2px solid var(--ink)" : "1px solid var(--line)",
                 }}
               />
             );
@@ -808,7 +817,7 @@ export function StepsPanel({ tl, time, seek, summary, narration }) {
     <>
       {summary && (
         <Panel title="What this demo shows">
-          <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: "var(--d-body)" }}>{summary}</p>
+          <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)" }}>{summary}</p>
         </Panel>
       )}
       <Panel title={`Steps · ${steps.length}`}>
@@ -841,10 +850,10 @@ export function StepsPanel({ tl, time, seek, summary, narration }) {
           <div style={{ display: "grid", gap: 11 }}>
             {narration.map((n) => (
               <div key={n.id}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--d-mute)", fontVariantNumeric: "tabular-nums" }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}>
                   {fmtTime(n.start, true)}
                 </div>
-                <p style={{ margin: "3px 0 0", fontSize: 13, lineHeight: 1.55, color: "var(--d-body)" }}>{n.text}</p>
+                <p style={{ margin: "3px 0 0", fontSize: 13, lineHeight: 1.55, color: "var(--ink-body)" }}>{n.text}</p>
               </div>
             ))}
           </div>
@@ -867,7 +876,7 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
       }
     >
       {analysis?.verdict && (
-        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--d-body)" }}>{analysis.verdict}</p>
+        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--ink-body)" }}>{analysis.verdict}</p>
       )}
       {list.length === 0 ? (
         <Empty icon="check" title="Nothing to fix">
@@ -880,15 +889,15 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
               key={s.id}
               style={{
                 padding: "11px 12px", borderRadius: 12,
-                border: "1px solid", borderColor: s.severity === "high" ? "rgba(255,148,130,.3)" : "var(--d-line-soft)",
-                background: s.severity === "high" ? "rgba(255,90,90,.06)" : "rgba(255,255,255,.02)",
+                border: "1px solid", borderColor: s.severity === "high" ? "#F5C7C3" : "var(--line)",
+                background: s.severity === "high" ? "#FCE8E6" : "var(--card)",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 650, color: "var(--d-ink)" }}>{s.title}</span>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{s.title}</span>
                 {s.severity === "high" && <Badge tone="warn">Important</Badge>}
               </div>
-              <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.55, color: "var(--d-mute)" }}>{s.why}</p>
+              <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.55, color: "var(--ink-mute)" }}>{s.why}</p>
               <div style={{ display: "flex", gap: 7 }}>
                 <Btn size="xs" kind="primary" onClick={() => onApply(s.id)}>
                   Apply
@@ -931,14 +940,14 @@ function TimeRange({ tl, item, time, onChange, extra }) {
           max={item.end - 0.15}
           onChange={(v) => onChange({ start: v })}
         />
-        <span style={{ fontSize: 12, color: "var(--d-mute)" }}>→</span>
+        <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>→</span>
         <Stepper
           value={item.end}
           min={item.start + 0.15}
           max={tl.duration || item.end}
           onChange={(v) => onChange({ end: v })}
         />
-        <span style={{ fontSize: 11.5, color: "var(--d-mute)", fontVariantNumeric: "tabular-nums" }}>{secs(len)}</span>
+        <span style={{ fontSize: 11.5, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}>{secs(len)}</span>
       </div>
       <div style={{ display: "flex", gap: 7, marginTop: 9, flexWrap: "wrap" }}>
         <Btn size="xs" onClick={() => onChange({ start: Math.min(srcNow, item.end - 0.15) })} title="Start at the playhead">
@@ -956,11 +965,11 @@ function TimeRange({ tl, item, time, onChange, extra }) {
 function Stepper({ value, min = 0, max = Infinity, onChange, step = 0.1 }) {
   const set = (v) => onChange(Math.round(clamp(v, min, max) * 1000) / 1000);
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--d-line)", borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,.3)" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--line)", borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,.3)" }}>
       <button type="button" onClick={() => set(value - step)} style={stepBtn} aria-label="Earlier">
         −
       </button>
-      <span style={{ minWidth: 52, textAlign: "center", fontSize: 12, fontWeight: 650, color: "var(--d-ink)", fontVariantNumeric: "tabular-nums" }}>
+      <span style={{ minWidth: 52, textAlign: "center", fontSize: 12, fontWeight: 650, color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
         {fmtTime(value, true)}
       </span>
       <button type="button" onClick={() => set(value + step)} style={stepBtn} aria-label="Later">
@@ -971,20 +980,20 @@ function Stepper({ value, min = 0, max = Infinity, onChange, step = 0.1 }) {
 }
 
 const stepBtn = {
-  width: 24, height: 28, border: "none", background: "transparent", color: "var(--d-body)",
+  width: 24, height: 28, border: "none", background: "transparent", color: "var(--ink-body)",
   cursor: "pointer", fontSize: 15, lineHeight: 1, fontFamily: "inherit",
 };
 
 function Label({ children }) {
   return (
-    <div style={{ marginBottom: 7, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--d-mute)" }}>
+    <div style={{ marginBottom: 7, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-mute)" }}>
       {children}
     </div>
   );
 }
 
 function Hint({ children }) {
-  return <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.55, color: "var(--d-mute)" }}>{children}</p>;
+  return <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.55, color: "var(--ink-mute)" }}>{children}</p>;
 }
 
 /** One item in one list, changed, as a patch for the whole timeline. */

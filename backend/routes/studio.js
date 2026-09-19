@@ -14,6 +14,7 @@
  *
  *   POST   /studio/demos/:id/analyse              { expected_cost, captions }
  *   POST   /studio/demos/:id/captions             transcribe, on its own
+ *   POST   /studio/demos/:id/captions/from-script captions from the narration
  *   POST   /studio/demos/:id/review               fresh suggestions for this edit
  *   POST   /studio/demos/:id/suggestions/:sid     { action: "apply" | "dismiss" }
  *
@@ -54,11 +55,12 @@ import {
   PRESETS, DEFAULT_EXPORT, EXPORT_MULTIPLIERS, cleanExportOptions, exportPrice,
 } from "../services/studio/exportOptions.js";
 import {
-  ASPECTS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, NOTE_KINDS, BLUR_KINDS,
+  ASPECTS, CURSOR_THEMES, CAPTION_STYLES, EASINGS, BLUR_KINDS,
   sanitizeTimeline, layout, newId,
 } from "../services/studio/timeline.js";
 import { GRADIENTS } from "../services/studio/render/frame.js";
 import { applySuggestion } from "../services/studio/suggestions.js";
+import { cuesFromNarration } from "../services/studio/captionsFromScript.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 
 const router = express.Router();
@@ -163,7 +165,6 @@ router.get("/config", wrap(async (req, res) => {
       cursor_themes: CURSOR_THEMES,
       caption_styles: CAPTION_STYLES,
       easings: EASINGS,
-      note_kinds: NOTE_KINDS,
       blur_kinds: BLUR_KINDS,
       backgrounds: Object.keys(GRADIENTS),
     },
@@ -413,6 +414,36 @@ router.post("/demos/:id/captions", wrap(async (req, res) => {
   await enqueue({ demo: demo._id, user: req.user.id, type: "captions" });
   publishProgress(demo, { captioning: true });
   res.json({ success: true });
+}));
+
+/**
+ * Captions from the voiceover script the analysis already wrote.
+ *
+ * Synchronous, free, and no model call: the narration is in the timeline and
+ * this is a chunking pass over it (services/studio/captionsFromScript.js). It
+ * answers with the whole demo so the editor swaps straight to the new cues.
+ */
+router.post("/demos/:id/captions/from-script", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  if (!demo.timeline) return fail(res, 409, "Analyse this recording first.");
+
+  const tl = demo.timeline;
+  const cues = cuesFromNarration(tl.narration || [], { duration: tl.duration || 0 });
+  if (!cues.length) {
+    return fail(res, 409, "There's no voiceover script for this recording yet.");
+  }
+
+  demo.timeline = sanitizeTimeline(
+    { ...tl, cues, captions: { ...(tl.captions || {}), enabled: true } },
+    { duration: tl.duration, source: tl.source }
+  );
+  demo.rev = (demo.rev || 0) + 1;
+  demo.expires_at = bumpExpiry();
+  demo.markModified("timeline");
+  await demo.save();
+
+  await respond(req, res, demo);
 }));
 
 router.post("/demos/:id/review", wrap(async (req, res) => {
