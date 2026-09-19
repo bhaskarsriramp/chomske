@@ -962,9 +962,20 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     }))
     .sort((a, b) => a.t - b.t);
 
-  // Quiet stretches the analysis found and deliberately did not remove.
-  out.dead_air = Array.isArray(tl.dead_air) ? tl.dead_air : [];
-    out.captured = (src.captured || [])
+  // Quiet stretches the analysis found and deliberately did NOT remove, kept so
+  // the editor can offer them rather than the creator losing footage silently.
+  out.dead_air = (Array.isArray(src.dead_air) ? src.dead_air : [])
+    .slice(0, 200)
+    .map((c) => ({
+      id: String(c.id || newId("cut")),
+      start: round3(clamp(num(c.start), 0, total)),
+      end: round3(clamp(num(c.end), 0, total)),
+      reason: String(c.reason || "idle").slice(0, 24),
+      auto: c.auto !== false,
+    }))
+    .filter((c) => c.end > c.start);
+
+  out.captured = (src.captured || [])
     .slice(0, 40000)
     .map((p) => ({ t: round3(clamp(num(p.t), 0, total)), x: round4(frac(p.x)), y: round4(frac(p.y)) }))
     .sort((a, b) => a.t - b.t);

@@ -207,7 +207,18 @@ const prepare = {
     // ── What arrived ──────────────────────────────────────────────────────
     const raw = await materialize(r.key, workDir, "capture");
     const first = await probe(raw);
-    if (!first.has_video) throw userError("That file has no video in it. Please record again.");
+    if (!first.has_video) {
+      // Worth the four lines: this is a dead end for the creator and there is
+      // nothing in the logs to tell an empty upload from a codec the server
+      // cannot read from a file truncated in transit.
+      let bytes = -1;
+      try { bytes = (await fsp.stat(raw)).size; } catch { /* the size is a nicety */ }
+      console.error(
+        "[studio] " + String(demo._id) + " has no video stream. key=" + r.key +
+          " bytes=" + bytes + " probe=" + JSON.stringify(first)
+      );
+      throw userError("That file has no video in it. Please record again.");
+    }
 
     // ── A real duration ───────────────────────────────────────────────────
     // MediaRecorder writes a header saying the duration is unknown, because the

@@ -65,7 +65,7 @@ export const AUDIO_MODEL = process.env.GEMINI_AUDIO_MODEL || VISION_MODEL;
  * nothing on them. See the answer-count check below, which is what makes the
  * difference visible now.
  */
-const FRAMES_PER_READ = 3;
+const FRAMES_PER_READ = 1;
 /** Concurrent Gemini calls. Bounded by the key pool's per-minute limits. */
 const CONCURRENCY = parseInt(process.env.STUDIO_VISION_CONCURRENCY || "4", 10);
 const ATTEMPTS = 3;
@@ -142,7 +142,12 @@ export async function readFrames(frames, { spend = newSpend(), onProgress = () =
   let done = 0;
 
   await pool(batches, CONCURRENCY, async (batch, bi) => {
-    const parts = [{ text: `${UI_ANALYZER}\n\nYou are given ${batch.length} frames. Answer for EACH, in order, as an array under "frames".\n\n${frameIndex(batch)}` }];
+    // One frame per call, so the wording that asks for an array of answers is
+    // only used if a future change batches them again.
+    const many = batch.length > 1;
+    const parts = [{ text: many
+      ? `${UI_ANALYZER}\n\nYou are given ${batch.length} frames. Answer for EACH, in order, as an array under \"frames\".\n\n${frameIndex(batch)}`
+      : `${UI_ANALYZER}\n\nAnswer for this one frame.` }];
     for (const f of batch) parts.push(await imagePart(f.file));
 
     const json = await ask({ parts, spend, label: `readFrames batch ${bi + 1}`, maxOutputTokens: 16384 });
