@@ -798,6 +798,47 @@ const MAX_SPEED = 2.5;
 const FREE_AFTER = 0.35;
 
 /**
+ * ── WHEN THE WHOLE PAGE IS MOVING, NOTHING IN IT IS THE POINTER ──────────────
+ * A pointer moving across a screen changes about a tenth of a per cent of the
+ * picture: its own few hundred pixels, once where it was and once where it is.
+ * The tracker reports a position by picking the most convincing patch of
+ * change, which is the right answer exactly when the pointer is the only thing
+ * changing.
+ *
+ * When the page scrolls, or navigates, or a list redraws, several per cent of
+ * the picture changes at once, and the most convincing patch is a piece of
+ * content. On one recording every single sighting taken while more than three
+ * per cent of the screen was changing — fifty-four of two hundred and five —
+ * sat along the top edge of the page at y between 0.00 and 0.13, where
+ * scrolled content enters and leaves the frame. The creator's pointer was
+ * sitting still on a sidebar item the whole time, and ours was drawn darting
+ * across the top of the page instead: two cursors.
+ *
+ * And a real pointer is almost never visible then anyway. During a trackpad
+ * scroll it is not moving at all, so it makes no difference to see; during a
+ * page load the hand has usually stopped. Dropping these leaves a gap, and a
+ * gap means held where it was last seen, which is where it was.
+ */
+const REPAINT = 0.03;
+
+export function dropRepaints(track, motion) {
+  if (!track.length || !motion || !motion.length) return track;
+  const m = [...motion].sort((a, b) => num(a.t) - num(b.t));
+  const busy = (t) => {
+    let lo = 0;
+    let hi = m.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (num(m[mid].t) <= t) lo = mid;
+      else hi = mid;
+    }
+    const near = Math.abs(num(m[lo].t) - t) <= Math.abs(num(m[hi].t) - t) ? m[lo] : m[hi];
+    return Math.abs(num(near.t) - t) <= 0.08 && num(near.energy) > REPAINT;
+  };
+  return track.filter((p) => !busy(num(p.t)));
+}
+
+/**
  * ── THE POINTER DOES NOT GO ROUND IN CIRCLES ─────────────────────────────────
  * A loading spinner is the tracker's worst enemy and has been through every
  * round of this. It is small, it is high contrast, it sits on a plain
@@ -1100,7 +1141,8 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
    * shape is gone, whichever samples you remove. So it reads the track before
    * anything else has touched it.
    */
-  const still = dropOrbits(opened, { sourceWidth, sourceHeight });
+  const quiet = dropRepaints(opened, shiftTimes(motion, offset, { duration }));
+  const still = dropOrbits(quiet, { sourceWidth, sourceHeight });
   const seen = dropLoners(still.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y))));
   const clean = dropFliers(seen, { sourceWidth, sourceHeight });
 
@@ -1114,7 +1156,8 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
       cursor_px: screen.cursorPx,
       parked: opened.length > shifted.length,
       spinners: screen.busy ? screen.busy.length : 0,
-      orbits: opened.length - still.length,
+      repaints: opened.length - quiet.length,
+      orbits: quiet.length - still.length,
       dropped: still.length - seen.length,
       fliers: seen.length - clean.length,
       reason: found.confident ? "" : "too little movement to line the two clocks up; left as recorded",
@@ -1122,4 +1165,4 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
   };
 }
 
-export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, dropOrbits, dropFliers, alignCapture };
+export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, dropRepaints, dropOrbits, dropFliers, alignCapture };

@@ -175,7 +175,31 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   if (overlay) inputs.push("-i", overlayPath);
 
   const graph = [];
-  let v = "0:v";
+
+  /**
+   * ── EVERY FRAME ON THE CLOCK BEFORE ANYTHING READS THE CLOCK ─────────────
+   * A browser recording is variable frame rate: MediaRecorder writes a frame
+   * when it has one, and a real recording came in at 17.19 frames a second.
+   * zoompan, which the camera is built on, has no clock of its own. It counts
+   * output frames and takes the time to be frame / 30, so it turned each
+   * recorded frame into exactly one output frame at thirty a second — and a
+   * 22.6 second demo came out 12.9 seconds long, playing 1.75 times too fast.
+   *
+   * Nothing else lined up after that. The cursor layer is drawn on the real
+   * clock, so it drifted away from the pointer burnt into the picture and there
+   * were two. Every zoom landed 1.75 times later than the moment it was aimed
+   * at, so the API Keys zoom arrived after the page had loaded and the Billing
+   * zoom landed on a page the creator was only scrolling.
+   *
+   * The trim pass used to do this conversion, and trimming used to happen on
+   * every demo because dead air was cut automatically. When that stopped, an
+   * uncut recording went into the graph exactly as it was recorded, and this
+   * had been silently depending on the cut. It now happens here, for every
+   * render, cut or not. On footage the trim pass already converted it is a
+   * no-op.
+   */
+  graph.push(`[0:v]fps=${FPS},setsar=1[vcfr]`);
+  let v = "vcfr";
 
   // ── 1b. The captured pointer ──────────────────────────────────────────
   /**

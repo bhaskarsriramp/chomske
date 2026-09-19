@@ -448,6 +448,8 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     ctx.strokeStyle = line;
     ctx.stroke();
   } else {
+    // Same sub-pixel tip margin as overlay.js drawArrow.
+    ctx.translate(-s * 0.03, -s * 0.03);
     arrowPath(ctx, s);
     ctx.fillStyle = fill;
     ctx.fill();
@@ -477,24 +479,25 @@ function arrowPath(ctx, s) {
 /** A pointing hand. Mirrors render/overlay.js drawHand exactly. */
 function handPath(ctx, s) {
   ctx.beginPath();
-  ctx.moveTo(s * 0.2, s * 0.46);
-  ctx.lineTo(s * 0.2, s * 0.09);
-  ctx.quadraticCurveTo(s * 0.2, 0, s * 0.3, 0);
-  ctx.quadraticCurveTo(s * 0.4, 0, s * 0.4, s * 0.09);
-  ctx.lineTo(s * 0.4, s * 0.44);
-  ctx.quadraticCurveTo(s * 0.43, s * 0.36, s * 0.5, s * 0.37);
-  ctx.quadraticCurveTo(s * 0.56, s * 0.38, s * 0.56, s * 0.47);
-  ctx.quadraticCurveTo(s * 0.59, s * 0.4, s * 0.655, s * 0.415);
-  ctx.quadraticCurveTo(s * 0.71, s * 0.43, s * 0.71, s * 0.52);
-  ctx.quadraticCurveTo(s * 0.74, s * 0.46, s * 0.795, s * 0.48);
-  ctx.quadraticCurveTo(s * 0.845, s * 0.5, s * 0.845, s * 0.6);
-  ctx.lineTo(s * 0.845, s * 0.98);
-  ctx.quadraticCurveTo(s * 0.83, s * 1.22, s * 0.6, s * 1.3);
+  // Same outline as overlay.js drawHand — see the note there for why it is shaped this way.
+  ctx.moveTo(s * 0.15, s * 0.32);
+  ctx.lineTo(s * 0.15, s * 0.02);
+  ctx.quadraticCurveTo(s * 0.15, s * -0.07, s * 0.305, s * -0.07);
+  ctx.quadraticCurveTo(s * 0.46, s * -0.07, s * 0.46, s * 0.02);
+  ctx.lineTo(s * 0.46, s * 0.3);
+  ctx.quadraticCurveTo(s * 0.48, s * 0.25, s * 0.54, s * 0.25);
+  ctx.quadraticCurveTo(s * 0.61, s * 0.25, s * 0.61, s * 0.33);
+  ctx.quadraticCurveTo(s * 0.63, s * 0.29, s * 0.69, s * 0.29);
+  ctx.quadraticCurveTo(s * 0.75, s * 0.29, s * 0.75, s * 0.38);
+  ctx.quadraticCurveTo(s * 0.77, s * 0.35, s * 0.825, s * 0.35);
+  ctx.quadraticCurveTo(s * 0.88, s * 0.35, s * 0.88, s * 0.45);
+  ctx.lineTo(s * 0.88, s * 0.98);
+  ctx.quadraticCurveTo(s * 0.86, s * 1.24, s * 0.62, s * 1.3);
   ctx.lineTo(s * 0.3, s * 1.3);
-  ctx.quadraticCurveTo(s * 0.12, s * 1.27, s * 0.065, s * 1.09);
-  ctx.lineTo(s * 0.005, s * 0.79);
-  ctx.quadraticCurveTo(s * -0.035, s * 0.63, s * 0.085, s * 0.605);
-  ctx.quadraticCurveTo(s * 0.165, s * 0.595, s * 0.185, s * 0.665);
+  ctx.quadraticCurveTo(s * 0.12, s * 1.27, s * 0.07, s * 1.09);
+  ctx.lineTo(s * 0, s * 0.66);
+  ctx.quadraticCurveTo(s * -0.03, s * 0.38, s * 0.09, s * 0.33);
+  ctx.quadraticCurveTo(s * 0.14, s * 0.31, s * 0.15, s * 0.32);
   ctx.closePath();
 }
 
@@ -707,6 +710,11 @@ function clickMarks(tl, lay) {
   for (const e of tl.events || []) {
     if (e.type !== "click" && e.type !== "dblclick") continue;
     if (e.confidence < 0.5) continue;
+    // A ripple says "this was pressed". A press the camera was told to ignore —
+    // a hover, a tap on empty space, a rest while the page scrolled — must not
+    // say it either, or the viewer sees a click the demo just decided never
+    // happened. undefined means a demo analysed before the gate existed.
+    if (e.zoomable === false) continue;
     for (const s of lay.segments) {
       if (e.t >= s.src_start && e.t <= s.src_end) {
         out.push({ t: s.out_start + (e.t - s.src_start), x: e.x, y: e.y, double: e.type === "dblclick" });

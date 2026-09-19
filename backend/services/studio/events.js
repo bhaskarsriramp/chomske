@@ -357,6 +357,21 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
      * a scroll event for exactly these frames.
      */
     if (Math.abs(num(m.dy, 0)) >= SCROLL_SHIFT) continue;
+    /**
+     * ── AND NOT JUST THIS FRAME: THE STRETCH AROUND IT ─────────────────────
+     * The check above reads one frame, and the first frame of a scroll often
+     * reads as no shift at all — the row correlation cannot match a flick that
+     * moved further than it searches. One real recording had a "navigation"
+     * with a shift of zero sitting inside twenty-two frames of scrolling, and
+     * it minted a click the creator never made, with a zoom.
+     *
+     * What makes a scroll a scroll is that it is SUSTAINED and it is COHERENT:
+     * every row goes the same way. Twenty-two of those shifts in a second and
+     * a half, all upward: a scroll. A page opening shows a few shifts that
+     * disagree with each other — its layout settling — and a real click on
+     * "API Keys" measured seven of them with a coherence of 0.64.
+     */
+    if (scrollingAround(mot, m.t)) continue;
     if (!screenAgrees(screen, m.t)) continue;
     if (m.t - lastNav < RULES.navGap) {
       lastNav = m.t;
@@ -424,8 +439,52 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
       // demo ends up with a ripple firing at nothing.
       .filter((r) => nav.t - r.start <= REST_FRESH)
       .sort((a, b) => b.start - a.start)[0];
-    if (!rest) continue;
+    if (!rest) {
+      /**
+       * ── THE CLICK NOBODY SAW, BECAUSE THE POINTER NEVER MOVED ────────────
+       * The tracker sees a pointer only when it moves. A creator who puts the
+       * mouse on "API Keys" before pressing record, and clicks it two seconds
+       * in, gives it nothing to see: no sighting before the page changes, so no
+       * rest, so no click — and the most important moment in the demo got no
+       * zoom of its own. What the viewer saw instead was the model's planned
+       * zoom arriving a second and a half after the page had already loaded.
+       *
+       * The pointer does not move after a click; the hand stays put while the
+       * page loads. So where it is first seen once the page has settled is where
+       * it was when it pressed — provided it is seen there twice, still, and
+       * soon. confirmClicks() still decides whether that spot is a control.
+       */
+      const parked = settledAfter(pts, mot, nav.t);
+      if (parked && !events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - nav.t) < 0.6)) {
+        const at = Math.max(0, nav.t - 0.12);
+        events.push(event("click", at, parked.x, parked.y, {
+          confidence: 0.75,
+          source: "parked",
+          shape: parked.shape || "default",
+          corroborated: true,
+          scrolled: false,
+          scroll_shift: 0,
+        }));
+        claim(at);
+      }
+      continue;
+    }
     spent.add(rest);
+
+    /**
+     * ── THE SAME POINTER, THE SAME PLACE, THE SAME PAGE LOADING ─────────────
+     * A page often arrives in two paints: the frame, then the data. If the
+     * pointer was already credited with a click at this spot and has not moved
+     * since, the second paint is that click still landing — not a second
+     * press. Without this, one click on "API Keys" became two, and the one
+     * that kept the zoom was the later one, two and a half seconds late.
+     */
+    const earlier = events.find((e) =>
+      (e.type === "click" || e.type === "dblclick") &&
+      e.t < nav.t && nav.t - e.t < 3 &&
+      Math.hypot(e.x - rest.x, e.y - rest.y) < 0.03
+    );
+    if (earlier) { claim(nav.t); continue; }
 
     // The press is just before the change it caused, and inside the dwell.
     const at = clamp(nav.t - 0.12, rest.start, Math.max(rest.start, rest.end));
@@ -632,6 +691,66 @@ function screenAgrees(screen, t) {
   }
   if (!best) return true;
   return best.cover >= RULES.navCover;
+}
+
+/** Frames of shift, around a change, that make it a scroll. */
+const SCROLL_FRAMES = 10;
+/** How much of that shift must agree on a direction. */
+const SCROLL_COHERENCE = 0.85;
+
+function scrollingAround(mot, t) {
+  let n = 0;
+  let abs = 0;
+  let net = 0;
+  for (const m of mot) {
+    if (m.t < t - 0.4) continue;
+    if (m.t > t + 1.4) break;
+    const dy = num(m.dy, 0);
+    if (Math.abs(dy) < SCROLL_SHIFT) continue;
+    n++;
+    abs += Math.abs(dy);
+    net += dy;
+  }
+  return n >= SCROLL_FRAMES && abs >= SCROLL_SUM && Math.abs(net) / abs >= SCROLL_COHERENCE;
+}
+
+/** How soon after a page changes the pointer must be found again. */
+const SETTLE_WITHIN = 2.0;
+/** Two sightings this close are the same resting place. */
+const SETTLE_SAME = 0.025;
+/** And they must be this close in time to count as one rest. */
+const SETTLE_GAP = 0.9;
+
+/**
+ * Where a pointer that was not seen pressing is first seen at rest afterwards.
+ *
+ * Only for a pointer that was genuinely still beforehand: if it had been seen
+ * moving in the moment before the page changed, it was not parked, and the
+ * ordinary rules already had their chance.
+ */
+function settledAfter(pts, mot, t) {
+  if (pts.some((p) => p.t < t && p.t > t - 0.6)) return null;
+  const quiet = (at) => {
+    let best = null;
+    for (const m of mot) {
+      const d = Math.abs(m.t - at);
+      if (!best || d < best.d) best = { d, m };
+    }
+    return !best || best.d > 0.1 || num(best.m.energy) <= 0.03;
+  };
+  // The FIRST sighting has to come soon; the one that confirms it may come a
+  // moment later. Requiring both inside the window missed a real click by a
+  // hundredth of a second.
+  const after = pts.filter((p) => p.t > t && quiet(p.t));
+  for (let i = 0; i + 1 < after.length; i++) {
+    const a = after[i];
+    if (a.t > t + SETTLE_WITHIN) break;
+    const b = after[i + 1];
+    if (b.t - a.t > SETTLE_GAP) continue;
+    if (Math.hypot(b.x - a.x, b.y - a.y) > SETTLE_SAME) continue;
+    return a;
+  }
+  return null;
 }
 
 function event(type, t, x, y, extra = {}) {
@@ -883,6 +1002,23 @@ const CONTROL_MAX_AREA = 0.2;
  * @returns {{ label, type, area } | false | null}
  *          the control, false for "looked and found nothing", null for no frame
  */
+/**
+ * The horizontal extent of a vertical list of nav items, or null when the
+ * items run across rather than down (a top bar is found by column, not row).
+ */
+function navColumn(els) {
+  const rows = els.filter((e) => String(e.type) === "nav_item" && Array.isArray(e.bbox) && e.bbox[2] > 0 && e.bbox[3] > 0);
+  if (rows.length < 3) return null;
+  const cx = rows.map((e) => e.bbox[0] + e.bbox[2] / 2);
+  const cy = rows.map((e) => e.bbox[1] + e.bbox[3] / 2);
+  const spread = (v) => Math.max(...v) - Math.min(...v);
+  if (spread(cy) < spread(cx) * 2) return null;
+  return {
+    x0: Math.max(0, Math.min(...rows.map((e) => e.bbox[0])) - EDGE_SLOP),
+    x1: Math.max(...rows.map((e) => e.bbox[0] + e.bbox[2])),
+  };
+}
+
 export function controlUnder(shots, t, x, y) {
   let looked = false;
   let best = null;
@@ -897,12 +1033,26 @@ export function controlUnder(shots, t, x, y) {
     if (!els.some((e) => PRESSABLE.has(String(e.type)))) continue;
     looked = true;
 
+    const column = navColumn(els);
     for (const el of els) {
       if (!PRESSABLE.has(String(el.type))) continue;
-      const [ex, ey, ew, eh] = el.bbox || [];
+      let [ex, ey, ew, eh] = el.bbox || [];
       if (!(ew > 0) || !(eh > 0)) continue;
       const area = ew * eh;
       if (area > CONTROL_MAX_AREA) continue;
+      /**
+       * ── A SIDEBAR ROW IS FOUND BY ITS ROW ──────────────────────────────
+       * Asked to box a left navigation, the model gets every label and every
+       * row's height right and the horizontal placement wrong: it put "API
+       * Keys" at x = 0.12 when the row starts at 0.015, so a pointer resting
+       * on the item was 0.08 away from its box and the item's own click read
+       * as "not on a control". In a vertical list the row is what identifies
+       * the item, so the box is widened to the whole column the list occupies.
+       */
+      if (column && String(el.type) === "nav_item") {
+        ex = column.x0;
+        ew = column.x1 - column.x0;
+      }
       // Distance from the point to the box, zero when inside it.
       const dx = Math.max(ex - x, 0, x - (ex + ew));
       const dy = Math.max(ey - y, 0, y - (ey + eh));
@@ -1088,9 +1238,8 @@ export function restOnControls(track, shots, { sourceWidth = 1920, sourceHeight 
  * Reads three things that were measured elsewhere and combines them once, here,
  * so the rule can be read in one place:
  *
- *   on a named control          the camera moves, even if the page also
- *                               scrolled — a link that jumps to an anchor is
- *                               still a link somebody pressed
+ *   the page was scrolling      the camera stays put, control or not
+ *   on a named control          the camera moves
  *   nothing was there           the camera stays put
  *   nobody looked, no scroll    the camera moves, as it always did
  *   nobody looked, but a scroll the camera stays put
@@ -1108,10 +1257,20 @@ export function confirmClicks(events, shots, { onNote = () => {} } = {}) {
 
     let zoomable;
     let why;
+    /**
+     * ── A SCROLL OVER A CONTROL IS STILL A SCROLL ──────────────────────────
+     * This used to let a press through if it was on a named control even when
+     * the page had scrolled, on the theory that a link can jump to an anchor.
+     * In practice it let through a hover: the creator scrolled a billing page
+     * with the pointer resting on a dropdown, the page moved, the rules saw a
+     * rest and a change on a control, and a zoom landed on a click that never
+     * happened. When the only thing that followed was the page sliding, there
+     * is no evidence of a press at all.
+     */
     if (!had) { zoomable = false; why = "nothing came of it"; }
+    else if (scrolled) { zoomable = false; why = "the page was scrolling"; }
     else if (on) { zoomable = true; why = "on " + (on.label ? '"' + on.label + '"' : on.type); }
     else if (on === false) { zoomable = false; why = "not on a control"; }
-    else if (scrolled) { zoomable = false; why = "the page was scrolling"; }
     else { zoomable = true; why = "no frame read here; allowed"; }
 
     onNote({ t: num(e.t), zoomable, why });

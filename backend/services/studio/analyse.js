@@ -35,9 +35,9 @@ import path from "path";
 import fsp from "fs/promises";
 import { extractFrames } from "../media/ffmpeg.js";
 import {
-  newSpend, readFrames, detectSteps, planZooms, findSensitive, writeCaptions, writeNarration,
+  newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { confirmClicks, dropScrollZooms, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, anticipateClicks, restToFull, partCuts } from "./events.js";
+import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts } from "./events.js";
 import { alignCapture } from "./sync.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
@@ -99,6 +99,19 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     // animations discounted. Without it a spinner reads as a page navigating.
     screen: aligned.screen,
   });
+
+  /**
+   * ── A POINTER PARKED FROM THE FIRST FRAME IS DRAWN FROM THE FIRST FRAME ────
+   * When the first click was made by a pointer that was already sitting on the
+   * control before recording started, there is no sighting of it until well
+   * after the click — and nothing drawn until then, while the real pointer is
+   * plainly visible in the picture the whole time. It was there all along; the
+   * click says so. So the path starts there.
+   */
+  const opening = events.find((e) => e.source === "parked");
+  if (opening && capturedTrack.length && opening.t < num0(capturedTrack[0].t)) {
+    capturedTrack.unshift({ t: 0, x: opening.x, y: opening.y, shape: opening.shape || "default", conf: 1 });
+  }
 
   /* ── Everything the model reads ──────────────────────────────────────── */
   // The UI pass and the blur pass both walk every frame and neither needs the
@@ -173,48 +186,36 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
 
   /* ── The camera ──────────────────────────────────────────────────────── */
   onProgress(0.58, "Planning the camera");
-  let zooms = steps.length
-    ? await planZooms({ steps, shots, events, duration, spend }).catch((err) => {
-        console.error("[studio] zoom planning failed:", err);
-        return [];
-      })
-    : [];
 
   /**
-   * ── THE CLICKS DECIDE THE CAMERA; THE PLANNER FILLS THE GAPS ──────────────
-   * The first version of this trusted the planner and used the clicks only as
-   * a fallback, and the result was an eleven-second export that was a single
-   * static crop: the planner had aimed at the content area, every click in the
-   * recording happened in the left nav, and the nav was outside the frame the
-   * whole time. Nobody watching could see a single thing being clicked.
+   * ── THE CAMERA MOVES FOR A CLICK, AND FOR NOTHING ELSE ────────────────────
+   * The creator has said it plainly and more than once: zoom when somebody
+   * clicks a control, never on a hover, never while they scroll, never on the
+   * model's own idea of what is interesting. Every zoom that was not a click
+   * has turned out to be a bug report.
    *
-   * The order is now the other way round, because a click is the one moment in
-   * a demo where the viewer is guaranteed to be looking for something
-   * specific:
+   * There used to be a second source. The model watched the recording and
+   * proposed zooms of its own, and those were kept wherever they did not
+   * collide with a click. On a real recording that planned zoom arrived a
+   * second and a half after the API Keys click, over a page that had already
+   * loaded — "zoom is happening after some delay" — and in another it landed
+   * on a billing page the creator was only scrolling. A planned zoom has no
+   * press behind it by definition, so the rule it breaks is the one the
+   * creator cares about most.
    *
-   *   1. Every click gets a zoom, centred ON the click (events.js containing).
-   *   2. The planner's zooms are kept only where they do not collide with one,
-   *      re-aimed at any click inside them, and released as soon as it lands.
-   *   3. restToFull() guarantees the camera reaches 1.0× between moves, which
+   * So the planner is gone, including its model call. What is left:
+   *
+   *   1. Every accepted click gets a zoom, centred ON the click. "Accepted" is
+   *      confirmClicks(): on a control, something came of it, and the page was
+   *      not scrolling.
+   *   2. restToFull() guarantees the camera reaches 1.0x between moves, which
    *      is the difference between a zoom and a crop.
-   *   4. A demo may not be zoomed for more than MAX_ZOOMED of its length. Past
-   *      that it stops reading as emphasis and starts reading as a mistake.
+   *   3. A demo may not be zoomed for more than MAX_ZOOMED of its length.
    */
   const clickZooms = zoomsFromClicks(events, { duration });
-  // The model's own plan does not know a press from a page being read, so the
-  // stretches the creator spent scrolling are taken off it before it competes.
-  const planned = dropScrollZooms(anticipateClicks(zooms, events, { duration }), events, {
-    motion: capturedMotion,
-    onNote: (n) => console.log("[studio] planned zoom at " + n.start.toFixed(2) + "s dropped: the creator was scrolling"),
-  });
-  const aimed = planned;
-
-  const collides = (z) =>
-    clickZooms.some((c) => z.start < c.end + REST && c.start < z.end + REST);
-  zooms = restToFull([...clickZooms, ...aimed.filter((z) => !collides(z))], { rest: REST });
-
+  let zooms = restToFull(clickZooms, { rest: REST });
   zooms = capZoomed(zooms, duration);
-  if (!zooms.length) zooms = restToFull(clickZooms, { rest: REST });
+
 
   /* ── Narration ───────────────────────────────────────────────────────── */
   onProgress(0.68, "Writing the narration");
@@ -467,4 +468,10 @@ function countMoves(track, { sourceWidth = 1920, sourceHeight = 1080 } = {}) {
     if (Math.hypot(b.x - a.x, (b.y - a.y) * ratio) > 0.02) n++;
   }
   return n;
+}
+
+/** A number, or 0. */
+function num0(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }

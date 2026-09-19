@@ -187,6 +187,11 @@ function clickMarks(tl, lay) {
   for (const e of tl.events || []) {
     if (e.type !== "click" && e.type !== "dblclick") continue;
     if (e.confidence < 0.5) continue;
+    // A ripple says "this was pressed". A press the camera was told to ignore —
+    // a hover, a tap on empty space, a rest while the page scrolled — must not
+    // say it either, or the viewer sees a click the demo just decided never
+    // happened. undefined means a demo analysed before the gate existed.
+    if (e.zoomable === false) continue;
     for (const span of lay.segments) {
       if (e.t >= span.src_start && e.t <= span.src_end) {
         out.push({ t: span.out_start + (e.t - span.src_start), x: e.x, y: e.y, double: e.type === "dblclick" });
@@ -274,6 +279,10 @@ function drawCursor(ctx, pt, cam, cur, theme, basePx, shape) {
  * already knows; a "designed" cursor reads as a watermark.
  */
 function drawArrow(ctx, s, theme) {
+  // The tip sits a hair up and left of the hotspot. A point placed exactly on
+  // it leaves the real arrow’s own corner pixel showing; this is under a pixel
+  // at any size a demo is drawn at, and it closes that gap.
+  ctx.translate(-s * 0.03, -s * 0.03);
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.lineTo(0, s * 1.02);
@@ -315,35 +324,38 @@ function drawHand(ctx, s, theme) {
   // top-left, so the whole shape shifts left to put the fingertip on the point.
   ctx.translate(-s * 0.3, 0);
   ctx.beginPath();
-
-  // The index finger. Short and thick: drawn long and thin it stops reading as
-  // a hand pointing at something and starts reading as a single raised finger,
-  // which is what one export came back looking like.
-  ctx.moveTo(s * 0.2, s * 0.46);
-  ctx.lineTo(s * 0.2, s * 0.09);
-  ctx.quadraticCurveTo(s * 0.2, 0, s * 0.3, 0);
-  ctx.quadraticCurveTo(s * 0.4, 0, s * 0.4, s * 0.09);
-  ctx.lineTo(s * 0.4, s * 0.44);
-
-  // Three folded fingers, as knuckles stepping down to the right. These are
-  // what make it a fist rather than a stalk.
-  ctx.quadraticCurveTo(s * 0.43, s * 0.36, s * 0.5, s * 0.37);
-  ctx.quadraticCurveTo(s * 0.56, s * 0.38, s * 0.56, s * 0.47);
-  ctx.quadraticCurveTo(s * 0.59, s * 0.4, s * 0.655, s * 0.415);
-  ctx.quadraticCurveTo(s * 0.71, s * 0.43, s * 0.71, s * 0.52);
-  ctx.quadraticCurveTo(s * 0.74, s * 0.46, s * 0.795, s * 0.48);
-  ctx.quadraticCurveTo(s * 0.845, s * 0.5, s * 0.845, s * 0.6);
-
-  // The outside of the hand, down to the heel.
-  ctx.lineTo(s * 0.845, s * 0.98);
-  ctx.quadraticCurveTo(s * 0.83, s * 1.22, s * 0.6, s * 1.3);
+  /**
+   * ── THIS HAND HAS ONE JOB BEFORE IT HAS TO LOOK GOOD ─────────────────────
+   * It is drawn on top of the operating system's own hand, and it must hide
+   * it completely: any part of the real hand that shows around ours is what
+   * a viewer reports as two cursors. The previous outline was drawn to read
+   * well and it did, but tested against a Windows-style hand under it, 13 to
+   * 33 pixels of the real one showed every frame: its square fingertip above
+   * our rounded one, its knuckles to the right of our narrow finger, its
+   * thumb to the left.
+   *
+   * So the finger is wider and its rounded top sits a little ABOVE the
+   * hotspot, the knuckles start higher, and the thumb reaches further left —
+   * each placed to contain the real outline at 1.35x from the same point.
+   */
+  ctx.moveTo(s * 0.15, s * 0.32);
+  ctx.lineTo(s * 0.15, s * 0.02);
+  ctx.quadraticCurveTo(s * 0.15, s * -0.07, s * 0.305, s * -0.07);
+  ctx.quadraticCurveTo(s * 0.46, s * -0.07, s * 0.46, s * 0.02);
+  ctx.lineTo(s * 0.46, s * 0.3);
+  ctx.quadraticCurveTo(s * 0.48, s * 0.25, s * 0.54, s * 0.25);
+  ctx.quadraticCurveTo(s * 0.61, s * 0.25, s * 0.61, s * 0.33);
+  ctx.quadraticCurveTo(s * 0.63, s * 0.29, s * 0.69, s * 0.29);
+  ctx.quadraticCurveTo(s * 0.75, s * 0.29, s * 0.75, s * 0.38);
+  ctx.quadraticCurveTo(s * 0.77, s * 0.35, s * 0.825, s * 0.35);
+  ctx.quadraticCurveTo(s * 0.88, s * 0.35, s * 0.88, s * 0.45);
+  ctx.lineTo(s * 0.88, s * 0.98);
+  ctx.quadraticCurveTo(s * 0.86, s * 1.24, s * 0.62, s * 1.3);
   ctx.lineTo(s * 0.3, s * 1.3);
-  ctx.quadraticCurveTo(s * 0.12, s * 1.27, s * 0.065, s * 1.09);
-
-  // The thumb, tucked across the front.
-  ctx.lineTo(s * 0.005, s * 0.79);
-  ctx.quadraticCurveTo(s * -0.035, s * 0.63, s * 0.085, s * 0.605);
-  ctx.quadraticCurveTo(s * 0.165, s * 0.595, s * 0.185, s * 0.665);
+  ctx.quadraticCurveTo(s * 0.12, s * 1.27, s * 0.07, s * 1.09);
+  ctx.lineTo(s * 0, s * 0.66);
+  ctx.quadraticCurveTo(s * -0.03, s * 0.38, s * 0.09, s * 0.33);
+  ctx.quadraticCurveTo(s * 0.14, s * 0.31, s * 0.15, s * 0.32);
   ctx.closePath();
 
   ctx.fillStyle = theme.fill;
