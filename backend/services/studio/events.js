@@ -89,6 +89,15 @@ export const RULES = {
    */
   navArea: 0.25,
   navEnergy: 0.02,
+  /**
+   * How close to the frame's top and bottom edges a faint change has to reach
+   * before its shape alone says a whole surface was replaced.
+   *
+   * A page swapping its content pane runs the full height of the window; a
+   * chart, a toast or a panel filling in sits in a band somewhere inside it.
+   * Eight per cent leaves room for a header bar without letting a band through.
+   */
+  faintEdge: 0.08,
   /** Repaints closer together than this are one navigation, not several. */
   navGap: 0.4,
   /**
@@ -427,7 +436,34 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
   const navs = [];
   let lastNav = -Infinity;
   for (const m of mot) {
-    if (m.energy < RULES.navEnergy) continue;
+    /**
+     * ── AND NOT EVERY NEW SCREEN CHANGES MANY PIXELS ──────────────────────
+     * `navBox` below learned that a new screen is a shape and not an amount.
+     * `navEnergy`, the floor underneath it, never did — it is still a count of
+     * how many pixels came out different, and that is the one thing a modern
+     * interface refuses to supply. White cards replaced by white skeleton
+     * placeholders on a white page move almost nothing.
+     *
+     * Measured on a real recording: pressing "Projects" replaced three
+     * quarters of the width and the whole height of the frame and changed
+     * 1.97% of the pixels. The floor is 2%. The most deliberate press in the
+     * demo was three ten-thousandths of a percent short of being visible at
+     * all, and got no zoom.
+     *
+     * So a change may also earn its place by its SIZE AND SHAPE: a real share
+     * of the picture, running from the top of the frame to the bottom, which
+     * is what a page or a pane replacing itself does and what a widget
+     * redrawing itself in the middle of one does not. That second half matters
+     * — without it, a chart finishing its animation across the screen from a
+     * resting hand would qualify, and that hover is a bug this file has
+     * already been through once.
+     */
+    const faint =
+      m.energy >= RULES.noiseEnergy &&
+      m.w * m.h >= RULES.navArea &&
+      m.y <= RULES.faintEdge &&
+      m.y + m.h >= 1 - RULES.faintEdge;
+    if (m.energy < RULES.navEnergy && !faint) continue;
     /**
      * ── NOT EVERY NEW SCREEN FILLS THE SCREEN ─────────────────────────────
      * The test below this used to be the whole of it: most of the width AND

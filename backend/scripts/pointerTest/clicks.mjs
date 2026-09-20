@@ -823,5 +823,58 @@ console.log("\nA press made the moment the hand arrives is still a press\n");
       confirmClicks([press(t, 0.99, 0.18 + 0.70 * (t - 11.8) / 3.8)], [], { located: riding })[0].zoomable === false), true);
 }
 
+console.log("\nA new screen that barely changes a pixel is still a new screen\n");
+
+/**
+ * ── THE ONE FROM video_demo_118 ───────────────────────────────────
+ * One click got no camera: "Projects" at the top of the rail. The hand was
+ * parked on it, the OS drew a hand, the page replaced itself — and nothing.
+ *
+ * `navBox` was taught long ago that a new screen is a shape and not an
+ * amount. The floor underneath it, `navEnergy`, never was: it still counts
+ * how many pixels came out different, and that is the one thing a modern
+ * interface will not supply. White cards replaced by white skeletons on a
+ * white page move almost nothing.
+ *
+ * Measured: that press replaced three quarters of the width and the whole
+ * height of the frame and changed 1.97% of the pixels, against a floor of 2%.
+ * It missed by three ten-thousandths of a percent. And the local path could
+ * not save it either — the content pane starts 0.224 from the rail, past the
+ * click radius — so no press existed at all.
+ */
+{
+  const FR = 1 / 24;
+  const r3 = (t) => Math.round(t * 1000) / 1000;
+  // A hand on the rail, and one faint change somewhere on the page.
+  const pressed = (box) => {
+    const path = rest(2.8, 5.5, 0.05, 0.055, "pointer");
+    const motion = [];
+    for (let t = 2.8; t < 5.5; t += FR) {
+      const m = { t: r3(t), energy: 0.0002, x: 0.05, y: 0.055, w: 0.02, h: 0.02, dy: 0 };
+      if (Math.abs(t - 3.792) < FR) { m.energy = box.e; m.x = box.x; m.y = box.y; m.w = box.w; m.h = box.h; }
+      motion.push(m);
+    }
+    const cs = inferEvents({ samples: path, motion, duration: 7, located: path })
+      .filter((e) => e.type === "click");
+    return { found: cs.length > 0, moves: cs.length > 0 && confirmClicks(cs, [], { located: path })[0].zoomable };
+  };
+
+  const projects = pressed({ e: 0.0197, x: 0.2735, y: 0.042, w: 0.725, h: 0.928 });
+  check("a pane replaced edge to edge, 1.97% of pixels", projects.found, true);
+  check("...and the camera moves to the rail item", projects.moves, true);
+
+  /**
+   * And what the shape half of that rule is there to keep out. Same faintness,
+   * same size, but sitting in a band inside the frame instead of running top
+   * to bottom: a chart finishing, a panel filling in, a toast arriving. The
+   * hand is resting on a row the whole time and never pressed anything — the
+   * hover this file has already pushed in on once.
+   */
+  check("a chart redrawing in a band is not a new screen",
+    pressed({ e: 0.019, x: 0.35, y: 0.40, w: 0.64, h: 0.60 }).found, false);
+  check("a panel filling mid-screen is not a new screen",
+    pressed({ e: 0.019, x: 0.30, y: 0.30, w: 0.60, h: 0.50 }).found, false);
+}
+
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");
 process.exit(failures ? 1 : 0);
