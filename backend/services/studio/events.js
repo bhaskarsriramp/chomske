@@ -588,7 +588,7 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
      * that press needs the dwell it happens in.
      */
     const os = osShapeAt(located, nav.t);
-    const read = os && os.n >= SHAPE_LEAST && os.share >= SHAPE_SHARE;
+    const read = settledAt(os);
     if (read && !CLICKABLE_SHAPES.has(os.shape)) continue;
 
     /**
@@ -1708,6 +1708,35 @@ const SHAPE_SHARE = 0.6;
 const SHAPE_LEAST = 3;
 
 /**
+ * How much of the time around a press the pointer must have spent AT the spot.
+ *
+ * ── AGREEING ABOUT THE SHAPE IS NOT THE SAME AS HAVING STOPPED ──────────────
+ * `share` says the sightings near the reference point agreed about the cursor's
+ * shape. It says nothing about whether the pointer stayed there, and once the
+ * reference became a median of the window a pointer moving STEADILY through
+ * that window satisfied it easily: it passes through the middle, several
+ * sightings land near it, and they all agree it is a hand — because it is one.
+ *
+ * That is a drag, not a press, and it is exactly what riding a scrollbar down
+ * a page looks like: a hand, moving at a constant speed, for four seconds,
+ * while the camera pushed in and pulled out over and over. "the mouse is
+ * actually going there, it is transforming to hand gesture and zooming in and
+ * zooming out and till bottom it is zooming in and zooming out."
+ *
+ * So the test also asks how much of the window those sightings were: nearly
+ * all of them for a hand that stopped, a fraction of them for one on its way
+ * past. A press is made by a pointer that arrived and STAYED.
+ */
+const SHAPE_STILL = 0.6;
+
+/** Did the pointer stop here, with a shape it held? */
+function settledAt(os) {
+  if (!os || os.n < SHAPE_LEAST || os.share < SHAPE_SHARE) return false;
+  if (!(os.seen > 0)) return false;
+  return os.n / os.seen >= SHAPE_STILL;
+}
+
+/**
  * What the operating system was drawing where a press landed.
  *
  * @param {Array}  path  the located track — positions and real shapes, per frame
@@ -1836,7 +1865,7 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
     const scrolled = e.scrolled === true;
 
     const os = osShapeAt(located, num(e.t));
-    const settled = os && os.n >= SHAPE_LEAST && os.share >= SHAPE_SHARE;
+    const settled = settledAt(os);
     const hand = settled && CLICKABLE_SHAPES.has(os.shape);
     const arrow = settled && os.shape === "default";
     /**
@@ -1868,6 +1897,34 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
      * happened. When the only thing that followed was the page sliding, there
      * is no evidence of a press at all.
      */
+    /**
+     * ── THE CAMERA MOVES ON EVIDENCE, AND STAYS PUT ON THE ABSENCE OF IT ────
+     * This was a list of reasons to REFUSE, ending in "nothing was read here;
+     * allowed". That default is why this file kept growing: the camera moved
+     * for anything that looked vaguely like a press, and every new thing a
+     * creator did that happened to look like one — a page finishing loading, a
+     * scrollbar being dragged, a panel fetching its data — had to be found in
+     * an export and then written in here as another refusal. A blocklist can
+     * only ever be as long as the bugs already reported.
+     *
+     *   "we should not hard code what things need to be ignored for the zoom
+     *    in or camera rotation, we should only focus on at what interaction we
+     *    should move the camera ... if we follow that simple rule, any other
+     *    new interaction comes, it simply ignores it."
+     *
+     * So it is turned around. There are exactly two things that say a person
+     * pressed something, and both are positive:
+     *
+     *   the OS drew a hand (or a caret) and held it there   — the machine that
+     *     rendered the page saying this answers a click
+     *   the model named a control under the pointer         — for the sites
+     *     that draw a plain arrow on a real button
+     *
+     * Everything else is not a press. Not "a press we have decided to skip" —
+     * not a press. Scrolling, a page arriving in stages, a tap on empty space,
+     * a drag, and whatever nobody has thought of yet all land in the same
+     * place now, and they land there without anybody adding a rule for them.
+     */
     if (!had) { zoomable = false; why = "nothing came of it"; }
     else if (scrolled) { zoomable = false; why = "the page was scrolling"; }
     else if (hand) { zoomable = true; why = "the pointer was a " + (os.shape === "text" ? "text caret" : "hand") + " here"; }
@@ -1875,7 +1932,7 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
     else if (arrow) { zoomable = false; why = "a plain arrow here — nothing clickable under it"; }
     else if (on === false) { zoomable = false; why = "not on a control"; }
     else if (moving) { zoomable = false; why = "the pointer never stopped here"; }
-    else { zoomable = true; why = "no frame read here; allowed"; }
+    else { zoomable = false; why = "no hand and no control here — nothing says this was a press"; }
 
     onNote({ t: num(e.t), zoomable, why });
     return {

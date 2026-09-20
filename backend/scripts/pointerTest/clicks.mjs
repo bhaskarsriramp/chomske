@@ -103,10 +103,29 @@ console.log("\nA press only moves the camera when something clickable was under 
   check("an arrow on a button the model named", e.zoomable, true);
 }
 
-/* 6. Nothing located and nothing read: the oldest behaviour, unchanged. */
+/**
+ * 6. Nothing located and nothing read.
+ *
+ * ── THIS CHECK USED TO EXPECT THE OPPOSITE ──────────────────────────────────
+ * It asserted `true`: with no reading of any kind the press was allowed, which
+ * was the pipeline's oldest default, from when the shape of the cursor could
+ * not be recovered and there was nothing else to go on.
+ *
+ * That default is what made every previous bug in this file possible. A demo
+ * is full of things that look like a press from the pixels — a page arriving
+ * in stages, a scrollbar being dragged, a panel fetching its data — and each
+ * one moved the camera until somebody found it in an export and wrote another
+ * refusal here. The list could only ever be as long as the bugs already
+ * reported, which is why there was always one more.
+ *
+ * The camera now moves on positive evidence and stays put without it. No hand,
+ * no named control, no move. Deliberate, and the cost is stated plainly: if
+ * the locator cannot find the pointer in a recording, that recording gets no
+ * zooms rather than arbitrary ones.
+ */
 {
   const [e] = confirmClicks([press(4.6, 0.5, 0.3)], [], { located: [] });
-  check("no reading of any kind", e.zoomable, true);
+  check("no reading of any kind — the camera stays put", e.zoomable, false);
 }
 
 /* 7. A press with nothing following it is still nothing, hand or not. */
@@ -696,6 +715,64 @@ console.log("\nHowever many clicks, however fast, every one gets the camera\n");
   const t0 = Date.now();
   served(2000, 0.1, true);
   check("2000 clicks still plans in well under a second", Date.now() - t0 < 1000, true);
+}
+
+console.log("\nThe rule itself: a hand, at rest, and something came of it\n");
+
+/**
+ * ── THE WHOLE FORMULA, STATED ONCE ─────────────────────────────────
+ *   "whenever the mouse pointer changes to hand gesture and then a click
+ *    happens, there we should zoom in. Apart from this, at any point of
+ *    interaction, we should not zoom anywhere."
+ *
+ * Everything below the first check is the same press with one piece of that
+ * evidence taken away. None of them names the interaction it represents,
+ * because the point is that the camera does not need to recognise a scroll,
+ * or a page loading, or a drag, to leave them alone — it needs to not find a
+ * hand holding still over something that answered.
+ */
+{
+  // The one that moves the camera.
+  const held = rest(7.4, 9.2, 0.031, 0.182, "pointer");
+  check("a hand held still, and something came of it",
+    confirmClicks([press(8.32, 0.031, 0.182)], [], { located: held })[0].zoomable, true);
+
+  // The hand is there but it never stopped: dragging, not pressing. This is
+  // the scrollbar in video_demo_final1 — the pointer rides the bar down the
+  // page with a hand on it the whole way.
+  const riding = sweep(11.8, 15.6, { x: 0.99, y: 0.18 }, { x: 0.99, y: 0.88 }, "pointer");
+  const onBar = [12.4, 13.2, 14.1, 15.0].map((t) => {
+    const p = riding.find((q) => Math.abs(q.t - t) < 0.02) || { x: 0.99, y: 0.5 };
+    return confirmClicks([press(t, p.x, p.y)], [], { located: riding })[0].zoomable;
+  });
+  check("a hand riding the scrollbar never moves the camera",
+    onBar.every((z) => z === false), true);
+
+  // The hand held still, but nothing followed: a hover.
+  check("a hand held still, nothing came of it",
+    confirmClicks([press(8.32, 0.031, 0.182, { corroborated: false })], [], { located: held })[0].zoomable, false);
+
+  // Something came of it and the hand was still, but the page was sliding.
+  check("a hand held still while the page scrolled",
+    confirmClicks([press(8.32, 0.031, 0.182, { scrolled: true })], [], { located: held })[0].zoomable, false);
+
+  // Still hand, something came of it — but the OS drew a plain arrow, so
+  // whatever changed was not this pointer pressing anything. A panel
+  // finishing its fetch under a parked mouse looks exactly like this.
+  const parked = rest(7.4, 9.2, 0.42, 0.55, "default");
+  check("an arrow parked while the page finished loading",
+    confirmClicks([press(8.32, 0.42, 0.55)], [], { located: parked })[0].zoomable, false);
+
+  /**
+   * And the interaction nobody has thought of.
+   *
+   * No hand, no arrow, no model reading, no name for what it was — the case
+   * this file cannot enumerate, because it has not been invented yet. It is
+   * refused without any rule mentioning it, which is the whole point of
+   * asking for evidence instead of listing exceptions.
+   */
+  check("some interaction nothing in here has a name for",
+    confirmClicks([press(8.32, 0.5, 0.5)], [], { located: [] })[0].zoomable, false);
 }
 
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");
