@@ -522,7 +522,7 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
      * and the scroll had 40-46%. That is not a threshold anyone has to tune.
      */
     if (sustained(mot, m.t, m.energy)) continue;
-    if (!screenAgrees(screen, m.t)) continue;
+    if (!screenAgrees(screen, m.t, m)) continue;
     if (m.t - lastNav < RULES.navGap) {
       lastNav = m.t;
       continue;
@@ -879,11 +879,38 @@ function grewAfter(screen, mot, at, t) {
   const to = t + CONSEQUENCE;
   const series = screen && screen.motion && screen.motion.length ? screen.motion : null;
 
+  /**
+   * ── THE SAME EVIDENCE, WHICHEVER WAY THE MOMENT WAS MEASURED ──────────────
+   * "A big enough change is its own consequence" used to live only in the
+   * branch below, the one that runs when the video could NOT be read. So on
+   * every ordinary recording — where sync.js reads it fine — the only evidence
+   * available was `cover`: one scalar, the share of the whole frame that
+   * changed.
+   *
+   * That is the wrong instrument for half the presses in a product demo. A
+   * page replacing a page covers the frame. A settings dialog swapping its
+   * pane covers a fifth of it, and a dialog is where people keep the settings
+   * worth demonstrating. One threshold cannot serve both, so tuning it for one
+   * took the other away — which is exactly what the creator kept seeing:
+   *
+   *   "whenever I click on projects or any other tab the zoom is working ...
+   *    but in the same screen recording when I click on the billing or usage
+   *    the zoom is not happening ... if one thing is working the other thing
+   *    is not working."
+   *
+   * The tracker's own bounding box does not have that problem: it says how big
+   * the thing that changed WAS, not what share of the screen it happened to
+   * occupy, and it is there in both cases. So the test is asked first, of the
+   * same evidence, whichever branch is about to run.
+   */
+  if (num(at.energy) >= CONSEQUENCE_ALONE) return true;
+  if (num(at.w) * num(at.h) >= CONSEQUENCE_AREA) return true;
+
   if (series) {
     const here = nearest(series, at.t);
     const base = Math.max(0.01, here ? here.cover : 0.01);
-    // ── A BIG ENOUGH CHANGE IS ITS OWN CONSEQUENCE ─────────────────────────
-    // See the note below; the same rule, measured from the video's series.
+    // The video's own reading, which has the animations discounted, can still
+    // clear the bar on its own where the tracker's box did not.
     if (here && here.cover >= CONSEQUENCE_ALONE) return true;
     for (const m of series) {
       if (m.t < from || m.t > to) continue;
@@ -894,7 +921,6 @@ function grewAfter(screen, mot, at, t) {
   }
 
   /**
-   * ── A BIG ENOUGH CHANGE IS ITS OWN CONSEQUENCE ────────────────────────────
    * The rule below looks for something bigger AFTER the press than the press
    * itself made, because the shape it was written for is a button darkening
    * and then a panel opening. Half the interfaces people demo do not work that
@@ -908,13 +934,9 @@ function grewAfter(screen, mot, at, t) {
    * phantom press minted when the page finally finished drawing — four and a
    * half seconds late. That is the "zoom-in delay" a creator sees.
    *
-   * A hover cannot do this. The most a hover changes is its own row, which is
-   * a percent or two of a screen. A fifth of one is a consequence, whenever it
-   * is measured relative to.
+   * That case is now answered above, for both branches. What is left here is
+   * the original relative test, for a press whose own frame was small.
    */
-  if (num(at.energy) >= CONSEQUENCE_ALONE) return true;
-  if (num(at.w) * num(at.h) >= CONSEQUENCE_AREA) return true;
-
   const base = Math.max(RULES.noiseEnergy, at.energy);
   for (const m of mot) {
     if (m.t < from || m.t > to) continue;
@@ -932,7 +954,7 @@ function nearest(series, t) {
   return best;
 }
 
-function screenAgrees(screen, t) {
+function screenAgrees(screen, t, box = null) {
   const series = screen && screen.motion;
   if (!series || !series.length) return true;
   /**
@@ -958,7 +980,18 @@ function screenAgrees(screen, t) {
     most = Math.max(most, num(m.cover, 0));
   }
   if (!seen) return true;
-  return most >= RULES.navCover;
+  if (most >= RULES.navCover) return true;
+  /**
+   * ── AND A SMALL SURFACE COVERS A SMALL SHARE OF THE SCREEN ────────────────
+   * `cover` is the share of the WHOLE FRAME the video saw change, so it asks a
+   * page-sized question. A dialog that navigates its own pane can only ever
+   * answer it with a small number, however completely it changed — and being
+   * vetoed here is the same "one thing works, the other stops" the consequence
+   * test above had. Scaled against what actually changed rather than against
+   * the frame, a pane swap clears the same bar a page swap does.
+   */
+  const area = num(box && box.w) * num(box && box.h);
+  return area > 0 && most >= RULES.navCover * area;
 }
 
 /**
@@ -2120,22 +2153,93 @@ export function anticipateClicks(zooms, events, { duration = 0, settle = SETTLE,
  */
 export function restToFull(zooms, { rest = 0.35 } = {}) {
   const out = [];
+  /**
+   * The last moment each kept zoom still has to be on screen for.
+   *
+   * A zoom ends a hold after the press it was built for, so the press itself
+   * is at `end - HOLD` — and once a zoom has absorbed a later press as well
+   * (below), it has to stay up for that one too. Without this the shortening
+   * branch below would trim a zoom back past the very press it had just taken
+   * responsibility for, and that press would be on screen with the camera
+   * somewhere else entirely. It is the same "one press, silently unserved"
+   * this function exists to stop, one step further along.
+   */
+  const mustHold = new Map();
+  const keep = (z) => {
+    const copy = { ...z };
+    out.push(copy);
+    mustHold.set(copy, num(z.end) - HOLD);
+    return copy;
+  };
+
   for (const z of [...zooms].sort((a, b) => a.start - b.start)) {
     const prev = out[out.length - 1];
     if (!prev) {
-      out.push(z);
+      keep(z);
       continue;
     }
-    const prevOut = prev.end + (Number(prev.ramp_out) || RAMP_OUT);
+    const tail = Number(prev.ramp_out) || RAMP_OUT;
     const thisIn = z.start - rampIn(z);
-    if (thisIn >= prevOut + rest) {
-      out.push(z);
+    if (thisIn >= prev.end + tail + rest) {
+      keep(z);
       continue;
     }
-    // Too close to let go between them. Keep the stronger one; when they are
-    // the same strength keep the earlier, because the first of two rapid
-    // clicks is the one the viewer has not seen yet.
-    if (z.level > prev.level + 0.15) out[out.length - 1] = z;
+
+    /**
+     * ── TOO CLOSE TOGETHER IS NOT A REASON TO IGNORE A PRESS ────────────────
+     * This used to keep the stronger of the two and throw the other away. That
+     * is a rule about the camera making a press disappear, and which press
+     * disappears depends on how fast the creator happened to be clicking —
+     * measured on the current code, clicking round a screen at one and a half
+     * seconds a click lost EVERY SECOND ZOOM, and at one second a click lost
+     * two out of three. Nothing about those presses was wrong. They were
+     * simply too close to the one before.
+     *
+     *   "we can't estimate or imagine how many clicks a user can actually
+     *    click on the screen recording, right?"
+     *
+     * No, and we do not have to. There are two ways to make room without
+     * refusing anybody, and only the second costs anything:
+     *
+     *   1. the earlier zoom holds for less time, so the camera still gets back
+     *      to the full frame before the next move begins
+     *   2. failing that, the two become ONE move wide enough to hold both
+     *      presses — which is what zoomsFromClicks does for clicks close
+     *      together anyway, and is the honest answer when there is genuinely
+     *      no time for two separate moves
+     *
+     * Dropping one is not on the list.
+     */
+    const latestEnd = thisIn - rest - tail;
+    const floor = Math.max(prev.start + MIN_HOLD, mustHold.get(prev) ?? 0);
+    if (latestEnd >= floor) {
+      prev.end = round3(latestEnd);
+      keep(z);
+      continue;
+    }
+
+    /**
+     * ── NO ROOM FOR TWO MOVES, SO ONE MOVE THAT TRAVELS ────────────────────
+     * A push-in, a hold and a pull-out is about one and a third seconds, and
+     * the camera needs a beat at the full frame after it. Below roughly two
+     * seconds a click there is genuinely no time for two separate moves, and
+     * no rule anywhere can invent it.
+     *
+     * Widening one shot to hold both presses is the obvious way out and it is
+     * a trap: two presses in opposite corners need almost the whole frame to
+     * contain them, so the "zoom" comes out at 1.0x and neither press is shown
+     * at all. That is losing them both while appearing to keep them.
+     *
+     * So the camera stays in and travels instead — which is what a person
+     * editing this by hand would do, and what the follow mode already exists
+     * for. Both presses are seen close up, and the move between them is a
+     * move rather than a pull-out and a fresh push-in nobody had time for.
+     */
+    prev.end = round3(Math.max(prev.end, z.end));
+    prev.follow = true;
+    if (!Number.isFinite(Number(prev.follow_strength))) prev.follow_strength = 0.7;
+    // It now answers for this press too, and may not be trimmed back past it.
+    mustHold.set(prev, Math.max(mustHold.get(prev) ?? 0, num(z.end) - HOLD));
   }
   return out;
 }
@@ -2205,4 +2309,68 @@ export function partCuts(cuts, zooms, { min = 0.5 } = {}) {
     if (!gone && e - s >= min) out.push({ ...c, start: round3(s), end: round3(e) });
   }
   return out;
+}
+
+/** The most of a recording that may be under a zoom. */
+const MAX_ZOOMED = 0.6;
+
+/**
+ * The least time a zoom can hold and still read as the camera choosing something.
+ *
+ * Below about a third of a second the push-in and the pull-out meet in the
+ * middle and it reads as a twitch rather than a move.
+ */
+const MIN_HOLD = 0.3;
+
+/**
+ * Zooms, shortened until the demo is not mostly zoomed.
+ *
+ * A zoom is emphasis, and emphasis on everything is emphasis on nothing. Past
+ * about sixty per cent the video stops reading as "this bit matters" and starts
+ * reading as "this recording is cropped wrong" — which is precisely how a real
+ * export looked when the planner returned two zooms that covered all of it.
+ *
+ * ── IT SHORTENS THEM; IT NO LONGER DELETES THEM ─────────────────────────────
+ * This used to drop whole zooms, weakest first, until the total fitted. That
+ * makes the zooms compete: a press keeps its camera or loses it depending on
+ * how many OTHER presses the creator made, which is a rule nobody can predict
+ * and nobody asked for. It is also the exact shape of the complaint that took
+ * five recordings to pin down — one set of clicks working only while another
+ * set did not, with nothing wrong with either click.
+ *
+ * The creator's rule leaves no room for it:
+ *
+ *   "whenever a user clicks at some point then we should zoom in there. That
+ *    is the simple thing."
+ *
+ * A press that earned a zoom keeps it. If the demo is too zoomed, every zoom
+ * gives up some of its hold instead, in proportion, down to the shortest move
+ * that still reads as one. A slightly brisker demo is a judgement call; a
+ * missing zoom is a bug report.
+ */
+export function capZoomed(zooms, duration) {
+  if (!(duration > 0) || zooms.length < 2) return zooms;
+  const tail = (z) => Number(z.ramp_out) || 0.2;
+  const span = (z) => z.end - z.start + tail(z);
+  const total = zooms.reduce((a, z) => a + span(z), 0);
+  const cap = duration * MAX_ZOOMED;
+  if (total <= cap) return zooms;
+
+  // What every zoom has to give up, shared out by how long each one is.
+  const floor = zooms.reduce((a, z) => a + MIN_HOLD + tail(z), 0);
+  if (cap <= floor) return zooms.map((z) => ({ ...z, end: round3(z.start + MIN_HOLD) }));
+
+  const spare = total - floor;
+  const keep = (cap - floor) / spare;
+  return zooms.map((z) => {
+    /**
+     * A following zoom is already the compressed case: restToFull made it when
+     * there was no room for separate moves, and it is holding the camera over
+     * several presses at once. Trimming its end would strand every press after
+     * the new one — so it is left alone, and the others give up the time.
+     */
+    if (z.follow) return { ...z };
+    const held = Math.max(0, z.end - z.start - MIN_HOLD);
+    return { ...z, end: round3(z.start + MIN_HOLD + held * keep) };
+  });
 }

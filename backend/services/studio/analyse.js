@@ -45,7 +45,7 @@ import { extractFrames } from "../media/ffmpeg.js";
 import {
   newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts } from "./events.js";
+import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed } from "./events.js";
 import { alignCapture } from "./sync.js";
 import { locatePointer, mergeLocated, stepPath, snapToLocated } from "./locate.js";
 import { intentPath } from "./intent.js";
@@ -649,35 +649,6 @@ function thin(track, { step = 1 / 15, move = 0.004 } = {}) {
 
 /** Seconds the camera must sit at the full frame between two zooms. */
 const REST = 0.35;
-/** The most of a recording that may be under a zoom. */
-const MAX_ZOOMED = 0.6;
-
-/**
- * Zooms, trimmed until the demo is not mostly zoomed.
- *
- * A zoom is emphasis, and emphasis on everything is emphasis on nothing. Past
- * about sixty per cent the video stops reading as "this bit matters" and starts
- * reading as "this recording is cropped wrong" — which is precisely how a real
- * export looked when the planner returned two zooms that covered all of it.
- *
- * The weakest are dropped first: a 1.3× zoom contributes almost nothing and
- * costs the same screen time as a 2.5× one that actually shows something.
- */
-function capZoomed(zooms, duration) {
-  if (!(duration > 0) || zooms.length < 2) return zooms;
-  const span = (z) => z.end - z.start + (Number(z.ramp_out) || 0.2);
-  let kept = [...zooms];
-  let total = kept.reduce((a, z) => a + span(z), 0);
-  if (total <= duration * MAX_ZOOMED) return kept;
-
-  const order = [...kept].sort((a, b) => a.level - b.level || span(b) - span(a));
-  for (const weakest of order) {
-    if (total <= duration * MAX_ZOOMED || kept.length <= 1) break;
-    kept = kept.filter((z) => z !== weakest);
-    total -= span(weakest);
-  }
-  return kept.sort((a, b) => a.start - b.start);
-}
 
 /**
  * Two lists of proposed cuts, as one list with no overlaps.

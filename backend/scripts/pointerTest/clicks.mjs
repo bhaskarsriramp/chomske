@@ -18,7 +18,7 @@
  *
  * Needs no fixtures, no network and no Gemini.
  */
-import { confirmClicks, inferEvents } from "../../services/studio/events.js";
+import { confirmClicks, inferEvents, capZoomed, zoomsFromClicks, restToFull } from "../../services/studio/events.js";
 import { snapToLocated } from "../../services/studio/locate.js";
 
 const FPS = 30;
@@ -552,6 +552,150 @@ const atPress = (p) => Math.abs(p.t - 4.438) < 0.02;
     found.length > 0 && confirmClicks(found, [], { located: path })[0].zoomable, true);
   const off = found.length ? Math.hypot(found[0].x - 0.05, found[0].y - 0.055) : 9;
   check("...aimed at the rail item, not the bad frame", off < 0.05, true);
+}
+
+console.log("\nEvery click in ONE recording, whatever surface it lands on\n");
+
+/**
+ * ── THE ONE FROM video_demo_116, AND THE POINT OF ALL OF THEM ───────────────
+ *   "whenever I click on projects or any other tab the zoom is working ... but
+ *    in the same screen recording when I click on the billing or usage the
+ *    zoom is not happening ... if one thing is working the other thing is not
+ *    working, so it should not be the case."
+ *
+ * Every earlier case here is one press in isolation, and that is what let the
+ * see-saw hide: each fix was checked against the press it was for, and the
+ * press it quietly took away sat in a different test — or in none.
+ *
+ * So this one is a whole recording. A rail item in the app, whose press
+ * replaces the page; a rail item inside a settings dialog, whose press
+ * replaces one pane of it. The numbers are measured off 116, INCLUDING the
+ * video's own `cover` reading, because that reading is the thing the two
+ * presses disagree about: the page swap covers a quarter of the frame, the
+ * pane swap a twenty-fifth, and for a long time that scalar was the only
+ * evidence the pipeline consulted.
+ *
+ * Both are presses. Both get the camera. If either of these ever fails again,
+ * so has the rule.
+ */
+{
+  const FR = 1 / 24;
+  const r3 = (t) => Math.round(t * 1000) / 1000;
+
+  // The hand: parked on the app rail, then parked on the dialog rail.
+  const samples = [
+    ...rest(3.0, 5.5, 0.05, 0.055, "pointer"),
+    ...sweep(12.2, 12.7, { x: 0.05, y: 0.055 }, { x: 0.23, y: 0.23 }, "default"),
+    ...rest(12.8, 15.5, 0.23, 0.23, "pointer"),
+  ];
+
+  // Two presses, two very different surfaces.
+  const page = { t: 4.6, energy: 0.0982, x: 0.030, y: 0.042, w: 0.969, h: 0.917, cover: 0.25 };
+  const pane = { t: 13.67, energy: 0.0370, x: 0.305, y: 0.120, w: 0.510, h: 0.780, cover: 0.04 };
+
+  const motion = [];
+  const cover = [];
+  for (let t = 3.0; t < 16.0; t += FR) {
+    const now = r3(t);
+    const m = { t: now, energy: 0.0002, x: 0.5, y: 0.5, w: 0.02, h: 0.02, dy: 0 };
+    let c = 0.001;
+    for (const s of [page, pane]) {
+      if (Math.abs(now - s.t) < FR) {
+        m.energy = s.energy; m.x = s.x; m.y = s.y; m.w = s.w; m.h = s.h;
+        c = s.cover;
+      }
+    }
+    motion.push(m);
+    cover.push({ t: now, cover: c });
+  }
+
+  const found = confirmClicks(
+    inferEvents({ samples, motion, duration: 17, screen: { motion: cover }, located: samples })
+      .filter((e) => e.type === "click" || e.type === "dblclick"),
+    [], { located: samples }
+  ).filter((e) => e.zoomable !== false);
+
+  const near = (e, x, y) => Math.hypot(e.x - x, e.y - y) < 0.06;
+  check("the app rail — the page is replaced", found.some((e) => near(e, 0.05, 0.055)), true);
+  check("the dialog rail — one pane is replaced", found.some((e) => near(e, 0.23, 0.23)), true);
+  check("...and both in the same recording", found.length >= 2, true);
+}
+
+console.log("\nAnd nothing downstream quietly takes a zoom away again\n");
+
+/**
+ * ── A ZOOM IS NOT A SCARCE RESOURCE ──────────────────────────────
+ * capZoomed keeps a demo from being mostly zoomed. It used to do that by
+ * DROPPING whole zooms, weakest first — which makes presses compete, so a
+ * press kept its camera or lost it depending on how many OTHER presses the
+ * creator happened to make. Nothing in events.js can fix a see-saw of that
+ * shape, and it is the same complaint by another route.
+ *
+ * It shortens them now. Whatever the pressure, the count comes back whole.
+ */
+{
+  const mk = (n, hold) => Array.from({ length: n }, (_, i) => ({
+    id: "z" + i, start: i * 2, end: i * 2 + hold, ramp_out: 0.42, level: 2,
+  }));
+  const shortest = (zs) => Math.min(...zs.map((z) => z.end - z.start));
+
+  check("a calm demo is left alone", capZoomed(mk(4, 0.9), 25).length, 4);
+  check("a busy one keeps every zoom", capZoomed(mk(12, 0.9), 25).length, 12);
+  check("a very busy one still keeps every zoom", capZoomed(mk(20, 0.9), 20).length, 20);
+  check("...and none is shortened into a twitch", shortest(capZoomed(mk(20, 0.9), 20)) >= 0.29, true);
+}
+
+console.log("\nHowever many clicks, however fast, every one gets the camera\n");
+
+/**
+ * ── THERE IS NO CLICK BUDGET ────────────────────────────────────
+ *   "we can't estimate or imagine how many clicks a user can actually click
+ *    on the screen recording, right?"
+ *
+ * No. So the count must not matter, and neither must the rate. A press that
+ * earned a zoom keeps it whether it is the third of three or the four
+ * hundredth of five hundred.
+ *
+ * The rate is the harder half. A push-in, a hold and a pull-out plus the beat
+ * at the full frame afterwards is about two seconds; below that there is no
+ * room for two separate moves, and restToFull used to resolve that by keeping
+ * one press and discarding the other. Clicking round a screen at a second and
+ * a half — an ordinary demo pace — lost every second zoom.
+ */
+{
+  const clicks = (n, gap, apart) => Array.from({ length: n }, (_, i) => ({
+    id: "e" + i, type: "click", t: 1 + i * gap,
+    x: apart ? (i % 2 ? 0.12 : 0.88) : 0.5,
+    y: apart ? (i % 2 ? 0.15 : 0.85) : 0.5,
+    confidence: 0.9, corroborated: true, zoomable: true,
+  }));
+
+  // Is each press inside a shot that is on screen when it happens?
+  const served = (n, gap, apart) => {
+    const cs = clicks(n, gap, apart);
+    const duration = 1 + n * gap + 2;
+    const zs = capZoomed(restToFull(zoomsFromClicks(cs, { duration }), { rest: 0.35 }), duration);
+    let ok = 0;
+    for (const c of cs) {
+      const z = zs.find((v) => c.t >= v.start - 0.6 && c.t <= v.end + 0.5);
+      if (!z) continue;
+      // A following shot travels with the pointer, so it is on whatever it spans.
+      if (z.follow) { ok++; continue; }
+      if (c.x >= z.x - 0.02 && c.x <= z.x + z.w + 0.02 &&
+          c.y >= z.y - 0.02 && c.y <= z.y + z.h + 0.02) ok++;
+    }
+    return ok;
+  };
+
+  for (const [n, gap] of [[15, 3], [20, 1.5], [30, 1.0], [100, 0.4], [500, 0.15]]) {
+    check(n + " clicks, one every " + gap + "s, in one place", served(n, gap, false), n);
+    check("...and the same at opposite corners", served(n, gap, true), n);
+  }
+
+  // And it stays arithmetic: no quadratic blow-up on a long recording.
+  const t0 = Date.now();
+  served(2000, 0.1, true);
+  check("2000 clicks still plans in well under a second", Date.now() - t0 < 1000, true);
 }
 
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");
