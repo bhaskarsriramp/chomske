@@ -775,5 +775,53 @@ console.log("\nThe rule itself: a hand, at rest, and something came of it\n");
     confirmClicks([press(8.32, 0.5, 0.5)], [], { located: [] })[0].zoomable, false);
 }
 
+console.log("\nA press made the moment the hand arrives is still a press\n");
+
+/**
+ * ── THE ONE FROM video_demo_117 ───────────────────────────────────
+ * One click in the whole recording got no camera: "My Startup", pressed just
+ * after a two-second scroll. Everything else, scrolling included, was right.
+ *
+ * The stillness test added for the scrollbar asked what share of a SYMMETRIC
+ * window either side of the press the pointer spent at the spot. But a press
+ * happens at the START of a rest: you scroll, you move to the item, you press
+ * it. Half that window is the hand on its way there, and what it was doing
+ * before it arrived is not evidence about the press.
+ *
+ * Measured on the old code, on identical behaviour: arriving 0.72s before the
+ * window closed passed, 0.66s failed. A cliff, and ordinary demo timing sits
+ * right on it.
+ */
+{
+  // Parked over the content while the wheel scrolls, then over to the rail.
+  const arriving = (arrive) => {
+    const out = [];
+    for (let t = 20.6; t <= 23.0; t += 1 / FPS) {
+      let x, y;
+      if (t < arrive - 0.15) { x = 0.60; y = 0.55; }
+      else if (t < arrive) { const k = (t - (arrive - 0.15)) / 0.15; x = 0.60 + (0.06 - 0.60) * k; y = 0.55 + (0.45 - 0.55) * k; }
+      else { x = 0.06; y = 0.45; }
+      out.push({ t: Math.round(t * 1000) / 1000, x, y, shape: "pointer", located: true });
+    }
+    return out;
+  };
+  const p = press(21.713, 0.06, 0.45);
+  const moves = (a) => confirmClicks([p], [], { located: arriving(a) })[0].zoomable;
+
+  check("pressed a moment after the hand lands", moves(21.65), true);
+  check("...and however long it waited first",
+    [21.0, 21.2, 21.35, 21.45, 21.55, 21.6].every(moves), true);
+
+  /**
+   * And the thing that stillness test was put there for, which must stay
+   * refused: a hand riding the scrollbar never stops anywhere, so it never
+   * builds a span at any one spot.
+   */
+  const riding = sweep(11.8, 15.6, { x: 0.99, y: 0.18 }, { x: 0.99, y: 0.88 }, "pointer");
+  check("a hand riding the scrollbar is still refused",
+    [12.4, 13.2, 14.1, 15.0].every((t) =>
+      confirmClicks([press(t, 0.99, 0.18 + 0.70 * (t - 11.8) / 3.8)], [], { located: riding })[0].zoomable === false), true);
+}
+
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");
 process.exit(failures ? 1 : 0);

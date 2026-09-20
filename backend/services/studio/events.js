@@ -1727,13 +1727,26 @@ const SHAPE_LEAST = 3;
  * all of them for a hand that stopped, a fraction of them for one on its way
  * past. A press is made by a pointer that arrived and STAYED.
  */
-const SHAPE_STILL = 0.6;
+const SHAPE_HELD = 0.45;
 
-/** Did the pointer stop here, with a shape it held? */
+/**
+ * How far either side of the press the run is read.
+ *
+ * Forwards, mostly: the hand stays put after a press and arrives shortly
+ * before one, so the stillness that proves it is on the far side. Riding a
+ * scrollbar at an ordinary speed keeps the pointer inside a 0.05-wide band for
+ * about a quarter of a second, so there is a wide gap between that and any
+ * press worth the name.
+ */
+const HELD_BACK = 0.3;
+const HELD_FORWARD = 1.0;
+/** How much of that span really has to have been spent at the spot. */
+const HELD_DENSITY = 0.5;
+
+/** Did the pointer stop here and stay, with a shape it held? */
 function settledAt(os) {
   if (!os || os.n < SHAPE_LEAST || os.share < SHAPE_SHARE) return false;
-  if (!(os.seen > 0)) return false;
-  return os.n / os.seen >= SHAPE_STILL;
+  return num(os.held) >= SHAPE_HELD;
 }
 
 /**
@@ -1807,7 +1820,55 @@ export function osShapeAt(path, t, { reach = SHAPE_REACH, window = SHAPE_WINDOW,
   let shape = "default";
   let n = 0;
   for (const [s, c] of tally) if (c > n) { n = c; shape = s; }
-  return { shape, share: n / here.length, n: here.length, seen };
+
+  /**
+   * ── HOW LONG IT STAYED, READ FORWARDS FROM THE PRESS ──────────────────────
+   * The share of the window spent at this spot cannot answer "did it stop",
+   * because a press happens at the START of a rest and not in the middle of
+   * one. You scroll, you move to the menu item, you press it — so the half of
+   * the window before the press is the hand on its way there, and a test that
+   * wants most of a symmetric window to be still refuses a perfectly ordinary
+   * click for having only just arrived. Measured: a press 0.72s before the end
+   * of the window passed and one 0.66s before it failed, on identical
+   * behaviour either side. That cliff is what lost "My Startup".
+   *
+   * What the pointer did before it arrived is not evidence about the press. It
+   * was on its way. What matters is that it was here AND STAYED — so this is
+   * the unbroken run at this spot containing the press, read mostly forwards,
+   * and a couple of stray frames do not break it.
+   */
+  let from = null;
+  let to = null;
+  let atSpot = 0;
+  let total = 0;
+  for (const p of path) {
+    const dt = num(p.t) - t;
+    if (dt < -HELD_BACK || dt > HELD_FORWARD) continue;
+    total++;
+    if (Math.hypot(num(p.x, 0.5) - x, num(p.y, 0.5) - y) > near) continue;
+    atSpot++;
+    if (from === null) from = num(p.t);
+    to = num(p.t);
+  }
+  /**
+   * ── LOSING SIGHT OF IT IS NOT THE SAME AS IT LEAVING ──────────────────────
+   * A run counted frame by frame would be cut in half by the locator dropping
+   * the pointer for a moment, and it drops it exactly when a page repaints —
+   * which is exactly when a press happens. So the span is measured from the
+   * first sighting at this spot to the last, and the gaps in between are
+   * allowed as long as most of the span really was spent here.
+   *
+   * That is what separates a dropout from a departure. A hand the locator lost
+   * for a third of a second is at the same spot on both sides of the gap; a
+   * pointer riding a scrollbar never comes back to where it was, so its span
+   * is only as long as the moment it spent crossing this one band.
+   */
+  let held = 0;
+  if (from !== null && from <= t + 1e-9 && to >= t - 1e-9 && total > 0) {
+    if (atSpot / total >= HELD_DENSITY) held = to - from;
+  }
+
+  return { shape, share: n / here.length, n: here.length, seen, held: round3(held) };
 }
 
 /**
