@@ -40,6 +40,12 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const frac = (v, d = 0) => clamp(num(v, d), 0, 1);
 const round3 = (v) => Math.round(v * 1000) / 1000;
 const round4 = (v) => Math.round(v * 10000) / 10000;
+/** The middle value. Used wherever one bad frame must not carry the answer. */
+const median = (vs) => {
+  const s = [...vs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
 
 /**
  * The thresholds, in one place, because every one of them is a judgement that
@@ -1685,17 +1691,41 @@ export function osShapeAt(path, t, { reach = SHAPE_REACH, window = SHAPE_WINDOW,
    * the press's own coordinates come from a frame difference and can be a few
    * pixels out, or — for a pointer that was parked before the recording began
    * — an outright guess. The track is a measurement.
+   *
+   * ── AND TAKEN FROM ALL OF THE TRACK, NOT ONE FRAME OF IT ──────────────────
+   * This used to be the single sighting nearest the press in time, and every
+   * other sighting was then measured against that one frame. So one bad frame
+   * — and the locator's worst frames are the ones during a repaint, which is
+   * exactly when a press happens — moved the reference somewhere the pointer
+   * never was, and every good sighting at the real position fell outside
+   * `near` of it.
+   *
+   * The reading did not degrade, it inverted. A pointer that had sat perfectly
+   * still for nearly two seconds came back as "seen 36 times, settled 1" —
+   * which confirmClicks() reads as its strongest evidence AGAINST a press,
+   * "the pointer never stopped here", and the zoom was withheld. Measured on a
+   * real recording: pressing "Projects" in the left rail, with the hand
+   * visibly motionless on it and the OS drawing a hand the whole time, got no
+   * camera move at all.
+   *
+   * A median cannot be moved by a minority of bad frames, however wrong they
+   * are, and a pointer that genuinely travelled still has no position that
+   * most of its sightings agree on — so a real sweep still reads as one.
    */
-  let at = null;
+  let anyNear = false;
+  const xs = [];
+  const ys = [];
   for (const p of path) {
-    const d = Math.abs(num(p.t) - t);
-    if (d > reach) continue;
-    if (!at || d < at.d) at = { d, p };
+    if (Math.abs(num(p.t) - t) <= reach) anyNear = true;
+    const dt = num(p.t) - t;
+    if (dt < -window || dt > window) continue;
+    xs.push(num(p.x, 0.5));
+    ys.push(num(p.y, 0.5));
   }
-  if (!at) return null;
+  if (!anyNear || !xs.length) return null;
 
-  const x = num(at.p.x, 0.5);
-  const y = num(at.p.y, 0.5);
+  const x = median(xs);
+  const y = median(ys);
   const here = [];
   // How many times the pointer was seen AT ALL through this moment, wherever
   // it was. The difference between "we were not watching" and "we were

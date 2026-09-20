@@ -481,5 +481,78 @@ function pressThenCreep(from, to, a, b) {
   check("...a sighting in the far corner does not move it", wild[0].x, 0.22);
 }
 
+console.log("\nOne bad frame from the locator does not unmake a still hand\n");
+
+/**
+ * ── THE ONE FROM video_demo_115 ─────────────────────────────────────────────
+ *   "0:04-0:06 i have clicked on 'Projects' button or Tab why Zoomed in not
+ *    worked? (camera not moved closed to this button or area)"
+ *
+ * The hand is visibly parked on the rail item, the OS is drawing a hand, the
+ * page navigates — and no ripple, no zoom.
+ *
+ * osShapeAt() took its reference position from the ONE sighting nearest the
+ * press in time, then measured every other sighting against that frame. The
+ * locator's worst frames are the ones during a repaint, which is precisely
+ * when a press lands. So a single bad frame moved the reference somewhere the
+ * pointer never was, every good sighting fell outside `near` of it, and a
+ * pointer that had been still for nearly two seconds came back as "seen 36
+ * times, settled once" — which confirmClicks reads as its strongest evidence
+ * AGAINST a press: "the pointer never stopped here".
+ */
+
+/** A hand parked at one spot, with some of the locator's frames spoiled. */
+function parkedWith(spoil) {
+  const out = rest(3.6, 5.4, 0.05, 0.055, "pointer");
+  return out.map((p, i) => (spoil(p, i) ? { ...p, x: 0.62, y: 0.48 } : p));
+}
+const atPress = (p) => Math.abs(p.t - 4.438) < 0.02;
+
+/* 20. The exact failure: one spoiled frame, at the worst possible moment. */
+{
+  const located = parkedWith(atPress);
+  const [e] = confirmClicks([press(4.438, 0.05, 0.055)], [], { located });
+  check("a still hand, one bad frame at the press", e.zoomable, true);
+}
+
+/* 21. A burst of them, still a minority. */
+{
+  const located = parkedWith((p) => p.t > 4.30 && p.t < 4.70);
+  const [e] = confirmClicks([press(4.438, 0.05, 0.055)], [], { located });
+  check("a still hand, a burst of bad frames through the repaint", e.zoomable, true);
+}
+
+/* 22. And the reading this must not start inventing: a pointer that travelled. */
+{
+  const located = sweep(4.0, 5.0, { x: 0.15, y: 0.10 }, { x: 0.80, y: 0.70 }, "pointer");
+  const [e] = confirmClicks([press(4.5, 0.47, 0.40)], [], { located });
+  check("a hand sweeping across the screen is still not a press", e.zoomable, false);
+}
+
+/**
+ * 23. The whole press, end to end, from the numbers measured off 115.
+ *
+ * The rail item pressed, the page replacing itself, the hand never moving.
+ * Unlike 20 above, this one passes on the old code too — where the bad frame
+ * falls relative to the press decides whether the reading is poisoned, and
+ * here it falls outside. It is kept as the end-to-end check that the press is
+ * found, graded and aimed at the thing that was pressed; 20 is the sharp test
+ * for the reading itself.
+ */
+{
+  const path = rest(3.6, 6.0, 0.05, 0.055, "pointer").map((p) =>
+    Math.abs(p.t - 4.45) < 0.02 ? { ...p, x: 0.62, y: 0.48 } : p);
+  // The window spans one sample of the 24Hz grid this helper builds on.
+  const motion = run(3.6, 6.0, 4.59, 4.61,
+    { energy: 0.0982, x: 0.030, y: 0.042, w: 0.969, h: 0.917 });
+  const found = inferEvents({ samples: path, motion, duration: 7, located: path })
+    .filter((e) => e.type === "click");
+  check("'Projects' pressed, the page navigates", found.length > 0, true);
+  check("...and the camera moves to it",
+    found.length > 0 && confirmClicks(found, [], { located: path })[0].zoomable, true);
+  const off = found.length ? Math.hypot(found[0].x - 0.05, found[0].y - 0.055) : 9;
+  check("...aimed at the rail item, not the bad frame", off < 0.05, true);
+}
+
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");
 process.exit(failures ? 1 : 0);
