@@ -118,6 +118,10 @@ const AnalysisSchema = new Schema(
     usd: { type: Number, default: 0 },
     calls: { type: Number, default: 0 },
     charged: { type: Number, default: 0 },
+    // And the same for the on-demand reading of the screens, which is a
+    // separate purchase made later, from a different button. Kept apart so a
+    // failed reading refunds the reading and not the analysis.
+    read_charged: { type: Number, default: 0 },
     verdict: { type: String, default: "" },
     suggestions: { type: Schema.Types.Mixed, default: [] },
     // Applied or dismissed suggestion ids, so an editor reopened tomorrow does

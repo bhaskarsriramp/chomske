@@ -13,6 +13,7 @@
  *   POST   /studio/demos/:id/upload/complete      { capture } the recording has landed
  *
  *   POST   /studio/demos/:id/analyse              { expected_cost, captions }
+ *   POST   /studio/demos/:id/vision               read the screens: blur, steps, narration
  *   POST   /studio/demos/:id/captions             transcribe, on its own
  *   POST   /studio/demos/:id/captions/from-script captions from the narration
  *   POST   /studio/demos/:id/review               fresh suggestions for this edit
@@ -389,6 +390,50 @@ router.post("/demos/:id/analyse", wrap(async (req, res) => {
 
   await enqueue({ demo: demo._id, user: req.user.id, type: "analyse", ref: wantCaptions ? "captions" : "" });
   publishProgress(demo, { status: "analysing", stage: "Queued", progress: 0.01 });
+
+  await respond(req, res, demo, { charged, balance: await getBalance(req.user.id) });
+}));
+
+/**
+ * Read the screens: blur, steps, narration.
+ *
+ * ── WHY THIS IS ITS OWN BUTTON ───────────────────────────────────────────────
+ * The first analysis is pixels only — the camera, the cursor and the clicks all
+ * come from the recording itself now, with no model call — so it is fast and it
+ * is free. What still needs the model is reading what is ON the screen: finding
+ * an API key to blur, naming the steps, writing the voiceover.
+ *
+ * That is worth paying for when it is wanted and worth nothing when it is not,
+ * so it is asked for rather than assumed. Priced like an analysis, because it
+ * is the part of one that costs: every sampled frame, read.
+ *
+ * Leaves the edit alone. See the `vision` handler in studioRunner.js.
+ */
+router.post("/demos/:id/vision", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  if (demo.purged) return fail(res, 410, "This recording's files have been deleted.");
+  if (!demo.timeline) return fail(res, 409, "Analyse this recording first.");
+  if (demo.recording?.status !== "ready") return fail(res, 409, "This recording isn't ready yet.");
+
+  const busy = await StudioJob.findOne({ demo: demo._id, type: { $in: ["analyse", "vision"] }, status: { $in: ["queued", "running"] } });
+  if (busy) return fail(res, 409, "This recording is already being read.");
+
+  const cost = studioCost("analyse", demo.recording.duration);
+  const expected = Number(req.body?.expected_cost);
+  if (Number.isFinite(expected) && expected !== cost) {
+    return fail(res, 409, "The price changed. Please try again.", { price_changed: true, cost });
+  }
+
+  const charged = await charge(req, res, cost, { refId: demo._id, note: "read screens", what: "Reading this recording's screens" });
+  if (charged === null) return;
+
+  demo.analysis = { ...(demo.analysis?.toObject?.() || {}), status: "running", error: "", read_charged: charged };
+  demo.expires_at = bumpExpiry();
+  await demo.save();
+
+  await enqueue({ demo: demo._id, user: req.user.id, type: "vision" });
+  publishProgress(demo, { stage: "Queued", progress: 0.01, reading: true });
 
   await respond(req, res, demo, { charged, balance: await getBalance(req.user.id) });
 }));

@@ -169,7 +169,37 @@ export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {
  *     the slow way to say it.
  *   • The whole list can be previewed by clicking a row, which seeks to it.
  */
-export function BlurPanel({ tl, selection, onSelect, edit, time, seek }) {
+/**
+ * ── THE SCREENS ARE READ WHEN SOMEBODY ASKS ─────────────────────────────────
+ * The automatic edit is made from the recording itself — where the pointer
+ * was, what shape the operating system drew it, what changed on screen — and
+ * none of that needs a model. Reading what is ON the screen does, and that is
+ * what finds an API key to blur and what names the steps.
+ *
+ * So these two panels can be open on a demo whose screens nobody has read yet,
+ * and they have to say so. The alternative is the version of this that shipped
+ * first: an empty blur list under the words "Nothing private found. Every
+ * sampled frame was checked for emails, keys, tokens and personal details" on
+ * a demo where no frame was checked at all. A promise like that is worse than
+ * no promise, because the creator acts on it and exports.
+ */
+function Unread({ icon, title, children, reading, onRead, readCost }) {
+  return (
+    <Empty
+      icon={icon}
+      title={title}
+      action={
+        <Btn size="s" kind="primary" onClick={onRead} disabled={reading}>
+          {reading ? "Reading the screens…" : readCost > 0 ? `Read the screens · ${readCost} credits` : "Read the screens"}
+        </Btn>
+      }
+    >
+      {children}
+    </Empty>
+  );
+}
+
+export function BlurPanel({ tl, selection, onSelect, edit, time, seek, read = true, reading = false, onRead, readCost = 0 }) {
   const blurs = [...(tl.blurs || [])].sort((a, b) => a.start - b.start);
   const current = blurs.find((b) => b.id === selection?.id && selection.kind === "blur") || null;
   const auto = blurs.filter((b) => b.auto).length;
@@ -203,7 +233,19 @@ export function BlurPanel({ tl, selection, onSelect, edit, time, seek }) {
           </Btn>
         }
       >
-        {blurs.length === 0 ? (
+        {blurs.length === 0 && !read ? (
+          <Unread icon="blur" title="Nothing has been checked yet" reading={reading} onRead={onRead} readCost={readCost}>
+            Your edit was made from the recording itself, which needs no AI. Finding emails, keys, tokens and personal
+            details does — it means reading what is on every sampled frame. You can also{" "}
+            <button
+              type="button"
+              onClick={add}
+              style={{ font: "inherit", color: "var(--primary)", background: "none", border: 0, padding: 0, cursor: "pointer" }}
+            >
+              blur something by hand
+            </button>.
+          </Unread>
+        ) : blurs.length === 0 ? (
           <Empty icon="blur" title="Nothing private found" action={<Btn size="s" onClick={add}>Add one anyway</Btn>}>
             Every sampled frame was checked for emails, keys, tokens and personal details. Add your own if something was
             missed.
@@ -833,7 +875,7 @@ export function CanvasPanel({ tl, edit }) {
    Steps and suggestions
    ──────────────────────────────────────────────────────────────────────────── */
 
-export function StepsPanel({ tl, time, seek, summary, narration }) {
+export function StepsPanel({ tl, time, seek, summary, narration, read = true, reading = false, onRead, readCost = 0 }) {
   const steps = tl.steps || [];
   const lay = useMemo(() => layout(tl), [tl]);
 
@@ -845,7 +887,12 @@ export function StepsPanel({ tl, time, seek, summary, narration }) {
         </Panel>
       )}
       <Panel title={`Steps · ${steps.length}`}>
-        {steps.length === 0 ? (
+        {steps.length === 0 && !read ? (
+          <Unread icon="steps" title="The screens haven't been read yet" reading={reading} onRead={onRead} readCost={readCost}>
+            Naming the steps means reading what is on each frame. It also finds anything private to blur, and writes a
+            voiceover script you can turn into captions.
+          </Unread>
+        ) : steps.length === 0 ? (
           <Empty icon="steps" title="No steps were found">
             The recording may be too short, or nothing identifiable happened in it.
           </Empty>

@@ -48,6 +48,16 @@ export const completeUpload = (id, capture) => api.post(`/studio/demos/${id}/upl
 
 export const startAnalysis = (id, { expectedCost, captions }) =>
   api.post(`/studio/demos/${id}/analyse`, { expected_cost: expectedCost, captions }).then(data);
+/**
+ * Read the screens: blur, steps, narration.
+ *
+ * The first analysis is pixels only — the camera, the cursor and the clicks
+ * come from the recording itself — so what still needs the model is reading
+ * what is ON the screen. Asked for, rather than assumed, and priced like an
+ * analysis because it is the part of one that costs.
+ */
+export const readScreens = (id, { expectedCost } = {}) =>
+  api.post(`/studio/demos/${id}/vision`, { expected_cost: expectedCost }).then(data);
 export const requestCaptions = (id) => api.post(`/studio/demos/${id}/captions`).then((r) => r.data);
 // Captions from the voiceover script the analysis already wrote. Synchronous
 // and free — it is a chunking pass over text the demo already holds, not a
@@ -69,7 +79,7 @@ export const deleteRender = (id, rid) => api.delete(`/studio/demos/${id}/renders
 const studioApi = {
   getStudioConfig, listDemos, createDemo, getDemo, renameDemo, deleteDemo,
   startUpload, resumeUpload, completeUpload,
-  startAnalysis, requestCaptions, captionsFromScript, requestReview, resolveSuggestion,
+  startAnalysis, readScreens, requestCaptions, captionsFromScript, requestReview, resolveSuggestion,
   saveTimeline, startRender, renderDownloadUrl, deleteRender,
 }
 export default studioApi;

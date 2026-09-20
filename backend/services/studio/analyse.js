@@ -30,6 +30,14 @@
  * Every other pass can be skipped to save money. This one runs on every sampled
  * frame every time, because a missed API key cannot be un-published, and the
  * creator who most needs it is the one who did not think to ask for it.
+ *
+ * ── EXCEPT THAT NOW THE MODEL DOES NOT RUN HERE AT ALL ───────────────────────
+ * See VISION_ON_ANALYSE below. The first edit is made from pixels only; the
+ * blur pass, the steps and the narration are a second, separate pass the
+ * creator asks for. Nothing about the paragraph above has stopped being true —
+ * a missed API key still cannot be un-published — so the editor must keep
+ * saying so until that pass has run. It is an interface promise now rather
+ * than a pipeline one.
  */
 import path from "path";
 import fsp from "fs/promises";
@@ -43,6 +51,38 @@ import { locatePointer, mergeLocated, stepPath, snapToLocated } from "./locate.j
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
+
+/**
+ * ── WHETHER THE MODEL READS THE FRAMES DURING THE FIRST ANALYSIS ─────────────
+ *
+ * Off. Nothing in the camera, the cursor or the clicks needs it any more.
+ *
+ * ── WHY IT IS OFF RATHER THAN DELETED ───────────────────────────────────────
+ * Every line the model pass feeds is still here and still wired up — this is a
+ * switch, not an amputation. `STUDIO_VISION_ON_ANALYSE=on` in the environment
+ * restores the old behaviour exactly, with no deploy and no code change, which
+ * is the point: the creator asked for this to be reversible on their word after
+ * they had watched a few exports.
+ *
+ * ── WHAT CHANGED TO MAKE IT UNNECESSARY ─────────────────────────────────────
+ * The model's only job in the camera was to say whether there was something
+ * pressable under the pointer. The operating system answers that question in
+ * every frame, for free, by drawing a hand over what answers a click and an
+ * arrow over what does not — and locate.js now reads that glyph directly. See
+ * confirmClicks() in events.js.
+ *
+ * ── WHAT STILL NEEDS IT, AND WHERE THAT NOW HAPPENS ─────────────────────────
+ * Blur, the steps, the narration and the written summary are all readings of
+ * what is ON the screen, which no amount of pointer arithmetic can supply.
+ * Those moved to visionPass() below, run on demand when the creator opens the
+ * panel that needs them, so the first edit is instant and free and nobody pays
+ * for a blur pass on a recording with nothing private in it.
+ *
+ * Captions were never part of this: they are read from the audio, they have
+ * always been opt-in, and they have always had their own entry point.
+ */
+export const VISION_ON_ANALYSE =
+  String(process.env.STUDIO_VISION_ON_ANALYSE || "off").trim().toLowerCase() === "on";
 
 /**
  * Build the first edit.
@@ -123,6 +163,9 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
      * locator most needs a second opinion is the one where it gets none.
      */
     hints: (capture.track || []).map((p) => ({ ...p, t: num0(p.t) + num0(aligned.sync?.offset) })),
+    // With the model reading frames as well, that pass drives the bar and this
+    // one stays quiet rather than the two fighting over it.
+    onProgress: VISION_ON_ANALYSE ? null : (p) => onProgress(0.06 + 0.5 * p, "Following the pointer"),
   }).catch((err) => {
     console.error("[studio] pointer locator failed; using the tracker alone:", err);
     return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
@@ -137,13 +180,15 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    */
   onProgress(0.06, "Reading the pointer");
 
-  const uiTask = readFrames(frames, {
-    spend,
-    onProgress: (p) => onProgress(0.1 + 0.34 * p, "Understanding the interface"),
-  }).catch((err) => {
-    console.error("[studio] UI pass failed entirely:", err);
-    return [];
-  });
+  const uiTask = VISION_ON_ANALYSE
+    ? readFrames(frames, {
+        spend,
+        onProgress: (p) => onProgress(0.1 + 0.34 * p, "Understanding the interface"),
+      }).catch((err) => {
+        console.error("[studio] UI pass failed entirely:", err);
+        return [];
+      })
+    : Promise.resolve([]);
 
   /* ── What the pointer did ────────────────────────────────────────────── */
   /**
@@ -202,10 +247,12 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // The pointer log goes in with the frames: a blur is released when the screen
   // changes under it, not when the model happens to miss a sample. See
   // vision.js joinRegions.
-  const blurTask = findSensitive(frames, { every, duration, events, spend }).catch((err) => {
-    console.error("[studio] blur pass failed:", err);
-    return [];
-  });
+  const blurTask = VISION_ON_ANALYSE
+    ? findSensitive(frames, { every, duration, events, spend }).catch((err) => {
+        console.error("[studio] blur pass failed:", err);
+        return [];
+      })
+    : Promise.resolve([]);
 
   // ── CAPTIONS ARE ASKED FOR, NOT ASSUMED ──────────────────────────────────
   // Most product demos are silent screen recordings with the narration added
@@ -244,13 +291,15 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   }
   events = graded;
 
-  onProgress(0.46, "Working out the steps");
+  if (VISION_ON_ANALYSE) onProgress(0.46, "Working out the steps");
 
   /* ── What the person was doing ───────────────────────────────────────── */
-  const { summary, product, steps, dead } = await detectSteps({ shots, events, duration, spend }).catch((err) => {
-    console.error("[studio] step detection failed:", err);
-    return { summary: "", product: "", steps: [], dead: [] };
-  });
+  const { summary, product, steps, dead } = VISION_ON_ANALYSE
+    ? await detectSteps({ shots, events, duration, spend }).catch((err) => {
+        console.error("[studio] step detection failed:", err);
+        return { summary: "", product: "", steps: [], dead: [] };
+      })
+    : { summary: "", product: "", steps: [], dead: [] };
 
   /* ── The camera ──────────────────────────────────────────────────────── */
   onProgress(0.58, "Planning the camera");
@@ -286,13 +335,13 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
 
 
   /* ── Narration ───────────────────────────────────────────────────────── */
-  onProgress(0.68, "Writing the narration");
-  const narration = steps.length
+  if (VISION_ON_ANALYSE) onProgress(0.68, "Writing the narration");
+  const narration = VISION_ON_ANALYSE && steps.length
     ? await writeNarration({ steps, summary, product, duration, spend }).catch(() => [])
     : [];
 
   /* ── The passes that were running all along ──────────────────────────── */
-  onProgress(0.82, "Checking for anything private");
+  if (VISION_ON_ANALYSE) onProgress(0.82, "Checking for anything private");
   const blurs = await blurTask;
   onProgress(0.9, wantCaptions ? "Writing captions" : "Finishing");
   const captions = await captionTask;
@@ -469,6 +518,105 @@ export async function generateCaptions({ audio, duration }) {
 }
 
 /**
+ * Everything the model has to look at the screen to know, on demand.
+ *
+ * ── WHY THIS IS A SECOND PASS AND NOT PART OF THE FIRST ─────────────────────
+ * The first analysis used to read every frame with the model because the
+ * camera needed it to know what was clickable. It does not any more — the
+ * operating system's own pointer says so in every frame — so the model pass
+ * stopped being on the critical path and became what it always was in
+ * substance: a reading of the CONTENT.
+ *
+ * That reading is worth paying for when you want it and worth nothing when you
+ * do not. A creator demoing a public marketing page has nothing to blur; a
+ * creator who only wants a clean zoomed recording has no use for a written
+ * step list. Both of them were paying for both, on every recording, before the
+ * editor had even opened.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT TOUCH ─────────────────────────────────────
+ * The camera, the cursor path, the clicks and the cuts. By the time somebody
+ * asks for this they have had the edit open and may well have moved a zoom or
+ * deleted one, and a pass they ran to find private information has no business
+ * rearranging their edit. The one thing the model could still add to the
+ * camera — a press on a native button that some sites draw with a plain arrow
+ * — is not worth overwriting a creator's own work for.
+ *
+ * @param {object} o
+ * @param {string} o.video     the prepared recording on local disk
+ * @param {string} o.workDir
+ * @param {number} o.duration
+ * @param {Array}  o.events    the presses already found, so a blur can be
+ *                             released when the screen changes under it
+ * @returns {{ shots, blurs, steps, summary, product, narration, dead,
+ *             elements, frames_read, frames_failed, spend }}
+ */
+export async function visionPass({ video, workDir, duration, events = [], onProgress = () => {} }) {
+  const spend = newSpend();
+  const every = Math.max(0.5, STUDIO_LIMITS.frameEvery);
+
+  onProgress(0.02, "Sampling the recording");
+  const framesDir = path.join(workDir, "frames");
+  await fsp.mkdir(framesDir, { recursive: true });
+  const frames = await extractFrames(video, framesDir, { every, duration, longEdge: 1280 });
+  if (!frames.length) {
+    throw Object.assign(new Error("no frames"), {
+      userMessage: "We couldn't read any frames from this recording.",
+    });
+  }
+
+  onProgress(0.05, "Watching the recording");
+  const uiTask = readFrames(frames, {
+    spend,
+    onProgress: (p) => onProgress(0.05 + 0.5 * p, "Understanding the interface"),
+  }).catch((err) => {
+    console.error("[studio] UI pass failed entirely:", err);
+    return [];
+  });
+
+  const blurTask = findSensitive(frames, { every, duration, events, spend }).catch((err) => {
+    console.error("[studio] blur pass failed:", err);
+    return [];
+  });
+
+  const shots = await uiTask;
+
+  onProgress(0.6, "Working out the steps");
+  const { summary, product, steps, dead } = await detectSteps({ shots, events, duration, spend }).catch((err) => {
+    console.error("[studio] step detection failed:", err);
+    return { summary: "", product: "", steps: [], dead: [] };
+  });
+
+  onProgress(0.78, "Writing the narration");
+  const narration = steps.length
+    ? await writeNarration({ steps, summary, product, duration, spend }).catch(() => [])
+    : [];
+
+  onProgress(0.9, "Checking for anything private");
+  const blurs = await blurTask;
+
+  return {
+    shots,
+    blurs,
+    steps,
+    summary,
+    product,
+    narration,
+    dead,
+    elements: shots.map((s) => ({
+      t: Math.round(Number(s.t) * 1000) / 1000,
+      elements: (s.elements || []).map((el) => ({
+        type: el.type,
+        label: el.label,
+        bbox: (el.bbox || []).map((v) => Math.round(Number(v) * 1000) / 1000),
+      })),
+    })),
+    frames_read: shots.length,
+    frames_failed: Math.max(0, frames.length - shots.length),
+    spend,
+  };
+}
+
+/**
  * The recovered path at fifteen samples a second.
  *
  * The erase patch is a little larger than a cursor and moves between samples in
@@ -538,7 +686,7 @@ function mergeCuts(cuts, duration) {
   });
 }
 
-export default { analyseRecording, generateCaptions };
+export default { analyseRecording, generateCaptions, visionPass, VISION_ON_ANALYSE };
 
 
 /** How many samples actually moved the pointer, for the log above. */

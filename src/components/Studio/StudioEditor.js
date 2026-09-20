@@ -20,7 +20,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onLiveEvent } from "../../realtime/socket";
-import { getDemo, saveTimeline, renameDemo, requestCaptions, captionsFromScript, requestReview, resolveSuggestion } from "./studioApi";
+import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, requestReview, resolveSuggestion } from "./studioApi";
 import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
@@ -82,6 +82,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   }, []);
   const [exporting, setExporting] = useState(false);
   const [captioning, setCaptioning] = useState(false);
+  // The model reading the screens — blur, steps, narration — which is now a
+  // separate thing a creator asks for rather than part of the first analysis.
+  const [reading, setReading] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [starting, setStarting] = useState(false);
   const narrow = useNarrow();
@@ -185,6 +188,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       if (String(e?.demo) !== String(demoId)) return;
       if (e.notice) setNotice(e.notice);
       if (e.captioning === false) setCaptioning(false);
+      if (e.reading === false || e.read) setReading(false);
       if (e.reviewed) setReviewing(false);
       load(true);
     });
@@ -198,6 +202,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         d.recording?.status === "processing" ||
         d.renders?.some((r) => r.status === "queued" || r.status === "rendering") ||
         captioning ||
+        reading ||
         reviewing;
       if (busy) load(true);
     }, 3000);
@@ -205,7 +210,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       off();
       clearInterval(id);
     };
-  }, [demoId, load, captioning, reviewing]);
+  }, [demoId, load, captioning, reading, reviewing]);
 
   /* ── Editing ──────────────────────────────────────────────────────────── */
 
@@ -400,6 +405,28 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   /* ── Actions ──────────────────────────────────────────────────────────── */
 
+  /**
+   * Read the screens: blur, steps, narration.
+   *
+   * Paid, so the page owns the confirmation the same way it owns the one for
+   * the first analysis; this starts it and turns the panel into its waiting
+   * state, because the demo in hand still says nothing is running until
+   * something re-reads it.
+   */
+  const onRead = useCallback(async () => {
+    setReading(true);
+    setNotice("");
+    try {
+      await readScreens(demoId);
+      await load(true, { force: true });
+    } catch (err) {
+      setReading(false);
+      // Includes the 402 that names the price and the balance, which is the
+      // only confirmation this needs: nobody is charged without being told.
+      setNotice(err?.response?.data?.message || "We couldn't read this recording's screens.");
+    }
+  }, [demoId, load]);
+
   const onCaptions = useCallback(async () => {
     setCaptioning(true);
     setNotice("");
@@ -571,6 +598,20 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const total = lay?.duration || 0;
   const panelProps = { tl, selection, onSelect: setSelection, edit, time, seek };
 
+  /**
+   * Whether the model has read what is ON the screens of this recording.
+   *
+   * `frames_read` is the honest measure and the only one: a demo analysed
+   * before the model pass became optional has a number here, one analysed
+   * without it has zero, and so does one whose reading failed. All three mean
+   * the same thing to a creator about to export — nothing on these frames has
+   * been checked — so all three say it.
+   */
+  const screensRead = (demo.analysis?.frames_read || 0) > 0;
+  /** What that reading costs, so the button can say so before it is pressed. */
+  const readCost =
+    (config?.pricing?.analyse_per_min || 0) * Math.max(1, Math.ceil((demo.recording?.duration || 0) / 60));
+
   const header = (
     <header
       style={{
@@ -738,10 +779,20 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const panel = (
     <>
       {tab === "steps" && (
-        <StepsPanel tl={tl} time={time} seek={seek} summary={demo.analysis?.summary} narration={tl.narration} />
+        <StepsPanel
+          tl={tl}
+          time={time}
+          seek={seek}
+          summary={demo.analysis?.summary}
+          narration={tl.narration}
+          read={screensRead}
+          reading={reading}
+          onRead={onRead}
+          readCost={readCost}
+        />
       )}
       {tab === "zoom" && <ZoomPanel {...panelProps} />}
-      {tab === "blur" && <BlurPanel {...panelProps} />}
+      {tab === "blur" && <BlurPanel {...panelProps} read={screensRead} reading={reading} onRead={onRead} readCost={readCost} />}
       {tab === "captions" && (
         <CaptionsPanel
           {...panelProps}

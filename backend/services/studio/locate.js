@@ -427,8 +427,27 @@ function topTwo(frame, W, H, t) {
  * the pointer templates finds ONE clear, unique match in the most frames — a
  * property of the pointer, which is drawn identically wherever it goes, and not
  * of anything on the page.
+ *
+ * ── IT HAS TO LOOK FOR THE HAND AS WELL AS THE ARROW ────────────────────────
+ * The first version of this offered only arrows, on the reasoning that every
+ * recording has an arrow in it somewhere. Most do. The ones that do not are
+ * the ones that matter: a demo of a menu, a sidebar, a list of links, where
+ * the creator moves from one clickable row to the next and the pointer is a
+ * hand nearly the whole time. Twelve frames sampled across such a recording
+ * can easily turn up two arrows, one short of the three this needs, and the
+ * answer was then "no pointer design recognised" — the locator switched itself
+ * off for the whole recording, and the demo fell back to the difference
+ * tracker with every bug that entails.
+ *
+ * Offering both shapes also makes the decision SAFER rather than riskier. The
+ * thing this has to avoid mistaking for a pointer is a shape printed on the
+ * page, and pages are full of little arrows — play buttons, sort carets,
+ * submit chevrons. Almost nothing on a page is shaped like a hand.
+ *
+ * A hand votes under the arrow height it implies, so both shapes accumulate
+ * evidence for the same answer: one design, one size.
  */
-async function calibrate(video, W, H, all, duration, fps) {
+async function calibrate(video, W, H, all, duration, fps, { requireUnique = false } = {}) {
   const want = new Set();
   const total = Math.max(1, Math.floor(duration * fps));
   for (let k = 0; k < CAL_FRAMES; k++) want.add(Math.floor(((k + 0.5) / CAL_FRAMES) * total));
@@ -457,7 +476,10 @@ async function calibrate(video, W, H, all, duration, fps) {
         cur.n += 1;
         cur.v += best.score;
         if (margin >= UNIQUE) cur.unique += 1;
-        cur.at.push({ frame: Buffer.from(frame), x: best.x, y: best.y });
+        // The shape that matched is kept with the frame: the size is refined
+        // below by re-drawing the winner, and re-drawing an arrow over a frame
+        // a hand won measures nothing.
+        cur.at.push({ frame: Buffer.from(frame), x: best.x, y: best.y, name: t.name, ratio: t.ownPx / t.heightPx });
         votes.set(key, cur);
       }
     },
@@ -470,7 +492,14 @@ async function calibrate(video, W, H, all, duration, fps) {
   };
   const ranked = [...votes.entries()]
     .map(([k, v]) => [k, { ...v, moves: spread(v.at) >= 25, mean: v.v / v.n }])
-    .filter(([, v]) => v.n >= 3 && (v.moves || v.unique >= Math.max(2, v.n * 0.5)))
+    .filter(([, v]) => {
+      if (v.n < 3) return false;
+      const clear = v.unique >= Math.max(2, v.n * 0.5);
+      // Movement is the strongest evidence a pointer can give, and the easiest
+      // for noise to imitate when the shape being matched is not distinctive.
+      // Where the caller has said so, only being the one clear match counts.
+      return requireUnique ? clear : v.moves || clear;
+    })
     .sort((a, b) =>
       (b[1].moves ? 1 : 0) - (a[1].moves ? 1 : 0) ||
       b[1].n - a[1].n ||
@@ -488,12 +517,20 @@ async function calibrate(video, W, H, all, duration, fps) {
    * size a couple of pixels either side, on the frames it won, and the size
    * that fits those frames best is the one used.
    */
+  const cache = new Map();
+  const drawn = (name, hp, ratio) => {
+    const key = name + ":" + hp;
+    if (!cache.has(key)) {
+      cache.set(key, bounds(prepare(buildTemplate(name, Math.max(8, Math.round(hp * ratio)), { dark, setPx: hp }), W)));
+    }
+    return cache.get(key);
+  };
   let best = { hp: Number(hpKey), v: -Infinity };
   for (let hp = Number(hpKey) - 3; hp <= Number(hpKey) + 3; hp++) {
     if (hp < 8) continue;
-    const t = bounds(prepare(buildTemplate("arrow", hp, { dark }), W));
     let v = 0;
     for (const a of ranked[0][1].at) {
+      const t = drawn(a.name, hp, a.ratio);
       let m = -1;
       for (let y = a.y - 3; y <= a.y + 3; y++) for (let x = a.x - 3; x <= a.x + 3; x++) m = Math.max(m, scoreAt(a.frame, W, H, t, x, y));
       v += m;
@@ -516,7 +553,7 @@ async function calibrate(video, W, H, all, duration, fps) {
  * @param {Array}  [o.hints]     where the difference tracker thought it was
  * @returns {Promise<{ track: Array, design: string|null, heightPx: number, found: number, frames: number }>}
  */
-export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], onDebug = null } = {}) {
+export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], onDebug = null, onProgress = null } = {}) {
   const W = Math.round(sourceWidth);
   const H = Math.round(sourceHeight);
 
@@ -538,10 +575,39 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   const guess = cursorPx > 8 ? cursorPx : 20 * (W / 1920);
   const sizes = [...new Set([0.75, 0.85, 0.95, 1.05, 1.15, 1.3].map((k) => Math.round(guess * k)))];
   const make = (name, hp, dark) => bounds(prepare(buildTemplate(name, hp, { dark }), W));
+  /** A hand drawn at the height an arrow of `hp` implies, so it votes for `hp`. */
+  const asHand = (name, hp, dark, k = 1.21) =>
+    bounds(prepare(buildTemplate(name, Math.round(hp * k), { dark, setPx: hp }), W));
+  /** Which hand drawing a pointer set uses at this size. See SHAPES.handL. */
+  const handNames = (hp) => (hp < 24 ? ["hand"] : hp > 30 ? ["handL"] : ["hand", "handL"]);
+
   const arrows = [];
   for (const dark of [false, true]) for (const hp of sizes) arrows.push(make("arrow", hp, dark));
 
-  const cal = await calibrate(video, W, H, arrows, duration, fps);
+  /**
+   * ── THE ARROW FIRST, AND THE HAND ONLY IF THERE IS NO ARROW ───────────────
+   * Offering both shapes at once was tried and was worse. A hand template at a
+   * small size finds a middling match somewhere in a page full of text, and
+   * that match WANDERS from frame to frame, which is exactly the property this
+   * uses to tell a pointer from a printed glyph — so on five of seven test
+   * pages the noise outvoted the real pointer and the recording was calibrated
+   * to the wrong design at the wrong size.
+   *
+   * So the arrow keeps its place as the primary evidence, unchanged, and the
+   * hand is a second chance for the recordings that have no arrow to offer: a
+   * demo of a menu or a list of links, where the pointer is a hand nearly
+   * throughout. That pass has to earn it on uniqueness rather than on movement,
+   * because movement is the thing noise can fake.
+   */
+  let cal = await calibrate(video, W, H, arrows, duration, fps);
+  if (!cal) {
+    const hands = [];
+    for (const dark of [false, true]) {
+      for (const hp of sizes) for (const name of handNames(hp)) hands.push(asHand(name, hp, dark));
+    }
+    cal = await calibrate(video, W, H, hands, duration, fps, { requireUnique: true });
+    if (cal) console.log("[studio] no arrow to calibrate from; the pointer was identified by its hand");
+  }
   if (!cal) return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
 
   // Tracking uses only this recording's pointer: both shapes, at its size and
@@ -589,6 +655,15 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     onFrame: async (frame, i) => {
       frames++;
       const t = round3(i / fps);
+      /**
+       * With the model pass off this is the longest thing in an analysis, so it
+       * is the one the progress bar has to follow. Every half second of the
+       * recording is often enough to look alive and rare enough to cost
+       * nothing.
+       */
+      if (onProgress && duration > 0 && i % Math.round(fps / 2) === 0) {
+        onProgress(Math.min(1, t / duration));
+      }
 
       /**
        * ── THE SERVER HAS TO KEEP ANSWERING ──────────────────────────────────

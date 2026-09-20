@@ -31,7 +31,7 @@ const StudioJobSchema = new Schema({
   //   render    one export
   //   review    the quality pass over a finished edit, on its own so a creator
   //             can ask for fresh suggestions without re-analysing anything
-  type: { type: String, enum: ["prepare", "analyse", "captions", "render", "review"], required: true },
+  type: { type: String, enum: ["prepare", "analyse", "vision", "captions", "render", "review"], required: true },
   ref: { type: String, default: "" },   // render id, where the job is about one
 
   status: { type: String, enum: ["queued", "running", "done", "failed"], default: "queued" },

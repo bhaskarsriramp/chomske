@@ -7,8 +7,9 @@ export — on any page, not just the one demo these were written against.
     node scripts/pointerTest/bench.mjs        # accuracy, across pages and pointers
     node scripts/pointerTest/coverage.mjs     # is the real pointer ever visible?
     node scripts/pointerTest/clicks.mjs       # which presses move the camera
+    node scripts/pointerTest/parked.mjs       # a still pointer on a page that is not
 
-Both build their own test recordings, so they need no fixtures: a page is drawn
+They build their own test recordings, so they need no fixtures: a page is drawn
 (deliberately hostile — hundreds of text-like strokes, boxes, circles and sixty
 arrow-shaped glyphs), the system's own pointer images are composited onto it
 along a known path, and the clip is encoded as a real recording would be.
@@ -28,6 +29,13 @@ a heading, a margin, or the empty half of a panel still loading. It runs on
 pointer paths rather than video, so it takes a fraction of a second and needs
 no Gemini — which is the point, since the rule has to hold on the day the
 credits run out.
+
+`parked.mjs` is the hardest frame in any demo: the pointer sitting still on
+a menu row while a spinner goes round and the page waits. Nothing moves where
+the pointer is, so the difference tracker cannot see it and its hints point at
+the spinner instead; the page is otherwise static, so frame after frame is
+identical. On a real recording that lost the pointer for six and a half
+seconds and took the click on "API Keys" with it.
 
 Windows only: the pointer images come from `C:/Windows/Cursors`. They are read
 at run time and never copied into the product. `clicks.mjs` needs none of them

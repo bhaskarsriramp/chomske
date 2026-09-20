@@ -32,7 +32,7 @@ import { materialize, putFile, removePrefix, removeObject, statObject } from "..
 import { probe, makeVideoProxy, makeThumbnail, extractSpeechAudio, remuxRecording } from "../media/ffmpeg.js";
 import { refund } from "../creditsService.js";
 import { transient } from "../edit/transient.js";
-import { analyseRecording, generateCaptions } from "./analyse.js";
+import { analyseRecording, generateCaptions, visionPass, VISION_ON_ANALYSE } from "./analyse.js";
 import { reviewEdit, newSpend } from "./vision.js";
 import { renderTimeline } from "./render/compose.js";
 import { missingFonts, FONTS_DIR } from "./render/ass.js";
@@ -50,17 +50,18 @@ const MAX_ATTEMPTS = 3;
  * local and only the download or upload was at fault. An analysis gives up
  * sooner: every try pays for model calls again.
  */
-const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, captions: 4, review: 3 };
+const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3 };
 
 const int = (v, d) => (parseInt(v, 10) > 0 ? parseInt(v, 10) : d);
 const LIMIT = {
   prepare: int(process.env.STUDIO_PREPARE_CONCURRENCY, 2),
   analyse: int(process.env.STUDIO_ANALYSE_CONCURRENCY, 1),
+  vision: int(process.env.STUDIO_VISION_CONCURRENCY, 1),
   captions: int(process.env.STUDIO_CAPTIONS_CONCURRENCY, 2),
   render: int(process.env.STUDIO_RENDER_CONCURRENCY, 1),
   review: int(process.env.STUDIO_REVIEW_CONCURRENCY, 2),
 };
-const running = { prepare: 0, analyse: 0, captions: 0, render: 0, review: 0 };
+const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0 };
 
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
 
@@ -390,7 +391,14 @@ const analyse = {
 
     // The quality review is its own job so the editor opens the moment the edit
     // exists, rather than waiting on one more model call for advice.
-    await enqueue({ demo: demo._id, user: demo.user, type: "review" }).catch(() => {});
+    //
+    // It reads the step list to say anything useful, and with the model pass off
+    // there is no step list — so it would be a paid call that could only produce
+    // generalities. It is enqueued at the end of the vision pass instead, where
+    // it has something to review.
+    if (VISION_ON_ANALYSE) {
+      await enqueue({ demo: demo._id, user: demo.user, type: "review" }).catch(() => {});
+    }
   },
 
   async fail(job, err) {
@@ -415,6 +423,109 @@ function defaultTitle(result) {
   if (result.summary) return result.summary.replace(/\.$/, "").slice(0, 70);
   return "Untitled recording";
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   vision: read the screen — blur, steps, narration
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What the model has to look at the recording to know, run when it is asked for.
+ *
+ * ── WHY IT IS NOT PART OF THE FIRST ANALYSIS ANY MORE ────────────────────────
+ * It used to be, because the camera could not tell a button from a blank half
+ * of a page without it. That is no longer true — the operating system's own
+ * pointer says which is which, in every frame, for nothing — so the model pass
+ * became a reading of the CONTENT and nothing else, and content is exactly the
+ * kind of thing a creator should be able to decline.
+ *
+ * ── WHAT IT WRITES, AND WHAT IT LEAVES ALONE ─────────────────────────────────
+ * Writes: blurs, steps, narration, and the summary the demo is titled from.
+ * Leaves: every cut, zoom, event and pointer sample exactly where they are. By
+ * the time this runs the creator has had the editor open and may have moved
+ * things; a pass they started to find private information does not get to
+ * rearrange their edit. Like the captions job, the demo is READ AGAIN after
+ * the model answers, so a minute of their editing is not rolled back by a
+ * write that predates it.
+ */
+const vision = {
+  async run(job, workDir) {
+    const demo = await StudioDemo.findById(job.demo);
+    if (!demo || demo.purged) return;
+    if (!demo.timeline) throw userError("Analyse this recording first.");
+    const r = demo.recording;
+    if (!r?.mp4_key) throw userError("This recording isn't ready yet.");
+
+    const report = reporter((fields) => {
+      publishProgress(demo, fields);
+      return setDemo(demo._id, fields);
+    });
+
+    await setDemo(demo._id, { stage: "Starting", progress: 0.01, "analysis.status": "running", "analysis.error": "" });
+    publishProgress(demo, { stage: "Starting", progress: 0.01, reading: true });
+
+    const video = await materialize(r.mp4_key, workDir, "recording.mp4");
+    const result = await visionPass({
+      video,
+      workDir,
+      duration: r.duration,
+      events: demo.timeline.events || [],
+      onProgress: (p, stage) => report({ stage, progress: Math.max(0.01, Math.min(0.99, p)) }),
+    });
+
+    const fresh = await StudioDemo.findById(job.demo);
+    if (!fresh || fresh.purged) return;
+    const timeline = sanitizeTimeline(
+      {
+        ...fresh.timeline,
+        blurs: result.blurs,
+        steps: result.steps,
+        narration: result.narration,
+      },
+      { duration: fresh.recording?.duration || 0, source: fresh.timeline?.source }
+    );
+
+    await StudioDemo.updateOne(
+      { _id: demo._id },
+      {
+        $set: {
+          timeline,
+          stage: "", progress: 1,
+          "analysis.status": "done",
+          "analysis.summary": result.summary,
+          "analysis.product": result.product,
+          "analysis.frames_read": result.frames_read,
+          "analysis.frames_failed": result.frames_failed,
+          "analysis.elements": result.elements || null,
+          "analysis.finished_at": new Date(),
+          title: demo.title && demo.title !== "Untitled recording" ? demo.title : defaultTitle(result),
+          expires_at: bumpExpiry(),
+          updated_at: new Date(),
+        },
+        $inc: { rev: 1, "analysis.usd": result.spend.usd, "analysis.calls": result.spend.calls },
+      }
+    );
+
+    console.log(
+      `[studio] read ${demo._id}: ${result.frames_read} frames (${result.frames_failed} missed), ` +
+        `${result.steps.length} steps, ${result.blurs.length} blurs, $${result.spend.usd.toFixed(4)}`
+    );
+    publishProgress(demo, { stage: "", progress: 1, reading: true, read: true, blurs: result.blurs.length, steps: result.steps.length });
+
+    await enqueue({ demo: demo._id, user: demo.user, type: "review" }).catch(() => {});
+  },
+
+  async fail(job, err) {
+    const demo = await StudioDemo.findById(job.demo);
+    if (!demo) return;
+    await setDemo(demo._id, { stage: "", progress: 1, "analysis.status": "done" });
+    await refundCharge(demo, demo.analysis?.read_charged, "the reading");
+    publishProgress(demo, {
+      stage: "", progress: 1, reading: false,
+      // Not the demo's `error`: the edit is untouched and perfectly usable.
+      notice: err.userMessage || "We couldn't read this recording's screens. Your credits are back.",
+    });
+  },
+};
 
 /* ────────────────────────────────────────────────────────────────────────────
    captions: transcribe the audio, and nothing else
@@ -626,7 +737,7 @@ async function refundCharge(demo, charged, note) {
   );
 }
 
-const HANDLERS = { prepare, analyse, captions, render, review };
+const HANDLERS = { prepare, analyse, vision, captions, render, review };
 
 /* ────────────────────────────────────────────────────────────────────────────
    Retention
