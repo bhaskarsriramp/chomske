@@ -19,6 +19,7 @@
  * Needs no fixtures, no network and no Gemini.
  */
 import { confirmClicks, inferEvents } from "../../services/studio/events.js";
+import { snapToLocated } from "../../services/studio/locate.js";
 
 const FPS = 30;
 
@@ -401,6 +402,83 @@ function moved(path, motion, duration) {
   check("one frame of change is still a new screen", found.length > 0, true);
   check("...and still moves the camera",
     found.length > 0 && confirmClicks(found, [], { located: path })[0].zoomable, true);
+}
+
+console.log("\nA press is filed where the hand was, not where it ended up\n");
+
+/**
+ * ── THE ONE FROM video_demo_114 ─────────────────────────────────────────────
+ *   "between 0:19 - 0:21 why the hell Zoom-in or camera moved to the right
+ *    bottom of this screen? ... I guess Zoom-in and Camera movements are not
+ *    properly aligned."
+ *
+ * Solved off that recording by matching the zoomed frames back against the
+ * unzoomed ones: the press was on "Usage" in the settings rail at (0.22, 0.35)
+ * and the camera settled at 2.17x on (0.755, 0.749) — clamped against the
+ * bottom-right corner, aimed at "Adjust limit" at (0.78, 0.81).
+ *
+ * The hand pressed Usage, then drifted across the dialog while the pane
+ * loaded. The dwell was still open, so it carried the hand with it, and a
+ * dwell reports the position of its LAST sample. The press was filed where the
+ * hand finished, not where it pressed.
+ */
+
+/**
+ * A hand that presses, then creeps.
+ *
+ * The creep is deliberately slower than `stillSpeed`, because that is the case
+ * that bites: the dwell never closes, so it stays open across the press and
+ * keeps overwriting its own position with each new sample. Anything faster
+ * ends the dwell and was never the problem.
+ */
+function pressThenCreep(from, to, a, b) {
+  const FPS = 30;
+  const out = [];
+  const n = Math.round((to - from) * FPS);
+  for (let i = 0; i <= n; i++) {
+    const k = i / n;
+    out.push({
+      t: Math.round((from + i / FPS) * 1000) / 1000,
+      x: a.x + (b.x - a.x) * k,
+      y: a.y + (b.y - a.y) * k,
+      shape: "pointer",
+      located: true,
+    });
+  }
+  return out;
+}
+
+/* 18. The press belongs to the row it landed on. */
+{
+  const pressed = { x: 0.22, y: 0.35 };
+  const ended = { x: 0.285, y: 0.41 };
+  const path = pressThenCreep(17.0, 21.0, pressed, ended);
+  const motion = run(17.0, 21.0, 17.792, 17.792,
+    { energy: 0.0584, x: 0.205, y: 0.113, w: 0.625, h: 0.839 });
+  const found = inferEvents({ samples: path, motion, duration: 21.5, located: path })
+    .filter((e) => e.type === "click");
+  check("a rail item pressed, then the hand creeps away", found.length > 0, true);
+  const atPress = found.length ? Math.hypot(found[0].x - pressed.x, found[0].y - pressed.y) : 9;
+  const atEnd = found.length ? Math.hypot(found[0].x - ended.x, found[0].y - ended.y) : 0;
+  check("...filed where it pressed", atPress < 0.04, true);
+  check("...not where the dwell ended up", atEnd > 0.05, true);
+}
+
+/**
+ * 19. And the locator may correct a press, but it may not relocate one.
+ *
+ * snapToLocated moves a press onto the pointer the locator actually found,
+ * which is worth a few pixels. It had no limit, so one bad frame could pick a
+ * press up off its control and put it down anywhere at all.
+ */
+{
+  const press = [{ id: "e1", type: "click", t: 10.0, x: 0.22, y: 0.35, confidence: 0.9 }];
+
+  const nudged = snapToLocated(press, [{ t: 10.01, x: 0.235, y: 0.362, located: true }]);
+  check("a sighting a few pixels away corrects the press", nudged[0].snapped, "located");
+
+  const wild = snapToLocated(press, [{ t: 10.01, x: 0.78, y: 0.81, located: true }]);
+  check("...a sighting in the far corner does not move it", wild[0].x, 0.22);
 }
 
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");

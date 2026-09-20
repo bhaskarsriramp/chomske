@@ -678,7 +678,9 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
     // The nav that produced this was already checked for translation above, so
     // it is on the record as a press during a settled page rather than as one
     // with no opinion attached.
-    events.push(event("click", at, rest.x, rest.y, {
+    // Where the hand was when it pressed, not where the dwell ended up.
+    const spot = restAt(pts, rest, at);
+    events.push(event("click", at, spot.x, spot.y, {
       confidence: clamp(confidence, 0, 1),
       source: "nav",
       shape: rest.shape || "default",
@@ -741,9 +743,11 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
      * always used, and there was never a reason for the two to differ.
      */
     const at = clamp(best.m.t - 0.12, rest.start, Math.max(rest.start, rest.end));
+    // And where the hand was at that moment, for the same reason.
+    const spot = restAt(pts, rest, at);
 
     // One press, however many passes found it.
-    if (events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - at) < 0.4 && Math.hypot(e.x - rest.x, e.y - rest.y) < 0.05)) continue;
+    if (events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - at) < 0.4 && Math.hypot(e.x - spot.x, e.y - spot.y) < 0.05)) continue;
 
     /**
      * Did anything come of it? A press is followed by a change bigger than the
@@ -759,7 +763,7 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
     // the model has said whether the pointer was on a control at the time.
     const slid = scrolledAfter(mot, at);
     events.push(
-      event("click", at, rest.x, rest.y, {
+      event("click", at, spot.x, spot.y, {
         confidence: clamp(confidence * (after ? 1 : 0.8), 0, 1),
         shape: rest.shape || "default",
         corroborated: after,
@@ -1110,6 +1114,43 @@ function event(type, t, x, y, extra = {}) {
     source: "pixel",
     ...extra,
   };
+}
+
+/**
+ * Where the pointer was AT a moment, rather than where its dwell ended.
+ *
+ * ── A DWELL'S POSITION IS ITS LAST SAMPLE, AND A PRESS IS NOT ITS LAST ──────
+ * dwells() records a dwell at the position of its LAST sample, deliberately:
+ * the pointer decelerates into place, so the early samples of a short dwell
+ * are a few pixels short of where it actually stopped.
+ *
+ * That reasoning holds for a dwell that is a pause. It breaks for a dwell that
+ * is a stay — and after a press the hand stays, which is the whole reason the
+ * press's TIME had to stop being `rest.end` too. The dwell runs on while the
+ * new screen arrives and the creator drifts the pointer towards whatever they
+ * mean to do next, and its "position" follows them there. So the press was
+ * filed at the place the hand ended up, not the place it pressed.
+ *
+ * Measured on a real recording: the creator pressed "Usage" in a settings rail
+ * at (0.22, 0.35), and the camera pushed in on (0.78, 0.81) — "Adjust limit",
+ * at the opposite corner of the dialog, where the hand had wandered while the
+ * pane loaded. "why the hell Zoom-in or camera moved to the right bottom of
+ * this screen?"
+ *
+ * The press happened at a moment. The pointer was somewhere at that moment.
+ * That is the position, and nothing later gets a vote.
+ */
+function restAt(pts, rest, t) {
+  const until = Math.min(num(t), num(rest.end, t)) + 0.05;
+  let best = null;
+  for (const p of pts) {
+    if (p.t < rest.start - 0.05) continue;
+    if (p.t > until) break;
+    best = p;
+  }
+  // A blind dwell — a hole in the track — has no samples inside it at all, and
+  // the dwell already carries the last place the pointer was seen before it.
+  return best ? { x: best.x, y: best.y } : { x: rest.x, y: rest.y };
 }
 
 /** How far a changed region is from where the pointer was resting. 0 when over it. */

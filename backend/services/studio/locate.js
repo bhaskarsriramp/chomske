@@ -929,8 +929,22 @@ export function stepPath(track) {
  * inferred, which can be a few pixels off; the zoom is aimed there and the
  * ripple drawn there. When the locator saw the pointer at that moment, that is
  * where it was.
+ *
+ * ── A CORRECTION, NOT A RELOCATION ──────────────────────────────────────────
+ * "A few pixels off" is the entire remit, and this used to have no limit on
+ * how far it would move a press. Any sighting within a tenth of a second won,
+ * whatever it was and wherever it was, so one bad frame from the locator — and
+ * a repainting screen is exactly where those come from — could pick a press up
+ * off the control it landed on and put it down in the opposite corner, taking
+ * the zoom and the ripple with it.
+ *
+ * So it may correct a press and it may not move one. Past `reach` the two
+ * readings are not describing the same press, and the press's own position is
+ * the one that came from watching the pointer rest there.
  */
-export function snapToLocated(events, located, { within = 0.12 } = {}) {
+const SNAP_REACH = 0.08;
+
+export function snapToLocated(events, located, { within = 0.12, reach = SNAP_REACH } = {}) {
   if (!located?.length) return events;
   return events.map((e) => {
     if (e.type !== "click" && e.type !== "dblclick") return e;
@@ -940,6 +954,8 @@ export function snapToLocated(events, located, { within = 0.12 } = {}) {
       if (d <= within && (!best || d < best.d)) best = { d, p };
     }
     if (!best) return e;
+    const moved = Math.hypot(num(best.p.x) - num(e.x), num(best.p.y) - num(e.y));
+    if (moved > reach) return e;
     return { ...e, x: best.p.x, y: best.p.y, snapped: "located" };
   });
 }
