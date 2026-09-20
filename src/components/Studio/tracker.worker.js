@@ -153,11 +153,19 @@ function handle({ bitmap, data, width, height, t }) {
     y: maxY >= 0 ? minY / H : 0.5,
     w: maxX >= 0 ? (maxX - minX + 1) / W : 0,
     h: maxY >= 0 ? (maxY - minY + 1) / H : 0,
-    // Direction is only asked of frames that look like a scroll: a tall band
+    // Direction is only asked of frames that look like a scroll: a band
     // changed and the pointer did not move. Row correlation over a whole frame
     // is the one thing a difference image can say about which way it went, and
     // it costs too much to do on every frame for no reason.
-    dy: energy > 0.01 && maxY - minY > H * 0.3 ? shiftOf(gray, prev) : 0,
+    //
+    // ── AND A PANE SCROLLS WITHOUT THE FRAME SCROLLING ──────────────────────
+    // This asked for a third of the frame's height before it would look. A
+    // scrollable pane — a dashboard's main column, a modal's list, a sidebar
+    // with its own bar — is shorter than that on plenty of layouts, so its
+    // scrolls were reported as dy: 0, which downstream reads as "the page did
+    // not move" rather than "nobody looked". An eighth is still far more than
+    // any widget and takes in the panes.
+    dy: energy > 0.01 && maxY - minY > H * 0.125 ? shiftOf(gray, prev) : 0,
   };
 
   /* ── Where the pointer is ──────────────────────────────────────────────── */
@@ -371,7 +379,26 @@ function shiftOf(cur, old) {
     prevRows[y] = b;
   }
 
-  const MAX = Math.min(40, Math.floor(H / 4));
+  /**
+   * ── HOW FAR IT IS ALLOWED TO HAVE MOVED ───────────────────────────────────
+   * This was 40 rows. The frames are downscaled so the long side is 960, which
+   * makes a 16:9 recording 540 rows high, so 40 rows is 7.4% of the picture —
+   * about 1.8 screens a second at 24Hz.
+   *
+   * Nobody scrolls that politely. A wheel flick, a Page Down, and above all
+   * dragging the scrollbar to the bottom of a page all move further than that
+   * in a single frame, and when they do this loop returns whichever offset
+   * inside the range fit least badly — which, for two pictures that genuinely
+   * do not line up, is arbitrary and often zero. The signal did not degrade
+   * gracefully; it inverted. The faster the page scrolled, the more confidently
+   * it reported that the page had not scrolled, and every rule that reads `dy`
+   * to veto a scroll was reading a number that meant the opposite of what it
+   * said. That is how a demo zoomed in on somebody dragging a scrollbar.
+   *
+   * A quarter of the frame covers a hard flick, and the loop is a row profile
+   * of 540 floats stepped by two — the extra offsets cost microseconds.
+   */
+  const MAX = Math.max(40, Math.floor(H / 4));
   let bestShift = 0;
   let bestErr = Infinity;
   for (let s = -MAX; s <= MAX; s += 2) {

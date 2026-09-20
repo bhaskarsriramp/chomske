@@ -199,5 +199,209 @@ console.log("\nA hover is not a press, whatever else happens on screen\n");
   check("a whole page arriving 0.7s later", big.some((e) => e.corroborated), true);
 }
 
+console.log("\nA press is found wherever it landed, and recorded when it landed\n");
+
+/**
+ * ── THE TWO THE CREATOR FOUND IN video_demo_112 ─────────────────────────────
+ * Both were presses on plainly clickable things — a chat in a sidebar, "Usage"
+ * in a settings dialog's rail — and neither moved the camera. The numbers
+ * below are measured off that recording frame by frame, not invented.
+ *
+ *   "Blocking channels from YouT...chat has been clicked, but Zoom-in not
+ *    worked here."
+ *   "i have clicked the 'Usage' menu item from the Settings side bar, Zoom-in
+ *    not happened and not worked."
+ *
+ * Two separate causes, one symptom:
+ *
+ *   1. the dialog's pane swap spans 0.525 of the frame's width, and a
+ *      navigation had to span 0.6 of BOTH dimensions, so no press existed;
+ *   2. the press that the ordinary path did find was written down at the end
+ *      of the dwell — when the hand finally moved on, seconds later — so its
+ *      zoom arrived late and was merged into the next click's.
+ */
+
+/** Motion samples: quiet at the pointer, with one change dropped in. */
+function withChange(from, to, px, py, change) {
+  const FR = 1 / 24;
+  const out = [];
+  for (let t = from; t < to; t += FR) {
+    const m = { t: Math.round(t * 1000) / 1000, energy: 0.0002, x: px, y: py, w: 0.02, h: 0.02, dy: 0 };
+    if (Math.abs(t - change.t) < FR) {
+      m.energy = change.energy; m.x = change.x; m.y = change.y; m.w = change.w; m.h = change.h;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+/* 10. The settings dialog: a pane swaps beside the rail that swapped it. */
+{
+  const path = rest(20.0, 24.5, 0.232, 0.338, "pointer");
+  const motion = withChange(20.0, 24.5, 0.232, 0.338,
+    { t: 21.583, energy: 0.0555, x: 0.3045, y: 0.1135, w: 0.525, h: 0.839 });
+  const found = inferEvents({ samples: path, motion, duration: 25, located: path })
+    .filter((e) => e.type === "click");
+  check("'Usage' in a settings dialog, pane swap over half the frame", found.length > 0, true);
+  // And it belongs to the moment the pane changed, not to the moment the hand
+  // left four seconds later, which is what sent its zoom into the next click's.
+  check("...recorded when it landed, not when the hand moved on",
+    found.length > 0 && Math.abs(found[0].t - 21.583) < 0.3, true);
+}
+
+/* 11. A chat row that replaces the whole screen, hand held on it. */
+{
+  const path = rest(8.5, 11.5, 0.068, 0.587, "pointer");
+  const motion = withChange(8.5, 11.5, 0.068, 0.587,
+    { t: 9.75, energy: 0.0969, x: 0.0075, y: 0.042, w: 0.991, h: 0.928 });
+  const found = inferEvents({ samples: path, motion, duration: 12, located: path })
+    .filter((e) => e.type === "click");
+  check("a chat row in a sidebar, whole screen replaced", found.length > 0, true);
+  check("...and it moves the camera",
+    found.length > 0 && confirmClicks(found, [], { located: path })[0].zoomable, true);
+}
+
+/**
+ * 12. A menu opening: large, and almost none of its pixels are different.
+ *
+ * The account menu in that same recording covers a third of the width and six
+ * tenths of the height, and changes 5.15% of the pixels — it cleared the "did
+ * anything come of it" bar by fifteen ten-thousandths. Interfaces are mostly
+ * white; the honest measure is how big the thing that appeared was.
+ */
+{
+  const path = rest(10.0, 16.0, 0.11, 0.62, "pointer");
+  const motion = withChange(10.0, 16.0, 0.11, 0.62,
+    { t: 11.0, energy: 0.012, x: 0.12, y: 0.55, w: 0.22, h: 0.30 });
+  const found = inferEvents({ samples: path, motion, duration: 17, located: path })
+    .filter((e) => e.type === "click");
+  check("a menu opens, pale against a pale page", found.some((e) => e.corroborated), true);
+  check("...and is not blamed on the hand five seconds later",
+    found.length > 0 && Math.abs(found[0].t - 11.0) < 0.3, true);
+}
+
+/**
+ * 13. And the thing that loosening the shape test must NOT let back in.
+ *
+ * A pane-sized change is allowed to be a navigation now, so the price is that
+ * it has to be beside the pointer: a rail and the pane it drives are
+ * neighbours. A chart finishing on the far side of the screen from a parked
+ * hand is the hover the camera used to push in on, and stays refused.
+ */
+{
+  const path = rest(10.2, 12.0, 0.110, 0.625, "pointer");
+  const motion = withChange(10.2, 12.0, 0.110, 0.625,
+    { t: 11.65, energy: 0.06, x: 0.45, y: 0.15, w: 0.5, h: 0.8 });
+  const found = inferEvents({ samples: path, motion, duration: 13, located: path })
+    .filter((e) => e.type === "click");
+  check("a pane-sized change across the screen from the hand", found.length, 0);
+}
+
+console.log("\nA scroll the tracker could not measure is still a scroll\n");
+
+/**
+ * ── THE ONE FROM video_demo_113 ─────────────────────────────────────────────
+ *   "when i go to the Dashboard sub-menu item ... and scrolled to bottom, at
+ *    that instance the Zoom in has happened without any click and right side
+ *    you can see our mouse pointer is moving with the vertical scoller line."
+ *
+ * Every scroll veto in events.js reads `dy`, and `dy` is measured by sliding
+ * one frame's row profile over the last one across a fixed range of offsets.
+ * Drag a scrollbar and the content moves further than that range in a single
+ * frame, so the correlation finds nothing and returns ~0 — "the page did not
+ * move". The vetoes all passed, the whole-screen change read as a navigation,
+ * and the pointer parked on the scrollbar supplied the rest.
+ *
+ * Measured off that recording: fourteen consecutive frames, about a fifth of
+ * the picture changing each time, dy reported as 0.0000.
+ */
+function run(from, to, at, until, box) {
+  const FR = 1 / 24;
+  const out = [];
+  const n = Math.round((to - from) / FR);
+  for (let i = 0; i < n; i++) {
+    const t = Math.round((from + i * FR) * 1000) / 1000;
+    const m = { t, energy: 0.0002, x: 0.95, y: 0.5, w: 0.02, h: 0.02, dy: 0 };
+    if (t >= at - 1e-9 && t <= until + 1e-9) {
+      m.energy = box.energy; m.x = box.x; m.y = box.y; m.w = box.w; m.h = box.h;
+      // What the tracker reports when the page moved further than it can see.
+      m.dy = 0;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+/**
+ * The camera, not the record. A press this pipeline refuses still exists as an
+ * event — that is events.js's standing contract, so the creator can switch a
+ * zoom back on — but it draws no ripple and moves nothing. "Did the camera
+ * move" is therefore the question every one of these asks.
+ */
+function moved(path, motion, duration) {
+  const found = inferEvents({ samples: path, motion, duration, located: path })
+    .filter((e) => e.type === "click" || e.type === "dblclick");
+  return confirmClicks(found, [], { located: path }).some((e) => e.zoomable !== false);
+}
+
+/* 14. The scrollbar drag: the pointer parked on the bar, the page streaming past. */
+{
+  const path = rest(19.0, 22.0, 0.99, 0.42, "default");
+  const motion = run(19.0, 22.0, 20.0, 20.92, { energy: 0.1676, x: 0.13, y: 0.03, w: 0.734, h: 0.944 });
+  check("a scrollbar dragged to the bottom, dy unmeasurable", moved(path, motion, 23), false);
+}
+
+/* 15. The same, with a hand over the bar — a scrollbar thumb is grabbable. */
+{
+  const path = rest(19.0, 22.0, 0.99, 0.42, "pointer");
+  const motion = run(19.0, 22.0, 20.0, 20.92, { energy: 0.1676, x: 0.13, y: 0.03, w: 0.734, h: 0.944 });
+  check("...and a hand on the thumb does not make it a press", moved(path, motion, 23), false);
+}
+
+/**
+ * 15b. The dangerous one: a scroll with no reading of the pointer at all.
+ *
+ * A plain arrow over the scrollbar is refused by the arrow rule, and that rule
+ * carried these cases before. But the locator does not always find the pointer
+ * — a busy repainting screen is exactly when it struggles — and with no shape
+ * and no model reading the press falls through to the pipeline's oldest
+ * default, "nobody looked, so allow it". Scrolling is the one situation where
+ * that default is reliably wrong, and it is the only thing standing between a
+ * long scroll and a zoom.
+ */
+{
+  const path = rest(19.0, 22.0, 0.99, 0.42, "default");
+  const motion = run(19.0, 22.0, 20.0, 20.92, { energy: 0.1676, x: 0.13, y: 0.03, w: 0.734, h: 0.944 });
+  const found = inferEvents({ samples: path, motion, duration: 23, located: [] })
+    .filter((e) => e.type === "click" || e.type === "dblclick");
+  const camera = confirmClicks(found, [], { located: [] }).some((e) => e.zoomable !== false);
+  check("...and with nobody able to read the pointer at all", camera, false);
+}
+
+/* 16. A scrolling PANE, which is shorter than the frame and just as common. */
+{
+  const path = rest(19.0, 22.0, 0.78, 0.42, "default");
+  const motion = run(19.0, 22.0, 20.0, 20.92, { energy: 0.09, x: 0.30, y: 0.15, w: 0.48, h: 0.62 });
+  check("a pane scrolled beside a resting pointer", moved(path, motion, 23), false);
+}
+
+/**
+ * 17. And the press this must not take away with it.
+ *
+ * A navigation is a STEP: the frame after it is already the new screen, so it
+ * differs from its predecessor by almost nothing. That is what separates it
+ * from a scroll, and it has to keep working, or the fix for 113 undoes the
+ * fix for 112.
+ */
+{
+  const path = rest(8.5, 11.5, 0.068, 0.587, "pointer");
+  const motion = run(8.5, 11.5, 9.75, 9.75, { energy: 0.0969, x: 0.0075, y: 0.042, w: 0.991, h: 0.928 });
+  const found = inferEvents({ samples: path, motion, duration: 12, located: path })
+    .filter((e) => e.type === "click");
+  check("one frame of change is still a new screen", found.length > 0, true);
+  check("...and still moves the camera",
+    found.length > 0 && confirmClicks(found, [], { located: path })[0].zoomable, true);
+}
+
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");
 process.exit(failures ? 1 : 0);

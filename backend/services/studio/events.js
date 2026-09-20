@@ -72,6 +72,16 @@ export const RULES = {
    * width and most of the height — with a modest floor to rule out noise.
    */
   navBox: 0.6,
+  /**
+   * How much of the picture a change that spans only ONE dimension has to
+   * cover before it is a new screen rather than a widget doing something.
+   *
+   * A quarter of the frame. The settings pane that prompted it covers 0.44; a
+   * menu opening covers about 0.08, a row highlighting 0.006. Well clear of
+   * both, and it is never the only test: a change this shape also has to be
+   * beside the pointer that caused it.
+   */
+  navArea: 0.25,
   navEnergy: 0.02,
   /** Repaints closer together than this are one navigation, not several. */
   navGap: 0.4,
@@ -159,6 +169,28 @@ const CONSEQUENCE_GROWTH = 3;
  * a sidebar row that swaps the content area moves a fifth of the picture.
  */
 const CONSEQUENCE_ALONE = 0.05;
+/**
+ * The same thing, measured as the SIZE of what changed rather than the share
+ * of pixels inside it that did.
+ *
+ * ── IT IS A SHAPE, NOT AN AMOUNT, HERE TOO ──────────────────────────────────
+ * `navBox` above learned this lesson already: interfaces are mostly white, so
+ * a new screen changes a tenth of the pixels and the honest measure is where
+ * the change was, not how much of it there was. The consequence test never got
+ * the same treatment and still reads pixel share alone.
+ *
+ * Measured on a real recording: the creator opened the account menu, a third
+ * of the width and six tenths of the height of the frame appeared, and it
+ * cleared the pixel test by 0.0015 — 0.0515 against 0.05. A menu one shade
+ * lighter, or over a busier page, is thrown away as "nothing came of it", and
+ * a press that plainly opened a menu gets no zoom.
+ *
+ * A region this size is a menu, a popover, a panel or a pane. A hover's
+ * highlight is its own row — four thousandths of a frame — and a tooltip is
+ * not much more, so there is a factor of ten between this and anything a
+ * pointer can cause by merely sitting somewhere.
+ */
+const CONSEQUENCE_AREA = 0.06;
 /**
  * How soon the consequence of a press has to START.
  *
@@ -389,7 +421,34 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
   const navs = [];
   let lastNav = -Infinity;
   for (const m of mot) {
-    if (m.energy < RULES.navEnergy || m.w < RULES.navBox || m.h < RULES.navBox) continue;
+    if (m.energy < RULES.navEnergy) continue;
+    /**
+     * ── NOT EVERY NEW SCREEN FILLS THE SCREEN ─────────────────────────────
+     * The test below this used to be the whole of it: most of the width AND
+     * most of the height, which is what a page replacing a page looks like.
+     * Half the navigations in a product demo are not that shape.
+     *
+     * A settings dialog is the ordinary case. The creator pressed "Usage" in
+     * its left rail and the pane beside it became a different pane — measured
+     * on a real recording, 0.525 of the frame's width by 0.839 of its height.
+     * Every corner of the DIALOG changed and not one corner of the frame did,
+     * so the rule read it as "no navigation", no click was minted, and the
+     * most deliberate moment in that stretch of the demo got no zoom: "i have
+     * clicked the 'Usage' menu item from the Settings side bar, Zoom-in not
+     * happened and not worked".
+     *
+     * Nothing about that is a smaller event than a page load. It is the same
+     * event inside a smaller surface, and the frame's edges are an accident of
+     * where the dialog happens to sit. So a change that spans one whole
+     * dimension and covers a real share of the picture counts too — and pays
+     * for the looser shape by having to be BESIDE THE POINTER, which is
+     * checked where the rest is found below. A pane swaps because the rail
+     * next to it was pressed; a chart finishing on the far side of the screen
+     * while somebody hovers is not a press, and that is the difference.
+     */
+    const whole = m.w >= RULES.navBox && m.h >= RULES.navBox;
+    const surface = (m.w >= RULES.navBox || m.h >= RULES.navBox) && m.w * m.h >= RULES.navArea;
+    if (!whole && !surface) continue;
     /**
      * ── A PAGE SCROLLING IS NOT A PAGE CHANGING ───────────────────────────
      * The test above is a shape test: something changed in every corner, which
@@ -430,6 +489,33 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
      * "API Keys" measured seven of them with a coherence of 0.64.
      */
     if (scrollingAround(mot, m.t)) continue;
+    /**
+     * ── AND THE TEST THAT DOES NOT ASK THE TRACKER WHICH WAY IT WENT ───────
+     * Every scroll veto above this line is built on `dy`, and `dy` has a
+     * ceiling. The tracker measures it by sliding one frame's row profile over
+     * the previous frame's, across a fixed range of offsets; past that range
+     * it cannot see the shift at all and returns the offset that happened to
+     * fit best, which for two pictures that do not match is near enough zero.
+     *
+     * So the faster the page scrolls, the more it looks like a page that did
+     * not scroll. Dragging the scrollbar to the bottom of a dashboard — the
+     * single most common way anybody gets to the bottom of anything — moves
+     * the content further in one frame than the search ever reaches, every
+     * frame, for as long as the drag lasts. Measured on a real recording:
+     * fourteen consecutive frames of a fifth of the picture changing, `dy`
+     * reported as 0.0000, no scroll detected, a navigation minted, a zoom:
+     * "the Zoom in has happened without any click and right side you can see
+     * our mouse pointer is moving with the vertical scoller line".
+     *
+     * `dy` cannot be trusted to say a page was still, so this asks something
+     * `dy` is not involved in. A page replacing itself is a STEP: one frame
+     * differs from its predecessor and the frame after that is already the new
+     * page, quiet again. A scroll is a RUN: it keeps changing for as long as
+     * somebody keeps scrolling. Measured across both recordings, a real press
+     * that changed the screen had 4% of the surrounding second also changing,
+     * and the scroll had 40-46%. That is not a threshold anyone has to tune.
+     */
+    if (sustained(mot, m.t, m.energy)) continue;
     if (!screenAgrees(screen, m.t)) continue;
     if (m.t - lastNav < RULES.navGap) {
       lastNav = m.t;
@@ -437,7 +523,9 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
     }
     lastNav = m.t;
     events.push(event("nav", m.t, m.x + m.w / 2, m.y + m.h / 2, { confidence: clamp(0.5 + m.energy * 3, 0, 1) }));
-    navs.push(m);
+    // `whole` travels with it: a frame-filling change contains the pointer
+    // wherever the pointer is, and a pane-sized one has to be shown to.
+    navs.push({ ...m, whole });
     claim(m.t);
   }
 
@@ -522,6 +610,12 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
       // drawing a hand: that is a person hovering the thing they are about to
       // press, which is most of what a demo is.
       .filter((r) => nav.t - r.start <= (read ? REST_HOVER : REST_FRESH))
+      // ── A PANE THAT CHANGED HAS TO BE THE ONE BESIDE THE HAND ───────────
+      // The price of accepting a change that does not fill the frame. A rail
+      // and the pane it drives are neighbours, so the pointer is on or beside
+      // what changed; a chart redrawing itself across the screen from a parked
+      // pointer is not, and that is the hover the camera used to push in on.
+      .filter((r) => nav.whole || distanceTo(nav, r) <= RULES.clickRadius)
       .sort((a, b) => b.start - a.start)[0];
     if (!rest) {
       /**
@@ -539,7 +633,8 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
        * soon. confirmClicks() still decides whether that spot is a control.
        */
       const parked = settledAfter(pts, mot, nav.t);
-      if (parked && !events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - nav.t) < 0.6)) {
+      const beside = parked && (nav.whole || distanceTo(nav, parked) <= RULES.clickRadius);
+      if (beside && !events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - nav.t) < 0.6)) {
         const at = Math.max(0, nav.t - 0.12);
         events.push(event("click", at, parked.x, parked.y, {
           confidence: 0.75,
@@ -623,32 +718,66 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
     if (rest.end - rest.start > 0.25) confidence += 0.1;
     if (best.m.energy > 0.02) confidence += 0.05;
 
+    /**
+     * ── A PRESS HAPPENED WHEN IT LANDED, NOT WHEN THE HAND MOVED ON ─────────
+     * This said `rest.end`, and `rest.end` is not when the press happened. It
+     * is when the pointer NEXT MOVED — and after a click the hand stays put,
+     * which is the one thing about pressing a button this file states outright
+     * three separate times. The dwell is still open while the new screen
+     * arrives, while the creator talks over it, until they finally reach for
+     * the next control. On a pointer that never moves again it is the end of
+     * the recording.
+     *
+     * So the zoom landed seconds after the thing it was meant to be showing.
+     * Measured on a real recording: the creator pressed "Usage" in a settings
+     * dialog at 21.58s, the pane changed at once, and the press was written
+     * down at 24s — by which time the camera's move collided with the NEXT
+     * click's and was merged away entirely. What the creator saw was a demo
+     * that ignored the press and then zoomed on the one after it: "Zoom-in not
+     * happened and not worked. but worked when i clicked [the next one]".
+     *
+     * The press is just before the change it caused, and inside the dwell it
+     * was made during. That is the same rule the navigation branch above has
+     * always used, and there was never a reason for the two to differ.
+     */
+    const at = clamp(best.m.t - 0.12, rest.start, Math.max(rest.start, rest.end));
+
     // One press, however many passes found it.
-    if (events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - rest.end) < 0.4 && Math.hypot(e.x - rest.x, e.y - rest.y) < 0.05)) continue;
+    if (events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - at) < 0.4 && Math.hypot(e.x - rest.x, e.y - rest.y) < 0.05)) continue;
 
     /**
      * Did anything come of it? A press is followed by a change bigger than the
      * one it made at the control itself — a menu opening, a panel filling, a
      * row appearing. A hover's highlight is the whole story, and stops there.
+     *
+     * Measured from the press, for the same reason: a window opening at
+     * `rest.end` opens after the consequence it is looking for has come and
+     * gone, and reads a real press as one that nothing came of.
      */
-    const after = grewAfter(screen, mot, best.m, rest.end);
+    const after = grewAfter(screen, mot, best.m, at);
     // Measured, not judged: confirmClicks() below decides what it means once
     // the model has said whether the pointer was on a control at the time.
-    const slid = scrolledAfter(mot, rest.end);
+    const slid = scrolledAfter(mot, at);
     events.push(
-      event("click", rest.end, rest.x, rest.y, {
+      event("click", at, rest.x, rest.y, {
         confidence: clamp(confidence * (after ? 1 : 0.8), 0, 1),
         shape: rest.shape || "default",
         corroborated: after,
         // After OR around: on one recording the creator's flick ended a tenth of
         // a second before the rest, so looking only forward saw nothing.
-        scrolled: slid >= SCROLL_SUM || scrollingAround(mot, rest.end),
+        //
+        // And `sustained`, because both of those read `dy`, and a scrollbar
+        // dragged to the bottom of a page reports no `dy` at all. A pointer
+        // parked on the scrollbar while the page streams past it is the same
+        // shape as a press — it rests, the screen changes beside it — and
+        // without this it is minted as one.
+        scrolled: slid >= SCROLL_SUM || scrollingAround(mot, at) || sustained(mot, best.m.t, best.m.energy),
         scroll_shift: round3(slid),
       })
     );
     spent.add(rest);
     claim(best.m.t);
-    claim(rest.end);
+    claim(at);
   }
 
   // ── Double clicks ─────────────────────────────────────────────────────────
@@ -774,6 +903,7 @@ function grewAfter(screen, mot, at, t) {
    * is measured relative to.
    */
   if (num(at.energy) >= CONSEQUENCE_ALONE) return true;
+  if (num(at.w) * num(at.h) >= CONSEQUENCE_AREA) return true;
 
   const base = Math.max(RULES.noiseEnergy, at.energy);
   for (const m of mot) {
@@ -861,6 +991,56 @@ function scrollingAround(mot, t) {
   }
   if (longest >= SCROLL_RUN) return true;
   return n >= SCROLL_FRAMES && abs >= SCROLL_SUM && Math.abs(net) / abs >= SCROLL_COHERENCE;
+}
+
+/**
+ * Is this moment a STEP in the picture, or part of a RUN?
+ *
+ * ── THE ONE SCROLL TEST THAT DOES NOT DEPEND ON `dy` ────────────────────────
+ * Everything else here asks the tracker how far the page slid. That question
+ * has a ceiling built into it — see the note at the call site — and the answer
+ * degrades towards "it did not slide" exactly as the scroll gets bigger, which
+ * is the worst possible failure direction for a veto.
+ *
+ * This asks a question with no ceiling: for how long did the picture keep
+ * changing? Nothing about it cares which way the content went, how far, or
+ * whether the tracker could follow it.
+ *
+ *   a new screen   one frame differs; the next frame IS the new screen and
+ *                  differs from it by almost nothing
+ *   a scroll       every frame differs, for as long as the hand keeps going
+ *
+ * ── WHY THE FLOOR IS RELATIVE ───────────────────────────────────────────────
+ * A fixed floor would make this a tuning problem — the share of pixels a
+ * scroll changes depends entirely on how busy the page is. Measured against
+ * the candidate's own size it does not: the frames either side of a scroll are
+ * the same order of magnitude as the one in the middle, because they are the
+ * same scroll; the frames either side of a navigation are a repaint of nothing.
+ *
+ * On two real recordings: presses that changed the screen scored 0.04, and
+ * scrolling to the bottom of a dashboard scored 0.40 and 0.46. There is an
+ * order of magnitude between them and the line is drawn in the gap.
+ */
+const RUN_SHARE = 0.35;
+/** How much of a second either side is read. */
+const RUN_BEFORE = 0.35;
+const RUN_AFTER = 0.65;
+/** A neighbouring frame counts as "still changing" at this much of the candidate. */
+const RUN_RELATIVE = 0.2;
+
+function sustained(mot, t, energy) {
+  const floor = Math.max(RULES.noiseEnergy, num(energy) * RUN_RELATIVE);
+  let n = 0;
+  let changing = 0;
+  for (const m of mot) {
+    if (m.t < t - RUN_BEFORE) continue;
+    if (m.t > t + RUN_AFTER) break;
+    n++;
+    if (num(m.energy) >= floor) changing++;
+  }
+  // Too few samples to say. A recording that thin has nothing to protect.
+  if (n < 6) return false;
+  return changing / n >= RUN_SHARE;
 }
 
 /** How soon after a page changes the pointer must be found again. */
