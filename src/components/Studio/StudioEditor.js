@@ -54,7 +54,32 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const [selection, setSelection] = useState(null);
   const [time, setTime] = useState(0);
   const [seekTo, setSeekTo] = useState(null);
+  // Every request is a new object, so seeking to the same moment twice — the
+  // start, after it has played through — is still a request.
+  const seekN = useRef(0);
+  const seek = useCallback((t) => {
+    if (!Number.isFinite(Number(t))) return;
+    seekN.current += 1;
+    setSeekTo({ t: Number(t), n: seekN.current });
+  }, []);
   const [playing, setPlaying] = useState(false);
+  /**
+   * Full screen is the picture only, with just enough transport to watch it:
+   * the point is to see the edit at the size it will be watched, not to edit
+   * in it. The browser owns the state; this mirrors it so the button and the
+   * controls know which way round they are.
+   */
+  const stageRef = useRef(null);
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    const onChange = () => setFull(!!stageRef.current && document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFull = useCallback(() => {
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    else stageRef.current?.requestFullscreen?.().catch(() => {});
+  }, []);
   const [exporting, setExporting] = useState(false);
   const [captioning, setCaptioning] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -66,6 +91,29 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const lastEdit = useRef({ label: "", at: 0 });
   const saveTimer = useRef(null);
   const dirty = useRef(false);
+  /**
+   * ── ONE SAVE ON THE WIRE, AND A COUNT OF EDITS ─────────────────────────────
+   * Two races lived here, and both looked to the creator like the editor
+   * ignoring them: pick 4:5, and a few seconds later it was 16:9 again.
+   *
+   * 1. save() marked the tab clean BEFORE the server answered. A poll landing
+   *    in that window saw "nothing unsaved", took the server's copy — which did
+   *    not have the change yet — and put the old shape back.
+   * 2. Dragging a slider fires saves back to back. A second save sent while the
+   *    first was in flight carried the revision from before the first landed,
+   *    the server rightly called it stale, and the editor reloaded, threw the
+   *    change away, and said "This recording changed in another tab" to a
+   *    creator with one tab open.
+   *
+   * So there is one save in flight at most, every edit bumps a generation
+   * count, the tab is clean only when the server has confirmed the LATEST
+   * generation, and nothing read from the server replaces the timeline while
+   * any of that is unsettled.
+   */
+  const saving = useRef(null);
+  const resave = useRef(false);
+  const editGen = useRef(0);
+  const saveRef = useRef(null);
   const revRef = useRef(0);
   const tlRef = useRef(null);
   tlRef.current = tl;
@@ -77,15 +125,23 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   /* ── Loading ──────────────────────────────────────────────────────────── */
 
   const load = useCallback(
-    async (quiet = false) => {
+    async (quiet = false, { force = false } = {}) => {
+      const gen = editGen.current;
       try {
         const d = await getDemo(demoId);
         setDemo(d.demo);
-        revRef.current = d.demo.rev;
-        // An edit in flight must not be rolled back by a poll that answered
-        // after it. Only the server's copy is taken when this tab has nothing
-        // unsaved of its own.
-        if (d.demo.timeline && !dirty.current) setTl(d.demo.timeline);
+        // The server's timeline — and its revision, which belongs to it — is
+        // taken only when this tab has nothing of its own unsettled: no
+        // unsaved change, no save on the wire, and no edit made after this
+        // read was sent. A poll that answers late must not roll anything back.
+        const settled = !dirty.current && !saving.current && editGen.current === gen;
+        if (force || settled) {
+          revRef.current = d.demo.rev;
+          if (d.demo.timeline) {
+            tlRef.current = d.demo.timeline;
+            setTl(d.demo.timeline);
+          }
+        }
         if (!quiet) setError("");
       } catch (err) {
         /**
@@ -154,24 +210,52 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   /* ── Editing ──────────────────────────────────────────────────────────── */
 
   const save = useCallback(async () => {
+    if (saving.current) {
+      // Another save is on the wire. This one follows it, with the revision
+      // that one comes back with, instead of racing it with a stale one.
+      resave.current = true;
+      return saving.current;
+    }
     const current = tlRef.current;
     if (!current || !dirty.current) return;
-    dirty.current = false;
+    const gen = editGen.current;
+    let retryIn = 0;
+
+    const run = (async () => {
+      try {
+        const res = await saveTimeline(demoId, current, revRef.current);
+        revRef.current = res.rev;
+        // Clean only if nothing was edited while this was on the wire.
+        if (editGen.current === gen) dirty.current = false;
+      } catch (err) {
+        if (err?.response?.data?.stale) {
+          // A genuine conflict: something else saved in between.
+          setNotice("This recording changed in another tab, so it was reloaded.");
+          dirty.current = false;
+          saving.current = null;
+          await load(true, { force: true });
+        } else {
+          setNotice("Your last change hasn't saved yet. It will keep trying.");
+          retryIn = SAVE_MS * 4;
+        }
+      }
+    })();
+
+    saving.current = run;
     try {
-      const res = await saveTimeline(demoId, current, revRef.current);
-      revRef.current = res.rev;
-    } catch (err) {
-      if (err?.response?.data?.stale) {
-        setNotice("This recording changed in another tab, so it was reloaded.");
-        dirty.current = false;
-        load(true);
-      } else {
-        // Put the flag back: the next edit, or leaving the page, tries again.
-        dirty.current = true;
-        setNotice("Your last change hasn't saved yet. It will keep trying.");
+      await run;
+    } finally {
+      saving.current = null;
+    }
+    if (dirty.current || resave.current) {
+      resave.current = false;
+      if (dirty.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => saveRef.current && saveRef.current(), retryIn || SAVE_MS);
       }
     }
   }, [demoId, load]);
+  saveRef.current = save;
 
   /**
    * ── THE UNDO STACK IS BUILT OUTSIDE THE UPDATER ────────────────────────────
@@ -201,6 +285,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       setTl(next);
 
       dirty.current = true;
+
+      editGen.current += 1;
       clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(save, SAVE_MS);
     },
@@ -215,6 +301,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     setTl(last.tl);
     lastEdit.current = { label: "", at: 0 };
     dirty.current = true;
+    editGen.current += 1;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(save, SAVE_MS);
   }, [save]);
@@ -226,6 +313,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     tlRef.current = next.tl;
     setTl(next.tl);
     dirty.current = true;
+    editGen.current += 1;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(save, SAVE_MS);
   }, [save]);
@@ -407,7 +495,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         e.preventDefault();
         const step = e.shiftKey ? 1 : 1 / 30;
-        setSeekTo(clamp(time + (e.key === "ArrowRight" ? step : -step), 0, lay?.duration || 0));
+        seek(clamp(time + (e.key === "ArrowRight" ? step : -step), 0, lay?.duration || 0));
       } else if (e.key === "Escape") {
         setSelection(null);
       } else if (e.key === "Delete" || e.key === "Backspace") {
@@ -421,7 +509,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stepBack, stepForward, time, lay, selection, removeSelected]);
+  }, [stepBack, stepForward, time, lay, selection, removeSelected, seek]);
 
   /* ── Screens before the editor ────────────────────────────────────────── */
 
@@ -481,7 +569,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   /* ── The editor ───────────────────────────────────────────────────────── */
 
   const total = lay?.duration || 0;
-  const panelProps = { tl, selection, onSelect: setSelection, edit, time, seek: setSeekTo };
+  const panelProps = { tl, selection, onSelect: setSelection, edit, time, seek };
 
   const header = (
     <header
@@ -542,7 +630,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   const preview = (
     <div
-      style={{ flex: 1, minHeight: 0, display: "flex" }}
+      ref={stageRef}
+      className="st-fullscreen"
+      style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: full ? "column" : "row" }}
       onPointerDown={(e) => {
         // Clicking the empty space around the frame clears the selection,
         // which is how a creator stops a blur rectangle following them
@@ -562,6 +652,24 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         onSelect={setSelection}
         onChange={changeItem}
       />
+      {full && (
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 4px 0", color: "#fff" }}>
+          <Btn
+            kind="primary"
+            size="s"
+            onClick={() => setPlaying((p) => !p)}
+            aria-label={playing ? "Pause" : "Play"}
+            icon={<Icon name={playing ? "pause" : "play"} size={14} />}
+            style={{ width: 40, height: 34, padding: 0 }}
+          />
+          <span style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+            {fmtTime(time, true)} <span style={{ opacity: 0.6, fontWeight: 500 }}>/ {fmtTime(total, true)}</span>
+          </span>
+          <button type="button" onClick={toggleFull} title="Exit full screen (Esc)" aria-label="Exit full screen" style={fullBtn(true)}>
+            <Icon name="shrink" size={16} />
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -588,6 +696,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         </Btn>
       )}
       <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--ink-mute)" }}>{counts(tl)}</span>
+      <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={fullBtn(false)}>
+        <Icon name="expand" size={15} />
+      </button>
     </div>
   );
 
@@ -627,7 +738,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const panel = (
     <>
       {tab === "steps" && (
-        <StepsPanel tl={tl} time={time} seek={setSeekTo} summary={demo.analysis?.summary} narration={tl.narration} />
+        <StepsPanel tl={tl} time={time} seek={seek} summary={demo.analysis?.summary} narration={tl.narration} />
       )}
       {tab === "zoom" && <ZoomPanel {...panelProps} />}
       {tab === "blur" && <BlurPanel {...panelProps} />}
@@ -658,7 +769,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     <Timeline
       tl={tl}
       time={time}
-      onSeek={setSeekTo}
+      onSeek={seek}
       selection={selection}
       onSelect={setSelection}
       onChange={changeItem}
@@ -679,6 +790,15 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     />
   ) : null;
 
+  /**
+   * ── WHY THE INSPECTOR ROWS ARE max-content ──────────────────────────────
+   * The inspector is a grid with a fixed height, and every card in it clips
+   * its overflow. A grid item that clips is allowed to shrink to nothing, so
+   * when the cards did not fit, the grid squeezed each one instead of letting
+   * the column scroll: the fourth step and the end of the voiceover script were
+   * cut off with no scrollbar to reach them. Rows sized to their content make
+   * the column taller than its window, which is what makes it scroll.
+   */
   /**
    * ── TWO LAYOUTS, NOT ONE THAT REFLOWS ────────────────────────────────────
    * The same arrangement as src/components/Edit/Workspace.js, for the same
@@ -701,7 +821,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         </div>
         {transport}
         {tabs}
-        <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", padding: "12px 14px 28px", background: "var(--paper)" }}>
+        <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "12px 14px 28px", background: "var(--paper)" }}>
           {panel}
         </div>
         <div style={{ flexShrink: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "10px 12px 12px", overflowX: "auto" }}>
@@ -723,7 +843,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         </div>
         <aside style={{ gridColumn: 2, gridRow: "1 / span 2", minHeight: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
           {tabs}
-          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", padding: "14px 16px 28px" }}>
+          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "14px 16px 28px" }}>
             {panel}
           </div>
         </aside>
@@ -775,4 +895,16 @@ function Centred({ children }) {
       <div style={{ display: "grid", placeItems: "center" }}>{children}</div>
     </div>
   );
+}
+
+/** The full-screen toggle: quiet in the editor, light on the dark full-screen ground. */
+function fullBtn(onDark) {
+  return {
+    width: 32, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center",
+    marginLeft: onDark ? "auto" : 0,
+    border: onDark ? "1px solid rgba(255,255,255,.25)" : "1px solid var(--line)",
+    background: onDark ? "rgba(255,255,255,.08)" : "var(--card)",
+    color: onDark ? "#fff" : "var(--ink-body)",
+    borderRadius: 8, cursor: "pointer",
+  };
 }

@@ -83,17 +83,39 @@ export default function Preview({
   // Seeks are requested by changing `seekTo`, not by driving `time`, so the
   // playhead can follow the video during playback without every frame of it
   // being read back as a seek request.
+  /**
+   * ── A SEEK IS AN EVENT, NOT A STATE ────────────────────────────────────────
+   * This effect used to depend on the layout as well as the request, and the
+   * layout is rebuilt on every edit. So every edit re-ran the LAST seek: drag
+   * the cursor Size slider and the video jumped back to wherever the creator
+   * had last clicked the ruler — to a moment with no pointer in it, which read
+   * as "the cursor disappears when I change its size". It runs now only when a
+   * new request arrives; the layout it needs is read, not depended on.
+   */
+  const layRef = useRef(lay);
+  layRef.current = lay;
+  const durRef = useRef(tl.duration || 0);
+  durRef.current = tl.duration || 0;
+
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || seekTo == null) return;
-    v.currentTime = clamp(toSource(seekTo, lay), 0, Math.max(0, (tl.duration || 0) - 0.05));
-  }, [seekTo, lay, tl.duration]);
+    const at = seekTo && typeof seekTo === "object" ? seekTo.t : seekTo;
+    if (!v || at == null || !Number.isFinite(at)) return;
+    v.currentTime = clamp(toSource(at, layRef.current), 0, Math.max(0, durRef.current - 0.05));
+  }, [seekTo]);
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (playing) v.play().catch(() => onPlayingChange?.(false));
-    else v.pause();
+    if (playing) {
+      // Playback stops itself a hair before the end of the edit rather than at
+      // the end of the file, so the element never reports "ended" and play()
+      // would resume at the last frame and stop again at once. Pressing Play at
+      // the end means "watch it again".
+      const lay2 = layRef.current;
+      if (toOutputSnapped(v.currentTime, lay2) >= lay2.duration - 0.1) v.currentTime = toSource(0, lay2);
+      v.play().catch(() => onPlayingChange?.(false));
+    } else v.pause();
   }, [playing, onPlayingChange]);
 
   /* ── The frame loop ──────────────────────────────────────────────────── */
@@ -437,8 +459,7 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     // timeline.js smoothTrack, so a steady hover cannot flicker between the
     // two. Mirrors render/overlay.js drawCursor.
   } else if (p.shape === "pointer" || p.shape === "hand") {
-    // The hand's hotspot is the fingertip, not the corner of its box.
-    ctx.translate(-s * 0.3, 0);
+    // Laid out from the fingertip, which is the hotspot: no offset needed.
     handPath(ctx, s);
     ctx.fillStyle = fill;
     ctx.fill();
@@ -447,6 +468,9 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     ctx.lineJoin = "round";
     ctx.strokeStyle = line;
     ctx.stroke();
+    ctx.lineCap = "round";
+    ctx.lineWidth = Math.max(0.8, s * 0.04);
+    handDetail(ctx, s);
   } else {
     // Same sub-pixel tip margin as overlay.js drawArrow.
     ctx.translate(-s * 0.03, -s * 0.03);
@@ -477,28 +501,48 @@ function arrowPath(ctx, s) {
 /** The hand, matching render/overlay.js drawHand. Laid out from its box; the
  *  caller shifts it so the fingertip lands on the pointer's real position. */
 /** A pointing hand. Mirrors render/overlay.js drawHand exactly. */
+// Same outline and detail as overlay.js drawHand — see the note there.
 function handPath(ctx, s) {
   ctx.beginPath();
-  // Same outline as overlay.js drawHand — see the note there for why it is shaped this way.
-  ctx.moveTo(s * 0.15, s * 0.32);
-  ctx.lineTo(s * 0.15, s * 0.02);
-  ctx.quadraticCurveTo(s * 0.15, s * -0.07, s * 0.305, s * -0.07);
-  ctx.quadraticCurveTo(s * 0.46, s * -0.07, s * 0.46, s * 0.02);
-  ctx.lineTo(s * 0.46, s * 0.3);
-  ctx.quadraticCurveTo(s * 0.48, s * 0.25, s * 0.54, s * 0.25);
-  ctx.quadraticCurveTo(s * 0.61, s * 0.25, s * 0.61, s * 0.33);
-  ctx.quadraticCurveTo(s * 0.63, s * 0.29, s * 0.69, s * 0.29);
-  ctx.quadraticCurveTo(s * 0.75, s * 0.29, s * 0.75, s * 0.38);
-  ctx.quadraticCurveTo(s * 0.77, s * 0.35, s * 0.825, s * 0.35);
-  ctx.quadraticCurveTo(s * 0.88, s * 0.35, s * 0.88, s * 0.45);
-  ctx.lineTo(s * 0.88, s * 0.98);
-  ctx.quadraticCurveTo(s * 0.86, s * 1.24, s * 0.62, s * 1.3);
-  ctx.lineTo(s * 0.3, s * 1.3);
-  ctx.quadraticCurveTo(s * 0.12, s * 1.27, s * 0.07, s * 1.09);
-  ctx.lineTo(s * 0, s * 0.66);
-  ctx.quadraticCurveTo(s * -0.03, s * 0.38, s * 0.09, s * 0.33);
-  ctx.quadraticCurveTo(s * 0.14, s * 0.31, s * 0.15, s * 0.32);
+  ctx.moveTo(s * -0.15, s * 0.34);
+  ctx.lineTo(s * -0.15, s * 0.02);
+  ctx.quadraticCurveTo(s * -0.15, s * -0.08, s * 0.005, s * -0.08);
+  ctx.quadraticCurveTo(s * 0.16, s * -0.08, s * 0.16, s * 0.02);
+  ctx.lineTo(s * 0.16, s * 0.27);
+  ctx.quadraticCurveTo(s * 0.17, s * 0.19, s * 0.235, s * 0.19);
+  ctx.quadraticCurveTo(s * 0.31, s * 0.19, s * 0.31, s * 0.28);
+  ctx.quadraticCurveTo(s * 0.32, s * 0.24, s * 0.38, s * 0.24);
+  ctx.quadraticCurveTo(s * 0.45, s * 0.24, s * 0.45, s * 0.33);
+  ctx.quadraticCurveTo(s * 0.46, s * 0.3, s * 0.515, s * 0.3);
+  ctx.quadraticCurveTo(s * 0.58, s * 0.3, s * 0.58, s * 0.4);
+  ctx.lineTo(s * 0.58, s * 0.7);
+  ctx.quadraticCurveTo(s * 0.58, s * 0.86, s * 0.47, s * 0.95);
+  ctx.lineTo(s * 0.47, s * 1.04);
+  ctx.lineTo(s * -0.06, s * 1.04);
+  ctx.lineTo(s * -0.06, s * 0.93);
+  ctx.quadraticCurveTo(s * -0.2, s * 0.84, s * -0.3, s * 0.66);
+  ctx.quadraticCurveTo(s * -0.37, s * 0.5, s * -0.3, s * 0.38);
+  ctx.quadraticCurveTo(s * -0.24, s * 0.31, s * -0.15, s * 0.34);
   ctx.closePath();
+}
+
+function handDetail(ctx, s) {
+  ctx.beginPath();
+  ctx.moveTo(s * 0.16, s * 0.27);
+  ctx.lineTo(s * 0.16, s * 0.44);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(s * 0.31, s * 0.28);
+  ctx.lineTo(s * 0.31, s * 0.46);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(s * 0.45, s * 0.33);
+  ctx.lineTo(s * 0.45, s * 0.48);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(s * -0.15, s * 0.4);
+  ctx.quadraticCurveTo(s * -0.12, s * 0.52, s * 0, s * 0.6);
+  ctx.stroke();
 }
 
 

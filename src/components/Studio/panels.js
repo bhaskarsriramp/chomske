@@ -642,7 +642,7 @@ export function CursorPanel({ tl, edit }) {
             <Segmented
               full
               size="xs"
-              value={cur.mode || "intent"}
+              value={cur.mode === "intent" ? "intent" : "recorded"}
               onChange={(v) => edit({ cursor: { ...cur, mode: v } }, v === "intent" ? "Composed pointer" : "Recorded pointer")}
               options={[
                 { value: "intent", label: "Composed" },
@@ -650,10 +650,7 @@ export function CursorPanel({ tl, edit }) {
               ]}
             />
             <div style={{ fontSize: 11.5, lineHeight: 1.5, color: "var(--ink-mute)", marginTop: 6 }}>
-              {CURSOR_MODE_HINT[cur.mode === "recorded" ? "recorded" : "intent"]}
-            </div>
-            <div style={{ fontSize: 11.5, lineHeight: 1.5, color: "var(--ink-mute)", marginTop: 6 }}>
-              Changing this takes effect the next time the demo is analysed.
+              {CURSOR_MODE_HINT[cur.mode === "intent" ? "intent" : "recorded"]}
             </div>
           </div>
           <Toggle

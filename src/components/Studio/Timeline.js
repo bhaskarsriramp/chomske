@@ -24,7 +24,7 @@
  * written is the recording time it maps back to. Without that, dragging a zoom
  * across a cut would silently change its length by however long the cut was.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { layout, placedSpans, activeZooms, toSource, mergedCuts, clamp, fmtTime } from "./model";
 import { Icon } from "./ui";
 
@@ -49,7 +49,17 @@ export default function Timeline({
   height = 30,
 }) {
   const railRef = useRef(null);
+  const viewRef = useRef(null);
   const [drag, setDrag] = useState(null);
+  /**
+   * ── ZOOM IS WIDTH ──────────────────────────────────────────────────────────
+   * 1 fits the whole edit in the space there is. Past that the time area gets
+   * wider than its window and scrolls, and everything drawn in it is placed in
+   * percentages of that wider area — so nothing below needed to change to be
+   * zoomable, only the thing it is measured against.
+   */
+  const [zoom, setZoom] = useState(1);
+  const [scrubbing, setScrubbing] = useState(false);
 
   const lay = useMemo(() => layout(tl), [tl]);
   const total = Math.max(0.1, lay.duration);
@@ -66,10 +76,59 @@ export default function Timeline({
 
   /** Where along the rail, as a fraction, a pointer event landed. */
   const fractionAt = useCallback((clientX) => {
+    // The rail's rectangle is the full zoomed width, scrolled or not, so a
+    // pointer's offset into it is a fraction of the edit at any zoom.
     const r = railRef.current?.getBoundingClientRect();
     if (!r?.width) return 0;
     return clamp((clientX - r.left) / r.width, 0, 1);
   }, []);
+
+  /* ── Zoom ─────────────────────────────────────────────────────────────── */
+  const zoomBy = useCallback((factor, anchorClientX = null) => {
+    const view = viewRef.current;
+    setZoom((z) => {
+      const next = clamp(Math.round(z * factor * 100) / 100, 1, ZOOM_MAX);
+      if (view && next !== z) {
+        // Keep the moment under the pointer (or the playhead) where it is on
+        // screen, which is what makes zooming feel like zooming and not like
+        // being thrown somewhere else in the edit.
+        const vr = view.getBoundingClientRect();
+        const x = anchorClientX == null ? null : anchorClientX - vr.left;
+        const focusFrac = x == null
+          ? clamp(time / Math.max(0.1, total), 0, 1)
+          : clamp((view.scrollLeft + x) / (vr.width * z), 0, 1);
+        const px = x == null ? vr.width / 2 : x;
+        requestAnimationFrame(() => {
+          view.scrollLeft = Math.max(0, focusFrac * vr.width * next - px);
+        });
+      }
+      return next;
+    });
+  }, [time, total]);
+
+  // Ctrl / Cmd + wheel zooms, the way every editor and map does. A plain wheel
+  // still scrolls the page, which is what a creator reaching for it expects.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return undefined;
+    const onWheel = (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      zoomBy(e.deltaY < 0 ? 1.25 : 0.8, e.clientX);
+    };
+    view.addEventListener("wheel", onWheel, { passive: false });
+    return () => view.removeEventListener("wheel", onWheel);
+  }, [zoomBy]);
+
+  // While playing zoomed in, the view follows the playhead instead of letting
+  // it run off the edge.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || zoom <= 1 || scrubbing) return;
+    const w = view.clientWidth;
+    const x = (time / Math.max(0.1, total)) * w * zoom;
+    if (x < view.scrollLeft + w * 0.08 || x > view.scrollLeft + w * 0.92) view.scrollLeft = Math.max(0, x - w * 0.3);
+  }, [time, total, zoom, scrubbing]);
 
   /* ── Scrubbing ────────────────────────────────────────────────────────── */
   const scrub = useCallback(
@@ -143,56 +202,47 @@ export default function Timeline({
 
   /* ── The ruler's tick marks ───────────────────────────────────────────── */
   const ticks = useMemo(() => {
-    const step = total <= 20 ? 2 : total <= 60 ? 5 : total <= 180 ? 15 : total <= 600 ? 60 : 120;
+    const span = total / zoom;
+    const step = span <= 6 ? 0.5 : span <= 12 ? 1 : span <= 20 ? 2 : span <= 60 ? 5 : span <= 180 ? 15 : span <= 600 ? 60 : 120;
     const out = [];
     for (let t = 0; t <= total; t += step) out.push(t);
     return out;
-  }, [total]);
+  }, [total, zoom]);
 
   const playPct = (time / total) * 100;
 
+  /* ── The playhead can be grabbed ──────────────────────────────────────── */
+  const grabHead = useCallback(
+    (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      setScrubbing(true);
+      onSeek(fractionAt(e.clientX) * total);
+    },
+    [fractionAt, onSeek, total]
+  );
+  const dragHead = useCallback(
+    (e) => {
+      if (!scrubbing) return;
+      onSeek(fractionAt(e.clientX) * total);
+    },
+    [scrubbing, fractionAt, onSeek, total]
+  );
+  const dropHead = useCallback(() => setScrubbing(false), []);
+
+  const RULER = 25;
+
   return (
     <div className="st-timeline" style={{ userSelect: "none" }}>
-      {/* ── Ruler ──────────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 7 }}>
-        <div style={{ width: LABEL_W, flexShrink: 0 }} />
-        <div
-          style={{ position: "relative", flex: 1, height: 18, cursor: "pointer" }}
-          onPointerDown={scrub}
-          onPointerMove={scrubMove}
-        >
-          {ticks.map((t) => (
-            <span
-              key={t}
-              style={{
-                position: "absolute",
-                left: `${(t / total) * 100}%`,
-                fontSize: 9.5,
-                fontWeight: 650,
-                color: "var(--ink-mute)",
-                transform: t === 0 ? "none" : "translateX(-50%)",
-                fontVariantNumeric: "tabular-nums",
-                pointerEvents: "none",
-              }}
-            >
-              {fmtTime(t)}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Lanes ──────────────────────────────────────────────────────── */}
-      <div
-        style={{ position: "relative" }}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-      >
-        {LANES.map((lane) => (
-          <div key={lane.key} style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 6 }}>
+      <div style={{ display: "flex", gap: 10 }}>
+        {/* ── Lane names, which do not scroll ─────────────────────────── */}
+        <div style={{ width: LABEL_W, flexShrink: 0, paddingTop: RULER }}>
+          {LANES.map((lane) => (
             <div
+              key={lane.key}
               style={{
-                width: LABEL_W, flexShrink: 0, display: "flex", alignItems: "center", gap: 6,
+                height, marginBottom: 6, display: "flex", alignItems: "center", gap: 6,
                 fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase",
                 color: items[lane.key].length ? "var(--ink-body)" : "var(--ink-mute)",
                 opacity: items[lane.key].length ? 1 : 0.55,
@@ -203,77 +253,135 @@ export default function Timeline({
               </span>
               {lane.label}
             </div>
+          ))}
+        </div>
 
+        {/* ── The time area, which zooms and scrolls ──────────────────── */}
+        <div ref={viewRef} className="st-scroll" style={{ flex: 1, minWidth: 0, overflowX: zoom > 1 ? "auto" : "hidden", overflowY: "hidden", paddingBottom: zoom > 1 ? 4 : 0 }}>
+          <div
+            ref={railRef}
+            style={{ position: "relative", width: `${zoom * 100}%`, minWidth: "100%" }}
+            onPointerMove={(e) => { moveDrag(e); dragHead(e); }}
+            onPointerUp={() => { endDrag(); dropHead(); }}
+            onPointerCancel={() => { endDrag(); dropHead(); }}
+          >
+            {/* Ruler */}
             <div
-              className="st-lane"
-              ref={lane.key === "zooms" ? railRef : undefined}
-              style={{ flex: 1, height }}
-              onPointerDown={(e) => {
-                if (e.target !== e.currentTarget) return;
-                onSeek(fractionAt(e.clientX) * total);
-              }}
+              style={{ position: "relative", height: 18, marginBottom: 7, cursor: "pointer" }}
+              onPointerDown={scrub}
+              onPointerMove={scrubMove}
             >
-              {items[lane.key].map((item, i) => {
-                const left = (item.start / total) * 100;
-                const width = Math.max(0.6, ((item.end - item.start) / total) * 100);
-                const on = selection?.kind === SINGULAR[lane.key] && selection.id === item.id;
-                return (
-                  <div
-                    key={`${item.id}_${i}`}
-                    className={`st-chip${on ? " is-on" : ""}`}
-                    title={chipTitle(lane.key, item)}
-                    onPointerDown={beginDrag(lane.key, item, "move")}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!drag?.moved) {
-                        onSelect({ kind: SINGULAR[lane.key], id: item.id });
-                        onSeek(item.start + 0.05);
-                      }
-                    }}
-                    style={{
-                      left: `${left}%`,
-                      width: `${width}%`,
-                      background: on ? lane.color : `${lane.color}55`,
-                      borderColor: lane.color,
-                      color: on ? "#fff" : "var(--ink-body)",
-                    }}
-                  >
-                    <span className="st-grip is-start" onPointerDown={beginDrag(lane.key, item, "start")} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", pointerEvents: "none" }}>
-                      {chipLabel(lane.key, item)}
-                    </span>
-                    <span className="st-grip is-end" onPointerDown={beginDrag(lane.key, item, "end")} />
-                  </div>
-                );
-              })}
+              {ticks.map((t) => (
+                <span
+                  key={t}
+                  style={{
+                    position: "absolute",
+                    left: `${(t / total) * 100}%`,
+                    fontSize: 9.5,
+                    fontWeight: 650,
+                    color: "var(--ink-mute)",
+                    transform: t === 0 ? "none" : "translateX(-50%)",
+                    fontVariantNumeric: "tabular-nums",
+                    pointerEvents: "none",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {fmtTime(t)}
+                </span>
+              ))}
+            </div>
 
-              {/* Cuts, drawn across every lane so the gap reads as a gap in the
-                  video rather than as something missing from one track. */}
-              {lane.key === "zooms" &&
-                cuts.map((c) => {
-                  const at = outOf(c.start, lay);
+            {/* Lanes */}
+            {LANES.map((lane) => (
+              <div
+                key={lane.key}
+                className="st-lane"
+                style={{ height, marginBottom: 6, marginTop: 0 }}
+                onPointerDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  onSeek(fractionAt(e.clientX) * total);
+                }}
+              >
+                {items[lane.key].map((item, i) => {
+                  const left = (item.start / total) * 100;
+                  const width = Math.max(0.6 / zoom, ((item.end - item.start) / total) * 100);
+                  const on = selection?.kind === SINGULAR[lane.key] && selection.id === item.id;
                   return (
-                    <span
-                      key={c.id || `${c.start}`}
-                      className="st-cut"
-                      title={`Cut ${fmtTime(c.end - c.start, true)} — click to restore`}
+                    <div
+                      key={`${item.id}_${i}`}
+                      className={`st-chip${on ? " is-on" : ""}`}
+                      title={chipTitle(lane.key, item)}
+                      onPointerDown={beginDrag(lane.key, item, "move")}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onRemoveCut?.(c);
+                        if (!drag?.moved) {
+                          onSelect({ kind: SINGULAR[lane.key], id: item.id });
+                          onSeek(item.start + 0.05);
+                        }
                       }}
-                      style={{ left: `${(at / total) * 100}%`, width: 6, marginLeft: -3 }}
-                    />
+                      style={{
+                        left: `${left}%`,
+                        width: `${width}%`,
+                        background: on ? lane.color : `${lane.color}55`,
+                        borderColor: lane.color,
+                        color: on ? "#fff" : "var(--ink-body)",
+                      }}
+                    >
+                      <span className="st-grip is-start" onPointerDown={beginDrag(lane.key, item, "start")} />
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", pointerEvents: "none" }}>
+                        {chipLabel(lane.key, item)}
+                      </span>
+                      <span className="st-grip is-end" onPointerDown={beginDrag(lane.key, item, "end")} />
+                    </div>
                   );
                 })}
-            </div>
-          </div>
-        ))}
 
-        <div className="st-playhead" style={{ left: `calc(${LABEL_W}px + 10px + (100% - ${LABEL_W}px - 10px) * ${playPct / 100})` }} />
+                {/* Cuts, drawn on the first lane so the gap reads as a gap in
+                    the video rather than as something missing from one track. */}
+                {lane.key === "zooms" &&
+                  cuts.map((c) => {
+                    const at = outOf(c.start, lay);
+                    return (
+                      <span
+                        key={c.id || `${c.start}`}
+                        className="st-cut"
+                        title={`Cut ${fmtTime(c.end - c.start, true)} — click to restore`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveCut?.(c);
+                        }}
+                        style={{ left: `${(at / total) * 100}%`, width: 6, marginLeft: -3 }}
+                      />
+                    );
+                  })}
+              </div>
+            ))}
+
+            {/* The playhead: a line to see, and a handle to hold. The handle
+                is wider than the line so it can be caught with a mouse. */}
+            <div
+              className="st-playhead"
+              style={{ left: `${playPct}%`, top: RULER - 6, bottom: 0 }}
+            />
+            <div
+              role="slider"
+              aria-label="Playhead"
+              aria-valuemin={0}
+              aria-valuemax={Math.round(total * 10) / 10}
+              aria-valuenow={Math.round(time * 10) / 10}
+              title="Drag to scrub"
+              onPointerDown={grabHead}
+              style={{
+                position: "absolute", top: 0, bottom: 0, left: `${playPct}%`, width: 16, marginLeft: -8,
+                cursor: scrubbing ? "grabbing" : "grab", zIndex: 6, touchAction: "none",
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* ── What the ruler is showing ──────────────────────────────────── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 11, paddingLeft: LABEL_W + 10, fontSize: 11.5, color: "var(--ink-mute)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 11, paddingLeft: LABEL_W + 10, fontSize: 11.5, color: "var(--ink-mute)", flexWrap: "wrap" }}>
         <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--ink-body)", fontWeight: 650 }}>
           {fmtTime(time, true)} / {fmtTime(total, true)}
         </span>
@@ -282,12 +390,28 @@ export default function Timeline({
             {fmtTime(lay.removed, true)} cut from {fmtTime(tl.duration || 0, true)}
           </span>
         )}
+        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <button type="button" onClick={() => zoomBy(1 / 1.5)} disabled={zoom <= 1} title="Zoom out (Ctrl + wheel)" aria-label="Zoom timeline out" style={zoomBtn(zoom <= 1)}>
+            <Icon name="minus" size={12} />
+          </button>
+          <span style={{ minWidth: 38, textAlign: "center", fontVariantNumeric: "tabular-nums", fontWeight: 650, color: "var(--ink-body)" }}>
+            {Math.round(zoom * 100)}%
+          </span>
+          <button type="button" onClick={() => zoomBy(1.5)} disabled={zoom >= ZOOM_MAX} title="Zoom in (Ctrl + wheel)" aria-label="Zoom timeline in" style={zoomBtn(zoom >= ZOOM_MAX)}>
+            <Icon name="plus" size={12} />
+          </button>
+          {zoom > 1 && (
+            <button type="button" onClick={() => setZoom(1)} title="Fit the whole edit" style={{ ...zoomBtn(false), width: "auto", padding: "0 8px", fontSize: 11 }}>
+              Fit
+            </button>
+          )}
+        </span>
         {onAddCut && (
           <button
             type="button"
             onClick={() => onAddCut(time)}
             style={{
-              marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
+              display: "inline-flex", alignItems: "center", gap: 5,
               border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-body)",
               borderRadius: 8, padding: "4px 9px", fontSize: 11.5, fontWeight: 620, cursor: "pointer", fontFamily: "inherit",
             }}
@@ -301,6 +425,15 @@ export default function Timeline({
     </div>
   );
 }
+
+/** How far the timeline zooms in. 12x on a minute-long demo is five seconds across. */
+const ZOOM_MAX = 12;
+
+const zoomBtn = (off) => ({
+  width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center",
+  border: "1px solid var(--line)", background: "var(--card)", color: off ? "var(--ink-mute)" : "var(--ink-body)",
+  borderRadius: 7, cursor: off ? "default" : "pointer", opacity: off ? 0.5 : 1, fontFamily: "inherit", fontWeight: 650,
+});
 
 const LABEL_W = 74;
 

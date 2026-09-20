@@ -924,6 +924,9 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     // creator's display scaling decides it and nothing in the recording says,
     // so sync.js measures it and the erase patch is sized from it.
     captured_px: clamp(num(cur.captured_px, 22), 8, 96),
+    // True when the drawn path is the pointer found by its shape in each frame
+    // (locate.js) rather than one recovered from frame differences.
+    located: cur.located === true,
   };
 
   // ── The recovered path ────────────────────────────────────────────────────

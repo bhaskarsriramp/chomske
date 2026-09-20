@@ -39,6 +39,7 @@ import {
 } from "./vision.js";
 import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts } from "./events.js";
 import { alignCapture } from "./sync.js";
+import { locatePointer, mergeLocated, stepPath, snapToLocated } from "./locate.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
@@ -88,6 +89,34 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   });
   const capturedTrack = aligned.track;
   const capturedMotion = aligned.motion;
+
+  /**
+   * ── THE POINTER, FOUND BY WHAT IT LOOKS LIKE ──────────────────────────────
+   * The difference tracker above cannot see a still pointer, loses it while the
+   * page scrolls, and guesses its hotspot to within a few pixels. locate.js
+   * finds it by its shape in every frame instead — parked, mid-scroll, and to
+   * the pixel — and knows whether it is an arrow or a hand.
+   *
+   * It is started here and not awaited: it is all arithmetic on decoded frames,
+   * and the model pass below is all waiting on the network, so they overlap
+   * and the creator waits for the longer of the two, not both. It is read
+   * after the model has answered, before anything is decided from the clicks.
+   *
+   * Thirty frames a second is not arbitrary. It is the export's own frame grid,
+   * so every located sample is the position in exactly the recording frame the
+   * export will show at that moment.
+   */
+  const locateTask = locatePointer(video, {
+    sourceWidth: source?.width || 1920,
+    sourceHeight: source?.height || 1080,
+    duration,
+    fps: 30,
+    cursorPx: aligned.sync?.cursor_px || 0,
+    hints: capturedTrack,
+  }).catch((err) => {
+    console.error("[studio] pointer locator failed; using the tracker alone:", err);
+    return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
+  });
 
   /* ── What the pointer did ────────────────────────────────────────────── */
   onProgress(0.06, "Reading the pointer");
@@ -150,6 +179,15 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
       : Promise.resolve({ language: "", language_label: "", cues: [] });
 
   const shots = await uiTask;
+  const located = await locateTask;
+  const locatedShare = located.frames ? located.found / located.frames : 0;
+  console.log(
+    "[studio] pointer located by shape in " + located.found + " of " + located.frames + " frames" +
+      (located.design ? " (" + located.design + " pointer, " + located.heightPx + "px)" : " — no pointer design recognised, tracker only")
+  );
+  // Presses go where the pointer actually was, so the zoom and the ripple land
+  // on the control and not a few pixels beside it.
+  events = snapToLocated(events, located.track);
 
   /**
    * ── THE CAMERA WAITS FOR THE MODEL ──────────────────────────────────────
@@ -272,7 +310,21 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   const shaped = shapeFromControls(rested, shots);
   const stilled = capturedTrack.length - countMoves(steady, wh);
   if (stilled > 0) console.log("[studio] " + stilled + " brief deviation(s) of the pointer were not drawn");
-  tl.track = smoothTrack(shaped, { rate: 60, strength: tl.cursor.smoothing, duration });
+  /**
+   * ── WHERE THE POINTER WAS FOUND, IT IS DRAWN EXACTLY THERE ────────────────
+   * Found in most of the recording, the located positions ARE the drawn path:
+   * the real shape, frame by frame, with no smoothing, so the pointer burnt
+   * into the recording is under ours in every frame, still or moving. The
+   * tracker's (steadied, shaped) samples fill only what the locator missed.
+   * Found in too little of it — an unusual pointer, a recording at a scale no
+   * template fits — the path is built exactly as it was before.
+   */
+  if (locatedShare >= 0.5) {
+    tl.track = stepPath(mergeLocated(located.track, shaped));
+    tl.cursor = { ...tl.cursor, smoothing: 0, located: true };
+  } else {
+    tl.track = smoothTrack(shaped, { rate: 60, strength: tl.cursor.smoothing, duration });
+  }
   tl.composed = composed ? composed.path : [];
   tl.cursor = {
     ...tl.cursor,
@@ -284,7 +336,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // the recovered one — otherwise the drawn pointer is already on top of it.
   // Always kept: it is what the renderer reconstructs away if the creator
   // switches to the composed path, and it is small.
-  tl.captured = thin(capturedTrack);
+  tl.captured = thin(located.track.length ? mergeLocated(located.track, capturedTrack) : capturedTrack);
   if (composed) {
     console.log(
       `[studio] pointer composed from ${composed.anchors.length} clicks ` +
@@ -360,7 +412,8 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
         bbox: (el.bbox || []).map((v) => Math.round(Number(v) * 1000) / 1000),
       })),
     })),
-        frames_read: shots.length,
+        locate: { found: located.found, frames: located.frames, design: located.design, height_px: located.heightPx },
+    frames_read: shots.length,
     frames_failed: Math.max(0, frames.length - shots.length),
     sync: aligned.sync,
     spend,

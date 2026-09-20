@@ -269,3 +269,8 @@
   .st-card:hover { transform: none; }
   .st-bar > i { transition: none; }
 }
+
+/* Full screen: the edit on a dark ground, with room around it, the way it will
+   be watched. The editor's own chrome is outside this element and so is gone. */
+.st-fullscreen:fullscreen { background: #0B0D14; padding: 24px 28px 20px; box-sizing: border-box; }
+.st-fullscreen:-webkit-full-screen { background: #0B0D14; padding: 24px 28px 20px; box-sizing: border-box; }

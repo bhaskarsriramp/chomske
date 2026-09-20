@@ -302,68 +302,68 @@ function drawArrow(ctx, s, theme) {
 }
 
 /**
- * The hand, for anything the operating system considered clickable.
+ * ── THE HAND: A POINTING HAND FIRST, AND ONE THAT COVERS THE REAL ONE ───────
+ * Two earlier outlines failed in opposite ways. The first read nicely and let
+ * the operating system's hand show around it. The second covered it and, as
+ * one tall finger rising from the middle of a smooth fist, read as a rude
+ * gesture — which is how a creator described it.
  *
- * ── DRAWN, NOT BORROWED ──────────────────────────────────────────────────────
- * The system's own hand is about twenty pixels and cannot be restyled, which is
- * the whole reason this layer exists: the creator picks a theme, a size and a
- * glow, and every pointer in the video has to honour them. So the hand is a
- * path in units of the cursor's own size, same as the arrow, with the same fill,
- * the same outline weight and the same shadow — a matched pair rather than two
- * cursors that happen to appear in the same video.
- *
- * ── THE HOTSPOT IS THE FINGERTIP ─────────────────────────────────────────────
- * The path is laid out from its bounding box, but the pixel the operating
- * system calls "where the pointer is" is the tip of the extended finger, near
- * the top middle. Without the shift the drawn hand sits down and to the right of
- * the captured one it is meant to cover — which is two pointers again — and
- * every click ripple fires off the thing that was clicked.
+ * What makes a hand read as POINTING is structure, not size: the finger sits
+ * on the left of the hand, the thumb stands out on its own further left, and
+ * the curled fingers show as separate knuckles with lines between them. This
+ * outline has all three, is laid out from the fingertip (the hotspot) so no
+ * offset is needed, and still contains a Windows hand drawn at 1/1.35 of it
+ * from the same point.
  */
 function drawHand(ctx, s, theme) {
-  // The fingertip is the hotspot, and the path is laid out from its own
-  // top-left, so the whole shape shifts left to put the fingertip on the point.
-  ctx.translate(-s * 0.3, 0);
   ctx.beginPath();
-  /**
-   * ── THIS HAND HAS ONE JOB BEFORE IT HAS TO LOOK GOOD ─────────────────────
-   * It is drawn on top of the operating system's own hand, and it must hide
-   * it completely: any part of the real hand that shows around ours is what
-   * a viewer reports as two cursors. The previous outline was drawn to read
-   * well and it did, but tested against a Windows-style hand under it, 13 to
-   * 33 pixels of the real one showed every frame: its square fingertip above
-   * our rounded one, its knuckles to the right of our narrow finger, its
-   * thumb to the left.
-   *
-   * So the finger is wider and its rounded top sits a little ABOVE the
-   * hotspot, the knuckles start higher, and the thumb reaches further left —
-   * each placed to contain the real outline at 1.35x from the same point.
-   */
-  ctx.moveTo(s * 0.15, s * 0.32);
-  ctx.lineTo(s * 0.15, s * 0.02);
-  ctx.quadraticCurveTo(s * 0.15, s * -0.07, s * 0.305, s * -0.07);
-  ctx.quadraticCurveTo(s * 0.46, s * -0.07, s * 0.46, s * 0.02);
-  ctx.lineTo(s * 0.46, s * 0.3);
-  ctx.quadraticCurveTo(s * 0.48, s * 0.25, s * 0.54, s * 0.25);
-  ctx.quadraticCurveTo(s * 0.61, s * 0.25, s * 0.61, s * 0.33);
-  ctx.quadraticCurveTo(s * 0.63, s * 0.29, s * 0.69, s * 0.29);
-  ctx.quadraticCurveTo(s * 0.75, s * 0.29, s * 0.75, s * 0.38);
-  ctx.quadraticCurveTo(s * 0.77, s * 0.35, s * 0.825, s * 0.35);
-  ctx.quadraticCurveTo(s * 0.88, s * 0.35, s * 0.88, s * 0.45);
-  ctx.lineTo(s * 0.88, s * 0.98);
-  ctx.quadraticCurveTo(s * 0.86, s * 1.24, s * 0.62, s * 1.3);
-  ctx.lineTo(s * 0.3, s * 1.3);
-  ctx.quadraticCurveTo(s * 0.12, s * 1.27, s * 0.07, s * 1.09);
-  ctx.lineTo(s * 0, s * 0.66);
-  ctx.quadraticCurveTo(s * -0.03, s * 0.38, s * 0.09, s * 0.33);
-  ctx.quadraticCurveTo(s * 0.14, s * 0.31, s * 0.15, s * 0.32);
+  ctx.moveTo(s * -0.15, s * 0.34);
+  ctx.lineTo(s * -0.15, s * 0.02);
+  ctx.quadraticCurveTo(s * -0.15, s * -0.08, s * 0.005, s * -0.08);
+  ctx.quadraticCurveTo(s * 0.16, s * -0.08, s * 0.16, s * 0.02);
+  ctx.lineTo(s * 0.16, s * 0.27);
+  ctx.quadraticCurveTo(s * 0.17, s * 0.19, s * 0.235, s * 0.19);
+  ctx.quadraticCurveTo(s * 0.31, s * 0.19, s * 0.31, s * 0.28);
+  ctx.quadraticCurveTo(s * 0.32, s * 0.24, s * 0.38, s * 0.24);
+  ctx.quadraticCurveTo(s * 0.45, s * 0.24, s * 0.45, s * 0.33);
+  ctx.quadraticCurveTo(s * 0.46, s * 0.3, s * 0.515, s * 0.3);
+  ctx.quadraticCurveTo(s * 0.58, s * 0.3, s * 0.58, s * 0.4);
+  ctx.lineTo(s * 0.58, s * 0.7);
+  ctx.quadraticCurveTo(s * 0.58, s * 0.86, s * 0.47, s * 0.95);
+  ctx.lineTo(s * 0.47, s * 1.04);
+  ctx.lineTo(s * -0.06, s * 1.04);
+  ctx.lineTo(s * -0.06, s * 0.93);
+  ctx.quadraticCurveTo(s * -0.2, s * 0.84, s * -0.3, s * 0.66);
+  ctx.quadraticCurveTo(s * -0.37, s * 0.5, s * -0.3, s * 0.38);
+  ctx.quadraticCurveTo(s * -0.24, s * 0.31, s * -0.15, s * 0.34);
   ctx.closePath();
 
   ctx.fillStyle = theme.fill;
   ctx.fill();
   ctx.shadowColor = "transparent";
-  ctx.lineWidth = Math.max(1, s * 0.055);
   ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.strokeStyle = theme.line;
+  ctx.lineWidth = Math.max(1, s * 0.055);
+  ctx.stroke();
+
+  // The knuckle lines and the thumb's crease, a little finer than the outline.
+  ctx.lineWidth = Math.max(0.8, s * 0.04);
+  ctx.beginPath();
+  ctx.moveTo(s * 0.16, s * 0.27);
+  ctx.lineTo(s * 0.16, s * 0.44);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(s * 0.31, s * 0.28);
+  ctx.lineTo(s * 0.31, s * 0.46);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(s * 0.45, s * 0.33);
+  ctx.lineTo(s * 0.45, s * 0.48);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(s * -0.15, s * 0.4);
+  ctx.quadraticCurveTo(s * -0.12, s * 0.52, s * 0, s * 0.6);
   ctx.stroke();
 }
 

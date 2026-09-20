@@ -1,0 +1,807 @@
+/**
+ * locate.js: finding the pointer by what it looks like, in every frame.
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+ * Everything before this found the pointer by what CHANGED between two frames.
+ * That has three blind spots, and every cursor bug a creator reported came out
+ * of one of them:
+ *
+ *   still     a pointer that is not moving makes no change, so it is not seen;
+ *             a demo that starts with the mouse parked on a menu has no pointer
+ *             until it first moves, and the real one shows on its own
+ *   crowded   while the page scrolls, repaints or spins, the page changes far
+ *             more than a small hand does, and the tracker reports the page
+ *   blurred   the hotspot is guessed from a patch of difference, which is the
+ *             union of where the pointer was and where it is — a few pixels off
+ *             at rest, and enough for the real cursor to show beside ours
+ *
+ * The operating system draws its pointer on top of everything, the same way
+ * every time: the same outline, the same size, the same two tones. So instead
+ * of asking "what moved?", this asks, in every frame, "where is the thing that
+ * looks exactly like a pointer?" — and gets an answer while the pointer is
+ * still, while the page scrolls under it, and to the pixel.
+ *
+ * ── HOW ──────────────────────────────────────────────────────────────────────
+ * Each pointer shape is drawn as a small template at the recording's pointer
+ * size and softened the way video compression softens a one-pixel outline. A
+ * frame is compared with the template by masked normalised cross-correlation:
+ * only the pixels INSIDE the pointer's own outline take part, so the page
+ * behind it is irrelevant, and the score measures the pattern (a bright body
+ * inside a dark rim, or the reverse) rather than any absolute brightness.
+ *
+ * Searching every position of a 1920 × 1020 frame for every shape would be too
+ * slow, so a handful of the template's most telling pixels are checked first —
+ * deep inside the body must be brighter than points on the rim — and only
+ * positions that pass get the full comparison. Most frames need no global
+ * search at all: the pointer is looked for first where it was a frame ago.
+ *
+ * ── WHAT IT RETURNS ──────────────────────────────────────────────────────────
+ * One sample per frame it found the pointer in: the hotspot (arrow tip or
+ * fingertip), the shape, and the score. Frames it could not find the pointer in
+ * are left out, and the caller falls back to the difference tracker there.
+ */
+import { createCanvas } from "@napi-rs/canvas";
+import { ffmpegToFrames } from "../media/ffmpeg.js";
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const round4 = (v) => Math.round(v * 10000) / 10000;
+const round3 = (v) => Math.round(v * 1000) / 1000;
+
+/* ────────────────────────────────────────────────────────────────────────────
+   The shapes
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Outlines relative to the hotspot, in units of the pointer's height.
+ *
+ * Measured from a real Windows recording at 1920 wide: the arrow is 18 pixels
+ * tall with its tip at the hotspot; the hand's hotspot is the top of the index
+ * finger. macOS draws the same two ideas dark on light, which is handled by
+ * inverting the template rather than by more outlines.
+ */
+const SHAPES = {
+  /**
+   * Outlines traced row by row from the system pointers at their base size,
+   * as OUTER boundaries of the one-pixel rim, in units of each shape's own
+   * height. The hand is taller than the arrow in the same set, but not by a
+   * fixed ratio — each size is drawn by hand, and measured it is 1.26x at the
+   * base size, 1.19x at 150% and 1.21x at 200% — so its height is searched
+   * rather than assumed. See HAND_RATIOS.
+   */
+  arrow: {
+    shape: "default",
+    poly: [
+      [0, 0], [0.05, 0], [0.63, 0.58], [0.63, 0.63], [0.42, 0.68], [0.47, 0.74], [0.5, 0.79],
+      [0.53, 0.84], [0.53, 0.89], [0.5, 0.95], [0.45, 1.0], [0.37, 1.0], [0.32, 0.89], [0.26, 0.79],
+      [0.21, 0.68], [0.16, 0.74], [0.11, 0.82], [0.05, 0.89], [0, 0.89],
+    ],
+  },
+  hand: {
+    shape: "pointer",
+    poly: [
+      [-0.042, 0], [0.125, 0], [0.125, 0.208], [0.25, 0.208], [0.25, 0.25], [0.375, 0.25],
+      [0.375, 0.292], [0.5, 0.292], [0.5, 0.833], [0.458, 0.917], [0.375, 0.958], [0.333, 1.0],
+      [0.083, 1.0], [0, 0.958], [-0.042, 0.917], [-0.083, 0.875], [-0.125, 0.813], [-0.167, 0.75],
+      [-0.208, 0.708], [-0.25, 0.667], [-0.25, 0.521], [-0.208, 0.5], [-0.125, 0.5], [-0.083, 0.542],
+      [-0.042, 0.542],
+    ],
+    // Dark lines INSIDE the outline: the index finger's edge running on past
+    // the knuckles, and the gaps between the curled fingers. Without them a real
+    // hand scored 0.59 against its own template.
+    lines: [[0.104, 0.208, 0.104, 0.458], [0.229, 0.29, 0.229, 0.458], [0.354, 0.29, 0.354, 0.458]],
+  },
+  /**
+   * The same hand as drawn for the larger sizes (150% and up). A pointer set
+   * ships a separate picture per size rather than scaling one, and the large
+   * hand is proportioned differently: the finger is centred on the hotspot and
+   * longer before the knuckles, which sit lower, and the thumb reaches further.
+   * Scaling the small outline up missed a fifth of the frames at 150%.
+   */
+  handL: {
+    shape: "pointer",
+    poly: [
+      [-0.063, 0], [0.094, 0], [0.094, 0.25], [0.219, 0.25], [0.219, 0.281], [0.344, 0.281],
+      [0.344, 0.328], [0.469, 0.328], [0.469, 0.78], [0.44, 0.84], [0.41, 0.88], [0.34, 0.94],
+      [0.25, 0.98], [0.06, 1.0], [0, 0.95], [-0.06, 0.91], [-0.13, 0.84], [-0.19, 0.78],
+      [-0.25, 0.69], [-0.28, 0.63], [-0.31, 0.6], [-0.31, 0.5], [-0.16, 0.5], [-0.063, 0.56],
+    ],
+    lines: [[0.078, 0.25, 0.078, 0.45], [0.203, 0.28, 0.203, 0.45], [0.328, 0.31, 0.328, 0.45]],
+  },
+};
+
+
+/**
+ * A template: the pixels inside the pointer's outline, each with how bright it
+ * should be relative to the others. Rendered large and scaled down so the rim
+ * comes out soft, as it does in a compressed video.
+ */
+function buildTemplate(name, heightPx, { dark = false, setPx = heightPx } = {}) {
+  const def = SHAPES[name];
+  const SS = 4;
+  const xs = def.poly.map((p) => p[0]);
+  const ys = def.poly.map((p) => p[1]);
+  const pad = 2;
+  const minX = Math.floor(Math.min(...xs) * heightPx) - pad;
+  const minY = Math.floor(Math.min(...ys) * heightPx) - pad;
+  const maxX = Math.ceil(Math.max(...xs) * heightPx) + pad;
+  const maxY = Math.ceil(Math.max(...ys) * heightPx) + pad;
+  const w = maxX - minX + 1;
+  const h = maxY - minY + 1;
+
+  const c = createCanvas(w * SS, h * SS);
+  const g = c.getContext("2d");
+  g.scale(SS, SS);
+  g.translate(-minX, -minY);
+  g.beginPath();
+  def.poly.forEach(([x, y], i) => (i ? g.lineTo(x * heightPx, y * heightPx) : g.moveTo(x * heightPx, y * heightPx)));
+  g.closePath();
+  // The rim: a one-pixel outline, drawn INSIDE the shape so the template never
+  // claims anything about the page around the pointer.
+  g.save();
+  g.clip();
+  g.fillStyle = dark ? "#000" : "#fff";
+  g.fill();
+  g.lineWidth = 2.2;
+  g.strokeStyle = dark ? "#fff" : "#000";
+  g.stroke();
+  for (const [x1, y1, x2, y2] of def.lines || []) {
+    g.beginPath();
+    g.moveTo(x1 * heightPx, y1 * heightPx);
+    g.lineTo(x2 * heightPx, y2 * heightPx);
+    g.lineWidth = 1.1;
+    g.stroke();
+  }
+  g.restore();
+
+  const img = g.getImageData(0, 0, w * SS, h * SS).data;
+  const off = [];
+  const val = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let a = 0;
+      let l = 0;
+      for (let sy = 0; sy < SS; sy++) {
+        for (let sx = 0; sx < SS; sx++) {
+          const i = ((y * SS + sy) * w * SS + (x * SS + sx)) * 4;
+          a += img[i + 3];
+          l += img[i] * img[i + 3];
+        }
+      }
+      // Pixels mostly inside the outline take part; the anti-aliased edge,
+      // which is half page and half pointer, does not.
+      if (a / (SS * SS) < 200) continue;
+      off.push([x + minX, y + minY]);
+      val.push(l / a);
+    }
+  }
+
+  // Mean-centre and normalise once, so a comparison is one pass of sums.
+  const n = val.length;
+  const mean = val.reduce((s, v) => s + v, 0) / n;
+  const cen = val.map((v) => v - mean);
+  const norm = Math.sqrt(cen.reduce((s, v) => s + v * v, 0));
+
+  /**
+   * ── THE QUICK CHECK MUST NOT DEPEND ON ONE PIXEL ───────────────────────────
+   * It used to take the five darkest template pixels and require every one of
+   * them darker than the five brightest. The darkest turned out to sit on the
+   * hand's one-pixel finger gaps, and half a pixel of compression drift put
+   * two of them on the bright body instead: a real hand, correlating at 0.79,
+   * was thrown out before it was ever scored.
+   *
+   * Now the dark samples come from the OUTER rim only, spread around it, and
+   * the bright ones from deep in the body, away from every edge; and it is
+   * their averages that are compared. One sample landing on the wrong side of
+   * a line moves an average by an eighth, not the verdict.
+   */
+  const inSet = new Set(off.map(([x, y]) => x + "," + y));
+  const edge = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => !inSet.has(x + a + "," + (y + b)));
+  const deep = (x, y) => {
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (!inSet.has(x + a + "," + (y + b))) return false;
+    return true;
+  };
+  const cx = off.reduce((a, p) => a + p[0], 0) / n;
+  const cy = off.reduce((a, p) => a + p[1], 0) / n;
+  const around = (list) => list.sort((a, b) => Math.atan2(off[a][1] - cy, off[a][0] - cx) - Math.atan2(off[b][1] - cy, off[b][0] - cx));
+  const spread = (list, k) => (list.length <= k ? list : Array.from({ length: k }, (_, j) => list[Math.floor((j * list.length) / k)]));
+  const rim = around(off.map((p, i) => i).filter((i) => cen[i] < 0 && edge(off[i][0], off[i][1])));
+  const body = around(off.map((p, i) => i).filter((i) => cen[i] > 0 && deep(off[i][0], off[i][1]) && cen.every((_, j) => true)));
+  const lo = spread(rim, 8);
+  const hi = spread(body.length ? body : off.map((p, i) => i).filter((i) => cen[i] > 0), 8);
+
+  /**
+   * ── THE COARSE FORM ────────────────────────────────────────────────────────
+   * The exact comparison peaks on a single pixel — one pixel off, the thin rim
+   * lands on the page and the score collapses — so a scan on every second
+   * pixel could not see a pointer standing on an odd coordinate at all. The
+   * coarse scan therefore uses a test that survives a pixel of error: the
+   * pointer's CORE, two pixels in from every edge, against a BAND about three
+   * pixels wide straddling the outline. Off by one, the core is still inside
+   * the body and the band still holds the dark rim, so the contrast is still
+   * there; a box or a line of text does not have it in the shape of a pointer.
+   */
+  const dist = new Map();
+  for (const [x, y] of off) {
+    let d = 0;
+    while (d < 3) {
+      let ok = true;
+      for (let a = -(d + 1); a <= d + 1 && ok; a++) for (let b = -(d + 1); b <= d + 1 && ok; b++) if (!inSet.has(x + a + "," + (y + b))) ok = false;
+      if (!ok) break;
+      d++;
+    }
+    dist.set(x + "," + y, d);
+  }
+  const coreAll = off.filter(([x, y]) => dist.get(x + "," + y) >= 2);
+  const bandAll = [];
+  const minX2 = Math.min(...off.map((p) => p[0])) - 2;
+  const maxX2 = Math.max(...off.map((p) => p[0])) + 2;
+  const minY2 = Math.min(...off.map((p) => p[1])) - 2;
+  const maxY2 = Math.max(...off.map((p) => p[1])) + 2;
+  for (let y = minY2; y <= maxY2; y++) {
+    for (let x = minX2; x <= maxX2; x++) {
+      const inside = inSet.has(x + "," + y);
+      const d = inside ? dist.get(x + "," + y) : -1;
+      let nearEdge = false;
+      if (!inside) for (let a = -1; a <= 1 && !nearEdge; a++) for (let b = -1; b <= 1 && !nearEdge; b++) if (inSet.has(x + a + "," + (y + b))) nearEdge = true;
+      if ((inside && d === 0) || nearEdge) bandAll.push([x, y]);
+    }
+  }
+  const pick = (list, k) => (list.length <= k ? list : Array.from({ length: k }, (_, j) => list[Math.floor((j * list.length) / k)]));
+  const core = pick(coreAll.length ? coreAll : off, 10);
+  const band = pick(bandAll, 20);
+
+  return { name, shape: def.shape, dark, heightPx: setPx, ownPx: heightPx, off, cen, norm, n, lo, hi, core, band };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Comparing
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/** The hand's height against the arrow's, across the sizes a system ships. */
+const HAND_RATIOS = [1.16, 1.21, 1.26, 1.31];
+
+/** Minimum score to call it the pointer. Validated against real recordings. */
+const FOUND = 0.72;
+/** The quick check: the body must beat the rim by this much, in grey levels. */
+const QUICK = 18;
+
+function prepare(tpl, W) {
+  return {
+    ...tpl,
+    idx: Int32Array.from(tpl.off.map(([dx, dy]) => dy * W + dx)),
+    coreIdx: Int32Array.from(tpl.core.map(([dx, dy]) => dy * W + dx)),
+    bandIdx: Int32Array.from(tpl.band.map(([dx, dy]) => dy * W + dx)),
+    W,
+  };
+}
+
+/** Pixels between coarse samples; the core/band test tolerates this much error. */
+const COARSE_STEP = 3;
+
+/** Grey levels of core-over-band contrast that make a coarse candidate. */
+const COARSE = 22;
+
+/** The coarse test: is this a pointer-shaped patch of the right contrast? */
+function coarseAt(frame, W, H, t, x, y) {
+  if (x + t._minDx - 2 < 0 || y + t._minDy - 2 < 0 || x + t._maxDx + 2 >= W || y + t._maxDy + 2 >= H) return false;
+  const base = y * W + x;
+  let c = 0;
+  for (let k = 0; k < t.coreIdx.length; k++) c += frame[base + t.coreIdx[k]];
+  let b = 0;
+  for (let k = 0; k < t.bandIdx.length; k++) b += frame[base + t.bandIdx[k]];
+  const diff = c / t.coreIdx.length - b / t.bandIdx.length;
+  return t.dark ? diff <= -COARSE : diff >= COARSE;
+}
+
+/** Masked normalised cross-correlation at one hotspot position. */
+function scoreAt(frame, W, H, t, x, y) {
+  const minDx = t._minDx, maxDx = t._maxDx, minDy = t._minDy, maxDy = t._maxDy;
+  if (x + minDx < 0 || y + minDy < 0 || x + maxDx >= W || y + maxDy >= H) return -1;
+  const base = y * W + x;
+
+  // Quick check first: the body, on average, clearly brighter than the rim
+  // (or darker, for a dark pointer — the template's own values say which).
+  let hiSum = 0;
+  for (const i of t.hi) hiSum += frame[base + t.idx[i]];
+  let loSum = 0;
+  for (const i of t.lo) loSum += frame[base + t.idx[i]];
+  if (hiSum / t.hi.length - loSum / t.lo.length < QUICK) return -1;
+
+  let s = 0;
+  let s2 = 0;
+  let sm = 0;
+  const idx = t.idx;
+  const cen = t.cen;
+  for (let k = 0; k < t.n; k++) {
+    const v = frame[base + idx[k]];
+    s += v;
+    s2 += v * v;
+    sm += v * cen[k];
+  }
+  const varP = s2 - (s * s) / t.n;
+  if (varP < 1e-6) return -1;
+  return sm / (t.norm * Math.sqrt(varP));
+}
+
+function bounds(t) {
+  let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
+  for (const [dx, dy] of t.off) { a = Math.min(a, dx); b = Math.max(b, dx); c = Math.min(c, dy); d = Math.max(d, dy); }
+  t._minDx = a; t._maxDx = b; t._minDy = c; t._maxDy = d;
+  return t;
+}
+
+/** The best match for any template inside a rectangle of hotspot positions. */
+function search(frame, W, H, tpls, x0, y0, x1, y1, step = 1) {
+  let best = null;
+  x0 = clamp(Math.floor(x0), 0, W - 1); x1 = clamp(Math.ceil(x1), 0, W - 1);
+  y0 = clamp(Math.floor(y0), 0, H - 1); y1 = clamp(Math.ceil(y1), 0, H - 1);
+  for (const t of tpls) {
+    for (let y = y0; y <= y1; y += step) {
+      for (let x = x0; x <= x1; x += step) {
+        const sc = scoreAt(frame, W, H, t, x, y);
+        if (sc > (best ? best.score : FOUND * 0.85)) best = { x, y, score: sc, t };
+      }
+    }
+  }
+  // A coarse hit is refined to the exact pixel around it.
+  if (best && step > 1) {
+    const r = search(frame, W, H, [best.t], best.x - step, best.y - step, best.x + step, best.y + step, 1);
+    if (r && r.score >= best.score) best = r;
+  }
+  return best;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   The recording
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/** Pixels a pointer can move between two frames and still be looked for locally. */
+const NEAR = 70;
+/** Longest recording the locator will read frame by frame. */
+const MAX_SECONDS = 180;
+
+/** The softer bar, for a frame or two after a sure sighting. */
+const FLICK = 0.6;
+/** Pixels a hand can move a pointer between two frames of a fast flick. */
+const THROW = 320;
+/** Frames sampled across the recording to decide which pointer it has. */
+const CAL_FRAMES = 12;
+/**
+ * How clearly the best match must beat the next best somewhere else in the
+ * frame. This is what separates a pointer from the page: there is one pointer,
+ * and it matches its template far better than anything else on screen, while a
+ * template that is matching TEXT finds dozens of glyphs that fit it about
+ * equally well. Measured on a real recording: the right template scored 0.815
+ * on the pointer and 0.546 on the best thing anywhere else; the wrong one
+ * scored 0.79 on a letter and nearly as well on others.
+ */
+const UNIQUE = 0.12;
+
+/**
+ * Best and second-best (at least a pointer's width apart) over the whole frame.
+ *
+ * ── COARSE, THEN EXACT ───────────────────────────────────────────────────────
+ * The comparison peaks on ONE pixel: a pointer's outline one pixel off its own
+ * edge scores well below the same outline on it. So a scan of every second
+ * pixel lands beside the peak about half the time, and the first version of
+ * this missed a real pointer that scored 0.866 at its exact position because
+ * the coarse grid only saw 0.7. The grid is used to find CANDIDATES, at a lower
+ * bar, and each candidate is re-scored at every pixel around it before any
+ * decision is made on the numbers.
+ */
+function topTwo(frame, W, H, t) {
+  const sep = Math.max(20, t.heightPx * 1.5);
+  // Coarse: every second pixel, with the test that tolerates a pixel of error.
+  const hits = [];
+  for (let y = 0; y < H; y += COARSE_STEP) {
+    for (let x = 0; x < W; x += COARSE_STEP) {
+      if (coarseAt(frame, W, H, t, x, y)) hits.push(x, y);
+    }
+  }
+  // Exact: every pixel around every coarse hit, keeping the best per place.
+  const found = [];
+  for (let i = 0; i < hits.length; i += 2) {
+    const hx = hits[i], hy = hits[i + 1];
+    let best = null;
+    for (let y = hy - 2; y <= hy + 2; y++) {
+      for (let x = hx - 2; x <= hx + 2; x++) {
+        const sc = scoreAt(frame, W, H, t, x, y);
+        if (sc > (best ? best.score : 0.45)) best = { x, y, score: sc };
+      }
+    }
+    if (!best) continue;
+    const near = found.find((c) => Math.abs(c.x - best.x) <= sep && Math.abs(c.y - best.y) <= sep);
+    if (near) { if (best.score > near.score) Object.assign(near, best); }
+    else found.push(best);
+  }
+  found.sort((p, q) => q.score - p.score);
+  return { best: found[0] || null, second: found[1] || null };
+}
+
+/**
+ * Which pointer this recording has: the design (light body or dark body) and
+ * the size, decided once, from the recording itself.
+ *
+ * Nothing here is specific to a website or a product. It asks only which of
+ * the pointer templates finds ONE clear, unique match in the most frames — a
+ * property of the pointer, which is drawn identically wherever it goes, and not
+ * of anything on the page.
+ */
+async function calibrate(video, W, H, all, duration, fps) {
+  const want = new Set();
+  const total = Math.max(1, Math.floor(duration * fps));
+  for (let k = 0; k < CAL_FRAMES; k++) want.add(Math.floor(((k + 0.5) / CAL_FRAMES) * total));
+
+  /**
+   * ── WHAT ONLY A POINTER DOES: IT MOVES ─────────────────────────────────────
+   * Being the one clear match in the frame is good evidence, and on a page with
+   * arrow-shaped glyphs on it — a play button, a submit chevron, a sort caret —
+   * it is not enough on its own. A pointer has a second property nothing
+   * printed on the page has: between two moments of a recording it is somewhere
+   * else. So each candidate is followed across the sampled frames, and one whose
+   * best match wanders is believed over one whose best match never leaves its
+   * spot, even if the second scores a little higher in any single frame.
+   */
+  const votes = new Map();
+  await ffmpegToFrames(video, {
+    width: W, height: H, fps, pixelFormat: "gray",
+    onFrame: (frame, i) => {
+      if (!want.has(i)) return;
+      for (const t of all) {
+        const { best, second } = topTwo(frame, W, H, t);
+        if (!best || best.score < FOUND) continue;
+        const margin = best.score - (second ? second.score : 0.45);
+        const key = (t.dark ? "dark" : "light") + ":" + t.heightPx;
+        const cur = votes.get(key) || { n: 0, v: 0, unique: 0, at: [] };
+        cur.n += 1;
+        cur.v += best.score;
+        if (margin >= UNIQUE) cur.unique += 1;
+        cur.at.push({ frame: Buffer.from(frame), x: best.x, y: best.y });
+        votes.set(key, cur);
+      }
+    },
+  });
+
+  const spread = (at) => {
+    let d = 0;
+    for (let i = 1; i < at.length; i++) d = Math.max(d, Math.hypot(at[i].x - at[0].x, at[i].y - at[0].y));
+    return d;
+  };
+  const ranked = [...votes.entries()]
+    .map(([k, v]) => [k, { ...v, moves: spread(v.at) >= 25, mean: v.v / v.n }])
+    .filter(([, v]) => v.n >= 3 && (v.moves || v.unique >= Math.max(2, v.n * 0.5)))
+    .sort((a, b) =>
+      (b[1].moves ? 1 : 0) - (a[1].moves ? 1 : 0) ||
+      b[1].n - a[1].n ||
+      b[1].mean - a[1].mean
+    );
+  if (!ranked.length) return null;
+  const [darkKey, hpKey] = ranked[0][0].split(":");
+  const dark = darkKey === "dark";
+
+  /**
+   * ── THEN TO THE PIXEL ──────────────────────────────────────────────────
+   * The sizes tried above are a tenth apart, which finds the right pointer but
+   * not always its exact size, and one pixel of height is the difference
+   * between the hand matching and not. So the winner is re-measured at every
+   * size a couple of pixels either side, on the frames it won, and the size
+   * that fits those frames best is the one used.
+   */
+  let best = { hp: Number(hpKey), v: -Infinity };
+  for (let hp = Number(hpKey) - 3; hp <= Number(hpKey) + 3; hp++) {
+    if (hp < 8) continue;
+    const t = bounds(prepare(buildTemplate("arrow", hp, { dark }), W));
+    let v = 0;
+    for (const a of ranked[0][1].at) {
+      let m = -1;
+      for (let y = a.y - 3; y <= a.y + 3; y++) for (let x = a.x - 3; x <= a.x + 3; x++) m = Math.max(m, scoreAt(a.frame, W, H, t, x, y));
+      v += m;
+    }
+    if (v > best.v) best = { hp, v };
+  }
+  return { dark, heightPx: best.hp, votes: ranked[0][1].n, moves: ranked[0][1].moves };
+}
+
+/**
+ * Find the pointer in every frame of a recording.
+ *
+ * @param {string} video
+ * @param {object} o
+ * @param {number} o.sourceWidth
+ * @param {number} o.sourceHeight
+ * @param {number} o.duration
+ * @param {number} [o.fps]       30 matches the export's own frame grid exactly
+ * @param {number} [o.cursorPx]  the pointer's measured height, if known
+ * @param {Array}  [o.hints]     where the difference tracker thought it was
+ * @returns {Promise<{ track: Array, design: string|null, heightPx: number, found: number, frames: number }>}
+ */
+export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], onDebug = null } = {}) {
+  const W = Math.round(sourceWidth);
+  const H = Math.round(sourceHeight);
+
+  /**
+   * ── A CEILING, SO A LONG RECORDING IS NOT HELD UP ─────────────────────────
+   * Every frame is decoded and searched, which costs roughly a second and a
+   * half per second of a 1080p recording on a small server. That is worth it
+   * for the demos this is made for and not for a half hour screencast, where
+   * it would be most of the wait. Past the ceiling the difference tracker is
+   * used on its own, exactly as before this file existed.
+   */
+  if (duration > MAX_SECONDS) {
+    console.log("[studio] recording is " + Math.round(duration) + "s; the pointer locator is skipped past " + MAX_SECONDS + "s");
+    return { track: [], design: null, heightPx: 0, found: 0, frames: 0, skipped: "too long" };
+  }
+
+  // Sizes around the measured one: an OS picks the pointer's size for the
+  // display, and the recording may have been scaled on the way.
+  const guess = cursorPx > 8 ? cursorPx : 20 * (W / 1920);
+  const sizes = [...new Set([0.75, 0.85, 0.95, 1.05, 1.15, 1.3].map((k) => Math.round(guess * k)))];
+  const make = (name, hp, dark) => bounds(prepare(buildTemplate(name, hp, { dark }), W));
+  const arrows = [];
+  for (const dark of [false, true]) for (const hp of sizes) arrows.push(make("arrow", hp, dark));
+
+  const cal = await calibrate(video, W, H, arrows, duration, fps);
+  if (!cal) return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
+
+  // Tracking uses only this recording's pointer: both shapes, at its size and
+  // one step either side for the anti-aliasing a moving pointer picks up.
+  const tpls = [];
+  for (const hp of [cal.heightPx - 1, cal.heightPx, cal.heightPx + 1]) tpls.push(make("arrow", hp, cal.dark));
+  // Which of the two hand drawings a set uses depends on its size, so both are
+  // tried at the heights the system uses; the base one below about 24px.
+  const hands = cal.heightPx < 24 ? ["hand"] : cal.heightPx > 30 ? ["handL"] : ["hand", "handL"];
+  for (const name of hands) for (const k of HAND_RATIOS) {
+    tpls.push(bounds(prepare(buildTemplate(name, Math.round(cal.heightPx * k), { dark: cal.dark, setPx: cal.heightPx }), W)));
+  }
+
+  /**
+   * ── THE WHOLE-FRAME SCAN NEEDS TWO SHAPES, NOT ELEVEN ─────────────────────
+   * Looking near where the pointer just was is cheap and uses every template;
+   * scanning the entire frame is most of the cost of this file and only has to
+   * RE-ACQUIRE the pointer. One arrow and one hand at the size this recording
+   * uses are enough for that, and the local search refines the size on the
+   * very next frame. Eleven templates to two takes the cost of a lost frame
+   * down by about four fifths.
+   */
+  const wide = [
+    make("arrow", cal.heightPx, cal.dark),
+    bounds(prepare(buildTemplate(hands[0], Math.round(cal.heightPx * 1.21), { dark: cal.dark, setPx: cal.heightPx }), W)),
+  ];
+
+  const hintAt = (t) => {
+    let best = null;
+    for (const h of hints) { const d = Math.abs(h.t - t); if (d <= 0.25 && (!best || d < best.d)) best = { d, h }; }
+    return best ? best.h : null;
+  };
+
+  const track = [];
+  let last = null;
+  let lostFor = 0;
+  let frames = 0;
+
+  let prevFrame = null;
+  let prevHit = null;
+  let recent = null;
+
+  await ffmpegToFrames(video, {
+    width: W, height: H, fps, pixelFormat: "gray",
+    onFrame: async (frame, i) => {
+      frames++;
+      const t = round3(i / fps);
+
+      /**
+       * ── THE SERVER HAS TO KEEP ANSWERING ──────────────────────────────────
+       * This runs on the same thread that serves the website. A frame's work is
+       * a few milliseconds, but hundreds of frames back to back with no pause
+       * is exactly how an export once took the whole site down. Yielding per
+       * frame lets every waiting request through between them.
+       */
+      await new Promise((r) => setImmediate(r));
+
+      /**
+       * A recording made at 18 frames a second, read at 30, repeats about two
+       * frames in five exactly. The same picture has the same pointer in it.
+       */
+      if (prevFrame && sameFrame(prevFrame, frame)) {
+        if (prevHit) track.push({ ...prevHit, t });
+        return;
+      }
+      prevFrame = Buffer.from(frame);
+      prevHit = null;
+
+      let hit = null;
+
+      // 1. Where it was a frame ago, carried on by its last move — a flick
+      //    covers more than the search window in one frame, but it keeps going
+      //    the way it was going. Continuity is the evidence here, so a match
+      //    needs no uniqueness test.
+      if (last) {
+        const px = last.x + (last.vx || 0);
+        const py = last.y + (last.vy || 0);
+        hit = search(frame, W, H, tpls, px - NEAR, py - NEAR, px + NEAR, py + NEAR);
+        if ((!hit || hit.score < FOUND) && (last.vx || last.vy)) {
+          const r = search(frame, W, H, tpls, last.x - NEAR, last.y - NEAR, last.x + NEAR, last.y + NEAR);
+          if (r && (!hit || r.score > hit.score)) hit = r;
+        }
+      }
+      // 2. Where the difference tracker saw something move.
+      if (!hit || hit.score < FOUND) {
+        const h = hintAt(t);
+        if (h) {
+          const r = search(frame, W, H, tpls, h.x * W - NEAR, h.y * H - NEAR, h.x * W + NEAR, h.y * H + NEAR);
+          if (r && (!hit || r.score > hit.score)) hit = r;
+        }
+      }
+      // 3. Everywhere — and then it has to be the ONE clear match.
+      /**
+       * While the pointer stays gone — off the screen, or a text caret no
+       * template draws — scanning the whole frame every frame is most of the
+       * cost of this file. The first few frames after losing it are scanned
+       * every time (that is a flick, and it is about to reappear); after that,
+       * every few frames. Anywhere the tracker sees movement is still searched
+       * on every frame above, so a pointer coming back is caught at once.
+       */
+      const every = lostFor < 4 ? 1 : lostFor < 12 ? 3 : 6;
+      if ((!hit || hit.score < FOUND) && lostFor % every === 0) {
+        let r = null;
+        /**
+         * ── A FLICK IS COMPRESSED HARDEST ─────────────────────────────────────
+         * An encoder spends the fewest bits on whatever moved furthest, so in
+         * the middle of a fast flick the pointer comes out softer than it ever
+         * does at rest, and scores a little under the bar in exactly the frames
+         * where ours most needs to keep up. So for a frame or two after a sure
+         * sighting, a softer match is accepted — but only if it is still the one
+         * clear match in the whole frame, and no further from where the pointer
+         * just was than a hand can throw it in that time.
+         */
+        const fresh = recent && lostFor <= 2;
+        const bar = fresh ? FLICK : FOUND;
+        for (const tp of wide) {
+          const { best, second } = topTwo(frame, W, H, tp);
+          if (!best || best.score < bar) continue;
+          // A sure match is taken wherever it is; the extra conditions are only
+          // for a soft one, which has to earn its place by being where a flick
+          // could have carried the pointer.
+          const soft = best.score < FOUND;
+          /**
+           * Being the one clear match in the frame is how a pointer is told
+           * from the page — except on a page with arrow-shaped glyphs on it,
+           * where a RESTING pointer is not clearly the only one, and would
+           * never be picked up at all. The difference tracker is the second
+           * opinion: it cannot see a still pointer, but where it does see
+           * something move, a match there is corroborated and needs no
+           * uniqueness of its own.
+           */
+          const h = hintAt(t);
+          const corroborated = h && Math.hypot(best.x - h.x * W, best.y - h.y * H) <= NEAR;
+          if (!corroborated && best.score - (second ? second.score : 0.45) < (soft ? UNIQUE + 0.05 : UNIQUE)) continue;
+          if (soft && recent && Math.hypot(best.x - recent.x, best.y - recent.y) > THROW * (lostFor + 1)) continue;
+          if (!r || best.score > r.score) r = { ...best, t: tp };
+        }
+        if (r) hit = { ...r, soft: r.score < FOUND };
+      }
+
+      if (onDebug) onDebug({ t, hit: hit ? { x: hit.x, y: hit.y, score: hit.score, soft: !!hit.soft } : null, last, lostFor, recent });
+      if (hit && (hit.score >= FOUND || hit.soft)) {
+        prevHit = { t, x: round4(hit.x / W), y: round4(hit.y / H), shape: hit.t.shape, score: round3(hit.score), located: true };
+        track.push(prevHit);
+        last = last ? { x: hit.x, y: hit.y, vx: hit.x - last.x, vy: hit.y - last.y } : { x: hit.x, y: hit.y };
+        lostFor = 0;
+      } else {
+        lostFor++;
+        if (lostFor > 3) last = null;
+      }
+      recent = last ? { x: last.x, y: last.y } : lostFor <= 2 ? recent : null;
+    },
+  });
+
+  /**
+   * ── A POINTER THAT WAS ALREADY THERE ──────────────────────────────────────
+   * A demo often opens with the mouse already resting on what it is about to
+   * click. Nothing is found in those frames: the difference tracker cannot see
+   * a still pointer, and a still pointer on a page with arrow-shaped glyphs on
+   * it is not clearly the one match in the frame either.
+   *
+   * But the two blind spots answer each other. If the tracker saw NOTHING move
+   * before the first frame the pointer was found in, then the pointer did not
+   * move, and where it is first found is where it was sitting all along. If it
+   * did move, there are sightings, and this does not apply.
+   */
+  if (track.length && track[0].t > 0.05) {
+    const stirred = hints.some((h) => num(h.t) < track[0].t - 0.1);
+    if (!stirred) track.unshift({ ...track[0], t: 0, held: true });
+  }
+
+  return { track, design: cal.dark ? "dark" : "light", heightPx: cal.heightPx, found: track.length, frames };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Using what was found
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/** How long the locator may lose the pointer before the old tracker fills in. */
+const HOLE = 0.2;
+
+/**
+ * The located path, with the difference tracker's samples filling only the
+ * stretches the locator could not see (a text caret, a pointer in a colour the
+ * templates do not cover). Where both exist the located one wins: it is the
+ * pointer's actual position in that frame, not an estimate from a difference.
+ */
+export function mergeLocated(located, fallback) {
+  if (!located?.length) return fallback || [];
+  const L = [...located].sort((a, b) => a.t - b.t);
+  const covered = (t) => {
+    let lo = 0;
+    let hi = L.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (L[mid].t <= t) lo = mid; else hi = mid; }
+    return Math.min(Math.abs(L[lo].t - t), Math.abs(L[hi].t - t)) <= HOLE;
+  };
+  const fill = (fallback || []).filter((p) => !covered(Number(p.t)));
+  return [...L, ...fill].sort((a, b) => a.t - b.t);
+}
+
+/**
+ * The path as the renderer should draw it: each located position held until
+ * the NEXT frame's, switching halfway between them.
+ *
+ * ── WHY THERE IS NO SMOOTHING HERE ─────────────────────────────────────────
+ * Smoothing is what let the real pointer show while it moved: ours glided
+ * between two frames' positions while the picture underneath showed the real
+ * one at one of them, a few pixels apart for every frame of every move. The
+ * export picks, for each output frame, the recording frame nearest in time;
+ * switching at the midpoint makes ours follow exactly the same rule, so on
+ * every frame of the finished video ours is where the real one is — at rest,
+ * moving, or mid-flick. Located stretches keep their frame rate; the gaps the
+ * old tracker filled keep its samples.
+ */
+export function stepPath(track) {
+  const out = [];
+  for (let i = 0; i < track.length; i++) {
+    const p = track[i];
+    const next = track[i + 1];
+    out.push({ t: p.t, x: p.x, y: p.y, shape: p.shape || "default" });
+    if (next && p.located && next.located && next.t - p.t <= HOLE) {
+      const mid = (p.t + next.t) / 2;
+      out.push({ t: round3(mid - 0.001), x: p.x, y: p.y, shape: p.shape || "default" });
+    }
+  }
+  return out;
+}
+
+/**
+ * Each press moved to where the pointer actually was when it happened.
+ *
+ * The click detector works from differences and places a press at the rest it
+ * inferred, which can be a few pixels off; the zoom is aimed there and the
+ * ripple drawn there. When the locator saw the pointer at that moment, that is
+ * where it was.
+ */
+export function snapToLocated(events, located, { within = 0.12 } = {}) {
+  if (!located?.length) return events;
+  return events.map((e) => {
+    if (e.type !== "click" && e.type !== "dblclick") return e;
+    let best = null;
+    for (const p of located) {
+      const d = Math.abs(p.t - e.t);
+      if (d <= within && (!best || d < best.d)) best = { d, p };
+    }
+    if (!best) return e;
+    return { ...e, x: best.p.x, y: best.p.y, snapped: "located" };
+  });
+}
+
+/** Two frames are the same picture: a sparse sample of pixels, all identical. */
+function sameFrame(a, b) {
+  if (a.length !== b.length) return false;
+  const step = 997;
+  for (let i = 0; i < a.length; i += step) if (a[i] !== b[i]) return false;
+  // The sample can miss a small moving pointer, so a full comparison confirms.
+  return a.equals(b);
+}
+
+/** For tests. */
+export const _debug = { coarse: coarseAt, make: (name, hp, dark, W) => bounds(prepare(buildTemplate(name, hp, { dark }), W)), score: scoreAt };
+
+export default { locatePointer, mergeLocated, stepPath, snapToLocated };
