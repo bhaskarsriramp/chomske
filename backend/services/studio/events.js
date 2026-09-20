@@ -127,6 +127,24 @@ const NAV_REACTION = 1.1;
  * repaint of a page that is busy on its own account.
  */
 const REST_FRESH = 2.5;
+/**
+ * The same, for a pointer the operating system is drawing a hand under.
+ *
+ * ── A HOVER BEFORE A PRESS IS LONGER THAN TWO AND A HALF SECONDS ────────────
+ * Two and a half was a guess made when nothing was known about what the
+ * pointer was over, and it has to be short, because a pointer parked anywhere
+ * at all would otherwise collect a click from any repaint that came along.
+ *
+ * It is also shorter than a demo. People put the pointer on the thing they are
+ * about to show, say a sentence about it, and then press — five seconds, often
+ * more. Every one of those clicks was being thrown away for being too patient.
+ *
+ * The hand is what makes the longer window safe. A pointer sitting on a menu
+ * row for five seconds and then the page changes is a person clicking a menu
+ * row. A pointer sitting in the empty half of a panel is refused outright,
+ * whatever the interval, by the rule above this one.
+ */
+const REST_HOVER = 6;
 
 /** How long after a press its consequence may take to appear. */
 const CONSEQUENCE = 1.4;
@@ -195,6 +213,10 @@ export function cleanSamples(raw, { duration = 0 } = {}) {
       y: round4(frac(s.y, 0.5)),
       shape: String(s.shape || "default").replace(/[^a-z_]/gi, "").slice(0, 16) || "default",
       conf: clamp(num(s.conf, 1), 0, 1),
+      // Kept because it changes how much a sighting is worth: a located one is
+      // the pointer, read off the frame by its shape. A tracker one is
+      // whatever moved, which during a page load is the page.
+      located: s.located === true,
     }))
     .filter((s) => s.conf >= 0.35)
     .sort((a, b) => a.t - b.t)
@@ -312,7 +334,7 @@ const GAP_REST = 0.25;
  *
  * @returns {Array<{id,t,type,x,y,dy,text,confidence,source}>}
  */
-export function inferEvents({ samples, motion, duration = 0, screen = null }) {
+export function inferEvents({ samples, motion, duration = 0, screen = null, located = null }) {
   const pts = cleanSamples(samples, { duration });
   const mot = cleanMotion(motion, { duration });
   if (!mot.length) return [];
@@ -416,6 +438,30 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
 
   for (const nav of navs) {
     /**
+     * ── A PAGE FINISHING LOADING IS NOT A PRESS ────────────────────────────
+     * Everything below reads a whole-screen change over a resting pointer as
+     * near-certain evidence of a click, and for a page that CHANGED that is
+     * right. A page that is still arriving changes the same way, several times
+     * over, seconds after the press that asked for it — and the creator, done
+     * clicking, has moved the pointer somewhere neutral to watch it come in.
+     *
+     * Two of those were minted on one recording, each with its own zoom, each
+     * on a pointer sitting in the empty half of a panel that had not drawn
+     * itself yet: "i think while some part or section of the page is loading
+     * our code is treating it as a new page, because of that it is
+     * automatically zooming in there."
+     *
+     * The pointer says which it was. Nobody presses empty space and gets a new
+     * screen for it, so a plain arrow over the spot means the screen changed by
+     * itself. Nothing is claimed and no dwell is spent: the creator is often
+     * about to press something for real while the page is still settling, and
+     * that press needs the dwell it happens in.
+     */
+    const os = osShapeAt(located, nav.t);
+    const read = os && os.n >= SHAPE_LEAST && os.share >= SHAPE_SHARE;
+    if (read && !CLICKABLE_SHAPES.has(os.shape)) continue;
+
+    /**
      * The dwell the pointer was in when the page changed.
      *
      * ── THE POINTER DOES NOT MOVE AFTER A CLICK ─────────────────────────────
@@ -436,8 +482,10 @@ export function inferEvents({ samples, motion, duration = 0, screen = null }) {
       // A press and the change it causes are seconds apart at most. A pointer
       // that has been parked for half a minute while a dashboard loads itself
       // in stages did not click anything, and attributing one to it is how a
-      // demo ends up with a ripple firing at nothing.
-      .filter((r) => nav.t - r.start <= REST_FRESH)
+      // demo ends up with a ripple firing at nothing. Longer where the OS is
+      // drawing a hand: that is a person hovering the thing they are about to
+      // press, which is most of what a demo is.
+      .filter((r) => nav.t - r.start <= (read ? REST_HOVER : REST_FRESH))
       .sort((a, b) => b.start - a.start)[0];
     if (!rest) {
       /**
@@ -769,10 +817,25 @@ const SETTLE_GAP = 0.9;
  */
 function settledAfter(pts, mot, t) {
   if (pts.some((p) => p.t < t && p.t > t - 0.6)) return null;
-  const quiet = (at) => {
+  /**
+   * ── A LOCATED SIGHTING NEEDS NO STILL SCREEN ──────────────────────────────
+   * The screen has to be quiet for a TRACKER sighting to mean anything: during
+   * a repaint the difference tracker reports the repaint, so a sample taken
+   * then is the page, not the pointer. That test is why the most important
+   * press in one recording was thrown away — the creator clicked "API Keys",
+   * the page spent a second and a half drawing itself, and every sighting of
+   * the pointer sitting on the item it had just pressed was discarded for
+   * arriving during the change it caused.
+   *
+   * A located sighting is not an inference from movement. It is the pointer,
+   * matched by its own shape in that frame, and a page repainting around it
+   * does not make it less true.
+   */
+  const quiet = (p) => {
+    if (p.located) return true;
     let best = null;
     for (const m of mot) {
-      const d = Math.abs(m.t - at);
+      const d = Math.abs(m.t - p.t);
       if (!best || d < best.d) best = { d, m };
     }
     return !best || best.d > 0.1 || num(best.m.energy) <= 0.03;
@@ -780,7 +843,7 @@ function settledAfter(pts, mot, t) {
   // The FIRST sighting has to come soon; the one that confirms it may come a
   // moment later. Requiring both inside the window missed a real click by a
   // hundredth of a second.
-  const after = pts.filter((p) => p.t > t && quiet(p.t));
+  const after = pts.filter((p) => p.t > t && quiet(p));
   for (let i = 0; i + 1 < after.length; i++) {
     const a = after[i];
     if (a.t > t + SETTLE_WITHIN) break;
@@ -1277,27 +1340,144 @@ export function restOnControls(track) {
 }
 
 /**
+ * ── THE OPERATING SYSTEM ALREADY KNOWS WHAT IS CLICKABLE ─────────────────────
+ * The whole question confirmClicks() exists to answer — was there something
+ * pressable under the pointer? — has been answered on screen, in every frame,
+ * by the machine that drew the pointer. A hand is drawn over a link, a button,
+ * a menu row; a plain arrow is drawn over a heading, a panel, a margin, an
+ * empty half of a page that is still loading. No model is needed and no site
+ * has to be recognised: it is the same rule on every page ever rendered.
+ *
+ * It was not usable until the pointer could be found by its shape, because the
+ * only shape available came from the difference tracker, which classifies the
+ * DENSITY of the patch of pixels that changed and reads a spinner as a hand.
+ * locate.js reads the actual glyph, so this is now the strongest evidence the
+ * pipeline has about a press, and the cheapest — it costs nothing and needs no
+ * Gemini call, which matters on the day the credits run out.
+ *
+ * ── WHY A MOMENT OF HAND IS NOT ENOUGH ──────────────────────────────────────
+ * Sweeping the pointer across a page flickers through every link on the way.
+ * On one recording a press was minted while the pointer was passing over a
+ * link on its way somewhere else — one frame of hand in twenty — and the
+ * camera pushed in on nothing. A real press is made by a pointer that arrived,
+ * stopped, and was shown a hand the whole time it sat there. So the shape is
+ * the one that held AT THE PLACE THE PRESS LANDED, not the one in a single
+ * frame.
+ */
+const CLICKABLE_SHAPES = new Set(["pointer", "hand", "text"]);
+
+/** A press has to land within this of a located sighting for one to describe it. */
+const SHAPE_REACH = 0.35;
+/** How much either side of the press is read. */
+const SHAPE_WINDOW = 0.6;
+/** Sightings this close to the press's own position are the same resting place. */
+const SHAPE_SAME = 0.025;
+/** How much of that time the shape has to have held to count as settled. */
+const SHAPE_SHARE = 0.6;
+/**
+ * And how many sightings that share has to be drawn from.
+ *
+ * One frame is not a reading. A pointer crossing a page at speed is over a
+ * link for a frame at a time and off it again, and both the hand and the arrow
+ * mean nothing there — it was not resting anywhere, so it was not pressing
+ * anything either. Below this the answer is "no reading", which sends the
+ * decision to the model's opinion rather than to a guess.
+ */
+const SHAPE_LEAST = 3;
+
+/**
+ * What the operating system was drawing where a press landed.
+ *
+ * @param {Array}  path  the located track — positions and real shapes, per frame
+ * @param {number} t     when the press happened
+ * @returns {{shape:string, share:number, n:number}|null}  null where the
+ *          pointer was never located near that moment, which is not evidence
+ *          of anything and is treated as such by the caller.
+ */
+export function osShapeAt(path, t, { reach = SHAPE_REACH, window = SHAPE_WINDOW, near = SHAPE_SAME } = {}) {
+  if (!path || !path.length) return null;
+
+  /**
+   * Where the pointer was, taken from the track rather than from the press:
+   * the press's own coordinates come from a frame difference and can be a few
+   * pixels out, or — for a pointer that was parked before the recording began
+   * — an outright guess. The track is a measurement.
+   */
+  let at = null;
+  for (const p of path) {
+    const d = Math.abs(num(p.t) - t);
+    if (d > reach) continue;
+    if (!at || d < at.d) at = { d, p };
+  }
+  if (!at) return null;
+
+  const x = num(at.p.x, 0.5);
+  const y = num(at.p.y, 0.5);
+  const here = [];
+  for (const p of path) {
+    const dt = num(p.t) - t;
+    if (dt < -window || dt > window) continue;
+    if (Math.hypot(num(p.x, 0.5) - x, num(p.y, 0.5) - y) > near) continue;
+    here.push(String(p.shape || "default"));
+  }
+  if (!here.length) return null;
+
+  const tally = new Map();
+  for (const s of here) tally.set(s, (tally.get(s) || 0) + 1);
+  let shape = "default";
+  let n = 0;
+  for (const [s, c] of tally) if (c > n) { n = c; shape = s; }
+  return { shape, share: n / here.length, n: here.length };
+}
+
+/**
  * Decide which clicks get to move the camera.
  *
- * Reads three things that were measured elsewhere and combines them once, here,
- * so the rule can be read in one place:
+ * Reads what was measured elsewhere and combines it once, here, so the rule can
+ * be read in one place. Strongest evidence first:
  *
- *   the page was scrolling      the camera stays put, control or not
+ *   nothing came of it          the camera stays put
+ *   the page was scrolling      the camera stays put, hand or not
+ *   the OS drew a hand there    the camera moves — it only does that over
+ *                               something that answers a click
  *   on a named control          the camera moves
- *   nothing was there           the camera stays put
- *   nobody looked, no scroll    the camera moves, as it always did
- *   nobody looked, but a scroll the camera stays put
+ *   the OS drew a plain arrow   the camera stays put: empty space, a heading,
+ *                               a panel still loading
+ *   the model looked, saw none  the camera stays put
+ *   nobody looked at all        the camera moves, as it always did
  *
- * @param {Array} events  from inferEvents
- * @param {Array} shots   from readFrames — per-frame elements the model named
+ * ── THE ARROW RULE IS THE ONE THE CREATOR ASKED FOR ─────────────────────────
+ * "Zoom in should only happen when user clicks on a Clickable UI element like
+ * buttons etc. It should not zoom-in in any other condition. Sometimes users
+ * have a tendency to click at some empty place where there is no UI clickable
+ * element, so at those places we should not Zoom-in."
+ *
+ * Before this, a press with no model reading behind it was allowed through —
+ * the pipeline's oldest default, from when there was nothing else to go on. On
+ * a recording analysed with the vision pass unavailable that default let every
+ * press through, including two the creator never made, minted by a page
+ * finishing loading under a parked pointer. The arrow is what says so.
+ *
+ * A native <button> is drawn with an arrow on some sites, so the model's
+ * reading is still consulted BEFORE the arrow rule refuses: the OS's hand can
+ * only ever add a press, never take one away from a control the model named.
+ *
+ * @param {Array} events   from inferEvents
+ * @param {Array} shots    from readFrames — per-frame elements the model named
+ * @param {Array} located  from locatePointer — the real pointer, frame by frame
  */
-export function confirmClicks(events, shots, { onNote = () => {} } = {}) {
+export function confirmClicks(events, shots, { located = null, onNote = () => {} } = {}) {
   return (events || []).map((e) => {
     if (e.type !== "click" && e.type !== "dblclick") return e;
 
     const on = controlUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5));
     const had = e.corroborated !== false;
     const scrolled = e.scrolled === true;
+
+    const os = osShapeAt(located, num(e.t));
+    const settled = os && os.n >= SHAPE_LEAST && os.share >= SHAPE_SHARE;
+    const hand = settled && CLICKABLE_SHAPES.has(os.shape);
+    const arrow = settled && os.shape === "default";
 
     let zoomable;
     let why;
@@ -1313,7 +1493,9 @@ export function confirmClicks(events, shots, { onNote = () => {} } = {}) {
      */
     if (!had) { zoomable = false; why = "nothing came of it"; }
     else if (scrolled) { zoomable = false; why = "the page was scrolling"; }
+    else if (hand) { zoomable = true; why = "the pointer was a " + (os.shape === "text" ? "text caret" : "hand") + " here"; }
     else if (on) { zoomable = true; why = "on " + (on.label ? '"' + on.label + '"' : on.type); }
+    else if (arrow) { zoomable = false; why = "a plain arrow here — nothing clickable under it"; }
     else if (on === false) { zoomable = false; why = "not on a control"; }
     else { zoomable = true; why = "no frame read here; allowed"; }
 
@@ -1323,6 +1505,7 @@ export function confirmClicks(events, shots, { onNote = () => {} } = {}) {
       zoomable,
       on_control: on ? true : on === false ? false : null,
       control: on ? on.label || on.type : "",
+      pointer_shape: os ? os.shape : null,
     };
   });
 }

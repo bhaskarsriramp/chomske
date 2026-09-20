@@ -112,21 +112,74 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     duration,
     fps: 30,
     cursorPx: aligned.sync?.cursor_px || 0,
-    hints: capturedTrack,
+    /**
+     * ── THE HINTS ARE THE RAW LOG, NOT THE CLEANED ONE ────────────────────
+     * alignCapture() throws away the samples where the tracker was following a
+     * spinner or a repaint instead of the pointer, because those would be
+     * DRAWN. As hints they are harmless: a hint is only a place to look, and
+     * looking somewhere the pointer is not costs one failed match. Throwing
+     * them away is not harmless — on a page that spends six seconds loading,
+     * the cleaning removes every hint there is, and the one stretch where the
+     * locator most needs a second opinion is the one where it gets none.
+     */
+    hints: (capture.track || []).map((p) => ({ ...p, t: num0(p.t) + num0(aligned.sync?.offset) })),
   }).catch((err) => {
     console.error("[studio] pointer locator failed; using the tracker alone:", err);
     return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
   });
 
-  /* ── What the pointer did ────────────────────────────────────────────── */
+  /* ── Everything the model reads ──────────────────────────────────────── */
+  /**
+   * ── THE MODEL PASS STARTS FIRST, AND IS WAITED FOR LAST ──────────────────
+   * It is the longest thing in the analysis and it needs nothing from the rest
+   * of it, so it goes out now and is collected at the end. Everything between
+   * here and there runs while it is in flight.
+   */
   onProgress(0.06, "Reading the pointer");
+
+  const uiTask = readFrames(frames, {
+    spend,
+    onProgress: (p) => onProgress(0.1 + 0.34 * p, "Understanding the interface"),
+  }).catch((err) => {
+    console.error("[studio] UI pass failed entirely:", err);
+    return [];
+  });
+
+  /* ── What the pointer did ────────────────────────────────────────────── */
+  /**
+   * ── THE PRESSES ARE READ FROM THE POINTER, NOT FROM THE TRACKER ──────────
+   * This used to run before the locator had answered, on the difference
+   * tracker's log alone, and the tracker cannot see a still pointer — which is
+   * the only kind there is at the moment of a click. Everything downstream was
+   * then reasoning about a pointer that vanished for the whole of every press.
+   *
+   * On one recording that cost the most important click in it: the creator put
+   * the pointer on "API Keys", held it while a billing page finished loading,
+   * pressed, and the tracker's only report of those six seconds was a loading
+   * spinner going round. No sighting, no dwell, no click, no zoom.
+   *
+   * So the locator is read first now. Where it found the pointer that IS the
+   * pointer — position and, just as importantly, the shape the operating
+   * system drew, which is the one thing that says whether what was under it
+   * could be clicked at all. The tracker fills the gaps, as it always did.
+   */
+  const located = await locateTask;
+  const locatedShare = located.frames ? located.found / located.frames : 0;
+  console.log(
+    "[studio] pointer located by shape in " + located.found + " of " + located.frames + " frames" +
+      (located.design ? " (" + located.design + " pointer, " + located.heightPx + "px)" : " — no pointer design recognised, tracker only")
+  );
+  const pointerPath = located.track.length ? mergeLocated(located.track, capturedTrack) : capturedTrack;
+
   let events = inferEvents({
-    samples: capturedTrack,
+    samples: pointerPath,
     motion: capturedMotion,
     duration,
     // What the finished video says changed, with loading spinners and other
     // animations discounted. Without it a spinner reads as a page navigating.
     screen: aligned.screen,
+    // The real pointer, frame by frame: what the OS drew, where.
+    located: located.track,
   });
 
   /**
@@ -142,18 +195,9 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     capturedTrack.unshift({ t: 0, x: opening.x, y: opening.y, shape: opening.shape || "default", conf: 1 });
   }
 
-  /* ── Everything the model reads ──────────────────────────────────────── */
-  // The UI pass and the blur pass both walk every frame and neither needs the
-  // other's answer, so they go together. Captions need only the audio.
-  onProgress(0.1, "Watching the recording");
-
-  const uiTask = readFrames(frames, {
-    spend,
-    onProgress: (p) => onProgress(0.1 + 0.34 * p, "Understanding the interface"),
-  }).catch((err) => {
-    console.error("[studio] UI pass failed entirely:", err);
-    return [];
-  });
+  // Presses go where the pointer actually was, so the zoom and the ripple land
+  // on the control and not a few pixels beside it.
+  events = snapToLocated(events, located.track);
 
   // The pointer log goes in with the frames: a blur is released when the screen
   // changes under it, not when the model happens to miss a sample. See
@@ -179,15 +223,6 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
       : Promise.resolve({ language: "", language_label: "", cues: [] });
 
   const shots = await uiTask;
-  const located = await locateTask;
-  const locatedShare = located.frames ? located.found / located.frames : 0;
-  console.log(
-    "[studio] pointer located by shape in " + located.found + " of " + located.frames + " frames" +
-      (located.design ? " (" + located.design + " pointer, " + located.heightPx + "px)" : " — no pointer design recognised, tracker only")
-  );
-  // Presses go where the pointer actually was, so the zoom and the ripple land
-  // on the control and not a few pixels beside it.
-  events = snapToLocated(events, located.track);
 
   /**
    * ── THE CAMERA WAITS FOR THE MODEL ──────────────────────────────────────
@@ -202,15 +237,10 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * anything aims at them. Nothing is deleted here; only the camera is
    * withheld. See confirmClicks().
    */
-  const graded = confirmClicks(events, shots);
-  const held = graded.filter((g) => g.zoomable === false && g.corroborated !== false);
-  if (held.length) {
-    console.log(
-      "[studio] " + held.length + " of " +
-        graded.filter((g) => g.type === "click" || g.type === "dblclick").length +
-        " presses will not move the camera: " +
-        held.map((g) => g.t.toFixed(2) + "s").join(", ")
-    );
+  const notes = [];
+  const graded = confirmClicks(events, shots, { located: located.track, onNote: (n) => notes.push(n) });
+  for (const n of notes) {
+    console.log("[studio] press at " + n.t.toFixed(2) + "s " + (n.zoomable ? "moves the camera" : "does not move the camera") + " — " + n.why);
   }
   events = graded;
 

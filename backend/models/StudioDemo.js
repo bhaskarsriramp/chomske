@@ -95,6 +95,11 @@ const AnalysisSchema = new Schema(
     // How far the browser's clock turned out to be from the video's, and
     // whether the opening could be filled in. services/studio/sync.js.
     sync: { type: Schema.Types.Mixed, default: null },
+    // What the shape locator made of the pointer: which design it recognised,
+    // at what size, and in how many frames it found it. Without this a run that
+    // silently fell back to the tracker looks identical to one that did not.
+    // services/studio/locate.js.
+    locate: { type: Schema.Types.Mixed, default: null },
 
     /**
      * The controls the model named, one entry per frame it read: t, and each

@@ -998,6 +998,10 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       zoomable: e.zoomable === false ? false : e.zoomable === true ? true : undefined,
       on_control: e.on_control === true ? true : e.on_control === false ? false : undefined,
       control: typeof e.control === "string" ? e.control.slice(0, 80) : undefined,
+      // What the operating system drew where the press landed, from the shape
+      // locator: a hand means the thing under it answers a click. Kept so the
+      // editor can say why a press did or did not move the camera.
+      pointer_shape: typeof e.pointer_shape === "string" ? e.pointer_shape.slice(0, 16) : undefined,
       scrolled: e.scrolled === true ? true : undefined,
       x: round4(frac(e.x, 0.5)),
       y: round4(frac(e.y, 0.5)),
