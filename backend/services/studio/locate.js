@@ -424,9 +424,9 @@ function topTwo(frame, W, H, t) {
  * the size, decided once, from the recording itself.
  *
  * Nothing here is specific to a website or a product. It asks only which of
- * the pointer templates finds ONE clear, unique match in the most frames — a
- * property of the pointer, which is drawn identically wherever it goes, and not
- * of anything on the page.
+ * the pointer templates FITS BEST, among those that behave like a pointer
+ * rather than like the page — a property of the pointer, which is drawn
+ * identically wherever it goes, and not of anything on the page.
  *
  * ── IT HAS TO LOOK FOR THE HAND AS WELL AS THE ARROW ────────────────────────
  * The first version of this offered only arrows, on the reasoning that every
@@ -447,7 +447,7 @@ function topTwo(frame, W, H, t) {
  * A hand votes under the arrow height it implies, so both shapes accumulate
  * evidence for the same answer: one design, one size.
  */
-async function calibrate(video, W, H, all, duration, fps, { requireUnique = false } = {}) {
+async function calibrate(video, W, H, all, duration, fps) {
   const want = new Set();
   const total = Math.max(1, Math.floor(duration * fps));
   for (let k = 0; k < CAL_FRAMES; k++) want.add(Math.floor(((k + 0.5) / CAL_FRAMES) * total));
@@ -490,22 +490,65 @@ async function calibrate(video, W, H, all, duration, fps, { requireUnique = fals
     for (let i = 1; i < at.length; i++) d = Math.max(d, Math.hypot(at[i].x - at[0].x, at[i].y - at[0].y));
     return d;
   };
-  const ranked = [...votes.entries()]
+  const offers = [...votes.entries()]
     .map(([k, v]) => [k, { ...v, moves: spread(v.at) >= 25, mean: v.v / v.n }])
-    .filter(([, v]) => {
-      if (v.n < 3) return false;
-      const clear = v.unique >= Math.max(2, v.n * 0.5);
-      // Movement is the strongest evidence a pointer can give, and the easiest
-      // for noise to imitate when the shape being matched is not distinctive.
-      // Where the caller has said so, only being the one clear match counts.
-      return requireUnique ? clear : v.moves || clear;
-    })
-    .sort((a, b) =>
-      (b[1].moves ? 1 : 0) - (a[1].moves ? 1 : 0) ||
-      b[1].n - a[1].n ||
-      b[1].mean - a[1].mean
-    );
-  if (!ranked.length) return null;
+    .sort((a, b) => b[1].mean - a[1].mean);
+  const describe = (rows) =>
+    rows.map(([k, v]) => k + " seen " + v.n + (v.moves ? " moving" : " still") + " clear " + v.unique + " mean " + v.mean.toFixed(3)).join("  |  ");
+
+  const ranked = offers
+    /**
+     * A candidate has to look like a pointer rather than like the page: either
+     * it was somewhere different between frames, which nothing printed on a
+     * page ever is, or it was unmistakably the best match in half the frames
+     * it appeared in. Noise can manage the first of those, so this is only the
+     * gate — the ranking below decides.
+     */
+    .filter(([, v]) => v.n >= 3 && (v.moves || v.unique >= Math.max(2, v.n * 0.5)))
+    /**
+     * ── THE POINTER IS THE ONE THE TEMPLATE FITS BEST ────────────────────
+     * This used to rank by movement first, then by how many frames a
+     * candidate was seen in, and only fall back to the score. Both of those
+     * are properties a wrong answer has just as easily as a right one:
+     *
+     *   moving   a template that fits nothing in particular still finds a
+     *            middling match SOMEWHERE in a page of text, and where that
+     *            lands changes every frame. It moves as convincingly as a
+     *            pointer, for the same reason a broken clock does.
+     *   seen     a wrong template matches something in every frame, so it is
+     *            seen in all twelve. A real pointer that leaves the window or
+     *            is hidden while the creator types is seen in fewer.
+     *
+     * The score is not like that. It measures how well the pixels under the
+     * match actually form a pointer, and on the two recordings that got this
+     * wrong the correct answer was top of the list by score both times, and
+     * beaten on movement both times:
+     *
+     *   scaled to 1280:  light 13px scored 0.865 — lost to a dark 10px that
+     *                    fitted nothing (0.768) and was never once the clear
+     *                    match in a frame. Nothing was found in any frame.
+     *   tinted pointer:  light 19px scored 0.806 and was the right answer, on
+     *                    a page with sixty arrow glyphs drawn on it where NO
+     *                    candidate is ever the clear match.
+     *
+     * So: best fit first. Movement and uniqueness stay as the filter above —
+     * they are what separates a pointer from a glyph printed on the page —
+     * but among the candidates that pass, the one that fits best is the one.
+     */
+    .sort((a, b) => b[1].mean - a[1].mean || b[1].unique - a[1].unique || b[1].n - a[1].n);
+  /**
+   * What the candidates looked like. Kept in the log because calibration is
+   * the one decision in this file that everything else rests on: get the
+   * design or the size wrong and every frame after it is wrong too, silently.
+   * Reading the top few is how a recording that came out wrong gets diagnosed
+   * without re-running anything — and when nothing passed at all, the rejected
+   * candidates are the only evidence there is.
+   */
+  if (!ranked.length) {
+    console.log("[studio] pointer calibration found nothing usable. Best offers: " + (describe(offers.slice(0, 3)) || "none"));
+    return null;
+  }
+  console.log("[studio] pointer calibration: " + describe(ranked.slice(0, 3)));
   const [darkKey, hpKey] = ranked[0][0].split(":");
   const dark = darkKey === "dark";
 
@@ -581,33 +624,36 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   /** Which hand drawing a pointer set uses at this size. See SHAPES.handL. */
   const handNames = (hp) => (hp < 24 ? ["hand"] : hp > 30 ? ["handL"] : ["hand", "handL"]);
 
-  const arrows = [];
-  for (const dark of [false, true]) for (const hp of sizes) arrows.push(make("arrow", hp, dark));
-
   /**
-   * ── THE ARROW FIRST, AND THE HAND ONLY IF THERE IS NO ARROW ───────────────
-   * Offering both shapes at once was tried and was worse. A hand template at a
-   * small size finds a middling match somewhere in a page full of text, and
-   * that match WANDERS from frame to frame, which is exactly the property this
-   * uses to tell a pointer from a printed glyph — so on five of seven test
-   * pages the noise outvoted the real pointer and the recording was calibrated
-   * to the wrong design at the wrong size.
+   * ── BOTH SHAPES COMPETE, AND THE BEST FIT WINS ────────────────────────────
+   * Three arrangements of this were tried on real recordings before one held.
    *
-   * So the arrow keeps its place as the primary evidence, unchanged, and the
-   * hand is a second chance for the recordings that have no arrow to offer: a
-   * demo of a menu or a list of links, where the pointer is a hand nearly
-   * throughout. That pass has to earn it on uniqueness rather than on movement,
-   * because movement is the thing noise can fake.
+   * Arrows only was the original, and it fails outright on a demo of a sidebar
+   * where every row is clickable: the pointer is a hand nearly throughout, the
+   * twelve sampled frames turn up two arrows, and the locator switches itself
+   * off for the whole recording.
+   *
+   * Arrows first, hands only if that finds nothing, fixes that one and not the
+   * next: on a recording scaled to 1280 wide the arrow pass did not find
+   * nothing — it found NOISE, dark arrows at ten pixels fitting text at 0.768
+   * — so the hand pass that would have found the real pointer at 0.865 never
+   * ran.
+   *
+   * Both at once, ranked by movement, was worse than either: noise moves.
+   *
+   * Both at once ranked by FIT is the one that holds, because fit is the thing
+   * a wrong answer cannot have. A template that matches text scores in the
+   * 0.74-0.77 range; the pointer it was drawn for scores 0.85 and up. See the
+   * ranking in calibrate().
    */
-  let cal = await calibrate(video, W, H, arrows, duration, fps);
-  if (!cal) {
-    const hands = [];
-    for (const dark of [false, true]) {
-      for (const hp of sizes) for (const name of handNames(hp)) hands.push(asHand(name, hp, dark));
+  const candidates = [];
+  for (const dark of [false, true]) {
+    for (const hp of sizes) {
+      candidates.push(make("arrow", hp, dark));
+      for (const name of handNames(hp)) candidates.push(asHand(name, hp, dark));
     }
-    cal = await calibrate(video, W, H, hands, duration, fps, { requireUnique: true });
-    if (cal) console.log("[studio] no arrow to calibrate from; the pointer was identified by its hand");
   }
+  const cal = await calibrate(video, W, H, candidates, duration, fps);
   if (!cal) return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
 
   // Tracking uses only this recording's pointer: both shapes, at its size and
@@ -813,9 +859,40 @@ export function mergeLocated(located, fallback) {
     while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (L[mid].t <= t) lo = mid; else hi = mid; }
     return Math.min(Math.abs(L[lo].t - t), Math.abs(L[hi].t - t)) <= HOLE;
   };
-  const fill = (fallback || []).filter((p) => !covered(Number(p.t)));
+  /**
+   * ── THE SHAPE CARRIES ACROSS A GAP ────────────────────────────────────────
+   * A fallback sample brings the difference tracker's idea of the shape, which
+   * is not a shape at all: it classifies the DENSITY of the patch of pixels
+   * that changed, and over a menu row that highlights under a resting hand it
+   * says "arrow" almost every time. On one recording it said "arrow" in 4123
+   * samples out of 4360, so our pointer was an arrow for the whole demo while
+   * the one in the picture was a hand — side by side, plainly different.
+   *
+   * The operating system does not change the pointer while it sits still. So
+   * where a gap's sample is at the same place as the located sighting nearest
+   * it in time, that sighting's shape is the shape — measured, a moment either
+   * side, rather than guessed from a blob.
+   */
+  const at = (t) => {
+    let lo = 0;
+    let hi = L.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (L[mid].t <= t) lo = mid; else hi = mid; }
+    return Math.abs(L[lo].t - t) <= Math.abs(L[hi].t - t) ? L[lo] : L[hi];
+  };
+  const fill = (fallback || []).filter((p) => !covered(Number(p.t))).map((p) => {
+    const near = at(Number(p.t));
+    if (!near) return p;
+    if (Math.hypot(Number(p.x) - Number(near.x), Number(p.y) - Number(near.y)) > SAME_PLACE) return p;
+    return { ...p, shape: near.shape || p.shape };
+  });
   return [...L, ...fill].sort((a, b) => a.t - b.t);
 }
+
+/**
+ * Close enough to the nearest sighting to be the same resting place, as a
+ * fraction of the frame — about twenty pixels across a 1920 recording.
+ */
+const SAME_PLACE = 0.011;
 
 /**
  * The path as the renderer should draw it: each located position held until

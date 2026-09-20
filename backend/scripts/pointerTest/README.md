@@ -8,6 +8,7 @@ export — on any page, not just the one demo these were written against.
     node scripts/pointerTest/coverage.mjs     # is the real pointer ever visible?
     node scripts/pointerTest/clicks.mjs       # which presses move the camera
     node scripts/pointerTest/parked.mjs       # a still pointer on a page that is not
+    node scripts/pointerTest/real.mjs         # actual recordings, in fixtures/
 
 They build their own test recordings, so they need no fixtures: a page is drawn
 (deliberately hostile — hundreds of text-like strokes, boxes, circles and sixty
@@ -37,6 +38,24 @@ the spinner instead; the page is otherwise static, so frame after frame is
 identical. On a real recording that lost the pointer for six and a half
 seconds and took the click on "API Keys" with it.
 
+`real.mjs` is the one that catches what nobody thought of. The drawn pages
+above can only contain the difficulties we imagined; every real failure so far
+was something else — a recording whose pointer is a HAND nearly throughout
+because the demo is of a sidebar, a window capture at 1904x1092, Windows
+hiding the pointer while the creator types. Drop any screen recording into
+`fixtures/` and it becomes a permanent test. When a creator reports a cursor
+problem, that recording is the most valuable fixture there is.
+
+It also runs each one **scaled down to 1280 wide**, because whoever is
+recording decides how big the pointer is in the picture and decides it without
+knowing — a smaller display, a scaled window, a capture the browser downsized.
+One recording that read perfectly at 1920 calibrated to a design it does not
+have at 1280 and found the pointer in none of its frames. Nobody would have
+found that by looking at the original.
+
+The recordings do not belong in the repo — they are somebody's screen, and they
+are tens of megabytes — so empty `fixtures/` before a deploy.
+
 Windows only: the pointer images come from `C:/Windows/Cursors`. They are read
-at run time and never copied into the product. `clicks.mjs` needs none of them
-and runs anywhere.
+at run time and never copied into the product. `clicks.mjs` and `real.mjs` need
+none of them and run anywhere.

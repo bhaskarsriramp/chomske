@@ -92,7 +92,7 @@ function page(g, { loaded, spin }) {
   }
 }
 
-async function makeClip(name, size) {
+async function makeClip(name, size, { cursor = true } = {}) {
   const out = path.join(S, name + ".mp4");
   const hand = cursorImage("aero_link", size);
   const arrow = cursorImage("aero_arrow", size);
@@ -120,7 +120,7 @@ async function makeClip(name, size) {
           x = PARK.x; y = PARK.y; shape = "pointer";
         }
         const k = shape === "pointer" ? hand : arrow;
-        g.drawImage(k.img, x - k.hx, y - k.hy);
+        if (cursor) g.drawImage(k.img, x - k.hx, y - k.hy);
         truth.push({ t, x, y, shape });
 
         /**
@@ -166,6 +166,30 @@ for (const [label, size, cursorPx] of [["32px pointer", 32, 20], ["48px pointer"
       "  wrong place " + wrong +
       "  read as a hand " + shapePct + "%" +
       "  [" + r.design + " " + r.heightPx + "px]"
+  );
+}
+
+/**
+ * ── AND IT MUST NOT INVENT ONE ──────────────────────────────────────────────
+ * Calibration now falls back to looking for a HAND when a recording offers no
+ * arrow to identify itself by. That fallback is why a demo of a sidebar works
+ * at all, and it is also the most dangerous thing in this file: a locator that
+ * hallucinates a pointer puts our cursor somewhere nobody's hand ever was —
+ * and because a hand means "clickable", it hands out zooms to go with it.
+ *
+ * So the same page is rendered with no pointer on it anywhere. The right
+ * answer is to find nothing and say so.
+ */
+{
+  const { file } = await makeClip("parked_none", 32, { cursor: false });
+  const r = await locatePointer(file, { sourceWidth: W, sourceHeight: H, duration: D, fps: FPS, hints: [], cursorPx: 20 });
+  const share = r.frames ? r.found / r.frames : 0;
+  const ok = !r.design || share < 0.05;
+  if (!ok) failures++;
+  console.log(
+    (ok ? "PASS  " : "FAIL  ") + "no pointer at all".padEnd(14) +
+      "  design " + (r.design || "none") +
+      "  claimed " + r.found + "/" + r.frames + " frames"
   );
 }
 

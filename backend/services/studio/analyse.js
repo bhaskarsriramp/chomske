@@ -391,16 +391,28 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   if (stilled > 0) console.log("[studio] " + stilled + " brief deviation(s) of the pointer were not drawn");
   /**
    * ── WHERE THE POINTER WAS FOUND, IT IS DRAWN EXACTLY THERE ────────────────
-   * Found in most of the recording, the located positions ARE the drawn path:
-   * the real shape, frame by frame, with no smoothing, so the pointer burnt
-   * into the recording is under ours in every frame, still or moving. The
-   * tracker's (steadied, shaped) samples fill only what the locator missed.
-   * Found in too little of it — an unusual pointer, a recording at a scale no
-   * template fits — the path is built exactly as it was before.
+   * The located positions ARE the drawn path wherever they exist: the real
+   * shape, frame by frame, with no smoothing, so the pointer burnt into the
+   * recording is under ours in every frame, still or moving. The tracker's
+   * (steadied, shaped) samples fill only what the locator missed.
+   *
+   * ── AND "WHEREVER THEY EXIST" USED TO MEAN "ONLY IF MOST OF THEM DO" ──────
+   * This was an all-or-nothing switch on half the frames, and on a real
+   * recording that threw away every sighting because there were not quite
+   * enough of them. The result was the worst of both: the pointer had been
+   * found exactly, in a large part of the recording, and was drawn from the
+   * difference tracker anyway — approximate, smoothed, and with the shape
+   * guessed from a patch of pixels. The creator saw all of it at once: our
+   * arrow beside their hand, both visible, drifting apart as they moved.
+   *
+   * A sighting is right or it is not; how many other frames also have one
+   * changes nothing about it. So every located sample is used, and the share
+   * now decides only whether the recording counts as located overall — which
+   * is a claim made to the editor, not a reason to discard measurements.
    */
-  if (locatedShare >= 0.5) {
+  if (located.track.length) {
     tl.track = stepPath(mergeLocated(located.track, shaped));
-    tl.cursor = { ...tl.cursor, smoothing: 0, located: true };
+    tl.cursor = { ...tl.cursor, smoothing: 0, located: locatedShare >= 0.5 };
   } else {
     tl.track = smoothTrack(shaped, { rate: 60, strength: tl.cursor.smoothing, duration });
   }

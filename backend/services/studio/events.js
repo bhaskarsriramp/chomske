@@ -150,6 +150,15 @@ const REST_HOVER = 6;
 const CONSEQUENCE = 1.4;
 /** How much bigger that consequence has to be than the press's own flicker. */
 const CONSEQUENCE_GROWTH = 3;
+/**
+ * How much of the screen a press has to change on its own frame to need no
+ * further consequence at all.
+ *
+ * A hover changes its own row: a percent or two. Five percent is already more
+ * than any highlight, and the value that matters in practice is far above it —
+ * a sidebar row that swaps the content area moves a fifth of the picture.
+ */
+const CONSEQUENCE_ALONE = 0.05;
 
 /**
  * ── A SCROLL IS NOT A CONSEQUENCE ────────────────────────────────────────────
@@ -707,12 +716,36 @@ function grewAfter(screen, mot, at, t) {
   if (series) {
     const here = nearest(series, at.t);
     const base = Math.max(0.01, here ? here.cover : 0.01);
+    // ── A BIG ENOUGH CHANGE IS ITS OWN CONSEQUENCE ─────────────────────────
+    // See the note below; the same rule, measured from the video's series.
+    if (here && here.cover >= CONSEQUENCE_ALONE) return true;
     for (const m of series) {
       if (m.t < from || m.t > to) continue;
       if (m.cover >= base * CONSEQUENCE_GROWTH && m.cover >= 0.05) return true;
     }
     return false;
   }
+
+  /**
+   * ── A BIG ENOUGH CHANGE IS ITS OWN CONSEQUENCE ────────────────────────────
+   * The rule below looks for something bigger AFTER the press than the press
+   * itself made, because the shape it was written for is a button darkening
+   * and then a panel opening. Half the interfaces people demo do not work that
+   * way: pressing a row in a sidebar swaps the whole content area in the very
+   * same frame, and there is nothing afterwards at all.
+   *
+   * Measured on a real recording: the creator pressed "Calendar", a fifth of
+   * the screen changed on that frame, and the next three and a half seconds
+   * were perfectly still while the new view loaded. The rule read that as
+   * "nothing came of it", threw the press away, and the zoom went instead to a
+   * phantom press minted when the page finally finished drawing — four and a
+   * half seconds late. That is the "zoom-in delay" a creator sees.
+   *
+   * A hover cannot do this. The most a hover changes is its own row, which is
+   * a percent or two of a screen. A fifth of one is a consequence, whenever it
+   * is measured relative to.
+   */
+  if (num(at.energy) >= CONSEQUENCE_ALONE) return true;
 
   const base = Math.max(RULES.noiseEnergy, at.energy);
   for (const m of mot) {
