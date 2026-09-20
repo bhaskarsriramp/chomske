@@ -115,7 +115,21 @@ console.log("\nA press only moves the camera when something clickable was under 
   check("a hover over a menu item, nothing came of it", e.zoomable, false);
 }
 
-/* 8. And a scroll over a control is still a scroll. */
+/**
+ * 8. A press made while the pointer was travelling.
+ *
+ * The last zoom of one recording landed here: the pointer crossed the screen,
+ * a press was minted somewhere along the way, nothing clickable was under it
+ * at any point, and it fell through to "nobody looked, so allow it" — the one
+ * case where the evidence is actually against a press.
+ */
+{
+  const located = sweep(26.8, 27.5, { x: 0.55, y: 0.35 }, { x: 0.56, y: 0.10 }, "default");
+  const [e] = confirmClicks([press(27.27, 0.555, 0.176)], [], { located });
+  check("a press while the pointer was travelling", e.zoomable, false);
+}
+
+/* 9. And a scroll over a control is still a scroll. */
 {
   const located = rest(7.4, 9.2, 0.031, 0.182, "pointer");
   const [e] = confirmClicks([press(8.32, 0.031, 0.182, { scrolled: true })], [], { located });
@@ -145,6 +159,44 @@ console.log("\nA page finishing loading is not a press\n");
   const evH = inferEvents({ samples: onHand, motion, duration: 6, located: onHand })
     .filter((e) => e.type === "click");
   check("the screen changes over a menu item", evH.length > 0, true);
+}
+
+console.log("\nA hover is not a press, whatever else happens on screen\n");
+
+/**
+ * ── THE ONE THAT PUSHED IN ON A HOVER ───────────────────────────────────────
+ * The creator rested the pointer on a sidebar row and never pressed it. The
+ * page never changed. Two thirds of a second later a chart elsewhere on the
+ * screen finished drawing itself, and because the hover's own highlight was
+ * too small to measure, that chart cleared the "bigger than the press itself"
+ * bar and became its consequence.
+ *
+ * A browser answers a real click at once — every real press in that recording
+ * was answered in 0.12 seconds.
+ */
+{
+  const FR = 1 / 24;
+  const quiet = (t) => ({ t: Math.round(t * 1000) / 1000, energy: 0.0002, x: 0.1, y: 0.6, w: 0.02, h: 0.02, dy: 0 });
+  const build = (spike) => {
+    const out = [];
+    for (let t = 10; t < 13; t += FR) {
+      const m = quiet(t);
+      if (spike && Math.abs(t - spike.t) < FR) { m.energy = spike.energy; m.x = 0.35; m.y = 0.4; m.w = 0.64; m.h = 0.75; }
+      out.push(m);
+    }
+    return out;
+  };
+  const onRow = rest(10.2, 12.0, 0.110, 0.625, "pointer");
+
+  // A chart finishing two thirds of a second later, the size that fooled it.
+  const late = inferEvents({ samples: onRow, motion: build({ t: 11.65, energy: 0.019 }), duration: 13, located: onRow })
+    .filter((e) => e.type === "click");
+  check("a chart finishing 0.7s later", late.some((e) => e.corroborated), false);
+
+  // A page replacing itself may still take its time: size earns the delay.
+  const big = inferEvents({ samples: onRow, motion: build({ t: 11.65, energy: 0.4 }), duration: 13, located: onRow })
+    .filter((e) => e.type === "click");
+  check("a whole page arriving 0.7s later", big.some((e) => e.corroborated), true);
 }
 
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");

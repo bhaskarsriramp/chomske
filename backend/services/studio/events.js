@@ -159,6 +159,33 @@ const CONSEQUENCE_GROWTH = 3;
  * a sidebar row that swaps the content area moves a fifth of the picture.
  */
 const CONSEQUENCE_ALONE = 0.05;
+/**
+ * How soon the consequence of a press has to START.
+ *
+ * ── A HOVER IS A PRESS WEARING SOMETHING ELSE'S CONSEQUENCE ─────────────────
+ * The test is relative: a change bigger than the press's own flicker. When the
+ * press made no flicker at all — a hover over a sidebar row, where the
+ * highlight is a rounding error — the bar drops to the noise floor and ANY
+ * change in the next second and a half qualifies, whatever caused it.
+ *
+ * On one recording that is exactly what happened. The creator rested the
+ * pointer on "Referral Bonus", never pressed it, and the page never changed;
+ * two thirds of a second later a chart elsewhere on the screen finished
+ * drawing itself, and the rules called that the consequence. The camera pushed
+ * in on a hover.
+ *
+ * A browser does not take two thirds of a second to acknowledge a click. In
+ * that same recording all five real presses were answered in 0.12 seconds —
+ * soon enough that the change is already inside the window the press itself is
+ * measured over, so nothing is lost by refusing late SMALL changes. A large
+ * one is a different matter: a page replacing itself may take its time, which
+ * is what a slow page does, so size earns the delay.
+ */
+const CONSEQUENCE_PROMPT = 0.5;
+/** How much of the screen a LATE consequence has to change to count at all. */
+const CONSEQUENCE_LATE = 0.25;
+/** The same, on the browser tracker's own scale rather than the video's. */
+const CONSEQUENCE_LATE_ENERGY = 0.05;
 
 /**
  * ── A SCROLL IS NOT A CONSEQUENCE ────────────────────────────────────────────
@@ -721,7 +748,8 @@ function grewAfter(screen, mot, at, t) {
     if (here && here.cover >= CONSEQUENCE_ALONE) return true;
     for (const m of series) {
       if (m.t < from || m.t > to) continue;
-      if (m.cover >= base * CONSEQUENCE_GROWTH && m.cover >= 0.05) return true;
+      const floor = m.t > t + CONSEQUENCE_PROMPT ? CONSEQUENCE_LATE : 0.05;
+      if (m.cover >= base * CONSEQUENCE_GROWTH && m.cover >= floor) return true;
     }
     return false;
   }
@@ -750,6 +778,7 @@ function grewAfter(screen, mot, at, t) {
   const base = Math.max(RULES.noiseEnergy, at.energy);
   for (const m of mot) {
     if (m.t < from || m.t > to) continue;
+    if (m.t > t + CONSEQUENCE_PROMPT && m.energy < CONSEQUENCE_LATE_ENERGY) continue;
     if (m.energy >= base * CONSEQUENCE_GROWTH) return true;
   }
   return false;
@@ -1447,21 +1476,36 @@ export function osShapeAt(path, t, { reach = SHAPE_REACH, window = SHAPE_WINDOW,
   const x = num(at.p.x, 0.5);
   const y = num(at.p.y, 0.5);
   const here = [];
+  // How many times the pointer was seen AT ALL through this moment, wherever
+  // it was. The difference between "we were not watching" and "we were
+  // watching and it never stopped here" — see `seen` in confirmClicks().
+  let seen = 0;
   for (const p of path) {
     const dt = num(p.t) - t;
     if (dt < -window || dt > window) continue;
+    seen++;
     if (Math.hypot(num(p.x, 0.5) - x, num(p.y, 0.5) - y) > near) continue;
     here.push(String(p.shape || "default"));
   }
-  if (!here.length) return null;
+  if (!here.length) return { shape: "", share: 0, n: 0, seen };
 
   const tally = new Map();
   for (const s of here) tally.set(s, (tally.get(s) || 0) + 1);
   let shape = "default";
   let n = 0;
   for (const [s, c] of tally) if (c > n) { n = c; shape = s; }
-  return { shape, share: n / here.length, n: here.length };
+  return { shape, share: n / here.length, n: here.length, seen };
 }
+
+/**
+ * How many sightings through the window count as having watched the pointer.
+ *
+ * At thirty frames a second this is a fifth of a second of continuous
+ * observation. Fewer than that and the locator was struggling here, so an
+ * unsettled reading says nothing; more, and an unsettled reading is a fact
+ * about the pointer rather than about the locator.
+ */
+const SHAPE_WATCHED = 6;
 
 /**
  * Decide which clicks get to move the camera.
@@ -1511,6 +1555,22 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
     const settled = os && os.n >= SHAPE_LEAST && os.share >= SHAPE_SHARE;
     const hand = settled && CLICKABLE_SHAPES.has(os.shape);
     const arrow = settled && os.shape === "default";
+    /**
+     * ── A POINTER THAT NEVER STOPPED DID NOT PRESS ANYTHING ────────────────
+     * Watched through this moment and never resting in one place. That is not
+     * a missing reading, it is a reading: nobody presses a button on the way
+     * past it, and the hand needs a fraction of a second on the spot for the
+     * mouse to go down and up.
+     *
+     * Before this, an unsettled pointer fell through to the oldest default in
+     * the pipeline — "nobody looked, so allow it" — which is the one case
+     * where the evidence is actually against a press. The last zoom of one
+     * recording landed on a press made while the pointer was travelling
+     * across the screen, with nothing clickable under it at any point:
+     * "there is no clickable element nor I have clicked, the Zoom-in
+     * happened, it should not right".
+     */
+    const moving = os && !settled && os.seen >= SHAPE_WATCHED;
 
     let zoomable;
     let why;
@@ -1530,6 +1590,7 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
     else if (on) { zoomable = true; why = "on " + (on.label ? '"' + on.label + '"' : on.type); }
     else if (arrow) { zoomable = false; why = "a plain arrow here — nothing clickable under it"; }
     else if (on === false) { zoomable = false; why = "not on a control"; }
+    else if (moving) { zoomable = false; why = "the pointer never stopped here"; }
     else { zoomable = true; why = "no frame read here; allowed"; }
 
     onNote({ t: num(e.t), zoomable, why });
@@ -1538,7 +1599,10 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
       zoomable,
       on_control: on ? true : on === false ? false : null,
       control: on ? on.label || on.type : "",
-      pointer_shape: os ? os.shape : null,
+      pointer_shape: os && os.shape ? os.shape : null,
+      // The sentence above, kept on the event: it is the only record of why a
+      // zoom is or is not there, and reading it back beats reconstructing it.
+      why,
     };
   });
 }

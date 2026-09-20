@@ -367,6 +367,7 @@ const analyse = {
           "analysis.frames_read": result.frames_read,
           "analysis.frames_failed": result.frames_failed,
           "analysis.sync": result.sync || null,
+          "analysis.locate": result.locate || null,
           "analysis.elements": result.elements || null,
           "analysis.usd": result.spend.usd,
           "analysis.calls": result.spend.calls,

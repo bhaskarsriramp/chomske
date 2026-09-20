@@ -1002,6 +1002,10 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       // locator: a hand means the thing under it answers a click. Kept so the
       // editor can say why a press did or did not move the camera.
       pointer_shape: typeof e.pointer_shape === "string" ? e.pointer_shape.slice(0, 16) : undefined,
+      // Why the camera did or did not move for this press, in the words
+      // confirmClicks() used. The only record of a decision that is otherwise
+      // impossible to reconstruct after the fact.
+      why: typeof e.why === "string" ? e.why.slice(0, 80) : undefined,
       scrolled: e.scrolled === true ? true : undefined,
       x: round4(frac(e.x, 0.5)),
       y: round4(frac(e.y, 0.5)),
