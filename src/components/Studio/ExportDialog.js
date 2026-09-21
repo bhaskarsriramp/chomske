@@ -249,7 +249,15 @@ function RenderRow({ demoId, render, onChanged }) {
     setBusy(false);
   };
 
-  const label = `${render.options?.label || render.options?.preset || "Export"} · ${render.width}×${render.height}`;
+  /**
+   * ── AN EXPORT THAT NEVER RAN HAS NO SIZE ─────────────────────────────────
+   * width and height are written when the render finishes, so a failed one
+   * carries zeroes and this read "youtube · 0×0" — which looks like an export
+   * that was somehow configured at no size at all, rather than one that never
+   * produced a frame. The size is only news once there is a file.
+   */
+  const size = render.width > 0 && render.height > 0 ? ` · ${render.width}×${render.height}` : "";
+  const label = `${render.options?.label || render.options?.preset || "Export"}${size}`;
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 11, border: "1px solid var(--line)", background: "var(--card)" }}>

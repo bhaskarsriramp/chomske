@@ -20,11 +20,15 @@
  *
  * ── THE EXPRESSIONS ARE GENERATED, NOT WRITTEN ───────────────────────────────
  * A demo's camera is a piecewise function of time: still, ramp in, hold, ramp
- * out, still. Each piece becomes one branch of a nested `if()`, and the ramps
- * carry their easing inline. The expression is built with `st()`/`ld()`
- * registers so the easing polynomial appears once per branch rather than three
- * times, which keeps a thirty-zoom demo's expression readable in a log and
- * cheap to evaluate.
+ * out, still. Each piece becomes one gated term of a SUM, and the ramps carry
+ * their easing inline, built with `st()`/`ld()` registers so the easing
+ * polynomial appears once per term rather than three times.
+ *
+ * A sum and not a nested `if()` chain, which is what this was: ffmpeg parses
+ * expressions by recursive descent and gives up somewhere around a hundred
+ * levels, so a chain one branch per keyframe long broke every demo past about
+ * twenty-three zooms — and broke it as "Failed to configure output pad", which
+ * names nothing. Gated terms are flat however many there are. See fieldExpr.
  *
  * Following zooms cannot be analytic — the camera is chasing a path that came
  * out of a frame difference — so those stretches are sampled at FOLLOW_HZ and
@@ -37,12 +41,10 @@
  * of rest and settle into place, and the eye reads a linear one as a fault in
  * the playback rather than a move.
  */
-import { EASE, RAMP, rampsOf, activeZooms, cameraAt, clampRect, layout, toSource, drawnTrack } from "../timeline.js";
+import { EASE, rampsOf, activeZooms, cameraAt, clampRect, layout, toSource, drawnTrack } from "../timeline.js";
 
 /** Samples per second for a zoom that follows the pointer. */
 const FOLLOW_HZ = 10;
-/** Below this much change, two adjacent samples are one. Sub-pixel at 4K. */
-const EPS = 0.0004;
 
 const round4 = (v) => Math.round(v * 10000) / 10000;
 const round3 = (v) => Math.round(v * 1000) / 1000;
@@ -146,7 +148,90 @@ export function cameraKeys(tl, { fps = 30 } = {}) {
     }
   }
 
-  return keys.sort((a, b) => a.t - b.t);
+  return thinKeys(keys.sort((a, b) => a.t - b.t));
+}
+
+/**
+ * The most keyframes one camera expression may carry.
+ *
+ * ── A CEILING, NOT A TARGET ──────────────────────────────────────────────────
+ * Flattening the expression (see fieldExpr) moved the wall from 92 keys to
+ * something over 200, measured. This sits well inside that, because the number
+ * that matters is not the one where it breaks but the one where it is CERTAIN
+ * not to — and the failure mode is a demo that will not export at all, reported
+ * as an ffmpeg error nobody can read.
+ *
+ * Ordinary work never comes near it: a click zoom is four keys, so this is
+ * forty of them in one recording. It is reached by a long demo full of FOLLOW
+ * zooms, which sample the pointer at FOLLOW_HZ and can emit ten keys a second.
+ */
+const MAX_KEYS = 160;
+
+/**
+ * The same camera move, with the keys that were not saying anything removed.
+ *
+ * ── WHICH ONES GO ────────────────────────────────────────────────────────────
+ * A key that sits on the straight line between its neighbours describes nothing
+ * the line does not already describe. Following a pointer at ten samples a
+ * second across a slow drag produces a great many of those, and they are the
+ * whole reason a long demo can run out of expression.
+ *
+ * So the least informative key is dropped, repeatedly, until the rest fit —
+ * measuring "least informative" as how far it deviates from the chord between
+ * its neighbours, in all three of x, y and w at once. That is Douglas–Peucker's
+ * criterion, applied greedily.
+ *
+ * ── AND WHICH NEVER GO ───────────────────────────────────────────────────────
+ * Anything that is not a LINEAR key. The first and last of a ramp, the ends of
+ * a hold, and every eased key carry the SHAPE of the move: an eased key is not
+ * on the chord by definition, and dropping one turns a curve into a straight
+ * line. Only the interpolation points between them are ever candidates.
+ */
+function thinKeys(keys) {
+  if (keys.length <= MAX_KEYS) return keys;
+
+  const out = [...keys];
+  const droppable = (i) => i > 0 && i < out.length - 1 && (out[i].ease || "linear") === "linear";
+
+  // How far key i sits off the line from i-1 to i+1, over x, y and w together.
+  const sag = (i) => {
+    const a = out[i - 1];
+    const b = out[i];
+    const c = out[i + 1];
+    const span = c.t - a.t;
+    if (span <= 0) return 0;
+    const f = (b.t - a.t) / span;
+    return (
+      Math.abs(b.x - (a.x + (c.x - a.x) * f)) +
+      Math.abs(b.y - (a.y + (c.y - a.y) * f)) +
+      Math.abs(b.w - (a.w + (c.w - a.w) * f))
+    );
+  };
+
+  const before = out.length;
+  while (out.length > MAX_KEYS) {
+    let at = -1;
+    let least = Infinity;
+    for (let i = 1; i < out.length - 1; i++) {
+      if (!droppable(i)) continue;
+      const d = sag(i);
+      if (d < least) {
+        least = d;
+        at = i;
+      }
+    }
+    // Nothing left that may be dropped: every remaining key carries shape. A
+    // camera this complicated is past what one expression can hold, and cutting
+    // an eased key would be a visible change to the move. Better a long
+    // expression than a wrong one; fieldExpr is flat and has the headroom.
+    if (at < 0) break;
+    out.splice(at, 1);
+  }
+
+  if (out.length < before) {
+    console.log(`[studio] camera: ${before} keyframes thinned to ${out.length} (the flat ones between moves)`);
+  }
+  return out;
 }
 
 /** The output-time stretches a source-time span survives as. */
@@ -225,45 +310,91 @@ const EASE_EXPR = {
 /**
  * One piecewise expression over the keys, for whichever field is asked for.
  *
- * Built from the end backwards so each branch's `else` is the expression for
- * everything after it, which is what makes one pass produce a correctly nested
- * `if()` chain without any bracket arithmetic.
- *
  * `T` is the expression that gives the current time. zoompan has no `t`: it
  * counts output frames in `on`, so time is `on/fps` and nothing else works.
+ *
+ * ── IT IS A SUM, AND IT USED TO BE A NESTED if() CHAIN ───────────────────────
+ * The obvious way to write a piecewise function here is one `if()` per segment,
+ * each one's `else` being the whole of the rest — and that is what this did.
+ * It is correct, it is compact, and past a certain length ffmpeg cannot parse
+ * it: av_expr_parse is recursive descent, and a chain N segments long is N
+ * levels deep.
+ *
+ * Measured, against real ffmpeg on a real clip:
+ *
+ *   nested, tiny branches    fine at 80 levels, FAILS at 100 — on 1,800 chars
+ *   flat sum, real easing    fine at 200 terms — on 26,000 chars
+ *
+ * So the wall is DEPTH, and length barely matters until three times further
+ * out. In production that wall arrived at 92 keys, which is 23 zooms: every
+ * demo longer than about a minute failed to export, with
+ *
+ *   [Parsed_zoompan_3] Failed to configure output pad
+ *   Nothing was written into output file
+ *
+ * and nothing anywhere saying the expression was the problem.
+ *
+ * A piecewise function does not need nesting. Each segment is gated by a
+ * half-open test and the gated values are ADDED: exactly one gate is ever 1, so
+ * the sum is the piece that applies. Depth becomes a constant no matter how
+ * many segments there are.
+ *
+ * ── WHAT IT COSTS, AND WHY THAT IS FINE ──────────────────────────────────────
+ * if() short-circuits and a sum does not, so every segment's easing is now
+ * evaluated on every frame rather than just the one in range. That is a few
+ * thousand arithmetic operations per frame against a full-frame bicubic rescale
+ * and an H.264 encode — unmeasurable next to either.
  */
 function fieldExpr(keys, field, T, { scale = 1, offset = 0 } = {}) {
   const val = (k) => round4(k[field] * scale + offset);
   if (!keys.length) return String(offset);
   if (keys.length === 1) return String(val(keys[0]));
 
-  let expr = String(val(keys[keys.length - 1]));
+  const terms = [];
 
-  for (let i = keys.length - 1; i > 0; i--) {
+  // Before the first key the camera is wherever the first key says.
+  terms.push(`lt(${T},${keys[0].t})*${val(keys[0])}`);
+
+  for (let i = 1; i < keys.length; i++) {
     const a = keys[i - 1];
     const b = keys[i];
     const span = b.t - a.t;
     const from = val(a);
     const to = val(b);
 
-    let branch;
+    /**
+     * Half-open, [a, b). Closed on both ends would double-count every boundary
+     * — two gates true at once, two values added, and the camera jumping to
+     * roughly twice its position for one frame at every keyframe.
+     */
+    const gate = `gte(${T},${a.t})*lt(${T},${b.t})`;
+
     if (b.ease === "hold" || span <= 0 || Math.abs(to - from) < 1e-6) {
-      branch = String(from);
-    } else {
-      const ease = EASE_EXPR[b.ease] || EASE_EXPR.linear;
-      // `st(0, …)*0 + …` is the idiom for storing a value without adding it to
-      // the result: st() RETURNS what it stored, so the multiply by zero is
-      // what keeps the progress out of the arithmetic. Operands evaluate left
-      // to right, so slot 0 is written before the easing reads it. Registers
-      // are per-evaluation and only one branch of the chain ever runs, so
-      // reusing slot 0 everywhere is safe.
-      branch = `(st(0,clip((${T}-${a.t})/${round3(span)},0,1))*0+(${from}+(${round4(to - from)})*(${ease})))`;
+      if (Math.abs(from) > 1e-9) terms.push(`${gate}*${from}`);
+      continue;
     }
-    expr = `if(lt(${T},${b.t}), ${branch}, ${expr})`;
+
+    const ease = EASE_EXPR[b.ease] || EASE_EXPR.linear;
+    /**
+     * `st(0, …)*0 + …` is the idiom for storing a value without adding it to
+     * the result: st() RETURNS what it stored, so the multiply by zero is what
+     * keeps the progress out of the arithmetic.
+     *
+     * ── AND SHARING SLOT 0 IS STILL SAFE, FOR A DIFFERENT REASON ────────────
+     * It used to be safe because only one branch of the chain ever ran. Now
+     * every term runs, so the reason is the other one: operands evaluate left
+     * to right, and each term writes slot 0 and reads it back inside itself
+     * before the next term is reached. A term is self-contained; the register
+     * never has to survive one.
+     */
+    terms.push(`${gate}*(st(0,clip((${T}-${a.t})/${round3(span)},0,1))*0+(${from}+(${round4(to - from)})*(${ease})))`);
   }
 
-  // Before the first key the camera is wherever the first key says.
-  return `if(lt(${T},${keys[0].t}), ${val(keys[0])}, ${expr})`;
+  // At and after the last key the camera stays where the last key put it.
+  const last = keys[keys.length - 1];
+  terms.push(`gte(${T},${last.t})*${val(last)}`);
+
+  return `(${terms.join("+")})`;
 }
 
 /**
