@@ -113,6 +113,46 @@ const AnalysisSchema = new Schema(
      * check why a particular click did or did not earn a zoom.
      */
     elements: { type: Schema.Types.Mixed, default: null },
+
+    /**
+     * Every moment the screen visibly changed, measured from the finished video
+     * (services/studio/sync.js readScreen, distilled by audit.js changeMoments).
+     *
+     * ── WHY A LIST OF NOTHING-IN-PARTICULAR IS WORTH STORING ──────────────────
+     * It is the only handle on what the click tracking MISSED. A press nobody
+     * recovered leaves no event, no zoom and no trace — examining the presses
+     * that were found can never reveal it. Subtracting the explained moments
+     * from this list can, and what remains is both the audit's candidate set and,
+     * read on its own, an honest measure of how much of a recording the pipeline
+     * accounted for.
+     *
+     * A fact about the RECORDING, so it is measured once and never recomputed.
+     * Whether a given moment is explained is a fact about the EDIT, which
+     * changes whenever the creator does, and is worked out fresh each time.
+     */
+    changes: { type: Schema.Types.Mixed, default: null },
+
+    /**
+     * What the cross-check found, including what it decided was nothing.
+     *
+     * The nos matter as much as the yeses: a run that looked at twenty moments
+     * and dismissed all twenty is a run whose thresholds are wrong, and that is
+     * only visible if the dismissals are on the record too. The findings that
+     * became offers are in `suggestions` as well; these are the full reading.
+     */
+    findings: { type: Schema.Types.Mixed, default: null },
+    audited_at: { type: Date, default: null },
+    /**
+     * The demo's `rev` when the audit last ran.
+     *
+     * The audit reads the events and the zooms and asks the recording about the
+     * moments they do not account for. Run again on an unchanged edit it asks
+     * the same questions of the same frames and gets the same answers, for the
+     * same money — and "Check again" is a button a creator can press all day.
+     * Unchanged since this rev means the findings still stand.
+     */
+    audited_rev: { type: Number, default: -1 },
+
     // What the model cost us, against what the creator was charged. The two
     // are not the same number and the gap is the thing worth watching.
     usd: { type: Number, default: 0 },

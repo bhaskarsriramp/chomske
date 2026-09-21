@@ -19,33 +19,30 @@
  * of the product, so the prompt forbids it several different ways.
  */
 
-import { GoogleGenAI } from "@google/genai";
+import { generate, isVertex } from "./ai/provider.js";
 
 const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
 
-// Rotate across keys so one key's per-minute (and per-day video) limit isn't the
-// whole app's ceiling. Same idea as the reference project's key pool, minus the
-// Redis coordination, a single process can round-robin in memory.
-let _keys = null;
-let _cursor = 0;
-function nextKey() {
-  if (!_keys) {
-    _keys = String(process.env.AISTUDIO_KEY || "")
-      .split(",")
-      .map((k) => k.trim())
-      .filter(Boolean);
-  }
-  if (!_keys.length) throw new Error("AISTUDIO_KEY is not set. Add a Google AI Studio key to .env");
-  const key = _keys[_cursor % _keys.length];
-  _cursor++;
-  return key;
-}
-
-const _clients = new Map();
-function clientFor(apiKey) {
-  if (!_clients.has(apiKey)) _clients.set(apiKey, new GoogleGenAI({ apiKey }));
-  return _clients.get(apiKey);
-}
+/**
+ * ── THE KEY POOL THAT USED TO LIVE HERE IS GONE ──────────────────────────────
+ * It rotated across AI Studio keys so one key's per-minute (and per-day video)
+ * limit was not the whole app's ceiling. That was the right idea and the wrong
+ * place for it: this file had no idea what the editor or the studio were doing
+ * with the same keys at the same moment, so three round-robins shared one
+ * ceiling and none of them knew it.
+ *
+ * It now goes through services/ai/provider.js, which owns the rotation, the
+ * request budget and the waiting — and which is also where the choice between
+ * AI Studio and Vertex lives, so this file needs to know nothing about either.
+ *
+ * ── ONE THING TO WATCH ON VERTEX ─────────────────────────────────────────────
+ * The YouTube URL below is handed straight to the model as fileData, with no
+ * download anywhere in this product. That works on both APIs but the terms are
+ * not identical — the per-day ceiling on public video is an AI Studio notion,
+ * and Vertex has its own limits on what it will fetch. If a video that plays
+ * fine in a browser comes back refused after the move, this is the first place
+ * to look.
+ */
 
 const PROMPT = `You are transcribing a video. Return ONLY what the speaker actually says.
 
@@ -71,41 +68,31 @@ Return STRICT JSON, nothing else:
  * @throws  Error with a `.userMessage` when the cause is something the user can fix.
  */
 export async function transcribeYouTube(watchUrl) {
-  const apiKey = nextKey();
-  const ai = clientFor(apiKey);
-
   let res;
   try {
-    res = await ai.models.generateContent({
+    ({ res } = await generate({
       model: VIDEO_MODEL,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { fileData: { fileUri: watchUrl } },
-            { text: PROMPT },
-          ],
-        },
+      parts: [
+        { fileData: { fileUri: watchUrl } },
+        { text: PROMPT },
       ],
-      config: {
-        temperature: 0.1,          // transcription, not writing, near-deterministic
-        responseMimeType: "application/json",
-        // Long videos produce long transcripts. Too small a ceiling truncates
-        // mid-sentence and the JSON then fails to parse, which reads to the user
-        // as a total failure rather than "the video was long".
-        maxOutputTokens: 65536,
-        // THINKING OFF, measured, not assumed. Transcription is mechanical: the
-        // model is writing down what it hears, not reasoning about it. With
-        // thinking on, a 60s Short burned 1,596 thinking tokens against just 630
-        // real output tokens, and thinking bills at the OUTPUT rate, so it was
-        // 44% of the bill for no benefit. Measured on the same video:
-        //   thinking on : 11.4s, ₹2.90, 1,993 chars
-        //   thinking off:  4.1s, ₹1.53, 1,976 chars  ← same transcript
-        // Half the cost and nearly 3x faster. If a future model needs reasoning
-        // here (it shouldn't), raise this deliberately and re-measure.
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
+      temperature: 0.1,          // transcription, not writing, near-deterministic
+      json: true,
+      // Long videos produce long transcripts. Too small a ceiling truncates
+      // mid-sentence and the JSON then fails to parse, which reads to the user
+      // as a total failure rather than "the video was long".
+      maxOutputTokens: 65536,
+      // THINKING OFF, measured, not assumed. Transcription is mechanical: the
+      // model is writing down what it hears, not reasoning about it. With
+      // thinking on, a 60s Short burned 1,596 thinking tokens against just 630
+      // real output tokens, and thinking bills at the OUTPUT rate, so it was
+      // 44% of the bill for no benefit. Measured on the same video:
+      //   thinking on : 11.4s, ₹2.90, 1,993 chars
+      //   thinking off:  4.1s, ₹1.53, 1,976 chars  ← same transcript
+      // Half the cost and nearly 3x faster. If a future model needs reasoning
+      // here (it shouldn't), raise this deliberately and re-measure.
+      thinkingBudget: 0,
+    }));
   } catch (err) {
     throw mapProviderError(err);
   }
@@ -201,7 +188,19 @@ function mapProviderError(err) {
   const msg = String(err?.message || "").toLowerCase();
   const out = new Error(err?.message || "Gemini request failed");
 
-  if (msg.includes("private") || msg.includes("unlisted") || msg.includes("not accessible") || msg.includes("forbidden")) {
+  /**
+   * ── A 401 OR 403 MEANS SOMETHING DIFFERENT ON VERTEX ──────────────────────
+   * On AI Studio it is nearly always the video: private, unlisted, or blocked.
+   * On Vertex the request is authenticated with a service account, so the
+   * overwhelmingly likely cause is that the account cannot reach Vertex at all
+   * — no credentials, the wrong project, or the API not enabled. Telling that
+   * operator "this video isn't public" sends them to look at the one thing that
+   * is fine.
+   */
+  if (isVertex() && (status === 401 || status === 403) && !msg.includes("video")) {
+    out.userMessage = "We couldn't reach the model. This looks like a configuration problem on our side, not with your video.";
+    console.error("[gemini] Vertex refused the request — check ADC, the project and that the Vertex AI API is enabled:", err?.message);
+  } else if (msg.includes("private") || msg.includes("unlisted") || msg.includes("not accessible") || msg.includes("forbidden")) {
     out.userMessage = "This video isn't public. Gemini can only read public YouTube videos. Unlisted and private ones don't work.";
   } else if (status === 429 || msg.includes("quota") || msg.includes("rate limit") || msg.includes("resource_exhausted")) {
     out.userMessage = "We've hit today's video-processing limit. Please try again later.";

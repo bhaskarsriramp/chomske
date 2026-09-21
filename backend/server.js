@@ -34,6 +34,7 @@ import User from "./models/User.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
 import { initSocketServer } from "./socket/index.js";
+import { describeProvider, providerReady, limits } from "./services/ai/provider.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "8001", 10);
@@ -204,11 +205,34 @@ app.use((err, req, res, _next) => {
 
 // Fail fast and loudly on missing config rather than 500ing at the first request.
 function assertConfig() {
-  const required = ["JWT_SECRET", "GOOGLE_CLIENT_ID", "AISTUDIO_KEY"];
+  const required = ["JWT_SECRET", "GOOGLE_CLIENT_ID"];
   const missing = required.filter((k) => !String(process.env[k] || "").trim());
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(", ")}. Copy .env.example to .env and fill it in.`);
   }
+
+  /**
+   * ── WHICH GOOGLE, AND WHETHER WE CAN REACH IT ─────────────────────────────
+   * AISTUDIO_KEY used to be flatly required. It is not required on Vertex,
+   * where there is no key at all and the service account does the
+   * authenticating — and demanding one there would stop the server booting over
+   * a variable it will never read.
+   *
+   * The Vertex side cannot be checked here in the same way. Application Default
+   * Credentials resolve asynchronously, from a metadata server or a file, and a
+   * missing one surfaces as a 401 on the first call rather than as an absent
+   * environment variable. So the provider is named in the log instead: if this
+   * line says something other than what was intended, nothing below it will
+   * work and the reason is on the first screen of the boot output.
+   */
+  if (!providerReady()) {
+    throw new Error("AISTUDIO_KEY is not set, and GEMINI_PROVIDER is not \"vertex\". Set one or the other.");
+  }
+  const l = limits();
+  console.log(
+    `[server] model provider: ${describeProvider()} — ` +
+      `${l.rpm} req/min per bucket, ${l.concurrency} in flight, ${l.attempts} attempts`
+  );
 }
 
 (async () => {

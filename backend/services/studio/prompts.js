@@ -263,7 +263,128 @@ Schema:
 }`;
 
 /* ────────────────────────────────────────────────────────────────────────────
-   7. Quality Reviewer — what to fix
+   7. Press Arbiter — was this actually a press, and on what
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ── THE ONLY PROMPT IN THIS FILE THAT SEES TWO FRAMES ────────────────────────
+ * Every other pass reads a frame and says what is on it. This one reads the
+ * frame just before a candidate press and the frame just after, and answers a
+ * question neither frame can answer alone: did the thing under the pointer get
+ * activated?
+ *
+ * That pairing is the whole idea. A hover, a scroll and a press all look
+ * identical in a single still. They look nothing alike across a before and an
+ * after — a press opens a menu, navigates, toggles a state or fills a field,
+ * and a hover changes a shade.
+ *
+ * ── IT IS A SECOND OPINION, NOT THE OPINION ──────────────────────────────────
+ * The pixel pipeline (services/studio/events.js) has already decided. This is
+ * asked only where that decision was uncertain, and the answer is weighed
+ * against it rather than replacing it. So the prompt is written to make
+ * disagreement cheap: "unclear" is a first-class answer and the schema has a
+ * confidence, because an arbiter that always picks a side is not an arbiter.
+ */
+export const PRESS_ARBITER = `You are checking one moment in a screen recording of desktop or web software.
+
+You are given two frames: BEFORE, taken a fraction of a second before the moment, and AFTER, taken shortly after it. You are also told the screen position the pointer was resting at.
+
+Answer one question: between these two frames, did the person ACTIVATE the thing at that position — press a button, click a link or nav item, open a menu or dropdown, toggle a control, submit a form, focus or type into a field?
+
+How to tell:
+- A press causes a CHANGE THAT PERSISTS: a menu is open, a dialog appeared, the page navigated, a tab became selected, a value changed, text appeared in a field, a row expanded.
+- A hover causes a change that is only DECORATION: a shade, a highlight, an underline, a tooltip, a shadow. That is NOT a press.
+- Scrolling moves the SAME content up or down. The page is the same page. That is NOT a press.
+- A page finishing loading by itself — a spinner resolving, a skeleton filling in, data arriving — is NOT a press. Nothing the person did caused it.
+- The pointer being over something clickable is NOT evidence. Only the consequence is.
+
+Then, if it was a press:
+- "target" is the control that was activated, as its visible label, exactly as written ("API Keys", "Create new key"). Use "" when it has no readable label, and give its type.
+- "target_bbox" is that control's box IN THE BEFORE FRAME.
+- "result_bbox" is the box of WHAT CHANGED as a result, in the AFTER frame: the menu that opened, the dialog, the panel that appeared, the region that updated. Use [0,0,1,1] when the whole screen changed. Use null when nothing visibly changed.
+- "typed" is the text that appeared in a field, when this was typing rather than a press. Otherwise "".
+
+"verdict" is exactly one of:
+  "press"    something was activated at that position
+  "hover"    the pointer was over it and nothing was activated
+  "scroll"   the content moved under the pointer
+  "settling" the screen changed on its own, not because of the person
+  "unclear"  the two frames do not let you tell
+
+"confidence" is 0 to 1. Be honest and low when the frames are ambiguous; "unclear" with low confidence is a useful answer and a confident guess is not.
+- ${COORDS}
+
+${JSON_ONLY}
+
+Schema:
+{
+  "verdict": "press|hover|scroll|settling|unclear",
+  "confidence": 0.0,
+  "target": "string, the label of what was activated, or \\"\\"",
+  "target_type": "button|link|nav_item|tab|text_field|dropdown|toggle|checkbox|menu|list_item|icon_button|other|none",
+  "target_bbox": [0,0,0,0],
+  "result_bbox": [0,0,0,0],
+  "typed": "string, text that appeared in a field, or \\"\\"",
+  "what_happened": "one short sentence naming what changed"
+}`;
+
+/* ────────────────────────────────────────────────────────────────────────────
+   8. Change Auditor — something happened here and nothing explains it
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ── THIS IS THE ONE THAT FINDS WHAT WAS MISSED ───────────────────────────────
+ * The arbiter above is asked about moments the pipeline already found. This one
+ * is asked about moments it found NOTHING at — a stretch where the screen
+ * plainly changed and no click, scroll or known animation accounts for it.
+ *
+ * Two things live in that gap, and both matter:
+ *   a press the pixel rules refused    typically because the site drew a plain
+ *                                      arrow over a real button, so the "is
+ *                                      there a hand here" test said no
+ *   something worth watching that      a result arriving, an error, a value
+ *   nobody pressed                     updating — no click exists to find, so
+ *                                      no click rule could ever have found it
+ *
+ * The second is the reason this prompt is not just "was there a click here".
+ * The camera exists to point at what matters, and what matters is not always
+ * something somebody pressed.
+ */
+export const CHANGE_AUDITOR = `You are auditing one moment in a screen recording of desktop or web software.
+
+Something changed on screen here and the recording's own click tracking found nothing to explain it. You are given the frame BEFORE the change and the frame AFTER it.
+
+Say what happened, and whether a viewer watching this demo would want the camera to emphasise it.
+
+"kind" is exactly one of:
+  "action"    the person did something: pressed a control, opened a menu, submitted a form, typed
+  "result"    something arrived or completed on its own: data loaded, a success message, an error, a value updated, a chart rendered
+  "scroll"    the same content moved up or down
+  "loading"   a spinner, a skeleton, a half-painted page, a progress bar — a transition, not a moment
+  "noise"     nothing meaningful: a caret blinking, a clock ticking, a hover shade, compression artefacts, an ad or animation cycling
+  "unclear"   the two frames do not let you tell
+
+"worth_camera" is true ONLY when a viewer would be worse off not looking at this: a result the demo exists to show, an error, a control being used, a value appearing. It is false for scrolling, loading, noise, and for anything you marked unclear. Most moments are false. Be strict — a demo where the camera moves for everything is worse than one where it never moves.
+
+"bbox" is the box around the thing that changed and that a viewer should look at. Tight, not the whole screen, unless the whole screen genuinely changed.
+
+"confidence" is 0 to 1, and low is an honest answer.
+- ${COORDS}
+
+${JSON_ONLY}
+
+Schema:
+{
+  "kind": "action|result|scroll|loading|noise|unclear",
+  "worth_camera": false,
+  "confidence": 0.0,
+  "label": "under 6 words, what a viewer would call this: \\"API key created\\", \\"Billing page loaded\\"",
+  "what_happened": "one short sentence",
+  "bbox": [0,0,0,0]
+}`;
+
+/* ────────────────────────────────────────────────────────────────────────────
+   9. Quality Reviewer — what to fix
    ──────────────────────────────────────────────────────────────────────────── */
 
 export const QUALITY_REVIEWER = `You are reviewing a finished automatic edit of a product demo, as an experienced video editor would, and proposing changes.
@@ -358,5 +479,6 @@ export default {
   ANALYSIS_LONG_EDGE,
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
+  PRESS_ARBITER, CHANGE_AUDITOR,
   frameIndex, eventLog, elementLog,
 };

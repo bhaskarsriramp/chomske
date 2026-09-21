@@ -18,7 +18,7 @@
  * The containers themselves are managed in services/profileService.js; this file
  * only analyses one of them.
  */
-import { GoogleGenAI } from "@google/genai";
+import { legacyClient } from "./ai/provider.js";
 import Transcript from "../models/Transcript.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import { resolveProfile, voiceFor } from "./profileService.js";
@@ -56,14 +56,18 @@ const LONG_MID_SLICES = parseInt(process.env.VOICE_LONG_MID_SLICES || "3", 10);
 const SHORT_MID_SLICES = parseInt(process.env.VOICE_SHORT_MID_SLICES || "2", 10);
 
 
-let _client = null;
-function client() {
-  if (_client) return _client;
-  const key = String(process.env.AISTUDIO_KEY || "").split(",")[0].trim();
-  if (!key) throw new Error("AISTUDIO_KEY is not set");
-  _client = new GoogleGenAI({ apiKey: key });
-  return _client;
-}
+/**
+ * ── ONE CLIENT FOR THE WHOLE PROCESS ─────────────────────────────────────────
+ * This used to build its own GoogleGenAI from the first AI Studio key. Six
+ * files did, each unaware of the others, so they shared one per-minute ceiling
+ * and none of them paced against it — and on Vertex, where there is no key at
+ * all, every one of them would simply have stopped working.
+ *
+ * services/ai/provider.js owns the client, the request budget and the waiting
+ * now. The request objects below are unchanged, which is the point: nothing
+ * about what this service asks for has been renegotiated, only how it is sent.
+ */
+const client = legacyClient;
 
 /**
  * Pull the three parts of one transcript that actually carry voice.

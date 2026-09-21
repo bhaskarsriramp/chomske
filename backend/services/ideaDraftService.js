@@ -30,18 +30,9 @@
  * talking points is something they read and correct. The step only works if it
  * still looks like a draft.
  */
-import { GoogleGenAI } from "@google/genai";
+import { generateJson } from "./ai/provider.js";
 
 const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
-
-let _client = null;
-function client() {
-  if (_client) return _client;
-  const key = String(process.env.AISTUDIO_KEY || "").split(",")[0].trim();
-  if (!key) throw new Error("AISTUDIO_KEY is not set");
-  _client = new GoogleGenAI({ apiKey: key });
-  return _client;
-}
 
 /**
  * How long a draft runs.
@@ -93,21 +84,16 @@ Return STRICT JSON only:
 }`;
 
   try {
-    const res = await client().models.generateContent({
+    const { json: parsed } = await generateJson({
       model: MODEL,
-      contents: prompt,
-      config: {
-        // Warmer than the analysis passes, cooler than the script writer. This
-        // is explanatory content the creator will edit, so it wants to be
-        // correct and organised more than it wants to be surprising.
-        temperature: 0.7,
-        responseMimeType: "application/json",
-        maxOutputTokens: 2048,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
+      parts: [{ text: prompt }],
+      // Warmer than the analysis passes, cooler than the script writer. This
+      // is explanatory content the creator will edit, so it wants to be
+      // correct and organised more than it wants to be surprising.
+      temperature: 0.7,
+      maxOutputTokens: 2048,
     });
 
-    const parsed = JSON.parse(res.text || "{}");
     const draft = String(parsed.draft || "").trim();
     if (!draft) return "";
 

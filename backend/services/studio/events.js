@@ -33,7 +33,7 @@
  * the editor shows the low ones differently, and the creator can add or remove
  * one by hand. A missed click costs a zoom; it does not cost the recording.
  */
-import { newId, rampsOf } from "./timeline.js";
+import { newId, rampsOf, clampRect } from "./timeline.js";
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -1365,6 +1365,16 @@ const MERGE = 1.6;
  * reads as the camera choosing something.
  */
 const MERGE_MAX = 0.62;
+/**
+ * The same, for two presses the step detector puts in the same step.
+ *
+ * Only ever used when the steps exist, which means the model pass has run. A
+ * step is a claim that these presses are one thing the viewer is watching, and
+ * it is a far better reason to hold the shot than a gap measured on a clock.
+ * MERGE_MAX still applies, so a step whose presses are spread across the screen
+ * still gets more than one shot rather than one shot of the whole screen.
+ */
+const MERGE_IN_STEP = 3.2;
 
 /**
  * ── WAS IT A CONTROL, OR WAS IT JUST SOMEWHERE? ──────────────────────────────
@@ -1544,7 +1554,28 @@ export function controlUnder(shots, t, x, y) {
       const rank = off * 10 + area;
       if (rank < bestArea) {
         bestArea = rank;
-        best = { label: String(el.label || ""), type: String(el.type), area: round4(area), off: round4(off) };
+        best = {
+          label: String(el.label || ""),
+          type: String(el.type),
+          area: round4(area),
+          off: round4(off),
+          /**
+           * ── THE BOX, KEPT, BECAUSE THE CAMERA WANTS IT ────────────────────
+           * Until now this function answered a yes/no question — was the
+           * pointer on something — and threw the rectangle away. The rectangle
+           * is the more valuable half: a zoom built from a click COORDINATE is
+           * a fixed box around a point, and a zoom built from the control's own
+           * box frames the control. That is the difference between framing "API
+           * Keys" and framing a patch of sidebar that happens to contain it.
+           *
+           * The WIDENED box is what is kept for a nav item, deliberately. The
+           * model places a vertical list about a twentieth of a frame to the
+           * right of where it really is (see above), so its own box is the one
+           * we know to be wrong horizontally, and the column is the one we
+           * believe covers the item.
+           */
+          bbox: clampRect({ x: ex, y: ey, w: ew, h: eh }),
+        };
       }
     }
   }
@@ -1722,7 +1753,7 @@ export function restOnControls(track) {
  * the one that held AT THE PLACE THE PRESS LANDED, not the one in a single
  * frame.
  */
-const CLICKABLE_SHAPES = new Set(["pointer", "hand", "text"]);
+export const CLICKABLE_SHAPES = new Set(["pointer", "hand", "text"]);
 
 /** A press has to land within this of a located sighting for one to describe it. */
 const SHAPE_REACH = 0.35;
@@ -2037,6 +2068,15 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
       zoomable,
       on_control: on ? true : on === false ? false : null,
       control: on ? on.label || on.type : "",
+      /**
+       * ── WHAT THE CAMERA SHOULD FRAME, WHEN ANYBODY KNOWS ──────────────────
+       * The control's own rectangle, so zoomsFromClicks() can hold the thing
+       * that was pressed rather than a fixed box around where the pointer was.
+       * Absent when no frame was read here, which is the common case with the
+       * model pass off — and then the camera falls back to the click point
+       * exactly as it always did.
+       */
+      target: on && on.bbox ? [round4(on.bbox.x), round4(on.bbox.y), round4(on.bbox.w), round4(on.bbox.h)] : undefined,
       pointer_shape: os && os.shape ? os.shape : null,
       // The sentence above, kept on the event: it is the only record of why a
       // zoom is or is not there, and reading it back beats reconstructing it.
@@ -2140,7 +2180,7 @@ export function dropScrollZooms(zooms, events, { motion = [], onNote = () => {} 
   });
 }
 
-export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE } = {}) {
+export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE, steps = [] } = {}) {
   const out = [];
   const clicks = events.filter(
     // zoomable is set by confirmClicks() once the model has said what was under
@@ -2151,12 +2191,46 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
       e.zoomable !== false
   );
 
+  /**
+   * ── A CLICK CONTRIBUTES A BOX, NOT A POINT ────────────────────────────────
+   * Where confirmClicks() named the control, the box is the control's. Where it
+   * did not, the box is the click itself with no size — and containingBox()
+   * then behaves exactly as containing() always did, which is what keeps every
+   * recording analysed without the model framed the way it was before.
+   */
+  const boxOf = (c) =>
+    Array.isArray(c.target) && c.target.length >= 4 && num(c.target[2]) > 0
+      ? { x: num(c.target[0]), y: num(c.target[1]), w: num(c.target[2]), h: num(c.target[3]) }
+      : { x: frac(c.x, 0.5), y: frac(c.y, 0.5), w: 0, h: 0 };
+
+  const stepAt = (t) => (steps || []).find((s) => t >= num(s.start) - 0.05 && t <= num(s.end) + 0.05) || null;
+
   for (const c of clicks) {
     const start = Math.max(0, c.t - settle);
     const end = Math.min(duration || Infinity, c.t + hold);
     if (end - start < 0.2) continue;
 
+    const mine = boxOf(c);
+    // A named control sets the strength of the shot; an unnamed one keeps the
+    // caller's constant, which is the behaviour every existing demo has.
+    const want = mine.w > 0 ? levelForBox(mine) : level;
+
+    /**
+     * ── TWO PRESSES IN ONE STEP ARE ONE SHOT ──────────────────────────────
+     * The gap below is a clock: presses closer together than `merge` become one
+     * camera move. That is the right instrument when nothing else is known, and
+     * the wrong one when the steps are known — six presses filling one form are
+     * one thing a viewer is watching however slowly the person typed, and
+     * pulling out and back in between them is the seasick auto-zoom this
+     * product exists not to be. Within a step the clock is relaxed; across a
+     * step boundary it is not relaxed at all, because a new step is a new
+     * subject and the camera should reset for it.
+     */
+    const here = stepAt(c.t);
     const prev = out[out.length - 1];
+    const sameStep = !!here && !!prev && prev.step === here.id;
+    const window = sameStep ? Math.max(merge, MERGE_IN_STEP) : merge;
+
     // Two clicks close together are one camera move covering both, not two:
     // pulling out and back in between two clicks a second apart is the reason
     // auto-zoom has a reputation for making people seasick. The rect grows to
@@ -2173,11 +2247,15 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
      * Past the point where the move would stop reading as emphasis, the clicks
      * get their own zooms instead.
      */
-    if (prev && start < prev.end + merge) {
-      const grown = containing([...prev.points, { x: c.x, y: c.y }], prev.level);
+    if (prev && start < prev.end + window) {
+      // The wider of the two shots wins: a level that holds one control will
+      // not hold two, and containingBox() lowers it further if it has to.
+      const lvl = Math.min(prev.level, want);
+      const grown = containingBox([...prev.boxes, mine], lvl);
       if (grown.w <= MERGE_MAX) {
         prev.end = round3(Math.max(prev.end, end));
-        prev.points.push({ x: c.x, y: c.y });
+        prev.boxes.push(mine);
+        prev.level = lvl;
         Object.assign(prev, grown);
         continue;
       }
@@ -2187,24 +2265,28 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
       id: newId("z"),
       start: round3(start),
       end: round3(end),
-      ...containing([{ x: c.x, y: c.y }], level),
-      level,
+      ...containingBox([mine], want),
+      level: want,
       easing: "smooth",
       // Gentle in, hard out. See timeline.js rampsOf for why these are not the
       // same number.
       ramp_out: RAMP_OUT,
       ease_out: "smooth",
-      camera: "cursor",
+      // A shot built around a named control is holding an element, which is
+      // what "element" means; one built around a click point is following the
+      // cursor. Saying which is not cosmetic — render/camera reads it.
+      camera: mine.w > 0 ? "element" : "cursor",
       follow: false,
       follow_strength: 0.7,
-      label: "click",
+      label: c.control ? String(c.control).slice(0, 60) : "click",
       auto: true,
-      points: [{ x: c.x, y: c.y }],
+      boxes: [mine],
+      step: here?.id || "",
     });
   }
 
-  // `points` is working state, not part of the timeline schema.
-  return out.map(({ points, ...z }) => z);
+  // `boxes` and `step` are working state, not part of the timeline schema.
+  return out.map(({ boxes, step, ...z }) => z);
 }
 
 /**
@@ -2240,6 +2322,64 @@ export function containing(points, level) {
   const cx = clamp((minX + maxX) / 2, w / 2, 1 - w / 2);
   const cy = clamp((minY + maxY) / 2, w / 2, 1 - w / 2);
   return { x: round4(cx - w / 2), y: round4(cy - w / 2), w: round4(w), h: round4(w) };
+}
+
+/** Breathing room left around a framed control, in fractions of the frame. */
+const BOX_MARGIN = 0.06;
+
+/**
+ * The same guarantee as containing(), for rectangles rather than points.
+ *
+ * ── WHY THIS IS THE ONE THAT MATTERS ─────────────────────────────────────────
+ * containing() frames a click, which is a coordinate, so the best it can do is
+ * put a box of a fixed size around it and hope the thing that was pressed is
+ * inside. When the control's own rectangle is known the question changes from
+ * "what is near the click" to "what was pressed", and the shot can be built
+ * around the answer. A press at the very edge of a wide button is then framed
+ * with the whole button in view rather than with half of it cropped off.
+ *
+ * A zero-size box is a point, and this degenerates to containing() exactly —
+ * which is what every recording analysed without the model still gets.
+ */
+export function containingBox(boxes, level, { margin = BOX_MARGIN } = {}) {
+  const list = (boxes || []).filter(Boolean);
+  if (!list.length) return containing([{ x: 0.5, y: 0.5 }], level);
+
+  const minX = Math.min(...list.map((b) => frac(b.x, 0.5)));
+  const minY = Math.min(...list.map((b) => frac(b.y, 0.5)));
+  const maxX = Math.max(...list.map((b) => frac(b.x, 0.5) + Math.max(0, num(b.w))));
+  const maxY = Math.max(...list.map((b) => frac(b.y, 0.5) + Math.max(0, num(b.h))));
+
+  const need = Math.max(maxX - minX, maxY - minY) + margin * 2;
+  const w = clamp(Math.max(1 / Math.max(1, level), need), 0.08, 1);
+  const cx = clamp((minX + maxX) / 2, w / 2, 1 - w / 2);
+  const cy = clamp((minY + maxY) / 2, w / 2, 1 - w / 2);
+  return { x: round4(cx - w / 2), y: round4(cy - w / 2), w: round4(w), h: round4(w) };
+}
+
+/**
+ * How hard to push in, given the size of the thing being looked at.
+ *
+ * ── ONE CONSTANT CANNOT SERVE A CHECKBOX AND A CHART ─────────────────────────
+ * The camera has always zoomed to a fixed 2.0x, which is a compromise between
+ * two shots that want different things. A sixteen-pixel icon at 2.0x is still a
+ * sixteen-pixel icon on a phone; a card filling a third of the screen at 2.0x is
+ * a crop with the context cut off. The shot should be sized by its subject: a
+ * zoom exists to make one thing legible, so the level is whatever makes that
+ * thing about a third of the picture.
+ *
+ * Both ends are clamped hard. Below 1.4x nobody can see that the camera moved,
+ * and past 2.8x a 1080p recording shown at 1080p is visibly soft — the pixels
+ * are not there, and a blurry emphasis is worse than none.
+ */
+const TARGET_SHARE = 0.34;
+const LEVEL_MIN = 1.4;
+const LEVEL_MAX = 2.8;
+
+export function levelForBox(rect) {
+  const span = Math.max(num(rect?.w), num(rect?.h));
+  if (!(span > 0)) return 2.0;
+  return Math.round(clamp(TARGET_SHARE / span, LEVEL_MIN, LEVEL_MAX) * 10) / 10;
 }
 
 /**
@@ -2403,7 +2543,7 @@ const RAMP_SECONDS = { smooth: 0.55, snappy: 0.32, slow: 0.9, linear: 0.5 };
 
 export default {
   RULES, cleanSamples, cleanMotion, speeds, dwells, inferEvents, idleCuts,
-  zoomsFromClicks, anticipateClicks, containing, restToFull,
+  zoomsFromClicks, anticipateClicks, containing, containingBox, levelForBox, restToFull,
 };
 
 /**

@@ -937,6 +937,7 @@ export function StepsPanel({ tl, time, seek, summary, narration, read = true, re
 
 export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy }) {
   const list = analysis?.suggestions || [];
+  const audit = analysis?.audit || null;
   return (
     <Panel
       title="Review"
@@ -951,7 +952,16 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
       )}
       {list.length === 0 ? (
         <Empty icon="check" title="Nothing to fix">
-          The edit was read back and nothing stood out.
+          {/**
+           * ── "NOTHING TO FIX" MEANS TWO VERY DIFFERENT THINGS ──────────────
+           * Either the recording was checked moment by moment and came back
+           * clean, or nobody looked. Those deserve different sentences: the
+           * first is a reassurance and the second is an explanation of why the
+           * panel is empty.
+           */}
+          {audit?.checked
+            ? `The edit was read back, and ${audit.checked} moment${audit.checked === 1 ? "" : "s"} in the recording ${audit.checked === 1 ? "was" : "were"} checked against it. Nothing stood out.`
+            : "The edit was read back and nothing stood out."}
         </Empty>
       ) : (
         <div style={{ display: "grid", gap: 9 }}>
@@ -966,6 +976,13 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
             >
               <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
                 <span style={{ flex: 1, fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{s.title}</span>
+                {/**
+                 * Where the advice came from, because the two kinds are not
+                 * equally sure of themselves. A note about pacing is one
+                 * editor's opinion of the timeline; this one is two frames of
+                 * the recording showing something the edit did not account for.
+                 */}
+                {s.source === "audit" && <Badge>From the recording</Badge>}
                 {s.severity === "high" && <Badge tone="warn">Important</Badge>}
               </div>
               <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.55, color: "var(--ink-mute)" }}>{s.why}</p>
@@ -980,6 +997,12 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
             </div>
           ))}
         </div>
+      )}
+      {audit?.changes > 0 && (
+        <Hint>
+          {audit.changes} moment{audit.changes === 1 ? "" : "s"} where the screen changed were measured in this
+          recording{audit.checked ? `, and ${audit.checked} the edit did not account for were checked frame by frame` : ""}.
+        </Hint>
       )}
     </Panel>
   );

@@ -1006,6 +1006,24 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       // confirmClicks() used. The only record of a decision that is otherwise
       // impossible to reconstruct after the fact.
       why: typeof e.why === "string" ? e.why.slice(0, 80) : undefined,
+      /**
+       * The box of the control this press landed on, when one was named.
+       * zoomsFromClicks() frames the control rather than the click point when
+       * it is here; undefined means no frame was read at this moment and the
+       * camera falls back to the point, as it always did.
+       */
+      target:
+        Array.isArray(e.target) && e.target.length >= 4
+          ? [frac(e.target[0]), frac(e.target[1]), frac(e.target[2]), frac(e.target[3])].map(round4)
+          : undefined,
+      /**
+       * What the cross-check made of this press, when it was asked
+       * (services/studio/audit.js): "press", "hover", "scroll", "settling" or
+       * "unclear". Evidence, not a verdict — the camera still follows what the
+       * pixels decided, and a disagreement becomes a suggestion rather than an
+       * edit. Undefined means nobody looked, which is most presses.
+       */
+      checked: typeof e.checked === "string" ? e.checked.slice(0, 16) : undefined,
       scrolled: e.scrolled === true ? true : undefined,
       x: round4(frac(e.x, 0.5)),
       y: round4(frac(e.y, 0.5)),

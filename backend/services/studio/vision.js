@@ -11,7 +11,9 @@
  *   4. findSensitive   what must be blurred before this is published
  *   5. writeCaptions   what was said
  *   6. writeNarration  what should have been said, when nothing was
- *   7. reviewEdit      what is still wrong with the result
+ *   7. arbitratePress  did a press really happen here, and on what
+ *      auditChange     something changed and nothing explains it — what was it
+ *   8. reviewEdit      what is still wrong with the result
  *
  * ── THE MODEL'S ANSWER IS NEVER TRUSTED ──────────────────────────────────────
  * Every number that comes back is clamped, every span is checked against the
@@ -32,10 +34,11 @@
  * what the creator was charged.
  */
 import fsp from "fs/promises";
-import { generateJson, retryable, pool, TEXT_MODEL } from "../edit/gemini.js";
+import { generateJson, pool, TEXT_MODEL } from "../edit/gemini.js";
 import {
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
+  PRESS_ARBITER, CHANGE_AUDITOR,
   frameIndex, eventLog, elementLog,
 } from "./prompts.js";
 import { newId, clampRect } from "./timeline.js";
@@ -66,9 +69,21 @@ export const AUDIO_MODEL = process.env.GEMINI_AUDIO_MODEL || VISION_MODEL;
  * difference visible now.
  */
 const FRAMES_PER_READ = 1;
-/** Concurrent Gemini calls. Bounded by the key pool's per-minute limits. */
+/**
+ * How wide this pass fans out.
+ *
+ * ── NOT THE RATE LIMIT, AND IT USED TO BE ────────────────────────────────────
+ * This was the only thing standing between a three hundred frame pass and the
+ * per-minute quota, which meant the ceiling was set by whichever pass happened
+ * to be running and two passes at once had twice the ceiling. The real limits
+ * are GEMINI_RPM and GEMINI_CONCURRENCY in services/ai/provider.js, and they
+ * apply across every caller in the process at once.
+ *
+ * What is left here is how many frames this pass is willing to have in the air,
+ * which is now only a statement about its own memory: each one is a base64 JPEG
+ * held until the answer comes back.
+ */
 const CONCURRENCY = parseInt(process.env.STUDIO_VISION_CONCURRENCY || "4", 10);
-const ATTEMPTS = 3;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -96,30 +111,33 @@ async function imagePart(file) {
 }
 
 /**
- * One model call with retries, and a spend counter that survives failure.
+ * One model call, and a spend counter that survives failure.
  *
- * `spend` is mutated rather than returned so a batch that fails on its last
- * attempt still accounts for the tokens the first two attempts burned. Those
- * were charged by Google whether or not this product got an answer.
+ * `spend` is mutated rather than returned so a call that fails on its last
+ * attempt still accounts for the tokens the earlier attempts burned. Those were
+ * charged by Google whether or not this product got an answer.
+ *
+ * ── THE RETRY LOOP THAT USED TO BE HERE IS GONE ──────────────────────────────
+ * It backed off 400ms and then 1600ms, which is the wrong order of magnitude
+ * for a per-minute quota: three requests into a closed window, then a pass
+ * reported as failed. Waiting is now the provider's job
+ * (services/ai/provider.js), where it can read the server's own retryDelay,
+ * hold the whole process back rather than this one call, and coordinate with
+ * the other workers through Redis. Two retry loops stacked on top of each other
+ * would multiply into attempts nobody asked for, so this one is a single call.
  */
 async function ask({ model = VISION_MODEL, parts, maxOutputTokens = 16384, spend, label }) {
-  let lastErr = null;
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    try {
-      const res = await generateJson({ model, parts, maxOutputTokens });
-      spend.usd += res.usd;
-      spend.calls += 1;
-      return res.json;
-    } catch (err) {
-      lastErr = err;
-      spend.usd += num(err?.usd);
-      if (!retryable(err) || attempt === ATTEMPTS) break;
-      await new Promise((r) => setTimeout(r, 400 * attempt * attempt));
-    }
+  try {
+    const res = await generateJson({ model, parts, maxOutputTokens });
+    spend.usd += res.usd;
+    spend.calls += 1;
+    return res.json;
+  } catch (err) {
+    spend.usd += num(err?.usd);
+    console.warn(`[studio] ${label} failed: ${err?.message}`);
+    spend.failed += 1;
+    return null;
   }
-  console.warn(`[studio] ${label} failed after ${ATTEMPTS} attempts: ${lastErr?.message}`);
-  spend.failed += 1;
-  return null;
 }
 
 export const newSpend = () => ({ usd: 0, calls: 0, failed: 0 });
@@ -679,7 +697,119 @@ export async function writeNarration({ steps, summary, product, duration, spend 
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   8. What is still wrong
+   8. Two frames, one moment: the cross-check
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ── WHY THESE TWO ARE DIFFERENT FROM EVERYTHING ABOVE ────────────────────────
+ * Every pass above samples the recording on a fixed grid — a frame every two
+ * seconds — and reads what is on each one. That grid is set before anything is
+ * known about the recording, so most of the frames land on nothing in
+ * particular and the moments that matter fall between them. A press lasts a
+ * tenth of a second; the grid cannot see it, and paying for a grid fine enough
+ * to would mean thirty times the frames for the same demo.
+ *
+ * These two pick their frames AFTERWARDS, from moments the pixel pipeline has
+ * already identified as interesting, and they send a pair — before and after —
+ * because the question is what CHANGED. That is both far cheaper (fifty frames
+ * where the grid would need three hundred) and far more accurate, since the
+ * "before" frame is by construction the frame the moment happened on rather
+ * than one up to 1.4 seconds away.
+ *
+ * ── AND WHY THEY MAY NOT DECIDE ANYTHING ─────────────────────────────────────
+ * The recording is the source of truth and the pixel pipeline reads it. These
+ * are a second opinion asked where that reading was uncertain or silent, and
+ * what comes back is a finding, not an edit. See services/studio/audit.js for
+ * what is done with one, and intent.js for the line neither may cross: the
+ * model may name, veto or reframe a press; it may not invent one into the
+ * timeline behind the creator's back.
+ */
+
+/** A verdict this product knows how to act on. Anything else is "unclear". */
+const VERDICTS = new Set(["press", "hover", "scroll", "settling", "unclear"]);
+const KINDS = new Set(["action", "result", "scroll", "loading", "noise", "unclear"]);
+
+/**
+ * Was there a press at this moment, and on what?
+ *
+ * @param {{before: string, after: string}} pair  two frame files on local disk
+ * @param {{t: number, x: number, y: number}} at  where the pointer was resting
+ * @returns {Promise<object|null>} null when the call failed or the answer was unusable
+ */
+export async function arbitratePress({ pair, at, spend = newSpend() }) {
+  if (!pair?.before || !pair?.after) return null;
+
+  const text =
+    `${PRESS_ARBITER}\n\n` +
+    `The pointer was resting at ${(num(at.x) * 100).toFixed(1)}% across and ${(num(at.y) * 100).toFixed(1)}% down the frame.\n` +
+    `The first image is BEFORE, the second is AFTER.`;
+
+  const json = await ask({
+    parts: [{ text }, await imagePart(pair.before), await imagePart(pair.after)],
+    spend,
+    label: `arbitratePress at ${num(at.t).toFixed(2)}s`,
+    maxOutputTokens: 1024,
+  });
+  if (!json) return null;
+
+  const verdict = VERDICTS.has(json.verdict) ? json.verdict : "unclear";
+  return {
+    t: round3(num(at.t)),
+    verdict,
+    // An answer with no confidence attached is not a confident answer.
+    confidence: clamp(num(json.confidence, 0.5), 0, 1),
+    target: str(json.target, 80),
+    target_type: str(json.target_type, 24) || "none",
+    target_bbox: box(json.target_bbox),
+    result_bbox: box(json.result_bbox),
+    typed: str(json.typed, 120),
+    what: str(json.what_happened, 160),
+  };
+}
+
+/**
+ * Something changed here and nothing in the recording explains it. What was it?
+ *
+ * @param {{before: string, after: string}} pair
+ * @param {{t: number}} at
+ */
+export async function auditChange({ pair, at, spend = newSpend() }) {
+  if (!pair?.before || !pair?.after) return null;
+
+  const text =
+    `${CHANGE_AUDITOR}\n\n` +
+    `This is ${num(at.t).toFixed(2)} seconds into the recording. ` +
+    `The first image is BEFORE the change, the second is AFTER it.`;
+
+  const json = await ask({
+    parts: [{ text }, await imagePart(pair.before), await imagePart(pair.after)],
+    spend,
+    label: `auditChange at ${num(at.t).toFixed(2)}s`,
+    maxOutputTokens: 1024,
+  });
+  if (!json) return null;
+
+  const kind = KINDS.has(json.kind) ? json.kind : "unclear";
+  return {
+    t: round3(num(at.t)),
+    kind,
+    /**
+     * ── THE MODEL MAY NOT SAY "WORTH WATCHING" ABOUT A SPINNER ──────────────
+     * It is asked to be strict and it mostly is, but "worth_camera: true" on a
+     * kind of "loading" or "noise" is self-contradictory and the answer should
+     * not need a human to notice. The kind is the harder judgement of the two
+     * and the one the schema describes in most detail, so the kind wins.
+     */
+    worth: json.worth_camera === true && (kind === "action" || kind === "result"),
+    confidence: clamp(num(json.confidence, 0.5), 0, 1),
+    label: str(json.label, 48),
+    what: str(json.what_happened, 160),
+    bbox: box(json.bbox),
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   9. What is still wrong
    ──────────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -736,4 +866,5 @@ export async function reviewEdit({ timeline, steps, duration, spend = newSpend()
 export default {
   VISION_MODEL, AUDIO_MODEL, newSpend,
   readFrames, detectSteps, planZooms, spaceZooms, findSensitive, writeCaptions, writeNarration, reviewEdit,
+  arbitratePress, auditChange,
 };

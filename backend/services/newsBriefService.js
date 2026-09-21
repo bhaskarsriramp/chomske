@@ -22,7 +22,7 @@
  * Cost: roughly 800 input + 180 output tokens per story, once, then cached
  * forever on the cluster. Generated for feed-visible stories only.
  */
-import { GoogleGenAI } from "@google/genai";
+import { generateJson } from "./ai/provider.js";
 import NewsItem from "../models/NewsItem.js";
 import { publishNewsEvent } from "./newsEvents.js";
 import { noEmDash } from "../utils/prose.js";
@@ -50,15 +50,6 @@ const OPENED_EXTRA_TRIES = parseInt(process.env.NEWS_BRIEF_OPENED_EXTRA_TRIES ||
 // and invisible to this, it never got a brief prepared, and generated one from
 // scratch every single time somebody opened it.
 const BRIEF_MIN_SCORE = parseInt(process.env.NEWS_BRIEF_MIN_SCORE || "5", 10);
-
-let _client = null;
-function client() {
-  if (_client) return _client;
-  const key = String(process.env.AISTUDIO_KEY || "").split(",")[0].trim();
-  if (!key) throw new Error("AISTUDIO_KEY is not set");
-  _client = new GoogleGenAI({ apiKey: key });
-  return _client;
-}
 
 /**
  * In-flight generations, keyed by cluster. Two people opening the same story at
@@ -169,39 +160,31 @@ async function generate(item) {
     return "";
   }
 
-  let res;
+  let json;
+  let input = 0;
+  let output = 0;
   try {
-    res = await client().models.generateContent({
+    ({ json, input, output } = await generateJson({
       model: MODEL,
-      contents: buildPrompt(item, coverage),
-      config: {
-        // Low, but not zero: this is prose, and 0 produces the same four
-        // sentence shapes for every story in the feed.
-        temperature: 0.3,
-        responseMimeType: "application/json",
-        // 1024 was tight enough that a brief running slightly long came back as
-        // truncated JSON, failed to parse, and, before the attempt counter
-        // above, was retried forever. Headroom is free: only what is actually
-        // generated is billed.
-        maxOutputTokens: 4096,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    });
+      parts: [{ text: buildPrompt(item, coverage) }],
+      // Low, but not zero: this is prose, and 0 produces the same four
+      // sentence shapes for every story in the feed.
+      temperature: 0.3,
+      // 1024 was tight enough that a brief running slightly long came back as
+      // truncated JSON, failed to parse, and, before the attempt counter
+      // above, was retried forever. Headroom is free: only what is actually
+      // generated is billed.
+      maxOutputTokens: 4096,
+    }));
   } catch (err) {
+    // Unparseable output arrives here too now: the provider parses, so a
+    // truncated brief is a thrown SyntaxError rather than a second branch.
     console.error(`[news-brief] Gemini call failed for ${item._id}:`, err.message);
     await stamp(item, "", { failed: true });
     return "";
   }
 
-  let brief = "";
-  try {
-    brief = noEmDash(JSON.parse(res.text || "{}").brief);
-  } catch {
-    const finish = res?.candidates?.[0]?.finishReason || "unknown";
-    console.error(`[news-brief] unparseable response for ${item._id} · finishReason=${finish}`);
-    await stamp(item, "", { failed: true });
-    return "";
-  }
+  let brief = noEmDash(json?.brief);
 
   if (!brief) {
     await stamp(item, "", { failed: true });
@@ -211,10 +194,9 @@ async function generate(item) {
 
   await stamp(item, brief);
 
-  const u = res.usageMetadata || {};
   console.log(
     `[news-brief] ${item.category}/${item.cluster_id || item._id} · ` +
-    `${u.promptTokenCount || 0}+${u.candidatesTokenCount || 0} tokens`
+    `${input}+${output} tokens`
   );
 
   return brief;

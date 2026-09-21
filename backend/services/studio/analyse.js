@@ -46,6 +46,7 @@ import {
   newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
 import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed } from "./events.js";
+import { changeMoments, auditEdit, applyPatches } from "./audit.js";
 import { alignCapture } from "./sync.js";
 import { locatePointer, mergeLocated, stepPath, snapToLocated } from "./locate.js";
 import { intentPath } from "./intent.js";
@@ -329,7 +330,14 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    *      is the difference between a zoom and a crop.
    *   3. A demo may not be zoomed for more than MAX_ZOOMED of its length.
    */
-  const clickZooms = zoomsFromClicks(events, { duration });
+  /**
+   * ── THE STEPS SHAPE THE CAMERA WHEN THERE ARE ANY ────────────────────────
+   * Two presses inside one step are one thing the viewer is watching, so the
+   * camera holds across them instead of pulling out and back in. With the model
+   * pass off there are no steps and the gap on the clock decides, exactly as
+   * before. See MERGE_IN_STEP in events.js.
+   */
+  const clickZooms = zoomsFromClicks(events, { duration, steps });
   let zooms = restToFull(clickZooms, { rest: REST });
   zooms = capZoomed(zooms, duration);
 
@@ -488,8 +496,30 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
 
   const timeline = sanitizeTimeline(tl, { duration, source });
 
+  /**
+   * ── EVERY MOMENT THE SCREEN CHANGED, KEPT ────────────────────────────────
+   * Arithmetic over what sync.js already measured: no model, no frames, no
+   * network, a few milliseconds. It is kept because it is the only way to look
+   * for what was MISSED — a press nobody found is invisible by definition, and
+   * cannot be discovered by examining the presses that were found.
+   *
+   * The list is a fact about the RECORDING, so it is computed once here and
+   * never again. Whether any given moment is explained is a fact about the
+   * EDIT, which changes every time the creator touches it, so that is worked
+   * out fresh each audit. See services/studio/audit.js.
+   */
+  const changes = changeMoments(aligned.screen, { duration }).slice(0, 400);
+  if (changes.length) {
+    const loud = changes.filter((c) => !events.some((e) => Math.abs(e.t - c.t) <= 1.6));
+    console.log(
+      `[studio] ${changes.length} screen change(s) measured; ${loud.length} with no event within 1.6s` +
+        (loud.length ? " — " + loud.slice(0, 6).map((c) => c.t.toFixed(1) + "s").join(", ") + (loud.length > 6 ? ", …" : "") : "")
+    );
+  }
+
   return {
     timeline,
+    changes,
     summary,
     product,
     language: captions.language,
@@ -606,7 +636,42 @@ export async function visionPass({ video, workDir, duration, events = [], onProg
   onProgress(0.9, "Checking for anything private");
   const blurs = await blurTask;
 
+  /**
+   * ── THE CONTROLS, WRITTEN ONTO THE PRESSES THAT LANDED ON THEM ─────────────
+   * Now that every frame has been read, the box of the thing under each press
+   * is knowable, and it is the single most useful fact the camera never had: a
+   * zoom built from a click COORDINATE is a fixed box around a point, and one
+   * built from the control's own rectangle frames the control.
+   *
+   * ── AND ONLY THE EVIDENCE, NOT THE VERDICT ────────────────────────────────
+   * confirmClicks() also decides `zoomable`, and with the frames read it would
+   * decide differently for some presses than the pixels did — a press refused
+   * for a plain arrow would now be allowed on a named control. That is very
+   * probably the better answer, and writing it here would still be wrong: by
+   * the time this pass runs the creator has had the editor open, and a zoom
+   * appearing in an edit they are working on because a background job changed
+   * its mind is exactly the kind of surprise this file's header promises not to
+   * spring. So the box, the label and the shape are written; the verdict is
+   * left exactly as it was, and any disagreement reaches the creator as a
+   * suggestion from the audit (services/studio/audit.js) instead.
+   */
+  const KEEP = ["target", "control", "on_control", "pointer_shape"];
+  const regraded = new Map(
+    confirmClicks(events, shots, { onNote: () => {} }).map((e) => [e.id, e])
+  );
+  let named = 0;
+  const annotated = events.map((e) => {
+    const fresh = regraded.get(e.id);
+    if (!fresh) return e;
+    const add = {};
+    for (const k of KEEP) if (fresh[k] !== undefined) add[k] = fresh[k];
+    if (add.target && !e.target) named++;
+    return Object.keys(add).length ? { ...e, ...add } : e;
+  });
+  if (named) console.log(`[studio] ${named} press(es) now know the control they landed on`);
+
   return {
+    events: annotated,
     shots,
     blurs,
     steps,
@@ -626,6 +691,55 @@ export async function visionPass({ video, workDir, duration, events = [], onProg
     frames_failed: Math.max(0, frames.length - shots.length),
     spend,
   };
+}
+
+/**
+ * The edit, checked against the recording it came from.
+ *
+ * ── A THIRD PASS, AND DELIBERATELY NOT PART OF EITHER OF THE OTHER TWO ───────
+ * analyseRecording() builds the edit from pixels. visionPass() reads the
+ * screens. This one asks whether the first got it right, and it is separate
+ * from both for the same reason a reviewer is separate from an author: a pass
+ * that audits its own output in the same breath is not auditing anything.
+ *
+ * It is also the cheapest of the three by a wide margin, because it does not
+ * sample the recording at all — it cuts two frames at each of a couple of dozen
+ * moments the pixel pipeline already identified as interesting or unaccounted
+ * for. A ten minute demo costs the vision pass three hundred frames and costs
+ * this one about fifty.
+ *
+ * ── NOTHING IT FINDS IS APPLIED ──────────────────────────────────────────────
+ * Camera changes come back as suggestions, which the creator accepts one at a
+ * time through services/studio/suggestions.js. The only thing written directly
+ * is evidence onto the events that were checked — what the frames showed, what
+ * the control was called — and never the verdict, the time or the position,
+ * which belong to the pixels.
+ */
+export async function auditPass({
+  video,
+  workDir,
+  duration,
+  timeline,
+  changes = [],
+  onProgress = () => {},
+}) {
+  const spend = newSpend();
+  const events = timeline?.events || [];
+  const zooms = timeline?.zooms || [];
+
+  onProgress(0.05, "Checking the clicks against the recording");
+  const res = await auditEdit({
+    video,
+    workDir,
+    duration,
+    events,
+    zooms,
+    changes,
+    spend,
+    onProgress: (p) => onProgress(0.05 + 0.9 * p, "Checking the clicks against the recording"),
+  });
+
+  return { ...res, events: applyPatches(events, res.patches), spend };
 }
 
 /**
@@ -669,7 +783,7 @@ function mergeCuts(cuts, duration) {
   });
 }
 
-export default { analyseRecording, generateCaptions, visionPass, VISION_ON_ANALYSE };
+export default { analyseRecording, generateCaptions, visionPass, auditPass, VISION_ON_ANALYSE };
 
 
 /** How many samples actually moved the pointer, for the log above. */

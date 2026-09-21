@@ -180,6 +180,25 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
       frames_failed: d.analysis?.frames_failed || 0,
       verdict: d.analysis?.verdict || "",
       suggestions: (d.analysis?.suggestions || []).filter((s) => !(d.analysis?.resolved || []).includes(s.id)),
+      /**
+       * ── WHAT THE CROSS-CHECK ACTUALLY DID ─────────────────────────────────
+       * Counts, not findings. The findings themselves are on the demo for
+       * anyone debugging, and most of them are "this was nothing" — a list the
+       * editor would only make noisier. What a creator wants to know is that
+       * the recording WAS checked and how thoroughly, which is the difference
+       * between "nothing to fix" meaning nobody looked and "nothing to fix"
+       * meaning eleven moments were looked at and all eleven were fine.
+       */
+      audit: d.analysis?.audited_at
+        ? {
+            at: d.analysis.audited_at,
+            changes: Array.isArray(d.analysis?.changes) ? d.analysis.changes.length : 0,
+            findings: Array.isArray(d.analysis?.findings) ? d.analysis.findings.length : 0,
+            checked: Array.isArray(d.analysis?.findings)
+              ? d.analysis.findings.filter((f) => f.kind !== "no_change_needed").length
+              : 0,
+          }
+        : null,
       error: d.analysis?.error || "",
       finished_at: d.analysis?.finished_at || null,
     },

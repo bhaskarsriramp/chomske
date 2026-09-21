@@ -32,8 +32,9 @@ import { materialize, putFile, removePrefix, removeObject, statObject } from "..
 import { probe, makeVideoProxy, makeThumbnail, extractSpeechAudio, remuxRecording } from "../media/ffmpeg.js";
 import { refund } from "../creditsService.js";
 import { transient } from "../edit/transient.js";
-import { analyseRecording, generateCaptions, visionPass, VISION_ON_ANALYSE } from "./analyse.js";
+import { analyseRecording, generateCaptions, visionPass, auditPass } from "./analyse.js";
 import { reviewEdit, newSpend } from "./vision.js";
+import { applyPatches } from "./audit.js";
 import { renderTimeline } from "./render/compose.js";
 import { missingFonts, FONTS_DIR } from "./render/ass.js";
 import { sanitizeTimeline } from "./timeline.js";
@@ -369,6 +370,21 @@ const analyse = {
           "analysis.sync": result.sync || null,
           "analysis.locate": result.locate || null,
           "analysis.elements": result.elements || null,
+          // The moments the screen changed, measured once. See the model.
+          "analysis.changes": result.changes || null,
+          /**
+           * ── LAST TIME'S FINDINGS DO NOT SURVIVE A NEW EDIT ────────────────
+           * The edit has just been rebuilt from scratch, so every zoom id a
+           * previous audit or review named is gone. applySuggestion() refuses a
+           * dead id politely enough, but offering a creator three buttons that
+           * all answer "that zoom isn't in the edit any more" is worse than
+           * offering none. The check re-runs immediately below.
+           */
+          "analysis.suggestions": [],
+          "analysis.resolved": [],
+          "analysis.findings": null,
+          "analysis.audited_at": null,
+          "analysis.audited_rev": -1,
           "analysis.usd": result.spend.usd,
           "analysis.calls": result.spend.calls,
           "analysis.finished_at": new Date(),
@@ -390,16 +406,23 @@ const analyse = {
 
     publishProgress(demo, { status: "ready", stage: "", progress: 1, analysed: true });
 
-    // The quality review is its own job so the editor opens the moment the edit
-    // exists, rather than waiting on one more model call for advice.
-    //
-    // It reads the step list to say anything useful, and with the model pass off
-    // there is no step list — so it would be a paid call that could only produce
-    // generalities. It is enqueued at the end of the vision pass instead, where
-    // it has something to review.
-    if (VISION_ON_ANALYSE) {
-      await enqueue({ demo: demo._id, user: demo.user, type: "review" }).catch(() => {});
-    }
+    /**
+     * ── THE CHECK IS ITS OWN JOB, AND IT RUNS EVERY TIME NOW ─────────────────
+     * Separate so the editor opens the moment the edit exists rather than
+     * waiting on more model calls for advice.
+     *
+     * It used to be enqueued only when the model pass had run, because the only
+     * thing in it was the quality reviewer and the reviewer needs a step list to
+     * say anything beyond generalities. The job does two things now, and the
+     * other one — checking the clicks against the recording — needs no steps, no
+     * frame grid and no vision pass. It needs the change list, which the
+     * analysis above always produces. See the review handler.
+     *
+     * So it runs on every analysis. On a demo whose screens nobody has read,
+     * that is the audit alone: the presses whose verdict was a close call, and
+     * the moments on screen that nothing in the edit accounts for.
+     */
+    await enqueue({ demo: demo._id, user: demo.user, type: "review" }).catch(() => {});
   },
 
   async fail(job, err) {
@@ -475,9 +498,28 @@ const vision = {
 
     const fresh = await StudioDemo.findById(job.demo);
     if (!fresh || fresh.purged) return;
+    /**
+     * ── THE EVENTS ARE ANNOTATED, NOT REPLACED ───────────────────────────────
+     * visionPass() returns the same events with the control each press landed
+     * on written onto it: the label, the type and, the part the camera wants,
+     * the box. Only those fields — `zoomable` and the timing are untouched, so
+     * nothing about the edit the creator has open changes. The boxes are what
+     * let the audit offer "aim this zoom at the thing that was pressed".
+     *
+     * Merged by id against the FRESH events rather than written wholesale,
+     * because the creator may have added or deleted a press in the minutes this
+     * pass was running, and the answer to that is to leave theirs alone.
+     */
+    const byId = new Map((result.events || []).map((e) => [e.id, e]));
+    const events = (fresh.timeline?.events || []).map((e) => {
+      const seen = byId.get(e.id);
+      return seen ? { ...e, target: seen.target, control: seen.control, on_control: seen.on_control } : e;
+    });
+
     const timeline = sanitizeTimeline(
       {
         ...fresh.timeline,
+        events,
         blurs: result.blurs,
         steps: result.steps,
         narration: result.narration,
@@ -610,37 +652,164 @@ const captions = {
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
-   review: what is still wrong with the edit
+   review: the edit, checked against the recording and then read back
    ──────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * ── TWO CHECKS, ONE JOB, AND THEY ASK DIFFERENT QUESTIONS ────────────────────
+ * The audit (services/studio/audit.js) checks the edit against the RECORDING:
+ * it cuts two frames at each moment the pixel pipeline was unsure about or did
+ * not account for at all, and asks what actually happened there. That is where
+ * a missed click and a camera move nobody proposed come from.
+ *
+ * The reviewer (vision.js reviewEdit) checks the edit against ITSELF: it reads
+ * the timeline as a piece of editing and says what a video editor would. It
+ * sees no frames and cannot know what was missed.
+ *
+ * They run together because they arrive in the same list beside the creator's
+ * edit and a creator should not have to learn which advice came from where.
+ * The audit runs first: it costs frames and can fail on a recording whose file
+ * has expired, and a failed audit must still leave the reviewer's advice.
+ */
 const review = {
-  async run(job) {
+  async run(job, workDir) {
     const demo = await StudioDemo.findById(job.demo);
     if (!demo || demo.purged || !demo.timeline) return;
 
     const spend = newSpend();
-    const { verdict, suggestions } = await reviewEdit({
-      timeline: demo.timeline,
-      steps: demo.timeline.steps || [],
-      duration: demo.recording?.duration || demo.timeline.duration || 0,
-      spend,
-    });
+    const duration = demo.recording?.duration || demo.timeline.duration || 0;
+
+    /* ── Checked against the recording ───────────────────────────────────── */
+    let audit = { findings: [], suggestions: [], patches: [], events: null, checked: 0 };
+    const changes = Array.isArray(demo.analysis?.changes) ? demo.analysis.changes : [];
+
+    /**
+     * ── AN UNCHANGED EDIT ASKS THE SAME QUESTIONS ────────────────────────────
+     * "Check again" costs about fifty frames, and on an edit nobody has touched
+     * it cuts the same frames at the same moments and gets the same answers.
+     * The reviewer below still re-runs — it is one text call and a creator
+     * pressing the button wants a second opinion on the prose — but the frames
+     * are not paid for twice. Any edit at all bumps `rev`, so this only ever
+     * skips work that would have changed nothing.
+     */
+    const stale = (demo.analysis?.audited_rev ?? -1) !== (demo.rev || 0);
+    if (!stale) {
+      audit = {
+        findings: demo.analysis?.findings || [],
+        suggestions: (demo.analysis?.suggestions || []).filter((s) => s.source === "audit"),
+        patches: [],
+        events: null,
+        checked: 0,
+      };
+      console.log("[studio] " + demo._id + " unchanged since its last check; keeping " + audit.findings.length + " finding(s)");
+    } else if (demo.recording?.mp4_key && changes.length) {
+      publishProgress(demo, { auditing: true });
+      try {
+        const video = await materialize(demo.recording.mp4_key, workDir, "recording.mp4");
+        const res = await auditPass({
+          video,
+          workDir,
+          duration,
+          timeline: demo.timeline,
+          changes,
+        });
+        audit = res;
+        spend.usd += res.spend.usd;
+        spend.calls += res.spend.calls;
+      } catch (err) {
+        // The recording may have expired, or ffmpeg may have refused a frame.
+        // Neither is a reason to lose the reviewer's advice as well.
+        console.error("[studio] audit failed:", err);
+      }
+    } else if (!changes.length) {
+      console.log("[studio] no change list on " + demo._id + "; re-analyse to cross-check the clicks");
+    }
+
+    /* ── Read back as a piece of editing ─────────────────────────────────── */
+    /**
+     * ── AND ONLY WHEN THERE IS SOMETHING TO READ ─────────────────────────────
+     * The reviewer is handed the steps, the cuts, the zooms and the blurs, and
+     * it is the steps that let it say anything specific: without them it is
+     * looking at a list of timestamps with no idea what the demo is about, and
+     * what comes back is advice about pacing in general. With the model pass off
+     * there are no steps, so this would be a paid call for generalities — and
+     * the audit above has already done the part that does not need them.
+     */
+    let verdict = demo.analysis?.verdict || "";
+    let suggestions = [];
+    if ((demo.timeline.steps || []).length) {
+      ({ verdict, suggestions } = await reviewEdit({
+        timeline: demo.timeline,
+        steps: demo.timeline.steps,
+        duration,
+        spend,
+      }));
+    }
+
+    /**
+     * ── THE DEMO IS READ AGAIN BEFORE ANYTHING IS WRITTEN ────────────────────
+     * Same reason as the vision and caption jobs: by now the creator may have
+     * had the editor open for a minute, and a write built on the timeline this
+     * job started from would roll that back. Only the evidence fields go onto
+     * the events, and only for events that still exist.
+     */
+    const fresh = await StudioDemo.findById(job.demo);
+    if (!fresh || fresh.purged) return;
+
+    const offers = [...audit.suggestions, ...suggestions].slice(0, 24);
+
+    /**
+     * ── A SUGGESTION ALREADY TURNED DOWN STAYS TURNED DOWN ───────────────────
+     * `resolved` used to be cleared on every review, which was harmless while
+     * every suggestion in the list was newly minted with a new id. It is not
+     * harmless now: the audit's findings are carried over unchanged when the
+     * edit has not moved, so clearing this would push a creator's own "Ignore"
+     * back at them every time they pressed Check again.
+     */
+    const keptIds = new Set(offers.map((s) => s.id));
+    const resolved = (fresh.analysis?.resolved || []).filter((id) => keptIds.has(id));
+
+    const set = {
+      "analysis.verdict": verdict,
+      /**
+       * The audit's offers first. They are findings about the recording, and a
+       * missed click matters more than a note about pacing.
+       */
+      "analysis.suggestions": offers,
+      "analysis.resolved": resolved,
+      "analysis.findings": audit.findings,
+      "analysis.audited_at": new Date(),
+      updated_at: new Date(),
+    };
+
+    const patched = audit.patches?.length && fresh.timeline;
+    if (patched) {
+      set.timeline = sanitizeTimeline(
+        { ...fresh.timeline, events: applyPatches(fresh.timeline.events || [], audit.patches) },
+        { duration: fresh.recording?.duration || 0, source: fresh.timeline?.source }
+      );
+    }
+    // The rev this audit's findings describe — AFTER this write's own bump, or
+    // they would be stale the moment they were stored.
+    set["analysis.audited_rev"] = (fresh.rev || 0) + (patched ? 1 : 0);
 
     await StudioDemo.updateOne(
       { _id: demo._id },
-      {
-        $set: { "analysis.verdict": verdict, "analysis.suggestions": suggestions, "analysis.resolved": [], updated_at: new Date() },
-        $inc: { "analysis.usd": spend.usd, "analysis.calls": spend.calls },
-      }
+      { $set: set, $inc: { "analysis.usd": spend.usd, "analysis.calls": spend.calls, ...(patched ? { rev: 1 } : {}) } }
     );
-    publishProgress(demo, { reviewed: true });
+
+    console.log(
+      `[studio] reviewed ${demo._id}: ${audit.checked} moment(s) checked, ` +
+        `${audit.findings.length} finding(s), ${set["analysis.suggestions"].length} suggestion(s), $${spend.usd.toFixed(4)}`
+    );
+    publishProgress(demo, { reviewed: true, auditing: false, findings: audit.findings.length });
   },
 
   // A review that fails costs the creator nothing and takes nothing away: the
   // edit is untouched and simply has no suggestions beside it.
   async fail(job) {
     const demo = await StudioDemo.findById(job.demo);
-    if (demo) publishProgress(demo, { reviewed: true });
+    if (demo) publishProgress(demo, { reviewed: true, auditing: false });
   },
 };
 
