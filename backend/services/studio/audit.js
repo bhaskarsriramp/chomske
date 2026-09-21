@@ -22,16 +22,27 @@
  * visible change on screen — that is what makes it worth watching. A press that
  * changed nothing is a press nobody wants a zoom on.
  *
- * So the audit set is arithmetic, not a model call:
+ * So the candidate set is arithmetic, not a model call. sync.js readScreen()
+ * already measures what changed, cell by cell, twelve times a second, with
+ * spinners and animations discounted; changeMoments() distils that to the
+ * moments something happened. Every one of them is a candidate, and so is every
+ * press. On a real demo that is a couple of dozen moments, not a couple of
+ * hundred, because it counts what HAPPENED rather than how long the recording is.
  *
- *     every significant change on screen
- *   − every change an event already explains
- *   = the moments worth paying to look at
+ * ── AND NEITHER SIDE OUTRANKS THE OTHER ──────────────────────────────────────
+ * An earlier version of this file only audited the presses the pixel pipeline
+ * was already unsure about, on the reasoning that where it is confident it is
+ * right. That reasoning cost the creator real clicks. A press refused for "the
+ * pointer never stopped here" is a CONFIDENT no by the gate's own reckoning, and
+ * it was also wrong.
  *
- * The left-hand side is already computed. sync.js readScreen() measures what
- * changed, cell by cell, twelve times a second, with spinners and animations
- * discounted. The right-hand side is the event list. The difference is small —
- * a handful of moments on a real demo — and it is the whole candidate set.
+ * The honest position is that the pixel pipeline is not a sensor. There is no
+ * hardware click anywhere in this product — getDisplayMedia hands over frames
+ * and nothing else, so every press in the timeline is already an inference from
+ * pixels. Ranking one inference above another and only checking the loser is a
+ * habit, not a hierarchy of reliability. So both are read, the answers are put
+ * together (see plan() and the fusion in auditEdit), and the budget decides how
+ * far down the list the money goes rather than which questions may be asked.
  *
  * ── AND WHAT FALLS OUT OF IT FOR FREE ────────────────────────────────────────
  * The same difference contains moments with no press behind them at all: a
@@ -111,6 +122,16 @@ export const AUDIT = {
    * changes has something else wrong with it that more model calls will not fix.
    */
   maxChecks: 24,
+  /**
+   * ...and the most it may grow to on a long recording.
+   *
+   * budgetFor() scales the cap with duration, because a ten minute demo really
+   * does contain more to check than a ten second one and refusing to look is
+   * how a missed click survives. A hundred and twenty looks is about 240 frames
+   * — still under what the uniform two-second grid costs the vision pass for
+   * the same recording, and that grid is not even trying to find a missed click.
+   */
+  maxLooks: 120,
   /** Seconds before the moment the BEFORE frame is taken. */
   before: 0.16,
   /** ...and after the moment, for the AFTER frame. */
@@ -281,6 +302,137 @@ export function unexplained(changes, { events = [], zooms = [], limit = AUDIT.ma
   return out.sort((a, b) => num(b.cover) - num(a.cover)).slice(0, Math.max(0, limit));
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+   What to look at, and in what order
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ── WHY THIS IS NOT A SHORTLIST ANY MORE ─────────────────────────────────────
+ * The first version asked the recording about two narrow sets: presses whose
+ * verdict was a close call, and changes nothing accounted for. That was built
+ * to be cheap, and it was — six calls on a ten second demo. It was also built
+ * on the assumption that where the pixel pipeline is CONFIDENT it is right, and
+ * that assumption is the thing that kept losing clicks. A press refused for "the
+ * pointer never stopped here" is not a close call by the gate's own reckoning;
+ * it is a confident no. It was also wrong.
+ *
+ * The honest position is that the pixel pipeline is not a sensor. There is no
+ * hardware click anywhere in this product — getDisplayMedia hands over frames
+ * and nothing else, so every press in the timeline is already an inference from
+ * pixels (events.js, locate.js). Ranking one inference above another and only
+ * auditing the loser is not a hierarchy of reliability, it is a habit.
+ *
+ * So every moment the screen changed is a candidate, and so is every press. The
+ * budget decides how far down the list the money goes, not which questions are
+ * allowed to be asked. On a short demo that means everything is looked at, which
+ * is the point.
+ *
+ * ── WHAT ORDER, AND WHY IT MATTERS MORE THAN THE CAP ─────────────────────────
+ * A hole a viewer can see beats a shot that could be framed a little better.
+ * So the ranking is by what the creator would notice if it went unchecked:
+ *
+ *   0  a press the gate refused          a missing zoom. The loudest failure.
+ *   1  a change with no press near it    a click never detected at all, or a
+ *                                        result nobody pressed for — the camera
+ *                                        move the pipeline cannot propose.
+ *   2  a press allowed on one signal     probably right, worth confirming, and
+ *                                        worth a box to frame properly.
+ *   3  a change already accounted for    confirmation only. Reached on a short
+ *                                        recording, skipped on a long one.
+ */
+export const PRIORITY = { refused: 0, unaccounted: 1, thin: 2, confirm: 3 };
+
+/**
+ * How many moments this recording's audit may buy.
+ *
+ * Scales with length because a longer demo genuinely contains more to check,
+ * and is floored so a short one gets looked at completely. Two frames and one
+ * call each; a ten minute demo at the ceiling is still under half what the
+ * uniform two-second grid costs for the vision pass.
+ */
+export function budgetFor(duration) {
+  return clamp(Math.round(num(duration) / 3), AUDIT.maxChecks, AUDIT.maxLooks);
+}
+
+/**
+ * Everything worth asking the recording about, best first.
+ *
+ * @returns {Array<object>} each with `kind` ("press" | "change") and `priority`
+ */
+export function plan({ changes = [], events = [], zooms = [], duration = 0, budget = 0 } = {}) {
+  const items = [];
+
+  for (const p of uncertainPresses(events, { limit: Infinity })) {
+    items.push({ ...p, kind: "press", priority: p.zoomable ? PRIORITY.thin : PRIORITY.refused });
+  }
+
+  for (const c of changes || []) {
+    const t = num(c.t);
+    const accounted = !!eventNear(events, t) || zoomOver(zooms, t);
+    items.push({
+      kind: "change",
+      t,
+      cover: num(c.cover),
+      x: num(c.x, 0.5),
+      y: num(c.y, 0.5),
+      w: num(c.w, 0.3),
+      h: num(c.h, 0.3),
+      priority: accounted ? PRIORITY.confirm : PRIORITY.unaccounted,
+    });
+  }
+
+  /**
+   * ── ONE QUESTION PER MOMENT ──────────────────────────────────────────────
+   * A missed click shows up twice: as the press the gate refused, and as the
+   * change it caused a fraction of a second later. They are one moment. The
+   * press wins, because it carries the pointer's position and can therefore ask
+   * "was the thing HERE activated" rather than "what happened somewhere on this
+   * screen" — a narrower question that gets a better answer.
+   */
+  items.sort((a, b) => a.priority - b.priority || num(b.cover) - num(a.cover) || a.t - b.t);
+
+  const kept = [];
+  const cap = budget || budgetFor(duration);
+  let folded = 0;
+
+  /**
+   * What this candidate is already covered by, or null.
+   *
+   * ── A PRESS IS NEVER FOLDED INTO ANYTHING ────────────────────────────────
+   * The first version folded any two candidates within the explanation window
+   * of each other, and on a dense demo that ate the presses: two real presses
+   * 1.5 seconds apart became one question, and a click at 4.45s disappeared
+   * into the audit for a different click at 2.93s. Thirteen candidates came out
+   * as four.
+   *
+   * Folding exists for ONE case — a press and the change it caused are the same
+   * moment reported twice — and that case has a direction. The change follows
+   * the press. So only a change folds, only into a press that precedes it, and
+   * two presses are always two questions however close together they are.
+   */
+  const coveredBy = (it) => {
+    if (it.kind !== "change") return null;
+    const by = kept.find((k) => k.kind === "press" && it.t >= k.t - 0.25 && it.t <= k.t + AUDIT.explainBefore);
+    if (by) return by;
+    return kept.find((k) => k.kind === "change" && Math.abs(k.t - it.t) <= AUDIT.spanGap) || null;
+  };
+
+  for (const it of items) {
+    const clash = coveredBy(it);
+    if (clash) {
+      // The press carries the moment, and inherits the change's measured box so
+      // nothing the arithmetic worked out is thrown away.
+      if (clash.kind === "press" && !clash.box) clash.box = { x: it.x, y: it.y, w: it.w, h: it.h };
+      folded++;
+      continue;
+    }
+    if (kept.length >= cap) break;
+    kept.push(it);
+  }
+
+  return { items: kept, folded, dropped: Math.max(0, items.length - kept.length - folded), cap };
+}
+
 /**
  * The presses whose verdict was a close call.
  *
@@ -389,7 +541,14 @@ export function uncertainPresses(events, { limit = AUDIT.maxChecks } = {}) {
    * moments are uncertain than the budget allows, the holes are the ones worth
    * the frames.
    */
-  return out.sort((a, b) => Number(a.zoomable) - Number(b.zoomable)).slice(0, Math.max(0, limit));
+  /**
+   * Refusals first: a press that got no camera move is a hole the creator can
+   * see, and one that got a slightly badly aimed move is a polish note. plan()
+   * re-ranks across both kinds of candidate, so the cap here is normally
+   * Infinity and this ordering only matters when it is called directly.
+   */
+  out.sort((a, b) => Number(a.zoomable) - Number(b.zoomable));
+  return Number.isFinite(limit) ? out.slice(0, Math.max(0, limit)) : out;
 }
 
 /** What to tell the model, and later the creator, about why we are asking. */
@@ -510,30 +669,19 @@ export async function auditEdit({
   const dir = path.join(workDir, "audit");
   await fsp.mkdir(dir, { recursive: true }).catch(() => {});
 
-  const presses = uncertainPresses(events);
+  const { items, folded, dropped, cap } = plan({ changes, events, zooms, duration });
+  const presses = items.filter((i) => i.kind === "press");
+  const gaps = items.filter((i) => i.kind === "change");
+  const total = items.length;
 
-  /**
-   * ── THE SAME MOMENT MUST NOT BE BOUGHT TWICE ─────────────────────────────
-   * Now that a refused press no longer explains a change, the commonest missed
-   * click produces BOTH: the press turns up in the uncertain list, and the
-   * change it caused turns up as unexplained a fraction of a second later.
-   * They are one moment and one question, and the press is the better way to
-   * ask it — it carries the pointer's position, so the model is told where to
-   * look instead of having to find it.
-   */
-  const asking = presses.map((p) => p.t);
-  const near = (t) => asking.some((pt) => Math.abs(pt - t) <= AUDIT.explainBefore);
-  const raw = unexplained(changes, { events, zooms });
-  const gaps = raw.filter((g) => !near(num(g.t)));
-  const folded = raw.length - gaps.length;
-
-  const total = presses.length + gaps.length;
-
+  const tally = (p) => items.filter((i) => i.priority === p).length;
   console.log(
-    `[studio] audit: ${changes.length} screen change(s), ${gaps.length} unexplained` +
-      (folded ? ` (${folded} folded into a press already being checked)` : "") +
-      `, ${presses.length} press(es) with an uncertain verdict` +
-      (presses.length ? ": " + presses.map((p) => p.t.toFixed(2) + "s " + (p.zoomable ? "(kept)" : "(refused)")).join(", ") : "")
+    `[studio] audit: ${changes.length} screen change(s), ${(events || []).filter((e) => e.type === "click" || e.type === "dblclick").length} press(es); ` +
+      `checking ${total} moment(s) of a possible ${cap}` +
+      (folded ? ` (${folded} folded)` : "") +
+      (dropped ? `, ${dropped} past the budget` : "") +
+      ` — ${tally(PRIORITY.refused)} refused press, ${tally(PRIORITY.unaccounted)} unaccounted change, ` +
+      `${tally(PRIORITY.thin)} thin press, ${tally(PRIORITY.confirm)} confirmation`
   );
   if (!total) return { findings: [], suggestions: [], patches: [], checked: 0, spend };
 
@@ -542,7 +690,7 @@ export async function auditEdit({
   let done = 0;
   const step = () => onProgress(Math.min(1, ++done / total));
 
-  /* ── The presses whose verdict was a close call ─────────────────────────── */
+  /* ── The presses ────────────────────────────────────────────────────────── */
   for (const p of presses) {
     const pair = await framePair(video, p.t, dir, { duration });
     if (!pair) {
@@ -577,7 +725,14 @@ export async function auditEdit({
     const confident = said.confidence >= AUDIT.accept;
 
     if (said.verdict === "press" && !p.zoomable) {
-      const bbox = frameFor(target, result);
+      /**
+       * ── AND IF THE MODEL NAMED NO BOX, THE ARITHMETIC DID ──────────────────
+       * A rescued press with nowhere to point is a finding that cannot become a
+       * button. When this press absorbed a change moment (see plan()), that
+       * moment's own bounding box — measured, not read — says where on screen
+       * the consequence was, which is a perfectly good thing to frame.
+       */
+      const bbox = frameFor(target, result) || p.box || null;
       findings.push(
         finding("missed_press", {
           t: p.t,
@@ -822,4 +977,4 @@ export function applyPatches(events, patches) {
   });
 }
 
-export default { AUDIT, changeMoments, unexplained, uncertainPresses, auditEdit, toSuggestions, applyPatches };
+export default { AUDIT, PRIORITY, changeMoments, unexplained, uncertainPresses, plan, budgetFor, auditEdit, toSuggestions, applyPatches };
