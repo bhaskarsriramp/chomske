@@ -126,6 +126,7 @@ export const AUDIT = {
   accept: 0.6,
 };
 
+
 /* ────────────────────────────────────────────────────────────────────────────
    Part one: arithmetic. What changed, and what explains it.
    ──────────────────────────────────────────────────────────────────────────── */
@@ -203,12 +204,50 @@ export function changeMoments(screen, { duration = 0 } = {}) {
     }));
 }
 
-/** The events that could be responsible for something changing at `t`. */
+/**
+ * The event that accounts for something changing at `t`, or "".
+ *
+ * ── A REFUSED PRESS IS NOT AN EXPLANATION ────────────────────────────────────
+ * This used to return the nearest event of any kind, and that quietly disabled
+ * the entire recall half of this file. On a real ten second demo it reported
+ * "7 screen changes measured, 0 with no event within 1.6s" — every change
+ * accounted for, nothing to check — while the creator was watching a press on
+ * "Projects" get no zoom at all.
+ *
+ * The reason is that a press the gate REFUSED still counted. But a refusal is
+ * the pipeline saying "no press happened here", and a screen that changed
+ * substantially anyway is not corroboration of that, it is the single loudest
+ * piece of evidence against it. Treating it as an explanation means the one
+ * shape a missed click actually makes — a refused press, and then the screen
+ * changing — is the one shape that silences the alarm.
+ *
+ * So only an ACCEPTED press explains a change. A refused one leaves the moment
+ * unexplained, which is exactly what it is.
+ */
 function eventNear(events, t) {
   for (const e of events || []) {
     const dt = t - num(e.t);
     if (dt < -AUDIT.explainAfter || dt > AUDIT.explainBefore) continue;
-    if (e.type === "click" || e.type === "dblclick" || e.type === "rightclick") return "a press at " + num(e.t).toFixed(2) + "s";
+    if (e.type === "click" || e.type === "dblclick" || e.type === "rightclick") {
+      if (e.zoomable === false) continue;
+      return "a press at " + num(e.t).toFixed(2) + "s";
+    }
+    /**
+     * ── A SCROLL EXPLAINS A CHANGE WHATEVER SIZE IT IS ───────────────────────
+     * The first attempt at this let a scroll explain only a SMALL change, on
+     * the theory that a page replacing itself mid-scroll is a different event
+     * wearing the same timestamp. The theory is right and the test was wrong,
+     * and events.js already says why in the comment above RULES.navBox: what
+     * separates a new screen from a widget is not how much changed but WHERE.
+     * A scroll moves every line of text in the content area, so it clears any
+     * magnitude bar worth setting — and gating on one would have marked every
+     * scroll in every demo as unaccounted for, which is the opposite of the
+     * bounded candidate set this whole file depends on.
+     *
+     * A press refused BECAUSE of a scroll is still checked. It is checked as a
+     * press, by uncertainPresses() below, which is the better question anyway:
+     * it knows where the pointer was.
+     */
     if (e.type === "scroll") return "scrolling";
     if (e.type === "type") return "typing";
     if (e.type === "drag") return "a drag";
@@ -235,8 +274,7 @@ function zoomOver(zooms, t) {
 export function unexplained(changes, { events = [], zooms = [], limit = AUDIT.maxChecks } = {}) {
   const out = [];
   for (const c of changes || []) {
-    const by = eventNear(events, num(c.t));
-    if (by) continue;
+    if (eventNear(events, num(c.t))) continue;
     if (zoomOver(zooms, num(c.t))) continue;
     out.push(c);
   }
@@ -266,38 +304,102 @@ export function unexplained(changes, { events = [], zooms = [], limit = AUDIT.ma
  * On a clean recording that is a small fraction of the presses. On a canvas app
  * it may be most of them, which is exactly the case worth paying for.
  */
+/**
+ * What each refusal was actually made of.
+ *
+ * ── A HEURISTIC AND A READING ARE NOT THE SAME REFUSAL ───────────────────────
+ * confirmClicks() turns a press down for eight different reasons and they are
+ * not equally sure of themselves:
+ *
+ *   no-consequence  the screen did not change. Nothing was worth a camera move
+ *                   here whether or not a finger went down, so there is nothing
+ *                   for a model to find. A reading; leave it alone.
+ *   moving          the pointer was judged never to have settled. That is a
+ *                   speed threshold applied to a recovered path, and a fast,
+ *                   confident hand trips it. A HEURISTIC.
+ *   scrolling       a vertical translation was detected nearby. A person can
+ *                   scroll and then press within the same second. A HEURISTIC.
+ *   arrow           the OS drew a plain arrow, so nothing was pressable. True of
+ *                   the OS, false of any app that draws its own cursor.
+ *   off-control     the model named controls and none was under the pointer —
+ *                   decided on boxes it places roughly by its own admission.
+ *   nothing-read    nobody looked. The gate's own fallback, and a guess.
+ *
+ * The first is a fact. The rest are inferences worth a second opinion, and the
+ * ones the creator keeps reporting as missing zooms are `moving` and
+ * `scrolling` — which the first version of this function did not check at all.
+ */
+const HEURISTIC_REFUSAL = new Set(["moving", "scrolling", "arrow", "off-control", "nothing-read"]);
+
 export function uncertainPresses(events, { limit = AUDIT.maxChecks } = {}) {
   const out = [];
   for (const e of events || []) {
     if (e.type !== "click" && e.type !== "dblclick") continue;
-    // Nothing came of it, or the page was scrolling: those are not close calls,
-    // they are readings, and events.js made them from evidence this cannot add
-    // to. Asking the model would only invite it to overrule a fact.
-    if (e.corroborated === false || e.scrolled === true) continue;
 
     // The same set confirmClicks() judges by, imported rather than restated:
     // two copies of "which glyphs mean pressable" would drift within a week.
     const hand = CLICKABLE_SHAPES.has(e.pointer_shape);
     const arrow = e.pointer_shape === "default";
     const onControl = e.on_control === true;
-    const noControl = e.on_control === false;
-    const unread = e.on_control == null;
 
     let why = "";
-    if (e.zoomable === false && arrow && unread) why = "a plain arrow, and no frame was read here";
-    else if (e.zoomable === false && arrow && noControl) why = "a plain arrow and no control named";
-    else if (e.zoomable === false && !hand && unread) why = "nothing was read here either way";
-    else if (e.zoomable === true && hand && !onControl) why = "a hand, but no control was named";
-    else if (e.zoomable === true && onControl && arrow) why = "a control was named, but the pointer was a plain arrow";
-    if (!why) continue;
 
+    if (typeof e.basis === "string") {
+      /**
+       * A press the gate turned down on an inference. This is the case the
+       * whole file exists for and the one it used to miss: a refusal for
+       * "the pointer never stopped here" left no trace in `pointer_shape` or
+       * `on_control` that the old rules below could see, so the most common
+       * refusal in every log was never once checked.
+       */
+      if (e.zoomable === false && HEURISTIC_REFUSAL.has(e.basis)) {
+        why = REFUSAL_WORDS[e.basis] || "the camera was withheld on an inference";
+      } else if (e.zoomable === true && e.basis === "hand" && !onControl) {
+        // Allowed, but on one signal only. Worth confirming, and worth framing.
+        why = "a hand, but no control was named";
+      } else if (e.zoomable === true && e.basis === "control" && arrow) {
+        why = "a control was named, but the pointer was a plain arrow";
+      }
+    } else {
+      /**
+       * ── DEMOS ANALYSED BEFORE `basis` EXISTED ──────────────────────────────
+       * Read from what is on the event instead. Weaker — it cannot see a
+       * `moving` refusal at all, which is precisely why `basis` was added — but
+       * an old demo re-reviewed should still get what can be got.
+       */
+      if (e.corroborated === false || e.scrolled === true) continue;
+      const noControl = e.on_control === false;
+      const unread = e.on_control == null;
+      if (e.zoomable === false && arrow && unread) why = "a plain arrow, and no frame was read here";
+      else if (e.zoomable === false && arrow && noControl) why = "a plain arrow and no control named";
+      else if (e.zoomable === false && !hand && unread) why = "nothing was read here either way";
+      else if (e.zoomable === false) why = "the camera was withheld here";
+      else if (e.zoomable === true && hand && !onControl) why = "a hand, but no control was named";
+      else if (e.zoomable === true && onControl && arrow) why = "a control was named, but the pointer was a plain arrow";
+    }
+
+    if (!why) continue;
     out.push({ id: e.id, t: num(e.t), x: num(e.x, 0.5), y: num(e.y, 0.5), zoomable: e.zoomable === true, why });
   }
-  // The uncertain presses nearest the middle of the demo are no more valuable
-  // than the ones at its edges, so the cap takes them in order and says how
-  // many it left. Sorting by anything here would be inventing an importance.
-  return out.slice(0, Math.max(0, limit));
+
+  /**
+   * ── THE REFUSALS COME FIRST WHEN THE CAP BITES ───────────────────────────
+   * A press that got no camera move is a hole in the demo the creator can see.
+   * One that got a slightly badly aimed move is a polish note. When more
+   * moments are uncertain than the budget allows, the holes are the ones worth
+   * the frames.
+   */
+  return out.sort((a, b) => Number(a.zoomable) - Number(b.zoomable)).slice(0, Math.max(0, limit));
 }
+
+/** What to tell the model, and later the creator, about why we are asking. */
+const REFUSAL_WORDS = {
+  moving: "the pointer was judged never to have settled here",
+  scrolling: "the page was judged to be scrolling here",
+  arrow: "the pointer was a plain arrow, so nothing was judged pressable",
+  "off-control": "no named control was under the pointer",
+  "nothing-read": "nothing was read here either way",
+};
 
 /* ────────────────────────────────────────────────────────────────────────────
    Part two: the frames, and the second opinion
@@ -409,12 +511,29 @@ export async function auditEdit({
   await fsp.mkdir(dir, { recursive: true }).catch(() => {});
 
   const presses = uncertainPresses(events);
-  const gaps = unexplained(changes, { events, zooms });
+
+  /**
+   * ── THE SAME MOMENT MUST NOT BE BOUGHT TWICE ─────────────────────────────
+   * Now that a refused press no longer explains a change, the commonest missed
+   * click produces BOTH: the press turns up in the uncertain list, and the
+   * change it caused turns up as unexplained a fraction of a second later.
+   * They are one moment and one question, and the press is the better way to
+   * ask it — it carries the pointer's position, so the model is told where to
+   * look instead of having to find it.
+   */
+  const asking = presses.map((p) => p.t);
+  const near = (t) => asking.some((pt) => Math.abs(pt - t) <= AUDIT.explainBefore);
+  const raw = unexplained(changes, { events, zooms });
+  const gaps = raw.filter((g) => !near(num(g.t)));
+  const folded = raw.length - gaps.length;
+
   const total = presses.length + gaps.length;
 
   console.log(
-    `[studio] audit: ${changes.length} screen change(s), ${gaps.length} unexplained, ` +
-      `${presses.length} press(es) with an uncertain verdict`
+    `[studio] audit: ${changes.length} screen change(s), ${gaps.length} unexplained` +
+      (folded ? ` (${folded} folded into a press already being checked)` : "") +
+      `, ${presses.length} press(es) with an uncertain verdict` +
+      (presses.length ? ": " + presses.map((p) => p.t.toFixed(2) + "s " + (p.zoomable ? "(kept)" : "(refused)")).join(", ") : "")
   );
   if (!total) return { findings: [], suggestions: [], patches: [], checked: 0, spend };
 

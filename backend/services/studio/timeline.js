@@ -1007,6 +1007,15 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       // impossible to reconstruct after the fact.
       why: typeof e.why === "string" ? e.why.slice(0, 80) : undefined,
       /**
+       * The same decision as a stable token: "hand", "control", "arrow",
+       * "moving", "scrolling", "off-control", "nothing-read", "no-consequence".
+       * The cross-check reads this to tell a refusal made on a HEURISTIC from
+       * one made on a READING, and only asks the recording about the first kind.
+       * Undefined on demos analysed before it existed; audit.js falls back to
+       * the pointer shape there.
+       */
+      basis: typeof e.basis === "string" ? e.basis.slice(0, 24) : undefined,
+      /**
        * The box of the control this press landed on, when one was named.
        * zoomsFromClicks() frames the control rather than the click point when
        * it is here; undefined means no frame was read at this moment and the

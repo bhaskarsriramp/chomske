@@ -2053,19 +2053,34 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
      * a drag, and whatever nobody has thought of yet all land in the same
      * place now, and they land there without anybody adding a rule for them.
      */
-    if (!had) { zoomable = false; why = "nothing came of it"; }
-    else if (scrolled) { zoomable = false; why = "the page was scrolling"; }
-    else if (hand) { zoomable = true; why = "the pointer was a " + (os.shape === "text" ? "text caret" : "hand") + " here"; }
-    else if (on) { zoomable = true; why = "on " + (on.label ? '"' + on.label + '"' : on.type); }
-    else if (arrow) { zoomable = false; why = "a plain arrow here — nothing clickable under it"; }
-    else if (on === false) { zoomable = false; why = "not on a control"; }
-    else if (moving) { zoomable = false; why = "the pointer never stopped here"; }
-    else { zoomable = false; why = "no hand and no control here — nothing says this was a press"; }
+    /**
+     * ── AND THE SAME ANSWER IN A WORD, FOR CODE TO READ ──────────────────────
+     * `why` is written for a person and has been reworded three times. `basis`
+     * is the same decision as a token that will not move, because something
+     * downstream now has to tell one refusal from another: the cross-check
+     * (services/studio/audit.js) asks the recording about the presses this gate
+     * turned down on a HEURISTIC — the pointer looked like it was moving, the
+     * page looked like it was scrolling — and must leave alone the ones it
+     * turned down on a READING, like nothing having changed at all.
+     *
+     * Matching that distinction against the prose would have broken the first
+     * time somebody improved a sentence.
+     */
+    let basis;
+    if (!had) { zoomable = false; basis = "no-consequence"; why = "nothing came of it"; }
+    else if (scrolled) { zoomable = false; basis = "scrolling"; why = "the page was scrolling"; }
+    else if (hand) { zoomable = true; basis = "hand"; why = "the pointer was a " + (os.shape === "text" ? "text caret" : "hand") + " here"; }
+    else if (on) { zoomable = true; basis = "control"; why = "on " + (on.label ? '"' + on.label + '"' : on.type); }
+    else if (arrow) { zoomable = false; basis = "arrow"; why = "a plain arrow here — nothing clickable under it"; }
+    else if (on === false) { zoomable = false; basis = "off-control"; why = "not on a control"; }
+    else if (moving) { zoomable = false; basis = "moving"; why = "the pointer never stopped here"; }
+    else { zoomable = false; basis = "nothing-read"; why = "no hand and no control here — nothing says this was a press"; }
 
     onNote({ t: num(e.t), zoomable, why });
     return {
       ...e,
       zoomable,
+      basis,
       on_control: on ? true : on === false ? false : null,
       control: on ? on.label || on.type : "",
       /**
