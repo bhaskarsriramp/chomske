@@ -51,16 +51,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
    ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * "vertex" or "aistudio".
+ * "vertex" or "aistudio". Vertex unless something says otherwise.
  *
- * One environment variable, because the whole reason for this file is that the
- * move back to AI Studio — once the credits are there — must not be a code
- * change. Every difference between the two lives below this line.
+ * ── THE DEFAULT IS THE ONE WE ACTUALLY USE ───────────────────────────────────
+ * This defaulted to aistudio at first, on the reasoning that a new switch
+ * should not change how anything already behaves. That reasoning was wrong
+ * here, because it made the intended configuration the one you had to opt into
+ * — and an environment that had simply not been updated carried on spending AI
+ * Studio credits that do not exist. It failed the way a missing env var always
+ * does: silently, until a 402 from a billing page nobody meant to be on.
+ *
+ * AI Studio is the FUTURE state of this project, not the current one, so it is
+ * the one that needs saying out loud. GEMINI_PROVIDER=aistudio moves back when
+ * there are credits there.
  */
 export const PROVIDER =
-  String(process.env.GEMINI_PROVIDER || "aistudio").trim().toLowerCase() === "vertex"
-    ? "vertex"
-    : "aistudio";
+  String(process.env.GEMINI_PROVIDER || "vertex").trim().toLowerCase() === "aistudio"
+    ? "aistudio"
+    : "vertex";
 
 export const isVertex = () => PROVIDER === "vertex";
 
@@ -342,7 +350,33 @@ const statusOf = (err) => num(err?.status ?? err?.code ?? err?.response?.status,
  * and a socket that died without a status treated as retryable, because a
  * dropped connection says nothing about the request.
  */
+/**
+ * Out of money, as opposed to going too fast.
+ *
+ * ── THESE LOOK IDENTICAL AND COULD NOT BE MORE DIFFERENT ─────────────────────
+ * Both arrive as RESOURCE_EXHAUSTED. One means "ask again in thirty seconds"
+ * and the other means "there is no money in this account". Waiting helps the
+ * first and is pure waste on the second, and the test below was matching the
+ * status name rather than reading the message:
+ *
+ *   {"error":{"code":402,"message":"Your prepayment credits are depleted...",
+ *             "status":"RESOURCE_EXHAUSTED"}}
+ *
+ * That was retried four times, thirty seconds apart, and it put the whole
+ * bucket to sleep for each of them — two minutes of a pass stalled on an answer
+ * that was never going to change. A 402 is a permanent refusal wearing a
+ * temporary one's status code.
+ */
+function outOfCredit(err) {
+  if (statusOf(err) === 402) return true;
+  const msg = String(err?.message || "").toLowerCase();
+  return /prepayment|credits are depleted|billing|payment required|free tier|quota_exceeded.*billing/.test(msg);
+}
+
 export function retryable(err) {
+  // Checked before anything else: it arrives as a 429-shaped error and must not
+  // be treated as one.
+  if (outOfCredit(err)) return false;
   const status = statusOf(err);
   if (status === 429 || status >= 500) return true;
   if (status === 401 || status === 403 || status === 400 || status === 404) return false;
@@ -460,6 +494,23 @@ export async function request({ model, contents, config = {}, onWait = null } = 
     await sleep(Math.min(nap, left));
   }
 
+  /**
+   * ── SAY WHICH GOOGLE REFUSED, AND WHY ─────────────────────────────────────
+   * A billing refusal is the one failure where the message matters more than
+   * the stack: it names an account somebody has to go and top up, and the
+   * caller's own log line ("arbitratePress at 2.38s failed: {…}") buries it in
+   * a JSON blob. Named here, once, with the provider attached — because the
+   * most likely reason to see an AI Studio billing error at all is that this
+   * process is not on the provider its operator thinks it is.
+   */
+  if (outOfCredit(lastErr)) {
+    console.error(
+      `[ai] ${PROVIDER} refused: out of credit, not rate limited. ` +
+        (PROVIDER === "aistudio"
+          ? "Set GEMINI_PROVIDER=vertex to use the Cloud project instead."
+          : "Check billing on the Vertex project.")
+    );
+  }
   throw lastErr || new Error("the model call failed for no stated reason");
 }
 
