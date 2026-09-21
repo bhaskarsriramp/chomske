@@ -695,6 +695,15 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   let prevFrame = null;
   let prevHit = null;
   let recent = null;
+  /**
+   * The ring around the pointer, frame by frame. Read here and nowhere else
+   * because these frames are decoded exactly once, at full source resolution,
+   * and this is the only place that has both them and the hotspot. See
+   * flashesFrom() above.
+   */
+  const rings = [];
+  const ringOuter = Math.max(14, Math.round((cal.heightPx || 18) * RING));
+  const ringHole = Math.max(10, Math.round((cal.heightPx || 18) * RING_HOLE));
 
   await ffmpegToFrames(video, {
     width: W, height: H, fps, pixelFormat: "gray",
@@ -725,7 +734,13 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
        * frames in five exactly. The same picture has the same pointer in it.
        */
       if (prevFrame && sameFrame(prevFrame, frame)) {
-        if (prevHit) track.push({ ...prevHit, t });
+        if (prevHit) {
+          track.push({ ...prevHit, t });
+          // An identical frame has an identical ring. Carrying it keeps a still
+          // run intact rather than splitting it in two around a duplicate.
+          const last = rings[rings.length - 1];
+          if (last) rings.push({ ...last, t });
+        }
         return;
       }
       prevFrame = Buffer.from(frame);
@@ -807,6 +822,7 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
       if (hit && (hit.score >= FOUND || hit.soft)) {
         prevHit = { t, x: round4(hit.x / W), y: round4(hit.y / H), shape: hit.t.shape, score: round3(hit.score), located: true };
         track.push(prevHit);
+        rings.push({ t, x: hit.x, y: hit.y, mean: ringMean(frame, W, H, hit.x, hit.y, ringOuter, ringHole) });
         last = last ? { x: hit.x, y: hit.y, vx: hit.x - last.x, vy: hit.y - last.y } : { x: hit.x, y: hit.y };
         lostFor = 0;
       } else {
@@ -834,7 +850,177 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     if (!stirred) track.unshift({ ...track[0], t: 0, held: true });
   }
 
-  return { track, design: cal.dark ? "dark" : "light", heightPx: cal.heightPx, found: track.length, frames };
+  const flashes = flashesFrom(rings, { fps });
+  if (flashes.length) {
+    console.log(
+      "[studio] " + flashes.length + " click acknowledgement(s) seen at the pointer: " +
+        flashes.slice(0, 8).map((f) => f.t.toFixed(2) + "s").join(", ") + (flashes.length > 8 ? ", …" : "")
+    );
+  }
+
+  return { track, flashes, design: cal.dark ? "dark" : "light", heightPx: cal.heightPx, found: track.length, frames };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   The press itself
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ── WHAT EVERY OTHER SIGNAL IN THIS PRODUCT IS MISSING ───────────────────────
+ * Everything upstream infers a click from its CONSEQUENCE: the pointer stopped,
+ * then something changed somewhere. That is a second-hand reading, it arrives
+ * hundreds of milliseconds late, and it fails completely on a press that
+ * produced nothing visible.
+ *
+ * But a press is not invisible. Almost every interface acknowledges one, at the
+ * moment it happens, at the pointer: a Material ripple, a `:active` darkening, a
+ * native button depressing, a focus ring landing on a field. It is small, it is
+ * two to eight frames long, and it is centred on the hotspot — which locate.js
+ * knows to the pixel, in every frame, at full source resolution, on frames it is
+ * already decoding. The cost of reading it is a few hundred byte-sums a frame.
+ *
+ * ── WHY IT IS READ AS A RING, NOT A PATCH ────────────────────────────────────
+ * The cursor is drawn ON TOP of whatever it is over, so a patch centred on the
+ * hotspot is mostly cursor, and the cursor's own movement would swamp the
+ * signal. The acknowledgement happens AROUND the cursor — a ripple expands from
+ * under it, a button darkens well past it — so the cursor's own footprint is
+ * cut out and what is left is a ring. The ring is the page; the hole is us.
+ *
+ * ── AND ONLY WHILE THE POINTER IS STILL ──────────────────────────────────────
+ * A moving pointer drags new pixels through the ring every frame and the mean
+ * moves for reasons that have nothing to do with a press. Held still, the ring
+ * is constant to within compression noise, and a two-frame excursion from that
+ * is not ambiguous. This is the same reasoning events.js applies to dwell, one
+ * layer down: stillness is what makes a small signal readable at all.
+ */
+
+/** Outer size of the ring, as a multiple of the pointer's height. */
+const RING = 2.6;
+/** ...and the hole cut out of it, which must comfortably clear the cursor. */
+const RING_HOLE = 1.35;
+/** Frames the pointer must hold a spot before its ring is worth reading. */
+const STILL_RUN = 4;
+/** How far it may drift, in source pixels, and still count as held. */
+const STILL_PX = 2.5;
+/** The longest an acknowledgement lasts. Past this it is the page, not a press. */
+const FLASH_MAX = 8;
+/**
+ * How far the ring must move from its own baseline, in grey levels.
+ *
+ * Absolute floor plus an adaptive term. JPEG noise on a static screen region
+ * runs to two or three levels; a button darkening on press is ten to forty. The
+ * floor keeps a perfectly clean region from finding a press in its own dither,
+ * and the adaptive term keeps a busy one from finding one in its own texture.
+ */
+const FLASH_FLOOR = 3.5;
+const FLASH_SIGMA = 4;
+
+/**
+ * The mean of the ring around a hotspot, or null when it runs off the frame.
+ *
+ * Deliberately a mean and not a histogram: an acknowledgement is a brightness
+ * shift across the whole control, and the cheapest statistic that sees it is
+ * the one that costs a few hundred additions.
+ */
+function ringMean(frame, W, H, cx, cy, outer, hole) {
+  const x0 = Math.max(0, cx - outer);
+  const x1 = Math.min(W - 1, cx + outer);
+  const y0 = Math.max(0, cy - outer);
+  const y1 = Math.min(H - 1, cy + outer);
+  if (x1 - x0 < 6 || y1 - y0 < 6) return null;
+
+  let sum = 0;
+  let n = 0;
+  for (let y = y0; y <= y1; y++) {
+    const dy = y - cy;
+    const inHoleY = dy >= -2 && dy <= hole;      // the cursor hangs BELOW its hotspot
+    const row = y * W;
+    for (let x = x0; x <= x1; x++) {
+      const dx = x - cx;
+      // The arrow and the hand both extend right and down from the tip, so the
+      // hole is not centred on the hotspot — it hangs off it.
+      if (inHoleY && dx >= -2 && dx <= hole) continue;
+      sum += frame[row + x];
+      n++;
+    }
+  }
+  return n > 40 ? sum / n : null;
+}
+
+/**
+ * Acknowledgements, from a per-frame series of ring means.
+ *
+ * @param {Array<{t,x,y,mean}>} series  x,y in source pixels; mean may be null
+ * @returns {Array<{t, strength, frames}>}
+ */
+export function flashesFrom(series, { fps = 30 } = {}) {
+  const out = [];
+  let run = [];
+
+  const close = () => {
+    if (run.length >= STILL_RUN) scan(run, out, fps);
+    run = [];
+  };
+
+  for (let i = 0; i < series.length; i++) {
+    const s = series[i];
+    const prev = run[run.length - 1];
+    if (s.mean == null) {
+      close();
+      continue;
+    }
+    if (prev && Math.hypot(s.x - prev.x, s.y - prev.y) <= STILL_PX && s.t - prev.t <= 2.5 / fps) {
+      run.push(s);
+      continue;
+    }
+    close();
+    run = [s];
+  }
+  close();
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/** One still run, read for excursions from its own resting level. */
+function scan(run, out, fps) {
+  const means = run.map((s) => s.mean);
+  const sorted = [...means].sort((a, b) => a - b);
+  const base = sorted[sorted.length >> 1];
+  /**
+   * Spread as a median absolute deviation rather than a standard deviation:
+   * the excursion we are looking for is IN this run, and a standard deviation
+   * would let it raise the bar it has to clear.
+   */
+  const devs = means.map((m) => Math.abs(m - base)).sort((a, b) => a - b);
+  const mad = devs[devs.length >> 1];
+  const bar = Math.max(FLASH_FLOOR, mad * FLASH_SIGMA);
+
+  let from = -1;
+  for (let i = 0; i <= run.length; i++) {
+    const hot = i < run.length && Math.abs(means[i] - base) >= bar;
+    if (hot && from < 0) from = i;
+    if (!hot && from >= 0) {
+      const len = i - from;
+      /**
+       * ── IT HAS TO END, AND IT HAS TO END WHERE IT STARTED ─────────────────
+       * A press is acknowledged and then released. A ring that shifts and
+       * STAYS shifted is the page having changed under a parked pointer — a
+       * panel loading, a row highlighting on its own — and calling that a
+       * press is how the old rules collected a click for every repaint.
+       */
+      const ended = i < run.length;
+      if (ended && len <= FLASH_MAX) {
+        let peak = 0;
+        for (let j = from; j < i; j++) peak = Math.max(peak, Math.abs(means[j] - base));
+        out.push({
+          t: run[from].t,
+          strength: Math.round((peak / Math.max(1, bar)) * 100) / 100,
+          frames: len,
+          levels: Math.round(peak * 10) / 10,
+        });
+      }
+      from = -1;
+    }
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -972,4 +1158,4 @@ function sameFrame(a, b) {
 /** For tests. */
 export const _debug = { coarse: coarseAt, make: (name, hp, dark, W) => bounds(prepare(buildTemplate(name, hp, { dark }), W)), score: scoreAt };
 
-export default { locatePointer, mergeLocated, stepPath, snapToLocated };
+export default { locatePointer, mergeLocated, stepPath, snapToLocated, flashesFrom };

@@ -286,7 +286,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * withheld. See confirmClicks().
    */
   const notes = [];
-  const graded = confirmClicks(events, shots, { located: located.track, onNote: (n) => notes.push(n) });
+  const graded = confirmClicks(events, shots, { located: located.track, flashes: located.flashes, onNote: (n) => notes.push(n) });
   for (const n of notes) {
     console.log("[studio] press at " + n.t.toFixed(2) + "s " + (n.zoomable ? "moves the camera" : "does not move the camera") + " — " + n.why);
   }

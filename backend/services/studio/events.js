@@ -1948,6 +1948,80 @@ export function osShapeAt(path, t, { reach = SHAPE_REACH, window = SHAPE_WINDOW,
  */
 const SHAPE_WATCHED = 6;
 
+/* ────────────────────────────────────────────────────────────────────────────
+   What a press is worth
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The weights, in one place, because they ARE the policy.
+ *
+ * ── HOW THEY WERE CHOSEN ─────────────────────────────────────────────────────
+ * Not fitted to anything — there was no labelled data when they were written,
+ * which is what scripts/truthScore.js and fixtures/truth.html now exist to
+ * provide. They were set so that the decision this file made BEFORE the scorer
+ * existed comes out unchanged in every case it already handled, and only the
+ * three cases it handled wrongly come out different:
+ *
+ *   unchanged   a settled hand alone passes; a named control alone passes;
+ *               a plain arrow alone fails; nothing read fails; a press with
+ *               no consequence fails; a press on no control fails
+ *   changed     a clickable glyph HELD through a press the speed threshold
+ *               called "moving" now passes  ← the Projects click
+ *   changed     an acknowledgement under a plain arrow now passes
+ *               ← canvas, Figma, VS Code web, most of Electron
+ *   changed     an acknowledgement during a scroll now passes
+ *
+ * That is deliberate: a rewrite that also re-tunes is a rewrite nobody can
+ * review. Tune them against real numbers now that there are some.
+ */
+const W_CHANGED = 0.25;   // something came of it — necessary, and evidence in itself
+const W_FLASH = 0.6;      // the interface acknowledged a press, at the pointer
+const W_HAND = 0.5;       // the OS drew a clickable glyph and it settled
+const W_HELD = 0.3;       // ...or drew one and held it, without settling
+const W_CONTROL = 0.5;    // the model named a control under the pointer
+const W_ARROW = 0.2;      // the OS drew a plain arrow: weak evidence against
+const W_MOVING = 0.3;     // the pointer never settled — a proxy, see above
+const W_SCROLLED = 0.35;  // the page was scrolling — also a proxy
+/** Total at or above which the camera moves. */
+const PRESS_BAR = 0.5;
+
+/**
+ * How long a clickable glyph must be held to count, without settling.
+ *
+ * Lower than SHAPE_HELD, deliberately. That constant decides whether the
+ * pointer STOPPED, which is a strong claim; this one only asks whether the
+ * operating system was drawing "you can press this" at the spot for long
+ * enough that a press is plausible. A fifth of a second is about the shortest
+ * deliberate hover a hand makes.
+ */
+const HELD_CLICKABLE = 0.2;
+
+function heldClickable(os) {
+  return !!os && CLICKABLE_SHAPES.has(os.shape) && num(os.held) >= HELD_CLICKABLE;
+}
+
+/**
+ * How close an acknowledgement has to be to the press to be its acknowledgement.
+ *
+ * Tight. The flash IS the mouse-down, and the press's own timestamp comes from
+ * the rest of this file resolving a dwell — which lands a little after. A
+ * second either way would let one button's ripple vouch for a press somewhere
+ * else entirely.
+ */
+const FLASH_BACK = 0.45;
+const FLASH_FWD = 0.35;
+
+function flashAt(flashes, t) {
+  if (!flashes || !flashes.length) return null;
+  let best = null;
+  for (const f of flashes) {
+    const dt = num(f.t) - t;
+    if (dt < -FLASH_BACK || dt > FLASH_FWD) continue;
+    if (!best || Math.abs(dt) < Math.abs(num(best.t) - t)) best = f;
+  }
+  return best;
+}
+
 /**
  * Decide which clicks get to move the camera.
  *
@@ -1984,7 +2058,7 @@ const SHAPE_WATCHED = 6;
  * @param {Array} shots    from readFrames — per-frame elements the model named
  * @param {Array} located  from locatePointer — the real pointer, frame by frame
  */
-export function confirmClicks(events, shots, { located = null, onNote = () => {} } = {}) {
+export function confirmClicks(events, shots, { located = null, flashes = null, onNote = () => {} } = {}) {
   return (events || []).map((e) => {
     if (e.type !== "click" && e.type !== "dblclick") return e;
 
@@ -2054,27 +2128,98 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
      * place now, and they land there without anybody adding a rule for them.
      */
     /**
-     * ── AND THE SAME ANSWER IN A WORD, FOR CODE TO READ ──────────────────────
-     * `why` is written for a person and has been reworded three times. `basis`
-     * is the same decision as a token that will not move, because something
-     * downstream now has to tell one refusal from another: the cross-check
-     * (services/studio/audit.js) asks the recording about the presses this gate
-     * turned down on a HEURISTIC — the pointer looked like it was moving, the
-     * page looked like it was scrolling — and must leave alone the ones it
-     * turned down on a READING, like nothing having changed at all.
+     * ── THE LADDER IS GONE, AND WHY ──────────────────────────────────────────
+     * This used to be an if/else chain: the first matching rule decided and
+     * everything below it was unreachable. With two signals that was a fair
+     * model of the problem. With four it stopped being one, and the failure was
+     * not subtle — a press refused because a speed threshold called the pointer
+     * "moving" could not be saved by anything, however much else agreed it was
+     * a press. The creator reported it as a missing zoom on "Projects" and it
+     * was structurally unfixable inside a chain.
      *
-     * Matching that distinction against the prose would have broken the first
-     * time somebody improved a sentence.
+     * So the evidence is ADDED UP. Every channel is positive: something is seen
+     * or it is not, and what is not seen contributes nothing rather than
+     * blocking. That keeps the property the creator asked for —
+     *
+     *   "we should not hard code what things need to be ignored ... we should
+     *    only focus on at what interaction we should move the camera ... if we
+     *    follow that simple rule, any other new interaction comes, it simply
+     *    ignores it."
+     *
+     * — because a new kind of interaction nobody has thought of scores zero and
+     * is ignored, without anybody writing a rule against it. And it means four
+     * weak agreeing signals can outvote one strong disagreeing one, which is the
+     * case a chain can never express.
      */
-    let basis;
-    if (!had) { zoomable = false; basis = "no-consequence"; why = "nothing came of it"; }
-    else if (scrolled) { zoomable = false; basis = "scrolling"; why = "the page was scrolling"; }
-    else if (hand) { zoomable = true; basis = "hand"; why = "the pointer was a " + (os.shape === "text" ? "text caret" : "hand") + " here"; }
-    else if (on) { zoomable = true; basis = "control"; why = "on " + (on.label ? '"' + on.label + '"' : on.type); }
-    else if (arrow) { zoomable = false; basis = "arrow"; why = "a plain arrow here — nothing clickable under it"; }
-    else if (on === false) { zoomable = false; basis = "off-control"; why = "not on a control"; }
-    else if (moving) { zoomable = false; basis = "moving"; why = "the pointer never stopped here"; }
-    else { zoomable = false; basis = "nothing-read"; why = "no hand and no control here — nothing says this was a press"; }
+    const ev = [];
+    let score = 0;
+    const add = (w, tag) => { score += w; ev.push(tag); };
+
+    /**
+     * ── ONE HARD VETO, AND ONLY ONE ──────────────────────────────────────────
+     * Nothing came of it. Not "we decided to skip this" — there is no moment
+     * here worth pointing a camera at, whether or not a finger went down, so
+     * there is nothing for any amount of further evidence to be about.
+     */
+    if (!had) {
+      zoomable = false;
+      onNote({ t: num(e.t), zoomable, why: "nothing came of it" });
+      return { ...e, zoomable, basis: "no-consequence", why: "nothing came of it", score: 0,
+        on_control: on ? true : on === false ? false : null, control: on ? on.label || on.type : "",
+        pointer_shape: os && os.shape ? os.shape : null };
+    }
+    add(W_CHANGED, "something changed");
+
+    // The acknowledgement the interface itself drew at the pointer, in the
+    // frames around the press. First-hand evidence of the press, not of its
+    // consequence — the only channel here that is. See locate.js flashesFrom.
+    const lit = flashAt(flashes, num(e.t));
+    if (lit) add(W_FLASH, "the control lit up under the pointer");
+
+    // The operating system drew a hand, a caret or a pointing finger, and held
+    // it. It only does that over something that answers a click.
+    if (hand) add(W_HAND, "the pointer was a " + (os.shape === "text" ? "text caret" : "hand") + " here");
+    else if (heldClickable(os)) add(W_HELD, "a clickable pointer was held here");
+
+    if (on) add(W_CONTROL, "on " + (on.label ? '"' + on.label + '"' : on.type));
+    if (arrow) add(-W_ARROW, "a plain arrow here");
+
+    /**
+     * ── A PENALTY IS A PROXY, AND A PROXY RETIRES WHEN ANSWERED ──────────────
+     * "The pointer never stopped" is not an observation about a press. It is a
+     * speed threshold standing in for the question "did they hold still long
+     * enough to press something" — and a flash, or a clickable glyph held on
+     * the spot, answers that question directly. A stand-in does not get to
+     * outvote the thing it was standing in for.
+     *
+     * Same for scrolling: it stands in for "was this really a press, or just
+     * the page moving under a resting hand". An acknowledgement drawn at the
+     * pointer answers that outright.
+     */
+    if (moving && !lit && !heldClickable(os)) add(-W_MOVING, "the pointer never settled here");
+    if (scrolled && !lit) add(-W_SCROLLED, "the page was scrolling");
+
+    zoomable = score >= PRESS_BAR;
+
+    /**
+     * The dominant reason, for code downstream to switch on (audit.js reads it
+     * to tell a refusal made on a heuristic from one made on a reading).
+     */
+    const basis = lit ? "flash"
+      : hand ? "hand"
+      : on ? "control"
+      : heldClickable(os) ? "held"
+      : scrolled ? "scrolling"
+      : moving ? "moving"
+      : arrow ? "arrow"
+      : on === false ? "off-control"
+      : "nothing-read";
+
+    why = zoomable
+      ? ev.filter((w) => !w.startsWith("something changed")).slice(0, 2).join(", ") || "something changed here"
+      : ev.length > 1
+        ? "not enough to call it a press: " + ev.slice(1).join(", ")
+        : "nothing says this was a press";
 
     onNote({ t: num(e.t), zoomable, why });
     return {
@@ -2092,6 +2237,9 @@ export function confirmClicks(events, shots, { located = null, onNote = () => {}
        * exactly as it always did.
        */
       target: on && on.bbox ? [round4(on.bbox.x), round4(on.bbox.y), round4(on.bbox.w), round4(on.bbox.h)] : undefined,
+      // What the evidence added up to. Kept because a threshold is only
+      // reviewable next to the numbers it was applied to.
+      score: Math.round(score * 100) / 100,
       pointer_shape: os && os.shape ? os.shape : null,
       // The sentence above, kept on the event: it is the only record of why a
       // zoom is or is not there, and reading it back beats reconstructing it.

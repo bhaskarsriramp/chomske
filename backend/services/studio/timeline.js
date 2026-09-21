@@ -1016,6 +1016,12 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
        */
       basis: typeof e.basis === "string" ? e.basis.slice(0, 24) : undefined,
       /**
+       * What the evidence added up to in confirmClicks(). Kept because a
+       * threshold is only reviewable beside the numbers it was applied to, and
+       * because scripts/truthScore.js reports it against real clicks.
+       */
+      score: Number.isFinite(Number(e.score)) ? Math.round(Number(e.score) * 100) / 100 : undefined,
+      /**
        * The box of the control this press landed on, when one was named.
        * zoomsFromClicks() frames the control rather than the click point when
        * it is here; undefined means no frame was read at this moment and the

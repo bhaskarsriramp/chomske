@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ground truth</title>
+<!--
+  truth.html: a fake console that writes down every click you really made.
+
+  ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+  Every judgement in services/studio/events.js is a threshold, and up to now
+  every one of them has been tuned by watching an export and forming an
+  impression. "It missed the Projects click" is a real report and a useless
+  measurement: it does not say whether the click was never detected, detected
+  and refused, or detected and framed somewhere the eye did not go.
+
+  A browser recording cannot see clicks (getDisplayMedia hands over pixels and
+  nothing else) — but a PAGE can see its own. So: record this page, click
+  around it, download the log, and there is ground truth for that recording.
+  scripts/truthScore.js then says exactly which clicks each stage lost.
+
+  ── HOW TO USE IT ───────────────────────────────────────────────────────────
+    1. Serve it:  cd backend/fixtures && npx serve .   (any static server)
+    2. Open it, start a studio recording, and SHARE THIS TAB.
+       The tab, not the screen — the log's coordinates are fractions of the
+       viewport, and only a tab capture makes the viewport the frame.
+    3. Press SYNC. The page flashes hard for a moment: that flash is what
+       lines this log up with the video, so it must be in the recording.
+    4. Use the page normally. Click nav items, buttons, rows, the field.
+       Scroll. Hover without clicking. Click empty space a few times — the
+       unqualified clicks matter as much as the real ones.
+    5. Stop recording, press DOWNLOAD, and keep the .json beside the demo id.
+
+  ── WHAT IT DELIBERATELY DOES ───────────────────────────────────────────────
+  Changes state on click. A fixture where nothing happens would be scored
+  against a pipeline that refuses presses with no consequence, which is a rule
+  we want to keep. Nav swaps the pane, buttons open a dialog, rows expand.
+-->
+<style>
+  :root {
+    --ink: #14181c; --mute: #6b7480; --line: #dfe3e8; --bg: #ffffff;
+    --rail: #f4f5f7; --sel: #e3ecfd; --brand: #1a56db;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg); display: flex; height: 100vh; overflow: hidden;
+  }
+  /* The sync flash. Full viewport, maximum contrast, a few frames long. */
+  #flash {
+    position: fixed; inset: 0; background: #000; z-index: 9999;
+    display: none; pointer-events: none;
+  }
+  #flash.on { display: block; }
+
+  aside { width: 232px; flex: none; background: var(--rail); border-right: 1px solid var(--line); padding: 18px 10px; }
+  .brand { font-weight: 700; font-size: 17px; padding: 0 12px 16px; }
+  nav button {
+    display: block; width: 100%; text-align: left; border: 0; background: none;
+    padding: 11px 12px; margin-bottom: 2px; border-radius: 8px;
+    font: inherit; color: #40474f; cursor: pointer;
+  }
+  nav button:hover { background: #eaecef; }
+  nav button[aria-current="true"] { background: var(--sel); color: var(--brand); font-weight: 650; }
+
+  main { flex: 1; padding: 26px 32px; overflow-y: auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--mute); margin: 0 0 22px; }
+
+  .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+  button.act { border: 1px solid var(--line); background: #fff; padding: 9px 15px; border-radius: 8px; font: inherit; cursor: pointer; }
+  button.act:hover { background: #f6f7f9; }
+  button.act:active { background: #e8eaed; }      /* the acknowledgement the flash detector looks for */
+  button.pri { background: var(--brand); border-color: var(--brand); color: #fff; }
+  button.pri:hover { background: #1749be; }
+  button.pri:active { background: #123a9c; }
+  input[type=text] { border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; font: inherit; min-width: 240px; }
+  input[type=text]:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #eef1f4; }
+  th { color: var(--mute); font-weight: 600; font-size: 13px; }
+  tr.row { cursor: pointer; }
+  tr.row:hover td { background: #f7f9fc; }
+  tr.row.open td { background: var(--sel); }
+  .detail td { color: var(--mute); font-size: 13px; background: #fbfcfd; }
+
+  .empty { height: 520px; }                        /* somewhere to click on nothing */
+
+  dialog { border: 0; border-radius: 14px; padding: 24px; box-shadow: 0 18px 50px rgba(0,0,0,.24); min-width: 380px; }
+  dialog::backdrop { background: rgba(20,24,28,.35); }
+
+  /* The recorder's own strip. Fixed, small, and out of the way of the UI. */
+  #hud {
+    position: fixed; right: 14px; bottom: 14px; z-index: 900;
+    background: #14181c; color: #fff; border-radius: 10px; padding: 10px 12px;
+    font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; display: flex; gap: 10px; align-items: center;
+  }
+  #hud button { border: 0; border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  #sync { background: #ffd166; color: #14181c; font-weight: 700; }
+  #dl { background: #2f6bff; color: #fff; }
+  #hud.armed #sync { background: #2bb673; color: #fff; }
+</style>
+</head>
+<body>
+<div id="flash"></div>
+
+<aside>
+  <div class="brand">Console</div>
+  <nav id="nav">
+    <button data-label="Overview" aria-current="true">Overview</button>
+    <button data-label="Projects">Projects</button>
+    <button data-label="API Keys">API Keys</button>
+    <button data-label="Billing">Billing</button>
+    <button data-label="Usage">Usage</button>
+    <button data-label="Settings">Settings</button>
+  </nav>
+</aside>
+
+<main id="main">
+  <h1 id="title">Overview</h1>
+  <p class="sub" id="sub">Everything at a glance.</p>
+
+  <div class="bar">
+    <button class="act pri" data-label="Create new">Create new</button>
+    <button class="act" data-label="Refresh">Refresh</button>
+    <button class="act" data-label="Export">Export</button>
+    <input type="text" data-label="Search" placeholder="Search…" />
+  </div>
+
+  <table>
+    <thead><tr><th>Name</th><th>Created</th><th>Last used</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <!-- Deliberate dead space: clicking here is an "unqualified click" and the
+       pipeline is supposed to refuse it. A fixture with no empty space cannot
+       measure false positives. -->
+  <div class="empty"></div>
+</main>
+
+<dialog id="dlg">
+  <h2 style="margin:0 0 6px">Create new key</h2>
+  <p class="sub" style="margin:0 0 16px">Give it a name you will recognise later.</p>
+  <input type="text" data-label="Key name" placeholder="production-key" style="width:100%" />
+  <div class="bar" style="margin:18px 0 0; justify-content:flex-end">
+    <button class="act" data-label="Cancel">Cancel</button>
+    <button class="act pri" data-label="Create">Create</button>
+  </div>
+</dialog>
+
+<div id="hud">
+  <button id="sync">SYNC</button>
+  <span id="count">not started</span>
+  <button id="dl">DOWNLOAD</button>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ── The log ──────────────────────────────────────────────────────────── */
+  let t0 = null;                    // performance.now() at the sync flash
+  const clicks = [];
+  const hovers = [];
+
+  const now = () => (t0 === null ? null : Math.round(performance.now() - t0) / 1000);
+
+  /** A box as fractions of the viewport, which is the frame when a TAB is shared. */
+  function frac(el) {
+    const r = el.getBoundingClientRect();
+    const W = window.innerWidth, H = window.innerHeight;
+    return [r.left / W, r.top / H, r.width / W, r.height / H].map((v) => Math.round(v * 10000) / 10000);
+  }
+
+  /** What was under the pointer, as this page understands it. */
+  function describe(target) {
+    const el = target.closest("[data-label]") || target.closest("tr.row") || null;
+    if (!el) return { label: "", kind: "empty", bbox: null };
+    const kind =
+      el.tagName === "INPUT" ? "text_field" :
+      el.tagName === "TR" ? "list_item" :
+      el.closest("nav") ? "nav_item" :
+      el.closest("dialog") ? "dialog_button" : "button";
+    return { label: el.dataset.label || el.querySelector("td")?.textContent?.trim() || "", kind, bbox: frac(el) };
+  }
+
+  /**
+   * ── pointerdown, NOT click ─────────────────────────────────────────────
+   * `click` fires after mouseup and only when down and up landed on the same
+   * element, so a press that missed, or one on empty space, never arrives.
+   * Those are exactly the presses this fixture exists to record. pointerdown
+   * is also the moment the pipeline is trying to find, to the frame.
+   */
+  addEventListener("pointerdown", (e) => {
+    if (t0 === null) return;
+    if (e.target.closest("#hud")) return;   // the harness is not part of the demo
+    const d = describe(e.target);
+    clicks.push({
+      t: now(),
+      x: Math.round((e.clientX / window.innerWidth) * 10000) / 10000,
+      y: Math.round((e.clientY / window.innerHeight) * 10000) / 10000,
+      label: d.label,
+      kind: d.kind,
+      bbox: d.bbox,
+      button: e.button,
+      pointer: e.pointerType,          // "mouse" or "touch" — a trackpad tap reads as mouse
+    });
+    paint();
+  }, true);
+
+  // Hover, for scoring the hover half later. Only over things that answer a
+  // click, because that is what the OS draws a hand over and what locate.js sees.
+  let hoverFrom = null, hoverEl = null;
+  addEventListener("pointerover", (e) => {
+    if (t0 === null) return;
+    const el = e.target.closest("[data-label], tr.row");
+    if (!el || el === hoverEl || el.closest("#hud")) return;
+    closeHover();
+    hoverEl = el; hoverFrom = now();
+  }, true);
+  function closeHover() {
+    if (hoverEl && hoverFrom !== null) {
+      const t = now();
+      if (t - hoverFrom >= 0.08) {
+        const d = describe(hoverEl);
+        hovers.push({ start: hoverFrom, end: t, label: d.label, kind: d.kind, bbox: d.bbox });
+      }
+    }
+    hoverEl = null; hoverFrom = null;
+  }
+  addEventListener("pointerout", (e) => { if (!e.relatedTarget || !hoverEl?.contains(e.relatedTarget)) closeHover(); }, true);
+
+  /* ── Sync ─────────────────────────────────────────────────────────────── */
+  const flash = document.getElementById("flash");
+  const hud = document.getElementById("hud");
+  document.getElementById("sync").addEventListener("click", () => {
+    /**
+     * ── THE FLASH IS THE CLOCK ──────────────────────────────────────────
+     * Two recordings of one session on two clocks, exactly the problem
+     * services/studio/sync.js solves for the tracker. Here it is solved by
+     * brute force: the whole viewport goes black for about a tenth of a
+     * second, which is by far the largest thing that happens in the video,
+     * and t = 0 of this log is the moment it starts. truthScore.js finds the
+     * biggest change in analysis.changes and lines the two up on it.
+     */
+    flash.classList.add("on");
+    t0 = performance.now();
+    clicks.length = 0; hovers.length = 0;
+    setTimeout(() => flash.classList.remove("on"), 120);
+    hud.classList.add("armed");
+    paint();
+  });
+
+  function paint() {
+    document.getElementById("count").textContent =
+      t0 === null ? "not started" : `${clicks.length} clicks · ${hovers.length} hovers · ${now().toFixed(1)}s`;
+  }
+
+  document.getElementById("dl").addEventListener("click", () => {
+    closeHover();
+    const blob = new Blob([JSON.stringify({
+      version: 1,
+      recorded_at: new Date().toISOString(),
+      viewport: { w: window.innerWidth, h: window.innerHeight, dpr: devicePixelRatio },
+      // t = 0 is the first frame of the flash.
+      clicks, hovers,
+    }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `truth-${Date.now()}.json`;
+    a.click();
+  });
+
+  /* ── The fixture behaves like an app ──────────────────────────────────── */
+  const DATA = {
+    Overview:  ["staging-key", "production-key", "ci-token"],
+    Projects:  ["lipi-web", "lipi-api", "lipi-studio", "scratch"],
+    "API Keys": ["production-key", "staging-key"],
+    Billing:   ["Sep 2026", "Aug 2026", "Jul 2026"],
+    Usage:     ["Transcribe", "Studio", "Scripts"],
+    Settings:  ["Profile", "Team", "Danger zone"],
+  };
+  const SUB = {
+    Overview: "Everything at a glance.", Projects: "Four projects in this workspace.",
+    "API Keys": "Keys can be revoked at any time.", Billing: "Invoices and payment method.",
+    Usage: "What you have spent this month.", Settings: "Workspace configuration.",
+  };
+
+  function render(section) {
+    document.getElementById("title").textContent = section;
+    document.getElementById("sub").textContent = SUB[section] || "";
+    const body = document.getElementById("rows");
+    body.innerHTML = "";
+    (DATA[section] || []).forEach((name, i) => {
+      const tr = document.createElement("tr");
+      tr.className = "row";
+      tr.innerHTML = `<td>${name}</td><td>${12 - i} Mar 2026</td><td>${i + 1} hour${i ? "s" : ""} ago</td>`;
+      tr.addEventListener("click", () => {
+        const open = tr.classList.toggle("open");
+        const next = tr.nextElementSibling;
+        if (next && next.classList.contains("detail")) next.remove();
+        if (open) {
+          const d = document.createElement("tr");
+          d.className = "detail";
+          d.innerHTML = `<td colspan="3">Created by you · last rotated 14 days ago · scoped to ${section.toLowerCase()}</td>`;
+          tr.after(d);
+        }
+      });
+      body.appendChild(tr);
+    });
+  }
+
+  document.getElementById("nav").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    for (const other of document.querySelectorAll("#nav button")) other.removeAttribute("aria-current");
+    b.setAttribute("aria-current", "true");
+    render(b.dataset.label);
+    document.getElementById("main").scrollTop = 0;
+  });
+
+  const dlg = document.getElementById("dlg");
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-label]");
+    if (!b) return;
+    if (b.dataset.label === "Create new") dlg.showModal();
+    if (b.dataset.label === "Cancel" || b.dataset.label === "Create") dlg.close();
+    if (b.dataset.label === "Refresh") render(document.getElementById("title").textContent);
+  });
+
+  render("Overview");
+  paint();
+})();
+</script>
+</body>
+</html>

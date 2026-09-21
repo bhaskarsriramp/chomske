@@ -481,7 +481,17 @@ export function plan({ changes = [], events = [], zooms = [], duration = 0, budg
  * ones the creator keeps reporting as missing zooms are `moving` and
  * `scrolling` — which the first version of this function did not check at all.
  */
-const HEURISTIC_REFUSAL = new Set(["moving", "scrolling", "arrow", "off-control", "nothing-read"]);
+const HEURISTIC_REFUSAL = new Set(["moving", "scrolling", "arrow", "off-control", "nothing-read", "held"]);
+
+/**
+ * ── AND THE EVIDENCE CHANNELS THAT ARE FIRST-HAND ───────────────────────────
+ * "flash" means the interface drew its own acknowledgement at the pointer
+ * (locate.js flashesFrom) — the one channel in this product that observes a
+ * press rather than inferring it from a consequence. A press kept on that needs
+ * no second opinion about WHETHER it happened; it may still be worth a look for
+ * what it landed on, which is a different and cheaper question.
+ */
+const FIRST_HAND = new Set(["flash"]);
 
 export function uncertainPresses(events, { limit = AUDIT.maxChecks } = {}) {
   const out = [];
@@ -506,7 +516,11 @@ export function uncertainPresses(events, { limit = AUDIT.maxChecks } = {}) {
        */
       if (e.zoomable === false && HEURISTIC_REFUSAL.has(e.basis)) {
         why = REFUSAL_WORDS[e.basis] || "the camera was withheld on an inference";
-      } else if (e.zoomable === true && e.basis === "hand" && !onControl) {
+      } else if (e.zoomable === true && FIRST_HAND.has(e.basis) && !onControl) {
+        // Observed directly, so not in doubt — but nobody has named what it
+        // landed on, and the camera has only a coordinate to aim at.
+        why = "the control lit up, but nothing named it";
+      } else if (e.zoomable === true && (e.basis === "hand" || e.basis === "held") && !onControl) {
         // Allowed, but on one signal only. Worth confirming, and worth framing.
         why = "a hand, but no control was named";
       } else if (e.zoomable === true && e.basis === "control" && arrow) {
@@ -553,6 +567,7 @@ export function uncertainPresses(events, { limit = AUDIT.maxChecks } = {}) {
 
 /** What to tell the model, and later the creator, about why we are asking. */
 const REFUSAL_WORDS = {
+  held: "a clickable pointer was held here but the evidence fell short",
   moving: "the pointer was judged never to have settled here",
   scrolling: "the page was judged to be scrolling here",
   arrow: "the pointer was a plain arrow, so nothing was judged pressable",
