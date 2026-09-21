@@ -304,11 +304,16 @@ const COARSE_STEP = 3;
  * full-resolution one. Only the hunting is cheap.
  *
  * ── AND IT IS NOT ALWAYS WORTH IT ────────────────────────────────────────────
- * A pointer already small in the recording — a 1280-wide capture, or a display
- * at no scaling — halves to eight or nine pixels, which is too little shape to
- * tell from a letter. Below HALF_MIN_PX the frame is searched whole, as before.
+ * A pointer already small in the recording halves to eight or nine pixels,
+ * which is too little shape to tell from a letter. Below HALF_MIN_PX the frame
+ * is searched whole.
+ *
+ * Raised from 20 to 40 after a 21px dark pointer located 65 frames of 376 with
+ * it on. Twenty was a guess; forty means the half template is still twenty
+ * pixels tall, which is the size the full-resolution matcher is known to work
+ * at. Even so this only runs when explicitly asked for — see useHalf below.
  */
-const HALF_MIN_PX = 20;
+const HALF_MIN_PX = 40;
 /** How far around the half-resolution answer the full-resolution pass looks. */
 const REFINE_R = 3;
 
@@ -895,17 +900,32 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   const HALF_H = H >> 1;
   const halfPx = Math.round(cal.heightPx / 2);
   /**
-   * ── AND IT IS A TRADE, SO IT HAS A SWITCH ─────────────────────────────────
-   * Measured on a 78-second 1080p recording: 139s to 96s, and 1000 located
-   * frames to 984. Sixteen frames in two and a half thousand — half a second of
-   * video — where the cursor comes from the difference tracker instead of the
-   * template, which is the fallback this file is designed around and not a
-   * failure. Worth thirty per cent of the wait, but it IS a trade, so it can be
-   * turned off in one variable while somebody measures it properly with
-   * fixtures/truth.html and scripts/truthScore.js.
+   * ── OFF BY DEFAULT, AND THE REASON IS THE WHOLE POINT ─────────────────────
+   * Measured on a 78-second recording with a LIGHT 26px pointer: 139s to 96s,
+   * and 1000 located frames to 984. Sixteen frames in two and a half thousand.
+   * A good trade, and I shipped it on that one measurement.
+   *
+   * On a real recording with a DARK 21px pointer it located 65 frames out of
+   * 376. Seventeen per cent. With almost nothing located there is no pointer
+   * shape for confirmClicks() to judge a press by, so every press was refused,
+   * the demo came back with no zooms at all, and the drawn cursor had nothing
+   * to draw from. The whole product looked broken.
+   *
+   * The cause is the same one that killed it in calibrate(): a cursor is a
+   * one-pixel rim, and halving a 21px pointer leaves a 10px template whose rim
+   * has been averaged into its body. HALF_MIN_PX was set at 20 on no evidence,
+   * and 21 scraped past it.
+   *
+   * So it is off unless asked for. The code stays because the IDEA is sound —
+   * hunting cheap and refining precise is the right shape — but the threshold
+   * that makes it safe has to be found with fixtures/truth.html and
+   * scripts/truthScore.js across real recordings at several pointer sizes and
+   * both designs, not inferred from one light-UI clip.
+   *
+   *   STUDIO_LOCATE_HALF=on     to measure it again
    */
-  const halfOff = String(process.env.STUDIO_LOCATE_HALF || "").trim().toLowerCase() === "off";
-  const useHalf = !halfOff && cal.heightPx >= HALF_MIN_PX && HALF_W > 64 && HALF_H > 64;
+  const halfOn = String(process.env.STUDIO_LOCATE_HALF || "").trim().toLowerCase() === "on";
+  const useHalf = halfOn && cal.heightPx >= HALF_MIN_PX && HALF_W > 64 && HALF_H > 64;
   const wideHalf = useHalf
     ? [
         bounds(prepare(buildTemplate("arrow", halfPx, { dark: cal.dark }), HALF_W)),
@@ -922,7 +942,7 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
       (useHalf
         ? `hunting at ${HALF_W}x${HALF_H} and refining at ${W}x${H}`
         : `whole frames at ${W}x${H}` +
-          (halfOff ? " (STUDIO_LOCATE_HALF=off)" : ` (pointer is only ${cal.heightPx}px; too small to halve)`))
+          (halfOn ? ` (pointer is only ${cal.heightPx}px; too small to halve)` : ""))
   );
 
   /**
