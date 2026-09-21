@@ -25,13 +25,13 @@
  * geminiClient.js): scoring headlines is judgement, not multi-step reasoning, and
  * thinking billed at the output rate for no quality gain.
  */
-import { legacyClient } from "./ai/provider.js";
+import { legacyClient, MODEL as GEMINI } from "./ai/provider.js";
 import NewsItem from "../models/NewsItem.js";
 import { getCategory, formatIdsFor } from "./categories.js";
 import { publishNewsEvent } from "./newsEvents.js";
 import { noEmDash } from "../utils/prose.js";
 
-const MODEL = process.env.GEMINI_RANK_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
+const MODEL = process.env.GEMINI_RANK_MODEL || GEMINI.text;
 const BATCH = parseInt(process.env.NEWS_RANK_BATCH || "60", 10);
 const WINDOW_HOURS = parseInt(process.env.NEWS_RANK_WINDOW_HOURS || "36", 10);
 

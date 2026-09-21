@@ -14,12 +14,19 @@
  * (translateCaptions.js) and the studio passes all import from here, and none
  * of them should have to know how the client is built.
  */
-import { generateJson, retryable, pool } from "../ai/provider.js";
+import { generateJson, retryable, pool, MODEL } from "../ai/provider.js";
 
 export { generateJson, retryable, pool };
 
-export const AUDIO_MODEL =
-  process.env.GEMINI_AUDIO_MODEL || process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
-export const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_AUDIO_MODEL || "gemini-3.5-flash";
+/**
+ * ── THE NAMES COME FROM THE PROVIDER NOW ─────────────────────────────────────
+ * These used to end in `|| "gemini-3.5-flash"`, as did ten other files, and
+ * that is an AI Studio name: on Vertex it is in the catalogue and 404s on every
+ * call. A default has to know which API it will be sent to, so it is chosen in
+ * services/ai/provider.js beside the thing that knows. The environment variables
+ * still win, and still have the same names.
+ */
+export const AUDIO_MODEL = MODEL.audio;
+export const TEXT_MODEL = MODEL.text;
 
 export default { AUDIO_MODEL, TEXT_MODEL, generateJson, retryable, pool };

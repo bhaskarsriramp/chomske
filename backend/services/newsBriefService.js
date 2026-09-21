@@ -22,12 +22,12 @@
  * Cost: roughly 800 input + 180 output tokens per story, once, then cached
  * forever on the cluster. Generated for feed-visible stories only.
  */
-import { generateJson } from "./ai/provider.js";
+import { generateJson, MODEL as GEMINI } from "./ai/provider.js";
 import NewsItem from "../models/NewsItem.js";
 import { publishNewsEvent } from "./newsEvents.js";
 import { noEmDash } from "../utils/prose.js";
 
-const MODEL = process.env.GEMINI_BRIEF_MODEL || process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
+const MODEL = process.env.GEMINI_BRIEF_MODEL || GEMINI.text;
 
 // Below this there is not enough collected text to say anything a headline
 // doesn't already say, and a model asked to write 110 words from two headlines

@@ -18,7 +18,7 @@
  * The containers themselves are managed in services/profileService.js; this file
  * only analyses one of them.
  */
-import { legacyClient } from "./ai/provider.js";
+import { legacyClient, MODEL as GEMINI } from "./ai/provider.js";
 import Transcript from "../models/Transcript.js";
 import VoiceProfile from "../models/VoiceProfile.js";
 import { resolveProfile, voiceFor } from "./profileService.js";
@@ -30,7 +30,7 @@ import {
   SHORT, LONG, laneQuery, laneForScript, laneReady, voiceForLane, laneStatus, LONG_MIN_VIDEOS,
 } from "./voiceLanes.js";
 
-const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
+const MODEL = GEMINI.text;
 
 // How many transcripts feed one profile. Beyond about eight the marginal signal is
 // small and the input cost is not.

@@ -151,6 +151,63 @@ function pick() {
   return { client: _clients.get(id), bucket: id, where: id };
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+   Which model
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What to ask for when nothing in the environment says.
+ *
+ * ── A DEFAULT THAT IGNORES THE PROVIDER IS A DEFAULT THAT IS WRONG ───────────
+ * Eleven files used to carry their own `|| "gemini-3.5-flash"`, and every one of
+ * them was an AI STUDIO name. On Vertex that model exists in the catalogue and
+ * 404s on every call — Google's message says "was not found OR your project does
+ * not have access to it", and it was the second half. So the move to Vertex hit
+ * eleven separate 404s that could each only be fixed by setting an environment
+ * variable nobody knew was needed, in a process that had to be restarted with
+ * the new environment actually loaded.
+ *
+ * The two APIs do not serve the same catalogue. A default that does not know
+ * which one it is talking to cannot be right on both, so it is chosen here,
+ * once, next to the thing that knows.
+ *
+ * Neither of these is a claim about which model is BEST — only about which one
+ * answers. Set GEMINI_TEXT_MODEL and friends to choose deliberately; the doctor
+ * (scripts/aiDoctor.js) prints what this project can actually call.
+ */
+const FALLBACK = {
+  // Verified callable on this project: the 3.x families are listed in
+  // us-central1 and every one of them refuses with 404.
+  vertex: "gemini-2.5-flash",
+  aistudio: "gemini-3.5-flash",
+};
+
+const first = (...vals) => vals.map((v) => String(v || "").trim()).find(Boolean) || "";
+
+/**
+ * The model each kind of call uses.
+ *
+ * `GEMINI_MODEL` sets all four at once, which is what you want when a project
+ * can only reach one. The specific variables win over it.
+ */
+export const MODEL = (() => {
+  const all = first(process.env.GEMINI_MODEL);
+  const base = all || FALLBACK[PROVIDER];
+  return {
+    text: first(process.env.GEMINI_TEXT_MODEL, process.env.GEMINI_AUDIO_MODEL, process.env.GEMINI_VIDEO_MODEL, base),
+    vision: first(process.env.GEMINI_VISION_MODEL, process.env.GEMINI_TEXT_MODEL, base),
+    audio: first(process.env.GEMINI_AUDIO_MODEL, process.env.GEMINI_TEXT_MODEL, process.env.GEMINI_VIDEO_MODEL, base),
+    video: first(process.env.GEMINI_VIDEO_MODEL, process.env.GEMINI_TEXT_MODEL, base),
+  };
+})();
+
+/** One line for the boot log: which model every kind of call will ask for. */
+export function describeModels() {
+  const uniq = [...new Set(Object.values(MODEL))];
+  if (uniq.length === 1) return uniq[0];
+  return Object.entries(MODEL).map(([k, v]) => `${k}=${v}`).join(" ");
+}
+
 /** For the startup log and the health endpoint: what this process will do. */
 export function describeProvider() {
   if (isVertex()) return "vertex (project " + (PROJECT || "from environment") + ", " + REGIONS.join(", ") + ")";

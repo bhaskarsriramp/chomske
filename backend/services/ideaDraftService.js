@@ -30,9 +30,9 @@
  * talking points is something they read and correct. The step only works if it
  * still looks like a draft.
  */
-import { generateJson } from "./ai/provider.js";
+import { generateJson, MODEL as GEMINI } from "./ai/provider.js";
 
-const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
+const MODEL = GEMINI.text;
 
 /**
  * How long a draft runs.

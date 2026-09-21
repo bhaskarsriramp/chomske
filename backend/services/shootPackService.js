@@ -35,11 +35,11 @@
  * added. The analysis was already paying for it. This is the screen it was
  * always for.
  */
-import { legacyClient } from "./ai/provider.js";
+import { legacyClient, MODEL as GEMINI } from "./ai/provider.js";
 import { sentences, words } from "./voiceMetrics.js";
 import { FALLBACK_WORDS_PER_SECOND } from "./creditPricing.js";
 
-const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
+const MODEL = GEMINI.text;
 
 /**
  * ── ONE CLIENT FOR THE WHOLE PROCESS ─────────────────────────────────────────

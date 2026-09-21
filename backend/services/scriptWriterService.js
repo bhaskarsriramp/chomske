@@ -17,12 +17,12 @@
  * not to invent numbers, because a creator reading a fabricated benchmark aloud
  * to their audience is the worst thing this product could do to them.
  */
-import { legacyClient } from "./ai/provider.js";
+import { legacyClient, MODEL as GEMINI } from "./ai/provider.js";
 import { metricsBlock, gradeDraft, sentences, hasNativeScript, nativeShare } from "./voiceMetrics.js";
 import { wordTarget } from "./creditPricing.js";
 import { noEmDash, noEmDashAll, dropDashes, trimTo } from "../utils/prose.js";
 
-const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
+const MODEL = GEMINI.text;
 
 // Length is no longer a constant. It used to be a fixed 180-260 words for every
 // script (SCRIPT_TARGET_WORDS), which could not serve a long-form order at all

@@ -26,11 +26,11 @@
  * caller writes from the brief alone and refunds the lookup fee. Nothing here
  * ever throws at the request path, and nothing here is allowed to lose a script.
  */
-import { legacyClient } from "./ai/provider.js";
+import { legacyClient, MODEL as GEMINI } from "./ai/provider.js";
 import { fetchGoogleNews } from "./sources/googleNews.js";
 import { fetchArticles } from "./tinyfishClient.js";
 
-const MODEL = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
+const MODEL = GEMINI.text;
 
 /** India by default: the creator writing in Hinglish about "the budget" means
  *  the Indian one, and a US-locale search would answer a different question. */

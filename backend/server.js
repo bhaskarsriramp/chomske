@@ -34,7 +34,7 @@ import User from "./models/User.js";
 import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
 import { initSocketServer } from "./socket/index.js";
-import { describeProvider, providerReady, limits } from "./services/ai/provider.js";
+import { describeProvider, describeModels, providerReady, limits } from "./services/ai/provider.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "8001", 10);
@@ -233,6 +233,15 @@ function assertConfig() {
     `[server] model provider: ${describeProvider()} — ` +
       `${l.rpm} req/min per bucket, ${l.concurrency} in flight, ${l.attempts} attempts`
   );
+  /**
+   * ── AND WHICH MODEL, BECAUSE THAT IS THE ONE THAT KEEPS BEING WRONG ───────
+   * A model name that does not exist on the provider in use fails as a 404 deep
+   * inside whichever pass happened to run first, and reads as "the analysis
+   * broke". Printed here it is the second line of the boot output, next to the
+   * provider it has to match. scripts/aiDoctor.js says what this project can
+   * actually call.
+   */
+  console.log(`[server] model: ${describeModels()}`);
 }
 
 (async () => {

@@ -19,9 +19,9 @@
  * of the product, so the prompt forbids it several different ways.
  */
 
-import { generate, isVertex } from "./ai/provider.js";
+import { generate, isVertex, MODEL } from "./ai/provider.js";
 
-const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
+const VIDEO_MODEL = MODEL.video;
 
 /**
  * ── THE KEY POOL THAT USED TO LIVE HERE IS GONE ──────────────────────────────

@@ -35,6 +35,7 @@
  */
 import fsp from "fs/promises";
 import { generateJson, pool, TEXT_MODEL } from "../edit/gemini.js";
+import { MODEL } from "../ai/provider.js";
 import {
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
@@ -44,8 +45,8 @@ import {
 import { newId, clampRect } from "./timeline.js";
 
 /** Vision reads and text reasoning both go to the same flash model by default. */
-export const VISION_MODEL = process.env.GEMINI_VISION_MODEL || process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
-export const AUDIO_MODEL = process.env.GEMINI_AUDIO_MODEL || VISION_MODEL;
+export const VISION_MODEL = MODEL.vision;
+export const AUDIO_MODEL = MODEL.audio;
 
 /**
  * Frames per UI-analysis request.
