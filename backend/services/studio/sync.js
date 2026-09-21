@@ -428,6 +428,95 @@ export function inBusy(screen, t, x, y) {
 }
 
 /**
+ * When the screen went quiet again after a moment.
+ *
+ * ── THE CAMERA WAS LEAVING BEFORE THE ANSWER ARRIVED ─────────────────────────
+ * A zoom holds for a fixed beat after the press (events.js HOLD). That is right
+ * when a control responds instantly and wrong whenever it does not: click "Open
+ * Calendar", the camera pushes in, and what the viewer is shown for the length
+ * of the hold is a grey loading skeleton — then the camera pulls out at the
+ * exact moment the real calendar renders. The wait is framed and the payoff is
+ * not, which is the reverse of what a demo is for.
+ *
+ * A press is worth watching until its result is ON SCREEN and STILL. That is
+ * measurable from the same series everything else here is measured from: the
+ * screen is settled once the change per frame has been under the noise floor
+ * for a moment together.
+ *
+ * Bounded at both ends. Never shorter than the beat a fast control deserves,
+ * and never longer than `max` — a page that never settles (a video, a ticker, a
+ * progress bar that runs for a minute) must not hold the camera hostage.
+ *
+ * @returns {number} seconds after `t`, within [min, max]
+ */
+export function settleAfter(screen, t, { min = 0.55, max = 2.6, quiet = 0.012, forMs = 300 } = {}) {
+  const series = screen?.motion;
+  if (!Array.isArray(series) || !series.length) return min;
+
+  const fps = num(screen.fps) || 12;
+  const need = Math.max(2, Math.round((forMs / 1000) * fps));
+  let run = 0;
+
+  for (const m of series) {
+    const dt = num(m.t) - t;
+    if (dt < min) continue;          // the minimum beat is owed regardless
+    if (dt > max) break;
+    if (num(m.cover) <= quiet) {
+      run++;
+      // Quiet for long enough: the result is up and holding still. The camera
+      // may leave at the START of the quiet run, not the end of it — the
+      // stillness is the evidence, not part of what there is to look at.
+      if (run >= need) return clamp(dt - (need - 1) / fps, min, max);
+    } else {
+      run = 0;
+    }
+  }
+  return max;
+}
+
+/**
+ * How much of a changed region was something animating on its own.
+ *
+ * ── inBusy() ASKS ABOUT A POINT, AND A VIDEO IS NOT A POINT ──────────────────
+ * inBusy() exists to throw away a pointer sighting that is really a spinner, so
+ * it takes the one position it is suspicious of. The question here is a
+ * different one: a press is believed because something CHANGED afterwards, and
+ * what has to be ruled out is that the change was a region of the screen moving
+ * by itself — a playing video, a carousel, an animated hero.
+ *
+ * That is a question about an area, and it cannot be answered by sampling a
+ * point: the centre of a 900-pixel-wide video is inside it and the centre of
+ * the bounding box around "the video AND a button that lit up" may not be.
+ *
+ * @param {object} screen  readScreen()'s output
+ * @param {number} t
+ * @param {{x,y,w,h}} box  fractions of the frame
+ * @returns {number} 0..1, the share of the box's cells that were animating
+ */
+export function busyShare(screen, t, box) {
+  if (!screen?.busy?.length || !screen.grid || !box) return 0;
+  const gw = screen.grid.w;
+  const gh = screen.grid.h;
+
+  const x0 = Math.max(0, Math.min(gw - 1, Math.floor(num(box.x) * gw)));
+  const y0 = Math.max(0, Math.min(gh - 1, Math.floor(num(box.y) * gh)));
+  const x1 = Math.max(x0, Math.min(gw - 1, Math.ceil((num(box.x) + num(box.w)) * gw) - 1));
+  const y1 = Math.max(y0, Math.min(gh - 1, Math.ceil((num(box.y) + num(box.h)) * gh) - 1));
+  const cells = (x1 - x0 + 1) * (y1 - y0 + 1);
+  if (cells <= 0) return 0;
+
+  const hot = new Set();
+  for (const s of screen.busy) {
+    if (t < s.start - 0.1 || t > s.end + 0.1) continue;
+    const sy = (s.c / gw) | 0;
+    const sx = s.c - sy * gw;
+    if (sx < x0 || sx > x1 || sy < y0 || sy > y1) continue;
+    hot.add(s.c);
+  }
+  return hot.size / cells;
+}
+
+/**
  * Every compact patch on a quiet frame. On such a frame they are the pointer.
  *
  * Connected components, same as the browser tracker, with the same rejections:
@@ -1165,4 +1254,4 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
   };
 }
 
-export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, dropRepaints, dropOrbits, dropFliers, alignCapture };
+export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, busyShare, settleAfter, dropRepaints, dropOrbits, dropFliers, alignCapture };

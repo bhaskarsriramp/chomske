@@ -34,6 +34,19 @@
  * one by hand. A missed click costs a zoom; it does not cost the recording.
  */
 import { newId, rampsOf, clampRect } from "./timeline.js";
+import { busyShare } from "./sync.js";
+
+/**
+ * How much of a changed region has to be animating before the change is the
+ * animation rather than a reaction to anything.
+ *
+ * Not a majority — well past one. A press on a control that happens to sit
+ * beside a playing video produces a box covering both, and that box is perhaps
+ * half animation; refusing it would throw away real presses on any page with a
+ * video on it. Three quarters means the change is essentially all animation
+ * with a little noise, which is what a video playing to itself looks like.
+ */
+const MOSTLY_ANIMATION = 0.75;
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -939,8 +952,31 @@ function grewAfter(screen, mot, at, t) {
    * occupy, and it is there in both cases. So the test is asked first, of the
    * same evidence, whichever branch is about to run.
    */
-  if (num(at.energy) >= CONSEQUENCE_ALONE) return true;
-  if (num(at.w) * num(at.h) >= CONSEQUENCE_AREA) return true;
+  /**
+   * ── AND IT IS NOT A CONSEQUENCE IF IT WAS GOING TO HAPPEN ANYWAY ──────────
+   * Both tests above read the BROWSER TRACKER's motion log, which is a single
+   * bounding box around everything that changed and knows nothing about what
+   * was merely animating. sync.js measures exactly that — readGrids() marks a
+   * cell as busy when it changes through most of a window, which a playing
+   * video does in every frame — and the two shortcuts here were returning true
+   * before that reading was ever consulted.
+   *
+   * The result, on a real recording: a landing page with a product video
+   * autoplaying on it. The video clears both bars on its own, every frame, so
+   * every pointer rest anywhere near it was "corroborated" and the camera
+   * pushed into a video nobody had pressed. Worse than the bad zoom itself, it
+   * spent the demo's zoom budget (restToFull, capZoomed), so the real click on
+   * "Pricing" a second later had nothing left to spend.
+   *
+   * The animation detection was correct and computed and simply not asked. It
+   * is asked now, of the area that changed rather than of a point, because a
+   * video is not a point. See sync.js busyShare.
+   */
+  const selfMoving = busyShare(screen, num(at.t), at);
+  if (selfMoving < MOSTLY_ANIMATION) {
+    if (num(at.energy) >= CONSEQUENCE_ALONE) return true;
+    if (num(at.w) * num(at.h) >= CONSEQUENCE_AREA) return true;
+  }
 
   if (series) {
     const here = nearest(series, at.t);
@@ -2197,6 +2233,35 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
      * pointer answers that outright.
      */
     if (moving && !lit && !heldClickable(os)) add(-W_MOVING, "the pointer never settled here");
+    /**
+     * ── A SCROLL IS SOMETIMES WHAT THE CLICK DID, AND WE CANNOT TELL ──────
+     * Half the links on a marketing page are anchors: pressing "Pricing" in a
+     * nav does not navigate, it scrolls. A real demo lost its Pricing zoom to
+     * this, and the obvious repair is to soften the penalty when the operating
+     * system was drawing a hand at the spot.
+     *
+     * That was tried and reverted, because the two cases are the SAME evidence.
+     * An anchor click is: hand on a link, page scrolls, pointer stays put. A
+     * wheel scroll with the pointer resting on a nav item is: hand on a link,
+     * page scrolls, pointer stays put. Softening the penalty enough to pass the
+     * first passes the second by exactly the same margin — and the second is
+     * the precise false positive this penalty was added for ("the creator
+     * scrolled a billing page with the pointer resting on a dropdown, and a
+     * zoom landed on a click that never happened").
+     *
+     * There is no cheap third signal that separates them. There are two
+     * expensive ones, and both are already built:
+     *
+     *   the flash   the control drew its own acknowledgement (locate.js). A
+     *               wheel scroll does not make a nav item light up. This
+     *               retires the penalty outright, above.
+     *   the audit   `scrolling` is a heuristic refusal, so audit.js cuts the
+     *               frames either side and asks what actually happened. It
+     *               comes back as a suggestion rather than a silent zoom.
+     *
+     * So the gate stays strict and the rescue happens where there is evidence
+     * to rescue it with. Trading a missing zoom for a phantom one is not a fix.
+     */
     if (scrolled && !lit) add(-W_SCROLLED, "the page was scrolling");
 
     zoomable = score >= PRESS_BAR;
@@ -2343,7 +2408,7 @@ export function dropScrollZooms(zooms, events, { motion = [], onNote = () => {} 
   });
 }
 
-export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE, steps = [] } = {}) {
+export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SETTLE, hold = HOLD, merge = MERGE, steps = [], sourceWidth = 0, holdFor = null } = {}) {
   const out = [];
   const clicks = events.filter(
     // zoomable is set by confirmClicks() once the model has said what was under
@@ -2370,13 +2435,22 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
 
   for (const c of clicks) {
     const start = Math.max(0, c.t - settle);
-    const end = Math.min(duration || Infinity, c.t + hold);
+    /**
+     * ── THE CAMERA LEAVES WHEN THE RESULT IS UP, NOT ON A STOPWATCH ────────
+     * `hold` is the beat a control that responds instantly deserves. Anything
+     * slower — a page that fetches, a panel that renders — spent that beat
+     * showing a loading state and the camera pulled out exactly as the answer
+     * appeared. `holdFor` asks the recording when the screen actually settled
+     * after this press. See sync.js settleAfter. Absent, nothing changes.
+     */
+    const keep = holdFor ? Math.max(hold, holdFor(c.t)) : hold;
+    const end = Math.min(duration || Infinity, c.t + keep);
     if (end - start < 0.2) continue;
 
     const mine = boxOf(c);
     // A named control sets the strength of the shot; an unnamed one keeps the
     // caller's constant, which is the behaviour every existing demo has.
-    const want = mine.w > 0 ? levelForBox(mine) : level;
+    const want = mine.w > 0 ? levelForBox(mine, { sourceWidth }) : Math.min(level, levelForBox(null, { sourceWidth }));
 
     /**
      * ── TWO PRESSES IN ONE STEP ARE ONE SHOT ──────────────────────────────
@@ -2539,10 +2613,38 @@ const TARGET_SHARE = 0.34;
 const LEVEL_MIN = 1.4;
 const LEVEL_MAX = 2.8;
 
-export function levelForBox(rect) {
+/**
+ * ── AND THE CEILING DEPENDS ON HOW MANY PIXELS THERE ARE TO SPEND ────────────
+ * A zoom does not magnify, it crops and rescales. At level L the camera shows
+ * sourceWidth/L pixels across the full width of the export, so the upscale is
+ * L × exportWidth / sourceWidth — and past a point the interface text, which is
+ * the entire content of a product demo, goes soft.
+ *
+ * The cap used to be a flat 2.8, which is the right number for a 4K recording
+ * and badly wrong for a 1080p one. Exported at 1080p, a 1080p source at 2.4×
+ * IS a 2.4× upscale, and it looked it: every zoomed frame of a real demo came
+ * out mushy while the unzoomed ones were sharp.
+ *
+ * ── WHY 1.8 AND NOT 1.0 ──────────────────────────────────────────────────────
+ * Refusing to upscale at all would cap a 1080p recording at 1.0× — no zoom.
+ * Some softness in a zoom is expected and forgiven; a viewer reads it as a
+ * close-up. 1.8 is where measured test renders stopped looking like a close-up
+ * and started looking like a mistake.
+ *
+ * The reference is 1920 because that is what almost every export is: the
+ * YouTube and Original presets on a 1080p capture, and the smaller presets
+ * only ever have MORE pixels per output pixel than this assumes.
+ */
+const MAX_UPSCALE = 1.8;
+const REFERENCE_WIDTH = 1920;
+
+export function levelForBox(rect, { sourceWidth = 0 } = {}) {
   const span = Math.max(num(rect?.w), num(rect?.h));
-  if (!(span > 0)) return 2.0;
-  return Math.round(clamp(TARGET_SHARE / span, LEVEL_MIN, LEVEL_MAX) * 10) / 10;
+  const ceiling = sourceWidth > 0
+    ? clamp((MAX_UPSCALE * sourceWidth) / REFERENCE_WIDTH, LEVEL_MIN, LEVEL_MAX)
+    : LEVEL_MAX;
+  if (!(span > 0)) return Math.min(2.0, ceiling);
+  return Math.round(clamp(TARGET_SHARE / span, LEVEL_MIN, ceiling) * 10) / 10;
 }
 
 /**

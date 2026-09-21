@@ -47,7 +47,7 @@ import {
 } from "./vision.js";
 import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed } from "./events.js";
 import { changeMoments, auditEdit, applyPatches } from "./audit.js";
-import { alignCapture } from "./sync.js";
+import { alignCapture, settleAfter } from "./sync.js";
 import { locatePointer, mergeLocated, stepPath, snapToLocated } from "./locate.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
@@ -337,7 +337,24 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * pass off there are no steps and the gap on the clock decides, exactly as
    * before. See MERGE_IN_STEP in events.js.
    */
-  const clickZooms = zoomsFromClicks(events, { duration, steps });
+  const clickZooms = zoomsFromClicks(events, {
+    duration,
+    steps,
+    /**
+     * ── HOW STRONG A ZOOM THIS RECORDING CAN AFFORD ─────────────────────────
+     * A zoom crops and rescales, so the level that stays sharp depends on how
+     * many source pixels there are to spend. See levelForBox.
+     */
+    sourceWidth: source?.width || 0,
+    /**
+     * ── AND HOW LONG TO STAY ────────────────────────────────────────────────
+     * Until the screen has settled after the press, rather than for a fixed
+     * beat. A control that answers instantly is unaffected; one that loads for
+     * a second no longer has its loading framed and its answer missed. See
+     * sync.js settleAfter.
+     */
+    holdFor: aligned.screen ? (t) => settleAfter(aligned.screen, t) : null,
+  });
   let zooms = restToFull(clickZooms, { rest: REST });
   zooms = capZoomed(zooms, duration);
 

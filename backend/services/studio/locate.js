@@ -282,16 +282,52 @@ const COARSE_STEP = 3;
 /** Grey levels of core-over-band contrast that make a coarse candidate. */
 const COARSE = 22;
 
-/** The coarse test: is this a pointer-shaped patch of the right contrast? */
+/**
+ * The most coarse candidates one frame's exact pass will re-score.
+ *
+ * ── WHY THERE HAS TO BE A LIMIT AT ALL ───────────────────────────────────────
+ * The coarse test is a filter, and how much it filters depends entirely on what
+ * is on the screen. Measured, same 1920×1080 frame size, same template:
+ *
+ *   a calm light UI        1,939 candidates
+ *   a dark code editor    24,905 candidates      — thirteen times as many
+ *
+ * Every candidate then costs a 5×5 block of full cross-correlations, so the
+ * exact pass went from about a tenth of a second per frame per template to
+ * three tenths — and that is paid for EVERY template on EVERY frame the pointer
+ * is lost. A dark, text-dense recording could leave an analysis running for a
+ * very long time with nothing in the log to say why.
+ *
+ * ── AND WHY THE TOP N ARE THE RIGHT ONES TO KEEP ─────────────────────────────
+ * The filter already measures how pointer-shaped a patch is: the contrast
+ * between the template's core and the band around it. A cursor is drawn to be
+ * legible on any background and is close to the strongest such contrast
+ * anywhere in a frame; syntax-highlighted text on a dark background merely
+ * clears the bar. Keeping the strongest candidates keeps the pointer.
+ *
+ * Set above what a calm screen produces, so ordinary recordings behave exactly
+ * as they did and only the pathological ones are trimmed.
+ */
+const COARSE_CAP = 4000;
+
+/**
+ * The coarse test: how pointer-shaped is this patch, in grey levels of
+ * core-over-band contrast? Below the bar returns -1.
+ *
+ * Returns a STRENGTH rather than a boolean so the candidates can be ranked. A
+ * boolean is enough to filter and useless for deciding which to keep when there
+ * are far too many, which is the case this has to survive.
+ */
 function coarseAt(frame, W, H, t, x, y) {
-  if (x + t._minDx - 2 < 0 || y + t._minDy - 2 < 0 || x + t._maxDx + 2 >= W || y + t._maxDy + 2 >= H) return false;
+  if (x + t._minDx - 2 < 0 || y + t._minDy - 2 < 0 || x + t._maxDx + 2 >= W || y + t._maxDy + 2 >= H) return -1;
   const base = y * W + x;
   let c = 0;
   for (let k = 0; k < t.coreIdx.length; k++) c += frame[base + t.coreIdx[k]];
   let b = 0;
   for (let k = 0; k < t.bandIdx.length; k++) b += frame[base + t.bandIdx[k]];
   const diff = c / t.coreIdx.length - b / t.bandIdx.length;
-  return t.dark ? diff <= -COARSE : diff >= COARSE;
+  const strength = t.dark ? -diff : diff;
+  return strength >= COARSE ? strength : -1;
 }
 
 /** Masked normalised cross-correlation at one hotspot position. */
@@ -393,12 +429,35 @@ const UNIQUE = 0.12;
 function topTwo(frame, W, H, t) {
   const sep = Math.max(20, t.heightPx * 1.5);
   // Coarse: every second pixel, with the test that tolerates a pixel of error.
-  const hits = [];
+  let hits = [];
+  const strengths = [];
   for (let y = 0; y < H; y += COARSE_STEP) {
     for (let x = 0; x < W; x += COARSE_STEP) {
-      if (coarseAt(frame, W, H, t, x, y)) hits.push(x, y);
+      const s = coarseAt(frame, W, H, t, x, y);
+      if (s >= 0) {
+        hits.push(x, y);
+        strengths.push(s);
+      }
     }
   }
+
+  /**
+   * ── TOO MANY CANDIDATES IS A PROPERTY OF THE SCREEN, NOT OF THE POINTER ────
+   * See COARSE_CAP. On a dark, text-dense interface the filter passes thirteen
+   * times what it passes on a calm one, and the exact pass below is linear in
+   * that number. Keeping the strongest is what turns an unbounded cost into a
+   * bounded one without changing anything on a recording that was never near
+   * the limit.
+   */
+  if (strengths.length > COARSE_CAP) {
+    const bar = [...strengths].sort((a, b) => b - a)[COARSE_CAP - 1];
+    const kept = [];
+    for (let i = 0, j = 0; j < strengths.length; i += 2, j++) {
+      if (strengths[j] >= bar) kept.push(hits[i], hits[i + 1]);
+    }
+    hits = kept;
+  }
+
   // Exact: every pixel around every coarse hit, keeping the best per place.
   const found = [];
   for (let i = 0; i < hits.length; i += 2) {
@@ -705,6 +764,30 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   const ringOuter = Math.max(14, Math.round((cal.heightPx || 18) * RING));
   const ringHole = Math.max(10, Math.round((cal.heightPx || 18) * RING_HOLE));
 
+  /**
+   * ── AN ANALYSIS HAS TO FINISH ────────────────────────────────────────────
+   * Searching the whole frame for every template is most of the cost of this
+   * file, and how expensive it is depends on what is on the screen rather than
+   * on how long the recording is. COARSE_CAP bounds one search; this bounds all
+   * of them together, because a bound per unit of work is not the same as a
+   * bound on the work.
+   *
+   * Past the budget the global search stops and the cheap local tracking
+   * carries on: the pointer is still followed frame to frame wherever it was
+   * already being followed, and where it is lost the difference tracker fills
+   * in, which is the documented fallback and exactly what happens on a
+   * recording no template matches. A demo that analyses with a worse cursor
+   * path is a demo. One that never finishes is not.
+   *
+   * Proportional to length, floored so a short recording is never cut off in
+   * the middle, capped so a long one cannot run away.
+   */
+  const budgetMs = Math.round(
+    clamp(num(process.env.STUDIO_LOCATE_BUDGET_MS) || duration * 2500, 90_000, 600_000)
+  );
+  const startedAt = Date.now();
+  let overBudget = false;
+
   await ffmpegToFrames(video, {
     width: W, height: H, fps, pixelFormat: "gray",
     onFrame: async (frame, i) => {
@@ -779,7 +862,15 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
        * on every frame above, so a pointer coming back is caught at once.
        */
       const every = lostFor < 4 ? 1 : lostFor < 12 ? 3 : 6;
-      if ((!hit || hit.score < FOUND) && lostFor % every === 0) {
+      if (!overBudget && Date.now() - startedAt > budgetMs) {
+        overBudget = true;
+        console.warn(
+          "[studio] pointer search gave up its remaining frames after " +
+            Math.round(budgetMs / 1000) + "s (at " + t.toFixed(1) + "s of " + duration.toFixed(1) +
+            "s); the tracker fills in from here"
+        );
+      }
+      if (!overBudget && (!hit || hit.score < FOUND) && lostFor % every === 0) {
         let r = null;
         /**
          * ── A FLICK IS COMPRESSED HARDEST ─────────────────────────────────────
