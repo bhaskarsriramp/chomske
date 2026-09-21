@@ -26,6 +26,7 @@ import EditProject from "../../models/EditProject.js";
 import EditJob from "../../models/EditJob.js";
 import Script from "../../models/Script.js";
 import { materialize, putFile, removePrefix, removeObject } from "../media/storage.js";
+import { jobDir } from "../media/scratch.js";
 import {
   probe, makeVideoProxy, makeAudioProxy, extractSpeechAudio, makeThumbnail, cutAudio, detectSpeech,
 } from "../media/ffmpeg.js";
@@ -119,7 +120,8 @@ async function execute(job) {
     ).catch(() => {});
   }, LEASE_MS / 3);
 
-  const workDir = path.join(os.tmpdir(), "lipi-edit", String(job._id));
+  // See services/media/scratch.js: STUDIO_TMPDIR moves this off the boot disk.
+  const workDir = await jobDir("lipi-edit", job._id);
   await fsp.mkdir(workDir, { recursive: true }).catch(() => {});
   const handler = HANDLERS[job.type];
 

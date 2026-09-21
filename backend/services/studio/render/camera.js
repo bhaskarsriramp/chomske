@@ -57,10 +57,30 @@ const round3 = (v) => Math.round(v * 1000) / 1000;
  * detail the zoom exists to show. Capped at 2×, because the memory cost is
  * quadratic and the benefit past 2× is below the noise floor of an H.264 encode.
  */
+/**
+ * ── AND THE STEP THAT MATTERS IS A FRACTION OF THE PICTURE, NOT A PIXEL ──────
+ * The rule below asks for twice the output width, which puts zoompan's
+ * rounding at half an output pixel whatever the export is. That is the right
+ * target at 1080p and far past it at 4K: half a pixel of 3840 is a quarter of
+ * the picture-fraction that half a pixel of 1920 is, and nobody can see the
+ * difference. What it costs is not nothing — a 4K export was supersampling to
+ * 7680 × 4320, thirty-three megapixels a frame, four times the filter work of
+ * the 1080p case on top of four times the encode.
+ *
+ * So there is a second ceiling: never resample finer than one part in 3840 of
+ * the picture, which is exactly the fineness a 1080p export already gets. A 4K
+ * source then needs no supersampling at all — its own pixels are already that
+ * fine — and everything at or below 1080p is unchanged to the pixel.
+ */
+const FINE_ENOUGH_WIDTH = 3840;
+
 export function supersampleFor({ sourceWidth, videoWidth }) {
   if (!(sourceWidth > 0) || !(videoWidth > 0)) return 1;
+  // Half an output pixel of rounding...
   const want = (videoWidth * 2) / sourceWidth;
-  return Math.min(2, Math.max(1, Math.round(want * 100) / 100));
+  // ...but never finer than one part in 3840 of the finished picture.
+  const enough = FINE_ENOUGH_WIDTH / sourceWidth;
+  return Math.min(2, Math.max(1, Math.round(Math.min(want, enough) * 100) / 100));
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

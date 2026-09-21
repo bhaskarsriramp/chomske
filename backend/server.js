@@ -295,13 +295,32 @@ function assertConfig() {
       console.log(`[server] Lipi API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
       console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);
       startNewsScheduler();
-      // Picks up uploads, matching and exports, including any a restart
-      // interrupted: their leases lapse and they are claimed again.
-      startEditRunner();
-      // The demo studio's own queue: preparing captures, the Gemini analysis,
-      // and exports. Separate from the editor's so one product's backlog is
-      // never the other's ceiling.
-      startStudioRunner();
+      /**
+       * ── THE QUEUES RUN HERE ONLY IF NOBODY ELSE IS RUNNING THEM ───────────
+       * The heavy work moved to worker.js. Not for capacity — for the event
+       * loop: locate.js is synchronous JavaScript and, measured, ninety-eight
+       * per cent of an analysis, so every frame it scores blocks this process.
+       * One creator analysing a demo made the API stutter for everyone.
+       *
+       * RUN_WORKERS=true puts them back in here, which is what local
+       * development wants: one command, one process, no pm2.
+       *
+       *   production   pm2 start server.js --name api      (queues off)
+       *                pm2 start worker.js --name worker   (queues on)
+       *   local        RUN_WORKERS=true npm run dev
+       */
+      if (String(process.env.RUN_WORKERS || "").toLowerCase() === "true") {
+        console.log("[server] RUN_WORKERS=true — running the queues in the API process");
+        // Picks up uploads, matching and exports, including any a restart
+        // interrupted: their leases lapse and they are claimed again.
+        startEditRunner();
+        // The demo studio's own queue: preparing captures, the Gemini analysis,
+        // and exports. Separate from the editor's so one product's backlog is
+        // never the other's ceiling.
+        startStudioRunner();
+      } else {
+        console.log("[server] queues are not running here; start worker.js (RUN_WORKERS=true to run them in-process)");
+      }
       // Load the key pool once at boot. Without this, isApidirectConfigured()
       // stays false until something forces a load, and nothing would, because
       // the duration gate is itself behind that check, so it would silently

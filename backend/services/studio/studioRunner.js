@@ -40,6 +40,7 @@ import { missingFonts, FONTS_DIR } from "./render/ass.js";
 import { sanitizeTimeline } from "./timeline.js";
 import { RENDER_ENGINE, cleanExportOptions } from "./exportOptions.js";
 import { STUDIO_LIMITS, demoKey, demoPrefix, bumpExpiry, publishProgress } from "./demoService.js";
+import { jobDir } from "../media/scratch.js";
 
 const WORKER = `${os.hostname()}:${process.pid}`;
 const LEASE_MS = 90_000;
@@ -123,8 +124,10 @@ async function execute(job) {
     ).catch(() => {});
   }, LEASE_MS / 3);
 
-  const workDir = path.join(os.tmpdir(), "lipi-studio", String(job._id));
-  await fsp.mkdir(workDir, { recursive: true }).catch(() => {});
+  // Where a job works on disk is a deployment question, not a code one: a
+  // Local SSD on a VM, and definitely not /tmp in a container, where it is RAM.
+  // See services/media/scratch.js.
+  const workDir = await jobDir("lipi-studio", job._id);
   const handler = HANDLERS[job.type];
 
   try {

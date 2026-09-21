@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "worker": "node worker.js",
+    "dev": "RUN_WORKERS=true node --watch server.js"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.22.0",

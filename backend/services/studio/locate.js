@@ -311,6 +311,18 @@ const COARSE = 22;
 const COARSE_CAP = 4000;
 
 /**
+ * How many of the strongest candidates are tried before the rest.
+ *
+ * The pointer is the strongest candidate on most frames, so this is the number
+ * that decides how much of an analysis is actually paid for. Three hundred
+ * because the two frames measured where the pointer was NOT near the top ranked
+ * it in the thousands — there is no value between "a few hundred" and "all of
+ * them", so this is set to catch the common case cheaply and let the rare one
+ * fall through to the full scan rather than trying to guess a middle.
+ */
+const FAST_TIER = parseInt(process.env.STUDIO_FAST_TIER || "300", 10);
+
+/**
  * The coarse test: how pointer-shaped is this patch, in grey levels of
  * core-over-band contrast? Below the bar returns -1.
  *
@@ -442,26 +454,50 @@ function topTwo(frame, W, H, t) {
   }
 
   /**
-   * ── TOO MANY CANDIDATES IS A PROPERTY OF THE SCREEN, NOT OF THE POINTER ────
-   * See COARSE_CAP. On a dark, text-dense interface the filter passes thirteen
-   * times what it passes on a calm one, and the exact pass below is linear in
-   * that number. Keeping the strongest is what turns an unbounded cost into a
-   * bounded one without changing anything on a recording that was never near
-   * the limit.
+   * ── THE STRONGEST CANDIDATES FIRST, AND USUALLY THAT IS ENOUGH ─────────────
+   * The exact pass below is twenty-five cross-correlations per candidate and it
+   * is, measured, ninety-eight per cent of an analysis. It was running over
+   * every candidate on every frame — a median of nine and a half thousand on a
+   * real recording.
+   *
+   * Measured on that recording: the true pointer is the STRONGEST candidate by
+   * coarse contrast on seven frames out of nine. A cursor is drawn to be
+   * legible on any background, so it usually has the highest core-over-band
+   * contrast anywhere in the frame.
+   *
+   * Usually, not always — on the other two frames it ranked 1533rd and 4897th,
+   * where the pointer sat over something with more contrast than itself. So a
+   * small cap would lose it outright. The order is what is exploited instead:
+   * scan the strongest few hundred, and STOP if that produced a sure match. It
+   * nearly always does, and when it does not the full set is scanned exactly as
+   * before. Nothing is given up; most frames just stop early.
    */
-  if (strengths.length > COARSE_CAP) {
-    const bar = [...strengths].sort((a, b) => b - a)[COARSE_CAP - 1];
-    const kept = [];
-    for (let i = 0, j = 0; j < strengths.length; i += 2, j++) {
-      if (strengths[j] >= bar) kept.push(hits[i], hits[i + 1]);
+  /**
+   * ── AND THE RANKING MUST NOT COST MORE THAN IT SAVES ──────────────────────
+   * The first version of this sorted an index array by strength. It was correct
+   * and it made the whole analysis TWICE AS SLOW: a comparator sort over ten to
+   * twenty thousand entries, allocated fresh, on every frame for every
+   * template, costs more than the exact passes it was meant to skip.
+   *
+   * No sort is needed to find a threshold. A strength is core-over-band
+   * contrast in grey levels, so it is bounded to 0..255 — a 256-bucket
+   * histogram gives any cut point in one pass and one fixed allocation.
+   */
+  const hist = new Int32Array(256);
+  for (let j = 0; j < strengths.length; j++) hist[Math.min(255, strengths[j] | 0)]++;
+  const barFor = (want) => {
+    let acc = 0;
+    for (let b = 255; b > 0; b--) {
+      acc += hist[b];
+      if (acc >= want) return b;
     }
-    hits = kept;
-  }
+    return 0;
+  };
+  const fastBar = strengths.length > FAST_TIER ? barFor(FAST_TIER) : 0;
+  const capBar = strengths.length > COARSE_CAP ? barFor(COARSE_CAP) : 0;
 
-  // Exact: every pixel around every coarse hit, keeping the best per place.
   const found = [];
-  for (let i = 0; i < hits.length; i += 2) {
-    const hx = hits[i], hy = hits[i + 1];
+  const consider = (hx, hy) => {
     let best = null;
     for (let y = hy - 2; y <= hy + 2; y++) {
       for (let x = hx - 2; x <= hx + 2; x++) {
@@ -469,11 +505,31 @@ function topTwo(frame, W, H, t) {
         if (sc > (best ? best.score : 0.45)) best = { x, y, score: sc };
       }
     }
-    if (!best) continue;
+    if (!best) return;
     const near = found.find((c) => Math.abs(c.x - best.x) <= sep && Math.abs(c.y - best.y) <= sep);
     if (near) { if (best.score > near.score) Object.assign(near, best); }
     else found.push(best);
+  };
+
+  // Tier one: only the strongest, which on most frames contains the pointer.
+  for (let j = 0; j < strengths.length; j++) {
+    if (strengths[j] < fastBar) continue;
+    consider(hits[j * 2], hits[j * 2 + 1]);
   }
+
+  /**
+   * A SURE match ends the search. A soft one does not: `second` decides whether
+   * a soft match is the one clear thing in the frame (see the caller), and that
+   * question cannot be answered from a part of the frame.
+   */
+  if (fastBar > 0 && !found.some((f) => f.score >= FOUND)) {
+    for (let j = 0; j < strengths.length; j++) {
+      if (strengths[j] >= fastBar) continue;   // already done above
+      if (strengths[j] < capBar) continue;     // past the cap: see COARSE_CAP
+      consider(hits[j * 2], hits[j * 2 + 1]);
+    }
+  }
+
   found.sort((p, q) => q.score - p.score);
   return { best: found[0] || null, second: found[1] || null };
 }
