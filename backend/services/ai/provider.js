@@ -446,6 +446,27 @@ const outRate = () => num(process.env.GEMINI_USD_PER_M_OUTPUT, 9.0);
  *
  * @returns {Promise<{ res, usd, input, output }>}
  */
+/**
+ * Models that refuse to have their thinking turned off.
+ *
+ * ── EVERY PROMPT HERE ASKS FOR thinkingBudget: 0, AND SOME MODELS REFUSE ─────
+ * Turning thinking off is measured and deliberate — it bills at the output rate
+ * and changes nothing on a mechanical reading task, which is all this product
+ * asks for. But the pro tier will not accept it:
+ *
+ *   400 "Unable to submit request because The model does not support setting
+ *        thinking_budget to 0."
+ *
+ * That is a quarrel about configuration, not a missing model or a missing
+ * permission, and failing a whole pass over it would be absurd. So the refusal
+ * is caught once per model, remembered, and the request goes again without the
+ * thinking config — after which that model simply costs more, which is the
+ * honest consequence of choosing it.
+ */
+const _noZeroThinking = new Set();
+const refusesZeroThinking = (err) =>
+  /thinking_budget/i.test(String(err?.message || "")) && statusOf(err) === 400;
+
 export async function request({ model, contents, config = {}, onWait = null } = {}) {
   const deadline = Date.now() + MAX_WAIT_MS;
   let lastErr = null;
@@ -456,7 +477,11 @@ export async function request({ model, contents, config = {}, onWait = null } = 
     await enter();
     let failed = null;
     try {
-      const res = await client.models.generateContent({ model, contents, config });
+      const use =
+        _noZeroThinking.has(model) && config.thinkingConfig?.thinkingBudget === 0
+          ? (({ thinkingConfig, ...rest }) => rest)(config)
+          : config;
+      const res = await client.models.generateContent({ model, contents, config: use });
       const u = res?.usageMetadata || {};
       const input = num(u.promptTokenCount);
       const output = num(u.candidatesTokenCount) + num(u.thoughtsTokenCount);
@@ -466,6 +491,18 @@ export async function request({ model, contents, config = {}, onWait = null } = 
       lastErr = err;
     } finally {
       leave();
+    }
+
+    /**
+     * Learned, then immediately acted on: this attempt is not counted against
+     * the budget of attempts, because nothing was wrong with the request except
+     * a field this model does not take, and the next line removes it.
+     */
+    if (refusesZeroThinking(failed) && !_noZeroThinking.has(model)) {
+      _noZeroThinking.add(model);
+      console.warn(`[ai] ${model} will not accept thinkingBudget: 0; sending without it (it will cost more)`);
+      attempt--;
+      continue;
     }
 
     if (!retryable(failed) || attempt === ATTEMPTS) break;
