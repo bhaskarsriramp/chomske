@@ -62,4 +62,22 @@ export async function scratchFree() {
   }
 }
 
-export default { scratchRoot, jobDir, scratchFree };
+/**
+ * Whether a path is on a memory filesystem.
+ *
+ * Debian 13 mounts /tmp as tmpfs, so the default scratch location is RAM on a
+ * stock image — half of it, by default. A job writing a 4 GB recording there is
+ * spending memory it also needs to encode with, and the failure when it runs
+ * out is an ffmpeg error that names nothing. Worth one syscall at boot to say so.
+ */
+export async function isTmpfs(dir) {
+  try {
+    const s = await fsp.statfs(dir);
+    // 0x01021994 is TMPFS_MAGIC. statfs reports it as `type` on Linux.
+    return s.type === 0x01021994;
+  } catch {
+    return false;
+  }
+}
+
+export default { scratchRoot, jobDir, scratchFree, isTmpfs };

@@ -279,6 +279,73 @@ function prepare(tpl, W) {
 /** Pixels between coarse samples; the core/band test tolerates this much error. */
 const COARSE_STEP = 3;
 
+/* ────────────────────────────────────────────────────────────────────────────
+   Coarse to fine
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ── THE WHOLE-FRAME SCAN DOES NOT NEED FULL RESOLUTION TO FIND ANYTHING ──────
+ * Re-acquiring a lost pointer is, measured, ninety-eight per cent of an
+ * analysis, and its cost is (candidates x template pixels). Both fall with the
+ * square of the resolution, and neither has anything to do with the precision
+ * the answer needs:
+ *
+ *   candidates        a dark, text-dense screen passed 24,905 of them at full
+ *                     resolution against 1,939 for a calm light one. Halving
+ *                     the frame blurs most of that texture away — it is text at
+ *                     the limit of the sampling — while a cursor, which is
+ *                     drawn to be legible, survives being halved intact.
+ *   template pixels   a quarter as many per score.
+ *
+ * So the search runs on a half-size frame, and the ANSWER is then refined at
+ * full resolution in a tiny window around it. Precision is not traded away: the
+ * hotspot is still decided by a full-resolution correlation on the real pixels,
+ * and the score that the caller's thresholds are applied to is the
+ * full-resolution one. Only the hunting is cheap.
+ *
+ * ── AND IT IS NOT ALWAYS WORTH IT ────────────────────────────────────────────
+ * A pointer already small in the recording — a 1280-wide capture, or a display
+ * at no scaling — halves to eight or nine pixels, which is too little shape to
+ * tell from a letter. Below HALF_MIN_PX the frame is searched whole, as before.
+ */
+const HALF_MIN_PX = 20;
+/** How far around the half-resolution answer the full-resolution pass looks. */
+const REFINE_R = 3;
+
+/** Average each 2x2 block into `dst`. About half a million operations a frame. */
+function halve(src, W, H, dst) {
+  const hw = W >> 1;
+  const hh = H >> 1;
+  for (let y = 0; y < hh; y++) {
+    const r0 = (y << 1) * W;
+    const r1 = r0 + W;
+    const o = y * hw;
+    for (let x = 0; x < hw; x++) {
+      const i = x << 1;
+      dst[o + x] = (src[r0 + i] + src[r0 + i + 1] + src[r1 + i] + src[r1 + i + 1]) >> 2;
+    }
+  }
+}
+
+/**
+ * The best full-resolution match within REFINE_R of a half-resolution hit.
+ *
+ * The half-resolution position is good to about a pixel there, which is two
+ * here, so the window only has to cover that plus the rounding.
+ */
+function refine(frame, W, H, tpl, hx, hy) {
+  let best = null;
+  const cx = hx << 1;
+  const cy = hy << 1;
+  for (let y = cy - REFINE_R; y <= cy + REFINE_R; y++) {
+    for (let x = cx - REFINE_R; x <= cx + REFINE_R; x++) {
+      const sc = scoreAt(frame, W, H, tpl, x, y);
+      if (sc > (best ? best.score : -1)) best = { x, y, score: sc };
+    }
+  }
+  return best;
+}
+
 /** Grey levels of core-over-band contrast that make a coarse candidate. */
 const COARSE = 22;
 
@@ -578,8 +645,30 @@ async function calibrate(video, W, H, all, duration, fps) {
    * spot, even if the second scores a little higher in any single frame.
    */
   const votes = new Map();
+
+  /**
+   * ── HALF RESOLUTION WAS TRIED HERE AND IT DOES NOT WORK ───────────────────
+   * This is the fixed cost of an analysis and it is the biggest single part of
+   * a short one: a whole-frame search for every candidate on every sampled
+   * frame, about two dozen templates across twelve frames, measured at 28
+   * seconds of a 49-second analysis on a 26-second demo. Screening at half
+   * resolution made it 7 seconds.
+   *
+   * It also made it find nothing at all — "calibration found nothing usable",
+   * every frame lost. The reason is worth keeping: a cursor is defined by a
+   * ONE-PIXEL rim around a body of the opposite tone, and that rim is the
+   * entire signal these templates match on. Averaging 2x2 blocks blends the rim
+   * into the body, the core-over-band contrast collapses below COARSE, and the
+   * coarse filter stops proposing the pointer as a candidate at all.
+   *
+   * So resolution cannot be traded here, and the same caution applies to the
+   * tracking loop below, where halving costs a little accuracy for real speed.
+   * Anything cheaper than this has to come from asking FEWER QUESTIONS — fewer
+   * candidates or fewer frames — not from asking them of less data.
+   */
   await ffmpegToFrames(video, {
     width: W, height: H, fps, pixelFormat: "gray",
+    duration,
     onFrame: (frame, i) => {
       if (!want.has(i)) return;
       for (const t of all) {
@@ -796,6 +885,68 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     bounds(prepare(buildTemplate(hands[0], Math.round(cal.heightPx * 1.21), { dark: cal.dark, setPx: cal.heightPx }), W)),
   ];
 
+  /**
+   * ── AND THE SAME TWO SHAPES AT HALF SIZE, FOR THE HUNTING ─────────────────
+   * Prepared against the half frame's own row stride, because a template is a
+   * list of byte offsets and those depend on how wide the picture is. See the
+   * coarse-to-fine note above for why the answer is still full resolution.
+   */
+  const HALF_W = W >> 1;
+  const HALF_H = H >> 1;
+  const halfPx = Math.round(cal.heightPx / 2);
+  /**
+   * ── AND IT IS A TRADE, SO IT HAS A SWITCH ─────────────────────────────────
+   * Measured on a 78-second 1080p recording: 139s to 96s, and 1000 located
+   * frames to 984. Sixteen frames in two and a half thousand — half a second of
+   * video — where the cursor comes from the difference tracker instead of the
+   * template, which is the fallback this file is designed around and not a
+   * failure. Worth thirty per cent of the wait, but it IS a trade, so it can be
+   * turned off in one variable while somebody measures it properly with
+   * fixtures/truth.html and scripts/truthScore.js.
+   */
+  const halfOff = String(process.env.STUDIO_LOCATE_HALF || "").trim().toLowerCase() === "off";
+  const useHalf = !halfOff && cal.heightPx >= HALF_MIN_PX && HALF_W > 64 && HALF_H > 64;
+  const wideHalf = useHalf
+    ? [
+        bounds(prepare(buildTemplate("arrow", halfPx, { dark: cal.dark }), HALF_W)),
+        bounds(prepare(
+          buildTemplate(hands[0], Math.round(halfPx * 1.21), { dark: cal.dark, setPx: halfPx }),
+          HALF_W
+        )),
+      ]
+    : null;
+  const halfBuf = useHalf ? Buffer.alloc(HALF_W * HALF_H) : null;
+  let halfReady = false;
+  console.log(
+    "[studio] pointer search: " +
+      (useHalf
+        ? `hunting at ${HALF_W}x${HALF_H} and refining at ${W}x${H}`
+        : `whole frames at ${W}x${H}` +
+          (halfOff ? " (STUDIO_LOCATE_HALF=off)" : ` (pointer is only ${cal.heightPx}px; too small to halve)`))
+  );
+
+  /**
+   * One whole-frame search, cheap side first. Returns full-resolution positions
+   * and full-resolution scores, so every threshold above this is unchanged.
+   */
+  const searchWide = (frame, k) => {
+    if (!useHalf) return topTwo(frame, W, H, wide[k]);
+    if (!halfReady) {
+      halve(frame, W, H, halfBuf);
+      halfReady = true;
+    }
+    const { best, second } = topTwo(halfBuf, HALF_W, HALF_H, wideHalf[k]);
+    if (!best) return { best: null, second: null };
+    return {
+      best: refine(frame, W, H, wide[k], best.x, best.y),
+      // The runner-up only ever decides whether the winner is the one clear
+      // match in the frame, and a half-resolution score answers that as well as
+      // a full one would. Refining it too would double the cost of the cheap
+      // half of this for a number nothing reads precisely.
+      second: second ? { x: second.x << 1, y: second.y << 1, score: second.score } : null,
+    };
+  };
+
   const hintAt = (t) => {
     let best = null;
     for (const h of hints) { const d = Math.abs(h.t - t); if (d <= 0.25 && (!best || d < best.d)) best = { d, h }; }
@@ -846,6 +997,16 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
 
   await ffmpegToFrames(video, {
     width: W, height: H, fps, pixelFormat: "gray",
+    /**
+     * ── DECODE WHAT WAS ASKED FOR, NOT WHATEVER THE FILE HOLDS ──────────────
+     * This was missing, so the locator read the whole file however long the
+     * caller said the recording was. In production the two agree and nothing
+     * was wrong — but the budget, the progress bar and MAX_SECONDS are all
+     * expressed in `duration`, so every one of them was reasoning about a
+     * different number from the one the loop actually worked through. A
+     * recording whose container over-reports its length paid for the excess.
+     */
+    duration,
     onFrame: async (frame, i) => {
       frames++;
       const t = round3(i / fps);
@@ -884,6 +1045,9 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
       }
       prevFrame = Buffer.from(frame);
       prevHit = null;
+      // The half-size copy is made once per frame, and only if something
+      // actually needs a whole-frame search on it.
+      halfReady = false;
 
       let hit = null;
 
@@ -940,8 +1104,9 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
          */
         const fresh = recent && lostFor <= 2;
         const bar = fresh ? FLICK : FOUND;
-        for (const tp of wide) {
-          const { best, second } = topTwo(frame, W, H, tp);
+        for (let k = 0; k < wide.length; k++) {
+          const tp = wide[k];
+          const { best, second } = searchWide(frame, k);
           if (!best || best.score < bar) continue;
           // A sure match is taken wherever it is; the extra conditions are only
           // for a soft one, which has to earn its place by being where a flick

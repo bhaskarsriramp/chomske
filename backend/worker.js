@@ -42,6 +42,7 @@ import { startEditRunner } from "./services/edit/editRunner.js";
 import { startStudioRunner } from "./services/studio/studioRunner.js";
 import { describeProvider, describeModels, providerReady, limits } from "./services/ai/provider.js";
 import redis, { isRedisEnabled } from "./redis.js";
+import { scratchRoot, scratchFree, isTmpfs } from "./services/media/scratch.js";
 
 const WHO = `${os.hostname()}:${process.pid}`;
 
@@ -91,6 +92,27 @@ async function checkRedis() {
     }
     const l = limits();
     console.log(`[worker] request budget ${l.rpm}/min per bucket, ${l.concurrency} in flight`);
+
+    /**
+     * ── WHERE THE GIGABYTES GO, SAID OUT LOUD ────────────────────────────────
+     * STUDIO_TMPDIR is the one setting here whose default is actively wrong on
+     * a modern Linux box: /tmp is tmpfs on Debian 13, so unset, every recording
+     * a job downloads and every frame it writes goes into RAM. A 4K export then
+     * competes with its own scratch for memory, and when the tmpfs fills the
+     * write fails with ENOSPC — which ffmpeg reports as "Conversion failed!",
+     * naming nothing and sending whoever reads it to look at the filter graph.
+     *
+     * It is also the only setting with no other symptom until that happens. So
+     * it is printed, with how much room it has and whether it is memory.
+     */
+    const root = scratchRoot();
+    const room = await scratchFree();
+    const onRam = await isTmpfs(root);
+    console.log(
+      `[worker] scratch: ${root}` +
+        (room ? ` — ${(room.free / 1e9).toFixed(0)} GB free of ${(room.total / 1e9).toFixed(0)} GB` : "") +
+        (onRam ? "  ** THIS IS RAM (tmpfs). Set STUDIO_TMPDIR to a real disk. **" : "")
+    );
 
     startEditRunner();
     startStudioRunner();
