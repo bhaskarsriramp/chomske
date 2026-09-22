@@ -102,6 +102,35 @@ const PLAYING_SHARE = 1 / 3;
  */
 const PLAYING_CELLS = 24;
 
+/**
+ * ...and the share of the WHOLE SCREEN past which this measurement is not
+ * believed at all.
+ *
+ * ── A SAFETY VALVE, ADDED AFTER IT BROKE A REAL RECORDING ──────────────────
+ * The two tests above are a good description of a demo video on an otherwise
+ * quiet page, which is what they were drawn against. On a real page they are
+ * not nearly strict enough: a recording of cursorful.com flagged 520 of its 960
+ * cells — more than half the screen — because a real page animates almost
+ * everywhere at once, with hover states, gradients, carousels, lazy images and
+ * a video. The veto then excluded the creator's own pointer along with
+ * everything else, and the locator went from finding it in 98% of frames to
+ * finding it in none.
+ *
+ * The lesson is not a better threshold. It is that this measurement has a range
+ * outside which it is meaningless, and it must say so rather than guess. If
+ * more than a third of the screen looks like moving pictures, then either the
+ * page really is mostly video — in which case there is no quiet region to
+ * retreat to and the veto buys nothing — or, far more likely, the measurement
+ * is wrong. Both answers are the same answer: report nothing and let the
+ * locator work exactly as it did before this existed.
+ *
+ * Failing open is deliberate. A missed content cursor costs some wrong zooms,
+ * which the model veto in events.js mediaUnder() then catches on the way to the
+ * camera. A pointer vetoed by mistake costs the whole recording its cursor, and
+ * nothing downstream can recover it.
+ */
+const PLAYING_MAX_COVER = 0.35;
+
 /** The widest disagreement between the two clocks worth searching for. */
 const MAX_OFFSET = 3;
 /** Correlation the best shift must reach before it is believed. */
@@ -533,6 +562,15 @@ export function playingRegions(screen, { duration = 0, share = PLAYING_SHARE, le
       }
     }
     if (blob.length >= least) for (const c of blob) out.add(c);
+  }
+
+  // Past the valve this says nothing rather than something wrong. See above.
+  if (out.size > gw * gh * PLAYING_MAX_COVER) {
+    console.log(
+      "[studio] " + out.size + " of " + gw * gh + " screen cells look like moving pictures, which is too much of it " +
+        "to be a video playing on a page; the content-cursor check is skipped for this recording"
+    );
+    return new Set();
   }
   return out;
 }

@@ -1512,6 +1512,71 @@ const MERGE_IN_STEP = 3.2;
  */
 
 /** Element types a person can actually press. The rest are surfaces. */
+/**
+ * The element types that are A PICTURE OF ANOTHER SCREEN.
+ *
+ * ── WHY THESE MATTER MORE THAN ANY OTHER TYPE HERE ───────────────────────────
+ * A product demo is very often recorded on a page that is ADVERTISING a product
+ * demo. Every competitor's home page plays one; so do most landing pages. That
+ * video was recorded on somebody else's machine and it has their cursor in it,
+ * moving, clicking, opening menus — and it looks exactly like a cursor because
+ * it is one.
+ *
+ * Nothing in the pixel pipeline can tell that cursor from the creator's. It
+ * matches the template as well, it moves as convincingly, and the screen
+ * changes around it just as a real interaction would. A creator reported the
+ * result exactly: "it is cursorful platform and it is demoing a video and our
+ * code is detecting that video's mouse and clicks". Ten zooms in a thirty
+ * second recording, of which two were real.
+ *
+ * The model already tells us where those regions are — it has reported `video`
+ * and `image` elements since the first version of UI_ANALYZER — and nothing
+ * read them. It is the one signal in the whole pipeline that knows the
+ * difference between a screen and a picture of a screen, because it is the only
+ * part that understands what it is looking at rather than how it is shaped.
+ */
+const MEDIA = new Set(["video", "image"]);
+
+/**
+ * How much of the frame an embedded picture must cover before a press inside it
+ * is refused.
+ *
+ * Three per cent. An avatar, a favicon or a logo is far below this and a press
+ * on one is an ordinary press on a control that happens to be an image. A demo
+ * video embedded in a page is ten to forty per cent. The gap is wide and
+ * nothing real sits in it.
+ */
+const MEDIA_MIN_AREA = 0.03;
+
+/**
+ * Is this point inside a picture of another screen?
+ *
+ * Read from the nearest frame the model looked at, the same way controlUnder()
+ * reads controls, and deliberately WITHOUT the edge slack that function allows:
+ * a press just outside a video is a press on the page, and widening the
+ * rectangle here would start refusing real presses on the controls beside it.
+ *
+ * @returns {{type: string, label: string, area: number}|null}
+ */
+export function mediaUnder(shots, t, x, y) {
+  let best = null;
+  for (const shot of shots || []) {
+    if (Math.abs(num(shot.t) - t) > SEEN_WITHIN) continue;
+    for (const el of shot.elements || []) {
+      if (!MEDIA.has(String(el.type))) continue;
+      const [ex, ey, ew, eh] = el.bbox || [];
+      if (!(ew > 0) || !(eh > 0)) continue;
+      const area = ew * eh;
+      if (area < MEDIA_MIN_AREA) continue;
+      if (x < ex || x > ex + ew || y < ey || y > ey + eh) continue;
+      // The smallest picture containing the point: a video inside a mockup
+      // inside a hero section is best described by the video.
+      if (!best || area < best.area) best = { type: String(el.type), label: String(el.label || ""), area: round4(area) };
+    }
+  }
+  return best;
+}
+
 const PRESSABLE = new Set([
   "button", "icon_button", "link", "nav_item", "tab", "list_item",
   "text_field", "dropdown", "checkbox", "toggle", "menu",
@@ -2268,6 +2333,29 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
       zoomable = false;
       onNote({ t: num(e.t), zoomable, why: "nothing came of it" });
       return { ...e, zoomable, basis: "no-consequence", why: "nothing came of it", score: 0,
+        on_control: on ? true : on === false ? false : null, control: on ? on.label || on.type : "",
+        pointer_shape: os && os.shape ? os.shape : null };
+    }
+
+    /**
+     * ── AND ONE MORE, BECAUSE IT IS NOT A PRESS AT ALL ───────────────────────
+     * A press inside a picture of another screen was made by whoever recorded
+     * THAT screen. It is not weak evidence of the creator pressing something —
+     * it is positive evidence that nobody here pressed anything, which is why
+     * it vetoes rather than subtracting.
+     *
+     * The pixel pipeline cannot reach this conclusion. A cursor inside a demo
+     * video looks identical to a real one and the screen changes around it in
+     * exactly the same way. Only the model knows the region is a video, and it
+     * has been reporting that all along. See mediaUnder().
+     */
+    const media = mediaUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5));
+    if (media) {
+      zoomable = false;
+      const what = media.label ? '"' + media.label + '"' : "a " + media.type + " on the page";
+      const why = "this happened inside " + what + " — a recording of somebody else's screen, not this one";
+      onNote({ t: num(e.t), zoomable, why });
+      return { ...e, zoomable, basis: "in-media", why, score: 0, in_media: media.type,
         on_control: on ? true : on === false ? false : null, control: on ? on.label || on.type : "",
         pointer_shape: os && os.shape ? os.shape : null };
     }

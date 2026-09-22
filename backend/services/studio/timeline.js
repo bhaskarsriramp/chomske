@@ -906,7 +906,38 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       label: text(x.label, 80),
       auto: !!x.auto,
     }))
-    .filter((x) => x.end - x.start > 0.05);
+    .filter((x) => x.end - x.start > 0.05)
+    /**
+     * ── ONE CAMERA AT A TIME ──────────────────────────────────────────────
+     * Two zooms covering the same instant is not a stronger move, it is an
+     * incoherent one. cameraAt() resolves it by letting the last one to start
+     * win — and the winner ramps in FROM FULL, because that is what a zoom
+     * ramps from. So the picture pulls all the way out and dives back in
+     * between two shots that were meant to be one continuous move. A creator
+     * described it exactly: "why are you zooming in or zooming out or
+     * adjusting on a single zoom ... whenever a user clicks at a particular
+     * point, you can take it as a single zoom".
+     *
+     * zoomsFromClicks() already guarantees this by merging presses that fall
+     * close together, so nothing the analysis produces overlaps. What can
+     * overlap is everything added AFTERWARDS: a suggestion the audit applied,
+     * a zoom the creator dragged over another. This is the gate all of those
+     * pass through, so the invariant is kept here rather than in each of them.
+     *
+     * The earlier zoom yields. It is the one already on screen, so trimming it
+     * shortens a shot the viewer has had time to read, while trimming the
+     * newer one would cut short the move that was just asked for.
+     */
+    .sort((a, b) => a.start - b.start)
+    .reduce((keep, z) => {
+      const prev = keep[keep.length - 1];
+      if (prev && z.start < prev.end) {
+        prev.end = round3(z.start);
+        if (prev.end - prev.start <= 0.05) keep.pop();
+      }
+      keep.push(z);
+      return keep;
+    }, []);
 
   // ── Cursor ────────────────────────────────────────────────────────────────
   const cur = src.cursor || {};

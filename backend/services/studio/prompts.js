@@ -54,7 +54,9 @@ Importance:
 - "low"     chrome and decoration: logos, static labels, the OS menu bar, scrollbars
 
 Rules:
-- Report at most 25 elements. When there are more, keep the high and medium ones and drop the low.
+- ALWAYS report every region that is a PICTURE OF ANOTHER SCREEN, however unimportant it looks, and never drop one to stay under the limit. That means: an embedded product demo or any video player, a screenshot or mockup of another application, a phone or laptop frame with a user interface inside it, an animated GIF of software being used, a carousel of such images. Use type "video" when it is moving and "image" when it is still, give its FULL outer bounding box, and set importance "low" unless a person is interacting with it.
+  This matters more than anything else in this list. Those regions were recorded on somebody else's machine and contain somebody else's mouse pointer, moving and clicking. This tool reads the pointer to decide where to point the camera, and it cannot tell that pointer from the real one. You are the only part of the system that can see the difference between a screen and a picture of a screen, so a region you leave out becomes a zoom onto a click that never happened.
+- Report at most 25 elements besides those. When there are more, keep the high and medium ones and drop the low.
 - A dialog or modal that is open is ALWAYS high importance, and report its full bounding box as one "modal" element as well as the controls inside it.
 - NEVER report a sidebar, nav, menu, toolbar, tab bar, list or table as a single element INSTEAD of what is inside it. Report every individual item in it separately — each nav_item, tab, list_item, button or link with its own label and its own box. A sidebar reported as one box tells the reader nothing about which item a person was pointing at, and that is the single most important thing this tool needs from you. Report the container as well if it helps, but never on its own.
 - Every item a person could click MUST have its own box, even when the items are stacked in a list and look alike. Six nav items in a sidebar are six elements, not one.
