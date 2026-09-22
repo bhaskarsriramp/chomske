@@ -460,6 +460,17 @@ const CAL_FRAMES = 12;
  */
 const GLYPH_CSS = 19;
 /**
+ * How well the browser's readings of the pointer must agree with each other
+ * before the search here is narrowed to the design they name.
+ *
+ * Below this the profile is still used for its SIZE — a rough first-hand
+ * measurement beats arithmetic on an assumed glyph — but both designs stay in
+ * the running, because a narrowed search that starts from the wrong design
+ * finds nothing, and finding nothing costs the whole recording its pointer.
+ * See profileOf() in src/components/Studio/capture.js for what the number is.
+ */
+const BROWSER_TRUST = 0.6;
+/**
  * How clearly the best match must beat the next best somewhere else in the
  * frame. This is what separates a pointer from the page: there is one pointer,
  * and it matches its template far better than anything else on screen, while a
@@ -753,10 +764,11 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
  * @param {number} [o.cursorPx]  the pointer's measured height, if known
  * @param {Array}  [o.hints]     where the difference tracker thought it was
  * @param {object} [o.env]       the recording machine: platform, dpr, screen_w
+ * @param {object} [o.cursor]    the pointer read at full size in the browser
  * @param {object} [o.screen]    readScreen(), for the regions that are video
  * @returns {Promise<{ track: Array, design: string|null, heightPx: number, found: number, frames: number }>}
  */
-export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], env = null, screen = null, onDebug = null, onProgress = null } = {}) {
+export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], env = null, cursor = null, screen = null, onDebug = null, onProgress = null } = {}) {
   const W = Math.round(sourceWidth);
   const H = Math.round(sourceHeight);
 
@@ -794,20 +806,38 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    *                of which are ordinary.
    */
   const fromScreen = num(env?.screen_w) > 0 ? GLYPH_CSS * (W / num(env.screen_w)) : 0;
-  const guess = cursorPx > 8 ? cursorPx : fromScreen > 8 ? fromScreen : 20 * (W / 1920);
-  const sizes = new Set([0.75, 0.85, 0.95, 1.05, 1.15, 1.3].map((k) => Math.round(guess * k)));
   /**
-   * ── WHEN THE TWO DISAGREE, BOTH ARE OFFERED ───────────────────────────────
-   * The measurement is first-hand and quantised: it is taken on a 480-wide
-   * pass, so a 19-pixel pointer is read as four or five pixels and multiplied
-   * back up, and a smeared patch reads high. The display is exact arithmetic on
-   * an assumed glyph size. Neither deserves to silently exclude the other, and
-   * a size that is not offered here can never be found later — calibration can
-   * only pick from this list, and picking wrong costs the whole recording its
-   * pointer. Three extra sizes on a rare disagreement is a cheap insurance.
+   * ── AND THE ONE SOURCE THAT IS NOT A GUESS AT ALL ─────────────────────────
+   * The browser reads the pointer at full resolution WHILE the recording is
+   * being made, out of the frames the operating system drew, before any
+   * encoder has touched them (src/components/Studio/tracker.worker.js,
+   * readGlyph). That is a measurement of the thing itself. Everything else on
+   * this line is an inference about it from a compressed copy.
+   *
+   * So when it is present it leads, and the spread around it is tighter: the
+   * other sources are offered a sixth either way because they can be wrong by
+   * that much, and this one does not need the room.
    */
-  if (cursorPx > 8 && fromScreen > 8 && (fromScreen > guess * 1.3 || fromScreen < guess * 0.75)) {
-    for (const k of [0.9, 1, 1.1]) sizes.add(Math.round(fromScreen * k));
+  const fromBrowser = num(cursor?.height_px) > 8 ? Math.round(num(cursor.height_px)) : 0;
+  const guess = fromBrowser || (cursorPx > 8 ? cursorPx : fromScreen > 8 ? fromScreen : 20 * (W / 1920));
+  const spread = fromBrowser ? [0.9, 0.95, 1, 1.06, 1.14] : [0.75, 0.85, 0.95, 1.05, 1.15, 1.3];
+  const sizes = new Set(spread.map((k) => Math.round(guess * k)));
+  /**
+   * ── WHEN THEY DISAGREE, ALL OF THEM ARE OFFERED ───────────────────────────
+   * The in-recording measurement is first-hand and quantised: it is taken on a
+   * 480-wide pass, so a 19-pixel pointer is read as four or five pixels and
+   * multiplied back up, and a smeared patch reads high. The display is exact
+   * arithmetic on an assumed glyph size. Neither deserves to silently exclude
+   * the other, and a size that is not offered here can never be found later —
+   * calibration can only pick from this list, and picking wrong costs the whole
+   * recording its pointer. A few extra sizes on a rare disagreement is cheap
+   * insurance, and calibration picks between them by fit, so offering a wrong
+   * one costs time rather than accuracy.
+   */
+  for (const other of [cursorPx, fromScreen]) {
+    if (other > 8 && (other > guess * 1.3 || other < guess * 0.75)) {
+      for (const k of [0.9, 1, 1.1]) sizes.add(Math.round(other * k));
+    }
   }
   const make = (name, hp, dark) => bounds(prepare(buildTemplate(name, hp, { dark }), W));
   /** A hand drawn at the height an arrow of `hp` implies, so it votes for `hp`. */
@@ -838,12 +868,41 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    * 0.74-0.77 range; the pointer it was drawn for scores 0.85 and up. See the
    * ranking in calibrate().
    */
-  const candidates = [];
-  for (const dark of [false, true]) {
-    for (const hp of sizes) {
-      candidates.push(make("arrow", hp, dark));
-      for (const name of handNames(hp)) candidates.push(asHand(name, hp, dark));
+  const candidatesFor = (designs) => {
+    const out = [];
+    for (const dark of designs) {
+      for (const hp of sizes) {
+        out.push(make("arrow", hp, dark));
+        for (const name of handNames(hp)) out.push(asHand(name, hp, dark));
+      }
     }
+    return out;
+  };
+
+  /**
+   * ── WHICH DESIGNS ARE WORTH OFFERING ──────────────────────────────────────
+   * Searching both halves the chance of getting it right by accident and
+   * doubles the cost. When the browser has actually READ the pointer — not
+   * inferred it from a compressed copy, read it from the pixels the operating
+   * system drew — offering the other design only gives the search a way to
+   * lose. One recording calibrated as a 21px dark pointer on a Windows machine
+   * that draws a 19px light one, and located the cursor in 40% of its frames
+   * for the rest of the run.
+   *
+   * The bar is deliberately about AGREEMENT rather than sample count: a
+   * recording where the pointer was read forty times and the readings disagree
+   * is exactly the recording where the search should stay open.
+   */
+  const measured = cursor?.design === "light" || cursor?.design === "dark" ? cursor.design : "";
+  const trusted = !!measured && num(cursor?.confidence) >= BROWSER_TRUST;
+  const designs = trusted ? [measured === "dark"] : [false, true];
+  if (measured) {
+    console.log(
+      "[studio] the browser measured this recording's pointer: " + measured + " " +
+        (fromBrowser || "?") + "px from " + num(cursor.samples) + " readings " +
+        "(agreement " + num(cursor.confidence).toFixed(2) + ", " +
+        (trusted ? "searching that design only" : "not firm enough to narrow the search") + ")"
+    );
   }
   /**
    * The parts of the screen that were animating for most of the recording: a
@@ -859,7 +918,18 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     );
   }
 
-  const cal = await calibrate(video, W, H, candidates, duration, fps, { playing, screen });
+  let cal = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen });
+  /**
+   * A narrowed search that comes back empty is the one case where the browser's
+   * reading has to be overruled. It can be wrong — a creator using a cursor
+   * theme neither design describes, a recording where the pointer was only ever
+   * measured over one background — and a narrowed search that found nothing is
+   * the evidence of it. The full search then runs exactly as it would have.
+   */
+  if (!cal && designs.length === 1) {
+    console.log("[studio] the measured pointer design found nothing; searching both designs");
+    cal = await calibrate(video, W, H, candidatesFor([false, true]), duration, fps, { playing, screen });
+  }
   if (!cal) return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
 
   // Tracking uses only this recording's pointer: both shapes, at its size and

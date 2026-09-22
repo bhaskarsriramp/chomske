@@ -350,10 +350,26 @@ router.post("/demos/:id/upload/complete", wrap(async (req, res) => {
       platform: ["windows", "macos", "linux", "chromeos", "android", "ios"].includes(cap.env?.platform)
         ? cap.env.platform
         : "unknown",
+      scheme: ["light", "dark"].includes(cap.env?.scheme) ? cap.env.scheme : "unknown",
       dpr: clampNum(cap.env?.dpr, 0.5, 8),
       screen_w: clampNum(cap.env?.screen_w, 240, 16384),
       screen_h: clampNum(cap.env?.screen_h, 240, 16384),
     },
+    /**
+     * The pointer this machine draws, measured in the browser at full
+     * resolution while the recording was being made. Validated on the same
+     * principle as env: a nonsense height would steer the locator off a cliff,
+     * and a zero reads as "not reported", which falls back to measuring the
+     * recording exactly as before. See capture.js profileOf().
+     */
+    cursor: cap.cursor
+      ? {
+        design: ["light", "dark"].includes(cap.cursor.design) ? cap.cursor.design : "",
+        height_px: clampNum(cap.cursor.height_px, 6, 200),
+        samples: clampNum(cap.cursor.samples, 0, 100000),
+        confidence: clampNum(cap.cursor.confidence, 0, 1),
+      }
+      : undefined,
   };
   demo.status = "preparing";
   demo.stage = "Queued";

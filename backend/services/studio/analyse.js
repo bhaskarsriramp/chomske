@@ -163,6 +163,15 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
      */
     env: capture.env || null,
     /**
+     * The pointer itself, read at full resolution in the browser while this was
+     * being recorded. It settles the two things calibration otherwise has to
+     * discover by searching the encoded video — which design and how tall — and
+     * those are the two it can get wrong for a whole recording at a stretch.
+     * Absent on every recording made before the browser started measuring it.
+     * See capture.js profileOf() and tracker.worker.js readGlyph().
+     */
+    cursor: capture.cursor || null,
+    /**
      * What the screen was doing, measured just above. The locator uses it for
      * one thing: a region that was animating for most of the recording is a
      * video playing on the page, and a pointer found inside one belongs to

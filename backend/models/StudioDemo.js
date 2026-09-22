@@ -93,9 +93,28 @@ const CaptureSchema = new Schema(
         enum: ["windows", "macos", "linux", "chromeos", "android", "ios", "unknown"],
         default: "unknown",
       },
+      scheme: { type: String, enum: ["light", "dark", "unknown"], default: "unknown" },
       dpr: { type: Number, default: 0 },
       screen_w: { type: Number, default: 0 },
       screen_h: { type: Number, default: 0 },
+    },
+    /**
+     * The pointer itself, measured in the browser at full resolution while the
+     * recording was being made — which design it is and how tall, the two
+     * things services/studio/locate.js otherwise has to discover by searching
+     * the encoded video, and which it sometimes discovers wrongly for a whole
+     * recording at a stretch.
+     *
+     * `confidence` is how much the readings agreed with each other. An empty
+     * design or a zero height means the browser could not read the pointer —
+     * a demo where it never moved far enough to be measured, or one recorded
+     * before this existed — and the locator then searches as it always did.
+     */
+    cursor: {
+      design: { type: String, enum: ["light", "dark", ""], default: "" },
+      height_px: { type: Number, default: 0 },
+      samples: { type: Number, default: 0 },
+      confidence: { type: Number, default: 0 },
     },
   },
   { _id: false }

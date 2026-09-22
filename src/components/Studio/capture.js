@@ -26,7 +26,7 @@
 import { uploadFile } from "../Edit/uploads";
 
 /** Reported with every recording, so a demo can be told from a later tracker's. */
-export const TRACKER_VERSION = "px-2";
+export const TRACKER_VERSION = "px-3";
 
 /** Frames a second the tracker looks at. Not the recording's frame rate. */
 const TRACK_HZ = 24;
@@ -34,6 +34,35 @@ const TRACK_HZ = 24;
 const TRACK_EDGE = 960;
 /** How often MediaRecorder hands over a chunk. */
 const CHUNK_MS = 3000;
+
+/**
+ * ── AND A SECOND, SMALL PICTURE AT FULL RESOLUTION ───────────────────────────
+ * The downscale above is what makes the tracker affordable, and it is also what
+ * makes the pointer unreadable: on a 1080p recording TRACK_EDGE halves a 19px
+ * cursor to nine, and nine pixels cannot say which cursor it is. The server
+ * cannot recover it either — it only ever sees the recording after H.264, which
+ * smears the one-pixel outline the answer lives in.
+ *
+ * This is a patch cut around the pointer from the ORIGINAL frame, one to one.
+ * It is the only place in this product where a sharp cursor exists.
+ *
+ * 192 covers a 96px cursor — Windows at 300% on a 4K display, the largest a
+ * pointer gets — with room either side for it to have moved. It is also 36,864
+ * pixels against the downscaled frame's 518,400, so reading it costs about a
+ * fourteenth of the pass it supplements.
+ */
+const PATCH = 192;
+/**
+ * The patch origin is snapped to this grid so that consecutive frames usually
+ * cut from the same place. The worker finds the glyph by what CHANGED between
+ * two patches, which only means anything if they line up; a frame where the
+ * origin moves is skipped. Snapping trades one sample each time the pointer
+ * travels 64px for never having to register two offset patches against each
+ * other, which is arithmetic that can be silently wrong.
+ */
+const PATCH_GRID = 64;
+/** Glyph readings needed before the recording claims to know its own cursor. */
+const GLYPH_MIN_SAMPLES = 6;
 
 /* ────────────────────────────────────────────────────────────────────────────
    What machine this is
@@ -85,8 +114,24 @@ export function environment() {
             : /linux|x11/.test(hay) ? "linux"
               : "unknown";
   const s = window.screen || {};
+  /**
+   * ── AND THE COLOUR SCHEME, WHICH IS WEAKER EVIDENCE THAN IT LOOKS ──────────
+   * It is tempting to read this as "dark mode, therefore a dark pointer". It is
+   * not: Windows draws its white arrow whether or not the desktop is dark, and
+   * macOS draws its black one whether or not it is light. Changing the pointer
+   * is a separate accessibility setting that almost nobody touches.
+   *
+   * So it is recorded and not acted on. What it is good for is the case the
+   * platform prior cannot cover — a creator who HAS changed their cursor — and
+   * telling that apart from an ordinary dark desktop needs the recordings this
+   * field will be present on. Storing it now is what makes that possible later;
+   * guessing from it now would break the common case to chase the rare one.
+   */
+  const scheme =
+    window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
   return {
     platform,
+    scheme,
     // Fractional on a scaled display, and that is the point of it.
     dpr: Number(window.devicePixelRatio) || 1,
     // CSS pixels, which is the unit the cursor's own size is fixed in.
@@ -320,6 +365,8 @@ export function createTracker() {
   let video = null;
   let canvas = null;
   let ctx = null;
+  let pcanvas = null;
+  let pctx = null;
   let timer = null;
   let running = false;
   let t0 = 0;
@@ -329,7 +376,10 @@ export function createTracker() {
 
   const track = [];
   const motion = [];
+  const glyphs = [];
   let lastKept = null;
+  /** Where the pointer was last seen, normalised. Decides where to cut. */
+  let lastSeen = null;
 
   const now = () => (performance.now() - t0 - paused) / 1000;
 
@@ -337,6 +387,13 @@ export function createTracker() {
     const msg = e.data;
     if (!msg || msg.first || msg.error) return;
     const t = msg.t;
+
+    // A full-resolution reading of the pointer itself. Kept separately from the
+    // track: the track says where it went, these say what it IS, and only one
+    // answer is needed for the whole recording.
+    if (msg.glyph?.design && glyphs.length < 4000) {
+      glyphs.push({ h: msg.glyph.h, design: msg.glyph.design });
+    }
 
     if (msg.motion) {
       // Motion is kept for every sample. It is small — seven numbers — and it
@@ -354,6 +411,7 @@ export function createTracker() {
 
     if (msg.cursor) {
       const p = { t: round3(t), x: round4(msg.cursor.x), y: round4(msg.cursor.y), shape: msg.cursor.shape, conf: round3(msg.cursor.conf) };
+      lastSeen = { x: p.x, y: p.y };
       const moved = !lastKept || Math.hypot(p.x - lastKept.x, p.y - lastKept.y) > 0.0015;
       const stale = !lastKept || p.t - lastKept.t > 0.25;
       if (moved || stale) {
@@ -361,6 +419,23 @@ export function createTracker() {
         lastKept = p;
       }
     }
+  }
+
+  /**
+   * Where to cut the full-resolution patch, in source pixels.
+   *
+   * Snapped to PATCH_GRID so that a pointer moving normally is cut from the
+   * same place two frames running, which is what the worker needs to see what
+   * changed. Clamped to the frame, which also snaps it — at an edge the origin
+   * simply stops moving, which is the stable case rather than the broken one.
+   */
+  function patchRect(vw, vh) {
+    if (!lastSeen) return null;
+    const w = Math.min(PATCH, vw);
+    const h = Math.min(PATCH, vh);
+    const snap = (v, size, max) =>
+      Math.max(0, Math.min(max - size, Math.floor((v - size / 2) / PATCH_GRID) * PATCH_GRID));
+    return { x: snap(lastSeen.x * vw, w, vw), y: snap(lastSeen.y * vh, h, vh), w, h };
   }
 
   async function tick() {
@@ -374,13 +449,27 @@ export function createTracker() {
       const w = Math.max(2, Math.round((vw * scale) / 2) * 2);
       const h = Math.max(2, Math.round((vh * scale) / 2) * 2);
 
+      // Where the pointer is, at full size. Null until the coarse pass has
+      // found it once, and after a reset until it finds it again.
+      const at = patchRect(vw, vh);
+
       // createImageBitmap resizes on the compositor and transfers ownership, so
       // the pixels never touch this thread's heap. The canvas path below is the
       // fallback for browsers without resize options on createImageBitmap; it
       // costs a readback here, which is why it is not the first choice.
       if (typeof createImageBitmap === "function" && typeof OffscreenCanvas !== "undefined") {
-        const bitmap = await createImageBitmap(video, { resizeWidth: w, resizeHeight: h, resizeQuality: "low" });
-        worker.postMessage({ type: "frame", bitmap, t }, [bitmap]);
+        // Both cuts are asked for together so they come from as near the same
+        // moment as the browser will give: the patch is compared against the
+        // previous patch, not against the whole frame, so a few milliseconds of
+        // skew between the two costs nothing.
+        const [bitmap, patch] = await Promise.all([
+          createImageBitmap(video, { resizeWidth: w, resizeHeight: h, resizeQuality: "low" }),
+          at ? createImageBitmap(video, at.x, at.y, at.w, at.h) : null,
+        ]);
+        worker.postMessage(
+          { type: "frame", bitmap, patch, at, vw, vh, t },
+          patch ? [bitmap, patch] : [bitmap]
+        );
       } else {
         if (!canvas || canvas.width !== w || canvas.height !== h) {
           canvas = document.createElement("canvas");
@@ -390,7 +479,23 @@ export function createTracker() {
         }
         ctx.drawImage(video, 0, 0, w, h);
         const img = ctx.getImageData(0, 0, w, h);
-        worker.postMessage({ type: "frame", data: img.data, width: w, height: h, t }, [img.data.buffer]);
+
+        let patchData = null;
+        if (at) {
+          if (!pcanvas || pcanvas.width !== at.w || pcanvas.height !== at.h) {
+            pcanvas = document.createElement("canvas");
+            pcanvas.width = at.w;
+            pcanvas.height = at.h;
+            pctx = pcanvas.getContext("2d", { willReadFrequently: true });
+          }
+          pctx.drawImage(video, at.x, at.y, at.w, at.h, 0, 0, at.w, at.h);
+          patchData = pctx.getImageData(0, 0, at.w, at.h).data;
+        }
+
+        worker.postMessage(
+          { type: "frame", data: img.data, width: w, height: h, patchData, patchW: at?.w, patchH: at?.h, at, vw, vh, t },
+          patchData ? [img.data.buffer, patchData.buffer] : [img.data.buffer]
+        );
       }
     } catch {
       // A frame that could not be grabbed — the surface changed, the tab went
@@ -430,6 +535,7 @@ export function createTracker() {
       // The screen has almost certainly changed while it was paused, and
       // comparing against a frame from before the pause would read as one
       // enormous burst of motion at the moment of resuming.
+      lastSeen = null;
       worker?.postMessage({ type: "reset" });
     },
 
@@ -448,7 +554,7 @@ export function createTracker() {
 
     /** Everything seen, for POST /studio/demos/:id/upload/complete. */
     report() {
-      return { track, motion, tracker: TRACKER_VERSION, samples: track.length };
+      return { track, motion, tracker: TRACKER_VERSION, samples: track.length, cursor: profileOf(glyphs) };
     },
 
     get samples() {
@@ -459,6 +565,63 @@ export function createTracker() {
 
 const round3 = (v) => Math.round(v * 1000) / 1000;
 const round4 = (v) => Math.round(v * 10000) / 10000;
+
+/**
+ * Which pointer this recording has, from many full-resolution readings of it.
+ *
+ * ── WHY THIS IS WORTH THE TROUBLE ────────────────────────────────────────────
+ * The server decides the same two things today — light body or dark, and how
+ * tall — by drawing candidate pointers and seeing which fits the recording
+ * best (backend/services/studio/locate.js, calibrate). That search runs on
+ * compressed, sometimes rescaled frames, and when it picks wrong it picks wrong
+ * for the WHOLE recording: every later frame is then matched against the wrong
+ * template and the pointer is simply not found. One real recording calibrated
+ * as a 21px dark pointer on a machine that draws a 19px light one and located
+ * the cursor in 40% of its frames.
+ *
+ * Neither number can be recovered once the recording is encoded. Both are
+ * trivially measurable here, where the pixels are still the ones the operating
+ * system drew. So they are measured here and sent as two numbers.
+ *
+ * ── ONE READING IS NOT TRUSTED; THE AGREEMENT BETWEEN MANY IS ────────────────
+ * A single glyph can be read wrong — the rim only shows up where it differed
+ * from whatever was underneath, so a pointer crossing black text reads thinner
+ * and darker than it is. Across a recording those disagree in different
+ * directions, and the majority and the median do not. What is reported with the
+ * answer is how much the readings agreed, and the server treats a shaky profile
+ * as a hint and a firm one as the answer.
+ */
+function profileOf(glyphs) {
+  if (glyphs.length < GLYPH_MIN_SAMPLES) return null;
+
+  let light = 0;
+  let dark = 0;
+  for (const g of glyphs) {
+    if (g.design === "dark") dark++;
+    else light++;
+  }
+  const design = dark > light ? "dark" : "light";
+
+  // Height is taken only from the readings that agreed about the design. A
+  // misread glyph is misread in both, and averaging them in would move the
+  // size towards a pointer that is not there.
+  const heights = glyphs.filter((g) => g.design === design).map((g) => g.h).sort((a, b) => a - b);
+  const height = heights[heights.length >> 1];
+
+  const agree = Math.max(light, dark) / glyphs.length;
+  const tight = heights.filter((v) => Math.abs(v - height) <= 1).length / heights.length;
+  // Below a couple of dozen readings the agreement is not yet evidence of
+  // anything, so few samples cannot produce a confident answer however well
+  // they happen to agree.
+  const enough = Math.min(1, glyphs.length / 24);
+
+  return {
+    design,
+    height_px: height,
+    samples: glyphs.length,
+    confidence: round3(Math.min(agree, tight) * enough),
+  };
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
    The recorder

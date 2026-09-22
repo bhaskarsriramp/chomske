@@ -201,6 +201,13 @@ export default function RecordPage({ config, onOpen, onCancel }) {
         tracker: report.tracker,
         track: report.track,
         motion: report.motion,
+        /**
+         * Which pointer this machine draws, measured during the recording from
+         * the original frames. The server decides the same thing from the
+         * encoded video when this is absent, and gets it wrong often enough to
+         * lose the cursor for a whole demo. See profileOf() in capture.js.
+         */
+        cursor: report.cursor,
         // The display and the OS. The pointer's size in the recording follows
         // from the screen's width in CSS pixels, and the server has no other
         // way to learn it. See environment() in capture.js.

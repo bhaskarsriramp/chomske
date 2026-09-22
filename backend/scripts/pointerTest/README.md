@@ -8,6 +8,9 @@ export — on any page, not just the one demo these were written against.
     node scripts/pointerTest/coverage.mjs     # is the real pointer ever visible?
     node scripts/pointerTest/clicks.mjs       # which presses move the camera
     node scripts/pointerTest/parked.mjs       # a still pointer on a page that is not
+    node scripts/pointerTest/content.mjs      # a cursor inside a video on the page
+    node scripts/pointerTest/glyph.mjs        # what the BROWSER measures, at full size
+    node scripts/pointerTest/profile.mjs      # ...and what the server does with it
     node scripts/pointerTest/real.mjs         # actual recordings, in fixtures/
 
 They build their own test recordings, so they need no fixtures: a page is drawn
@@ -37,6 +40,32 @@ the pointer is, so the difference tracker cannot see it and its hints point at
 the spinner instead; the page is otherwise static, so frame after frame is
 identical. On a real recording that lost the pointer for six and a half
 seconds and took the click on "API Keys" with it.
+
+`content.mjs` is the competitor's home page: a product demo PLAYING on the page
+being recorded, with somebody else's cursor inside it, moving, looking exactly
+like a cursor because it is one. Nothing about how it LOOKS separates it from
+the creator's — what separates them is that it lives inside a rectangle that
+repaints itself for the whole recording and can never leave it.
+
+`glyph.mjs` is the odd one out: it tests the BROWSER rather than the server.
+Before the locator can find a pointer it has to know which one to look for —
+light body or dark, and how tall — and it decides that by searching the
+uploaded video, where H.264 has smeared the one-pixel rim the answer lives in.
+The browser can simply measure it instead, out of a small patch cut from the
+original frame while the recording is being made
+(`src/components/Studio/tracker.worker.js`, `readGlyph`). This composites real
+cursors at known sizes over backgrounds chosen to be awkward — including the
+two that defeat a naive reading, a white cursor on a white page and a black one
+on a black page, where half the glyph does not change at all — and checks the
+answer against the truth. It prints the height error rather than only passing,
+because a bias of a pixel or two is the kind of thing that comes back.
+
+`profile.mjs` is the other half of that: a firm measurement from the browser
+NARROWS the server's search to the design it names, which is the improvement
+and also the new way to lose. A confidently wrong measurement would send the
+search looking for a pointer that is not there. locate.js reopens the search
+when a narrowed one comes back empty, and this is the test that takes that
+path — a fallback nobody has ever exercised is not a fallback.
 
 `real.mjs` is the one that catches what nobody thought of. The drawn pages
 above can only contain the difficulties we imagined; every real failure so far
