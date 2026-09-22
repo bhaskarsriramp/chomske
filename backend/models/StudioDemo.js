@@ -79,6 +79,24 @@ const CaptureSchema = new Schema(
     // (services/studio/events.js), never stored in place of it.
     track: { type: Schema.Types.Mixed, default: null },
     motion: { type: Schema.Types.Mixed, default: null },
+    /**
+     * The machine the demo was recorded on: OS family, the display's pixel
+     * ratio, and its size in CSS pixels. The pointer's height in the recording
+     * follows from the screen's width, and nothing on the server can work that
+     * out from the video alone. Zeroes mean the browser did not report it —
+     * every recording made before this existed — and the locator then measures
+     * the recording as it always did. See capture.js environment().
+     */
+    env: {
+      platform: {
+        type: String,
+        enum: ["windows", "macos", "linux", "chromeos", "android", "ios", "unknown"],
+        default: "unknown",
+      },
+      dpr: { type: Number, default: 0 },
+      screen_w: { type: Number, default: 0 },
+      screen_h: { type: Number, default: 0 },
+    },
   },
   { _id: false }
 );
@@ -131,6 +149,21 @@ const AnalysisSchema = new Schema(
      * changes whenever the creator does, and is worked out fresh each time.
      */
     changes: { type: Schema.Types.Mixed, default: null },
+
+    /**
+     * Every moment the pointer stopped, whether or not anything came of it.
+     *
+     * The change list above is "the screen did something nobody explained".
+     * This is the other half: "the pointer sat still and nobody proposed a
+     * press". A click on a toggle, a tab or a checkbox often produces neither
+     * an event nor a change big enough to notice, so it is invisible to both
+     * the pixel rules and the change list — and visible here, because a person
+     * clicks with the pointer held still.
+     *
+     * A fact about the RECORDING, measured once. Which rests are explained is
+     * a fact about the EDIT and is worked out on every audit.
+     */
+    rests: { type: Schema.Types.Mixed, default: null },
 
     /**
      * What the cross-check found, including what it decided was nothing.

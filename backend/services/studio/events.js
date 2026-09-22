@@ -409,6 +409,73 @@ export function dwells(samples, v = speeds(samples)) {
 }
 
 /**
+ * How long the pointer must have sat still before the moment is worth PAYING
+ * to ask the model about.
+ *
+ * RULES.dwellMs (90) is the bar for a dwell to exist at all, and it is
+ * deliberately low because the rules downstream need every rest they can get.
+ * This is a different question: a rest this short is usually the pointer
+ * pausing mid-travel, and the audit's budget is better spent elsewhere. A
+ * fifth of a second is about the shortest a hand takes to arrive somewhere,
+ * press, and still be there — the same reasoning as HELD_CLICKABLE.
+ */
+const REST_MS = 200;
+
+/**
+ * Every moment the pointer stopped, whether or not anything was made of it.
+ *
+ * ── WHY THIS IS NOT THE SAME LIST AS THE CLICKS ──────────────────────────────
+ * inferEvents() proposes a press only where a rest is FOLLOWED BY a change it
+ * can see near the pointer. That is the right rule for a pipeline that has to
+ * decide on its own, and it is a rule with a blind side: a press whose result
+ * was small, or slow, or off where the pointer was — a toggle flipping, a tab
+ * becoming selected, a value updating in a panel across the screen — produces
+ * a rest and no event, so there is nothing for the audit to be uncertain ABOUT
+ * and the moment is never checked by anything.
+ *
+ * Examining the presses that were found can never reveal the ones that were
+ * not. This is the list that can: a person clicks with the pointer held still,
+ * so every click in a recording is inside one of these, and what the audit does
+ * with them is ask the recording what actually happened there.
+ *
+ * It is a fact about the RECORDING — where the pointer stopped — so it is
+ * measured once and stored, exactly like the change list beside it. Which of
+ * them are already explained is a fact about the EDIT, and is worked out fresh
+ * every time the audit runs.
+ *
+ * @param {Array} samples the pointer path, located and merged
+ * @returns {Array<{t:number,x:number,y:number,ms:number,shape:string}>}
+ */
+export function restMoments(samples, { limit = 400 } = {}) {
+  const out = [];
+  for (const d of dwells(samples || [])) {
+    const ms = Math.round((num(d.end) - num(d.start)) * 1000);
+    if (ms < REST_MS) continue;
+    out.push({
+      /**
+       * The END of the rest, not its middle or its start. A press happens at
+       * the moment the hand stops moving and commits, and what follows it is
+       * the consequence the audit cuts its "after" frame from — so timing the
+       * candidate at the end of the rest puts that frame on the result rather
+       * than on the rest of the hover.
+       */
+      t: round3(num(d.end)),
+      x: round4(frac(d.x, 0.5)),
+      y: round4(frac(d.y, 0.5)),
+      ms,
+      shape: d.shape || "default",
+    });
+  }
+  /**
+   * The longest rests first when the cap bites. A pointer parked for two
+   * seconds is far more likely to have pressed something than one that paused
+   * for a quarter of a second on its way past.
+   */
+  out.sort((a, b) => b.ms - a.ms);
+  return out.slice(0, limit).sort((a, b) => a.t - b.t);
+}
+
+/**
  * How long the tracker must lose the pointer before that counts as it resting.
  *
  * It runs at 24 Hz, so a couple of dropped samples is ordinary and means

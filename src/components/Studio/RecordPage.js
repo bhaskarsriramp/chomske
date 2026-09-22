@@ -25,7 +25,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { captureSupport, startCapture, createRecorder, createTracker, sendRecording, levelOf } from "./capture";
+import { captureSupport, environment, startCapture, createRecorder, createTracker, sendRecording, levelOf } from "./capture";
 import { createDemo, startUpload, resumeUpload, completeUpload, startAnalysis } from "./studioApi";
 import { Btn, Icon, Toggle, Panel } from "./ui";
 import { fmtBytes } from "./model";
@@ -201,6 +201,10 @@ export default function RecordPage({ config, onOpen, onCancel }) {
         tracker: report.tracker,
         track: report.track,
         motion: report.motion,
+        // The display and the OS. The pointer's size in the recording follows
+        // from the screen's width in CSS pixels, and the server has no other
+        // way to learn it. See environment() in capture.js.
+        env: environment(),
       });
 
       setPhase("thinking");

@@ -340,7 +340,7 @@ export function unexplained(changes, { events = [], zooms = [], limit = AUDIT.ma
  *   3  a change already accounted for    confirmation only. Reached on a short
  *                                        recording, skipped on a long one.
  */
-export const PRIORITY = { refused: 0, unaccounted: 1, thin: 2, confirm: 3 };
+export const PRIORITY = { refused: 0, rested: 1, unaccounted: 2, thin: 3, confirm: 4 };
 
 /**
  * How many moments this recording's audit may buy.
@@ -359,11 +359,54 @@ export function budgetFor(duration) {
  *
  * @returns {Array<object>} each with `kind` ("press" | "change") and `priority`
  */
-export function plan({ changes = [], events = [], zooms = [], duration = 0, budget = 0 } = {}) {
+export function plan({ changes = [], events = [], zooms = [], rests = [], duration = 0, budget = 0 } = {}) {
   const items = [];
 
   for (const p of uncertainPresses(events, { limit: Infinity })) {
     items.push({ ...p, kind: "press", priority: p.zoomable ? PRIORITY.thin : PRIORITY.refused });
+  }
+
+  /**
+   * ── THE RESTS NOBODY PROPOSED A PRESS FOR ────────────────────────────────
+   * uncertainPresses() above can only be uncertain about presses that EXIST.
+   * The press that was never proposed — because its result was a toggle
+   * flipping, a tab highlighting, a value changing in a panel on the other
+   * side of the screen — leaves no event to be uncertain about and no change
+   * loud enough to reach the list below. It is invisible to both, and it is
+   * exactly the click a creator notices missing.
+   *
+   * A person clicks with the pointer held still, so every one of those clicks
+   * is inside a rest. Any rest with no event already on it and no zoom already
+   * over it is therefore a moment worth one question: "was the thing here
+   * activated?" — which is the narrow, well-posed question the arbiter answers
+   * best, because it comes with a position.
+   *
+   * They rank BELOW a refused press and above an unaccounted change. A refusal
+   * is a moment the pipeline looked at and got wrong, which is likelier to be
+   * a real press than a moment it never considered; a rest at least carries a
+   * pointer position, which an unexplained change does not.
+   */
+  for (const r of rests || []) {
+    const t = num(r.t);
+    if (eventNear(events, t)) continue;
+    if (zoomOver(zooms, t)) continue;
+    items.push({
+      kind: "press",
+      // No event exists for this moment, so there is nothing to patch evidence
+      // onto. auditEdit() reads the empty id as "this one is a proposal".
+      id: "",
+      t,
+      x: num(r.x, 0.5),
+      y: num(r.y, 0.5),
+      ms: num(r.ms),
+      zoomable: false,
+      // Ranked within the band by how long the pointer sat there, reusing the
+      // sort's existing tie-break. Two seconds parked on a control is far more
+      // likely to be a press than a quarter-second pause on the way past.
+      cover: num(r.ms) / 1000,
+      why: "the pointer rested here for " + Math.round(num(r.ms)) + "ms and nothing was made of it",
+      priority: PRIORITY.rested,
+    });
   }
 
   for (const c of changes || []) {
@@ -411,6 +454,17 @@ export function plan({ changes = [], events = [], zooms = [], duration = 0, budg
    * two presses are always two questions however close together they are.
    */
   const coveredBy = (it) => {
+    /**
+     * ── A PROPOSED REST IS NOT A PRESS AND DOES FOLD ─────────────────────────
+     * The rule below — two presses are always two questions — is about presses
+     * the pipeline actually FOUND, where being close together is ordinary and
+     * folding them loses a real click. A rest carries no such claim: it is only
+     * "the pointer stopped here". Two overlapping rests, or a rest sitting on a
+     * press already being asked about, are one moment and one question.
+     */
+    if (it.kind === "press" && !it.id) {
+      return kept.find((k) => k.kind === "press" && Math.abs(k.t - it.t) <= AUDIT.spanGap) || null;
+    }
     if (it.kind !== "change") return null;
     const by = kept.find((k) => k.kind === "press" && it.t >= k.t - 0.25 && it.t <= k.t + AUDIT.explainBefore);
     if (by) return by;
@@ -664,6 +718,7 @@ function frameFor(target, result) {
  * @param {Array}    o.events     the timeline's events, as the pipeline left them
  * @param {Array}    o.zooms      the timeline's zooms
  * @param {Array}    o.changes    changeMoments(), from the analysis
+ * @param {Array}    o.rests      restMoments(), from the analysis
  * @param {Function} [o.onProgress]
  *
  * @returns {Promise<{ findings, suggestions, patches, checked, spend }>}
@@ -678,13 +733,14 @@ export async function auditEdit({
   events = [],
   zooms = [],
   changes = [],
+  rests = [],
   spend = newSpend(),
   onProgress = () => {},
 }) {
   const dir = path.join(workDir, "audit");
   await fsp.mkdir(dir, { recursive: true }).catch(() => {});
 
-  const { items, folded, dropped, cap } = plan({ changes, events, zooms, duration });
+  const { items, folded, dropped, cap } = plan({ changes, events, zooms, rests, duration });
   const presses = items.filter((i) => i.kind === "press");
   const gaps = items.filter((i) => i.kind === "change");
   const total = items.length;
@@ -695,7 +751,8 @@ export async function auditEdit({
       `checking ${total} moment(s) of a possible ${cap}` +
       (folded ? ` (${folded} folded)` : "") +
       (dropped ? `, ${dropped} past the budget` : "") +
-      ` — ${tally(PRIORITY.refused)} refused press, ${tally(PRIORITY.unaccounted)} unaccounted change, ` +
+      ` — ${tally(PRIORITY.refused)} refused press, ${tally(PRIORITY.rested)} unexplained rest, ` +
+      `${tally(PRIORITY.unaccounted)} unaccounted change, ` +
       `${tally(PRIORITY.thin)} thin press, ${tally(PRIORITY.confirm)} confirmation`
   );
   if (!total) return { findings: [], suggestions: [], patches: [], checked: 0, spend };
@@ -727,15 +784,22 @@ export async function auditEdit({
      * fields are written — never the time, the position, or the verdict the
      * pixels reached.
      */
-    patches.push({
-      id: p.id,
-      fields: {
-        checked: said.verdict,
-        ...(said.target ? { control: said.target } : {}),
-        ...(said.typed ? { text: said.typed } : {}),
-        ...(target ? { target: [round4(target.x), round4(target.y), round4(target.w), round4(target.h)] } : {}),
-      },
-    });
+    /**
+     * A rest proposed by plan() has no event behind it — that is what makes it
+     * worth asking about — so there is nothing to annotate. The finding below
+     * carries everything learned here.
+     */
+    if (p.id) {
+      patches.push({
+        id: p.id,
+        fields: {
+          checked: said.verdict,
+          ...(said.target ? { control: said.target } : {}),
+          ...(said.typed ? { text: said.typed } : {}),
+          ...(target ? { target: [round4(target.x), round4(target.y), round4(target.w), round4(target.h)] } : {}),
+        },
+      });
+    }
 
     const confident = said.confidence >= AUDIT.accept;
 

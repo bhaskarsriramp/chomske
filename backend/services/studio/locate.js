@@ -108,7 +108,80 @@ const SHAPES = {
     ],
     lines: [[0.078, 0.25, 0.078, 0.45], [0.203, 0.28, 0.203, 0.45], [0.328, 0.31, 0.328, 0.45]],
   },
+
+  /* ──────────────────────────────────────────────────────────────────────────
+     The resize pointers
+     ──────────────────────────────────────────────────────────────────────────
+
+     ── WHY THEY ARE HERE AND THE TEXT CARET IS NOT ───────────────────────────
+     These four are drawn the same way the arrow and the hand are — a light body
+     inside a one-pixel dark rim — so the comparison this file is built on works
+     on them unchanged. Traced from C:/Windows/Cursors at the 32px set, where
+     the arrow's own glyph is 18 coordinate units tall, which is what RESIZE
+     below is measured against.
+
+     The text caret is NOT here, and cannot be. It is the old two-colour cursor:
+     a bar two pixels wide with no rim and no interior, whose tone comes from
+     INVERTING whatever is behind it. Built as a template it comes out a single
+     flat grey — measured, one distinct level against the arrow's 46, and a
+     norm of 0.76 against the arrow's 1183 — so there is no pattern to correlate
+     and matching it would be matching noise. Finding the caret needs a
+     different instrument, not another outline.
+
+     ── WHAT THEY ARE FOR ─────────────────────────────────────────────────────
+     Not clicks. Nobody presses a button with a resize pointer. They are here so
+     the pointer is not LOST while somebody drags a column edge or a panel
+     splitter — frames where the arrow and hand templates find nothing, the
+     track goes quiet, and everything downstream that reads the track reasons
+     about a pointer that was plainly on screen the whole time.
+
+     Their shape is reported as "resize" so that confirmClicks() treats it as
+     what it is: a pointer doing something other than pressing.
+     ────────────────────────────────────────────────────────────────────────── */
+
+  /** Horizontal double arrow: 23 x 9 at the 32px set, hotspot at its centre. */
+  ew: {
+    shape: "resize",
+    poly: [
+      [-1.375, 0], [-0.75, -0.5], [-0.75, -0.125], [0.75, -0.125], [0.75, -0.5],
+      [1.375, 0], [0.75, 0.5], [0.75, 0.125], [-0.75, 0.125], [-0.75, 0.5],
+    ],
+  },
+  /** The same, upright: 9 x 23. */
+  ns: {
+    shape: "resize",
+    poly: [
+      [0, -0.5], [0.182, -0.273], [0.045, -0.273], [0.045, 0.273], [0.182, 0.273],
+      [0, 0.5], [-0.182, 0.273], [-0.045, 0.273], [-0.045, -0.273], [-0.182, -0.273],
+    ],
+  },
+  /**
+   * The corner pair: two right-angled heads joined by a diagonal shaft, 17 x 17.
+   * One traced and one mirrored, because that is exactly how the system draws
+   * the second from the first.
+   */
+  nwse: {
+    shape: "resize",
+    poly: [
+      [-0.5, -0.5], [-0.125, -0.5], [-0.266, -0.359], [0.359, 0.266], [0.5, 0.125],
+      [0.5, 0.5], [0.125, 0.5], [0.266, 0.359], [-0.359, -0.266], [-0.5, -0.125],
+    ],
+  },
+  nesw: {
+    shape: "resize",
+    poly: [
+      [0.5, -0.5], [0.125, -0.5], [0.266, -0.359], [-0.359, 0.266], [-0.5, 0.125],
+      [-0.5, 0.5], [-0.125, 0.5], [-0.266, 0.359], [0.359, -0.266], [0.5, -0.125],
+    ],
+  },
 };
+
+/**
+ * Each resize outline's own height against the arrow's, at the same pointer
+ * size. Measured on the 32px Windows set, where the arrow spans 18 coordinate
+ * units: the flat double arrow spans 8, the upright one 22, the corner pair 16.
+ */
+const RESIZE = { ew: 8 / 18, ns: 22 / 18, nwse: 16 / 18, nesw: 16 / 18 };
 
 
 /**
@@ -279,120 +352,9 @@ function prepare(tpl, W) {
 /** Pixels between coarse samples; the core/band test tolerates this much error. */
 const COARSE_STEP = 3;
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Coarse to fine
-   ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * ── THE WHOLE-FRAME SCAN DOES NOT NEED FULL RESOLUTION TO FIND ANYTHING ──────
- * Re-acquiring a lost pointer is, measured, ninety-eight per cent of an
- * analysis, and its cost is (candidates x template pixels). Both fall with the
- * square of the resolution, and neither has anything to do with the precision
- * the answer needs:
- *
- *   candidates        a dark, text-dense screen passed 24,905 of them at full
- *                     resolution against 1,939 for a calm light one. Halving
- *                     the frame blurs most of that texture away — it is text at
- *                     the limit of the sampling — while a cursor, which is
- *                     drawn to be legible, survives being halved intact.
- *   template pixels   a quarter as many per score.
- *
- * So the search runs on a half-size frame, and the ANSWER is then refined at
- * full resolution in a tiny window around it. Precision is not traded away: the
- * hotspot is still decided by a full-resolution correlation on the real pixels,
- * and the score that the caller's thresholds are applied to is the
- * full-resolution one. Only the hunting is cheap.
- *
- * ── AND IT IS NOT ALWAYS WORTH IT ────────────────────────────────────────────
- * A pointer already small in the recording halves to eight or nine pixels,
- * which is too little shape to tell from a letter. Below HALF_MIN_PX the frame
- * is searched whole.
- *
- * Raised from 20 to 40 after a 21px dark pointer located 65 frames of 376 with
- * it on. Twenty was a guess; forty means the half template is still twenty
- * pixels tall, which is the size the full-resolution matcher is known to work
- * at. Even so this only runs when explicitly asked for — see useHalf below.
- */
-const HALF_MIN_PX = 40;
-/** How far around the half-resolution answer the full-resolution pass looks. */
-const REFINE_R = 3;
-
-/** Average each 2x2 block into `dst`. About half a million operations a frame. */
-function halve(src, W, H, dst) {
-  const hw = W >> 1;
-  const hh = H >> 1;
-  for (let y = 0; y < hh; y++) {
-    const r0 = (y << 1) * W;
-    const r1 = r0 + W;
-    const o = y * hw;
-    for (let x = 0; x < hw; x++) {
-      const i = x << 1;
-      dst[o + x] = (src[r0 + i] + src[r0 + i + 1] + src[r1 + i] + src[r1 + i + 1]) >> 2;
-    }
-  }
-}
-
-/**
- * The best full-resolution match within REFINE_R of a half-resolution hit.
- *
- * The half-resolution position is good to about a pixel there, which is two
- * here, so the window only has to cover that plus the rounding.
- */
-function refine(frame, W, H, tpl, hx, hy) {
-  let best = null;
-  const cx = hx << 1;
-  const cy = hy << 1;
-  for (let y = cy - REFINE_R; y <= cy + REFINE_R; y++) {
-    for (let x = cx - REFINE_R; x <= cx + REFINE_R; x++) {
-      const sc = scoreAt(frame, W, H, tpl, x, y);
-      if (sc > (best ? best.score : -1)) best = { x, y, score: sc };
-    }
-  }
-  return best;
-}
-
 /** Grey levels of core-over-band contrast that make a coarse candidate. */
 const COARSE = 22;
 
-/**
- * The most coarse candidates one frame's exact pass will re-score.
- *
- * ── WHY THERE HAS TO BE A LIMIT AT ALL ───────────────────────────────────────
- * The coarse test is a filter, and how much it filters depends entirely on what
- * is on the screen. Measured, same 1920×1080 frame size, same template:
- *
- *   a calm light UI        1,939 candidates
- *   a dark code editor    24,905 candidates      — thirteen times as many
- *
- * Every candidate then costs a 5×5 block of full cross-correlations, so the
- * exact pass went from about a tenth of a second per frame per template to
- * three tenths — and that is paid for EVERY template on EVERY frame the pointer
- * is lost. A dark, text-dense recording could leave an analysis running for a
- * very long time with nothing in the log to say why.
- *
- * ── AND WHY THE TOP N ARE THE RIGHT ONES TO KEEP ─────────────────────────────
- * The filter already measures how pointer-shaped a patch is: the contrast
- * between the template's core and the band around it. A cursor is drawn to be
- * legible on any background and is close to the strongest such contrast
- * anywhere in a frame; syntax-highlighted text on a dark background merely
- * clears the bar. Keeping the strongest candidates keeps the pointer.
- *
- * Set above what a calm screen produces, so ordinary recordings behave exactly
- * as they did and only the pathological ones are trimmed.
- */
-const COARSE_CAP = 4000;
-
-/**
- * How many of the strongest candidates are tried before the rest.
- *
- * The pointer is the strongest candidate on most frames, so this is the number
- * that decides how much of an analysis is actually paid for. Three hundred
- * because the two frames measured where the pointer was NOT near the top ranked
- * it in the thousands — there is no value between "a few hundred" and "all of
- * them", so this is set to catch the common case cheaply and let the rare one
- * fall through to the full scan rather than trying to guess a middle.
- */
-const FAST_TIER = parseInt(process.env.STUDIO_FAST_TIER || "300", 10);
 
 /**
  * The coarse test: how pointer-shaped is this patch, in grey levels of
@@ -403,15 +365,14 @@ const FAST_TIER = parseInt(process.env.STUDIO_FAST_TIER || "300", 10);
  * are far too many, which is the case this has to survive.
  */
 function coarseAt(frame, W, H, t, x, y) {
-  if (x + t._minDx - 2 < 0 || y + t._minDy - 2 < 0 || x + t._maxDx + 2 >= W || y + t._maxDy + 2 >= H) return -1;
+  if (x + t._minDx - 2 < 0 || y + t._minDy - 2 < 0 || x + t._maxDx + 2 >= W || y + t._maxDy + 2 >= H) return false;
   const base = y * W + x;
   let c = 0;
   for (let k = 0; k < t.coreIdx.length; k++) c += frame[base + t.coreIdx[k]];
   let b = 0;
   for (let k = 0; k < t.bandIdx.length; k++) b += frame[base + t.bandIdx[k]];
   const diff = c / t.coreIdx.length - b / t.bandIdx.length;
-  const strength = t.dark ? -diff : diff;
-  return strength >= COARSE ? strength : -1;
+  return t.dark ? diff <= -COARSE : diff >= COARSE;
 }
 
 /** Masked normalised cross-correlation at one hotspot position. */
@@ -487,6 +448,16 @@ const FLICK = 0.6;
 const THROW = 320;
 /** Frames sampled across the recording to decide which pointer it has. */
 const CAL_FRAMES = 12;
+
+/**
+ * The arrow's own glyph height, in CSS pixels, at 100% display scaling.
+ *
+ * Measured off the Windows set: the pointer IMAGE is 32 x 32, and the arrow
+ * drawn inside it spans 19 rows. macOS draws its arrow to within a pixel of the
+ * same, which is why one number serves both. It is a starting point and not a
+ * claim — every size within 25% below and 30% above is tried around it.
+ */
+const GLYPH_CSS = 19;
 /**
  * How clearly the best match must beat the next best somewhere else in the
  * frame. This is what separates a pointer from the page: there is one pointer,
@@ -512,64 +483,43 @@ const UNIQUE = 0.12;
  */
 function topTwo(frame, W, H, t) {
   const sep = Math.max(20, t.heightPx * 1.5);
-  // Coarse: every second pixel, with the test that tolerates a pixel of error.
-  let hits = [];
-  const strengths = [];
+  // Coarse: every third pixel, with the test that tolerates a pixel of error.
+  const hits = [];
   for (let y = 0; y < H; y += COARSE_STEP) {
     for (let x = 0; x < W; x += COARSE_STEP) {
-      const s = coarseAt(frame, W, H, t, x, y);
-      if (s >= 0) {
-        hits.push(x, y);
-        strengths.push(s);
-      }
+      if (coarseAt(frame, W, H, t, x, y)) hits.push(x, y);
     }
   }
 
   /**
-   * ── THE STRONGEST CANDIDATES FIRST, AND USUALLY THAT IS ENOUGH ─────────────
-   * The exact pass below is twenty-five cross-correlations per candidate and it
-   * is, measured, ninety-eight per cent of an analysis. It was running over
-   * every candidate on every frame — a median of nine and a half thousand on a
-   * real recording.
+   * ── EVERY CANDIDATE IS SCORED, AND THAT IS NOT NEGOTIABLE ─────────────────
+   * Three ways of scoring fewer of them were tried and all three cost the
+   * pointer, so this is written down rather than rediscovered:
    *
-   * Measured on that recording: the true pointer is the STRONGEST candidate by
-   * coarse contrast on seven frames out of nine. A cursor is drawn to be
-   * legible on any background, so it usually has the highest core-over-band
-   * contrast anywhere in the frame.
+   *   a cap of 4000 on the candidate list, keeping the strongest by coarse
+   *   contrast. The true pointer was measured at rank 1533 on one frame and
+   *   4897 on another — ABOVE the cap — so on a dark, text-dense screen the cap
+   *   discards the very thing it is looking for.
    *
-   * Usually, not always — on the other two frames it ranked 1533rd and 4897th,
-   * where the pointer sat over something with more contrast than itself. So a
-   * small cap would lose it outright. The order is what is exploited instead:
-   * scan the strongest few hundred, and STOP if that produced a sure match. It
-   * nearly always does, and when it does not the full set is scanned exactly as
-   * before. Nothing is given up; most frames just stop early.
+   *   scanning the strongest few hundred first and stopping on a sure match.
+   *   Identical results on a light UI, and on a dark one it simply arrives at
+   *   the same capped set by a longer road.
+   *
+   *   searching a half-size frame. A cursor IS a one-pixel rim, averaging
+   *   destroys it, and a 21px dark pointer located 65 frames out of 376.
+   *
+   * The lesson in all three: how pointer-like a patch looks at a glance does
+   * not rank the real pointer reliably, because a cursor is drawn to be legible
+   * against its background and a dark UI is full of high-contrast text. The
+   * only thing that separates them is the full correlation — which means
+   * running it. Making this cheaper has to come from asking FEWER QUESTIONS
+   * (fewer candidate templates, fewer sampled frames) rather than from
+   * answering them less carefully.
    */
-  /**
-   * ── AND THE RANKING MUST NOT COST MORE THAN IT SAVES ──────────────────────
-   * The first version of this sorted an index array by strength. It was correct
-   * and it made the whole analysis TWICE AS SLOW: a comparator sort over ten to
-   * twenty thousand entries, allocated fresh, on every frame for every
-   * template, costs more than the exact passes it was meant to skip.
-   *
-   * No sort is needed to find a threshold. A strength is core-over-band
-   * contrast in grey levels, so it is bounded to 0..255 — a 256-bucket
-   * histogram gives any cut point in one pass and one fixed allocation.
-   */
-  const hist = new Int32Array(256);
-  for (let j = 0; j < strengths.length; j++) hist[Math.min(255, strengths[j] | 0)]++;
-  const barFor = (want) => {
-    let acc = 0;
-    for (let b = 255; b > 0; b--) {
-      acc += hist[b];
-      if (acc >= want) return b;
-    }
-    return 0;
-  };
-  const fastBar = strengths.length > FAST_TIER ? barFor(FAST_TIER) : 0;
-  const capBar = strengths.length > COARSE_CAP ? barFor(COARSE_CAP) : 0;
-
   const found = [];
-  const consider = (hx, hy) => {
+  for (let i = 0; i < hits.length; i += 2) {
+    const hx = hits[i];
+    const hy = hits[i + 1];
     let best = null;
     for (let y = hy - 2; y <= hy + 2; y++) {
       for (let x = hx - 2; x <= hx + 2; x++) {
@@ -577,31 +527,11 @@ function topTwo(frame, W, H, t) {
         if (sc > (best ? best.score : 0.45)) best = { x, y, score: sc };
       }
     }
-    if (!best) return;
+    if (!best) continue;
     const near = found.find((c) => Math.abs(c.x - best.x) <= sep && Math.abs(c.y - best.y) <= sep);
     if (near) { if (best.score > near.score) Object.assign(near, best); }
     else found.push(best);
-  };
-
-  // Tier one: only the strongest, which on most frames contains the pointer.
-  for (let j = 0; j < strengths.length; j++) {
-    if (strengths[j] < fastBar) continue;
-    consider(hits[j * 2], hits[j * 2 + 1]);
   }
-
-  /**
-   * A SURE match ends the search. A soft one does not: `second` decides whether
-   * a soft match is the one clear thing in the frame (see the caller), and that
-   * question cannot be answered from a part of the frame.
-   */
-  if (fastBar > 0 && !found.some((f) => f.score >= FOUND)) {
-    for (let j = 0; j < strengths.length; j++) {
-      if (strengths[j] >= fastBar) continue;   // already done above
-      if (strengths[j] < capBar) continue;     // past the cap: see COARSE_CAP
-      consider(hits[j * 2], hits[j * 2 + 1]);
-    }
-  }
-
   found.sort((p, q) => q.score - p.score);
   return { best: found[0] || null, second: found[1] || null };
 }
@@ -803,9 +733,10 @@ async function calibrate(video, W, H, all, duration, fps) {
  * @param {number} [o.fps]       30 matches the export's own frame grid exactly
  * @param {number} [o.cursorPx]  the pointer's measured height, if known
  * @param {Array}  [o.hints]     where the difference tracker thought it was
+ * @param {object} [o.env]       the recording machine: platform, dpr, screen_w
  * @returns {Promise<{ track: Array, design: string|null, heightPx: number, found: number, frames: number }>}
  */
-export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], onDebug = null, onProgress = null } = {}) {
+export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], env = null, onDebug = null, onProgress = null } = {}) {
   const W = Math.round(sourceWidth);
   const H = Math.round(sourceHeight);
 
@@ -824,8 +755,40 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
 
   // Sizes around the measured one: an OS picks the pointer's size for the
   // display, and the recording may have been scaled on the way.
-  const guess = cursorPx > 8 ? cursorPx : 20 * (W / 1920);
-  const sizes = [...new Set([0.75, 0.85, 0.95, 1.05, 1.15, 1.3].map((k) => Math.round(guess * k)))];
+  /**
+   * ── HOW BIG THE POINTER IS, BEFORE ANY OF THE RECORDING HAS BEEN READ ─────
+   * Three sources, in descending order of how much they know:
+   *
+   *   measured     sync.js watched the pointer move and took the middle of the
+   *                patch heights it left. First-hand, and it needs a dozen
+   *                clean patches — so it returns nothing on the demos where
+   *                the pointer mostly sits still, which are common.
+   *   the display  the browser reported the screen's width in CSS pixels. A
+   *                cursor is drawn at a fixed CSS size, so its height here is
+   *                just that size scaled by videoWidth / screenWidth. See
+   *                environment() in capture.js.
+   *   nothing      the old arithmetic, which reads as a frame-width rule and
+   *                is really the assumption that every creator has a 1920-wide
+   *                desktop at 100% zoom. It is wrong by a third on a 1280-wide
+   *                laptop and wrong by 40% on a Windows machine at 150%, both
+   *                of which are ordinary.
+   */
+  const fromScreen = num(env?.screen_w) > 0 ? GLYPH_CSS * (W / num(env.screen_w)) : 0;
+  const guess = cursorPx > 8 ? cursorPx : fromScreen > 8 ? fromScreen : 20 * (W / 1920);
+  const sizes = new Set([0.75, 0.85, 0.95, 1.05, 1.15, 1.3].map((k) => Math.round(guess * k)));
+  /**
+   * ── WHEN THE TWO DISAGREE, BOTH ARE OFFERED ───────────────────────────────
+   * The measurement is first-hand and quantised: it is taken on a 480-wide
+   * pass, so a 19-pixel pointer is read as four or five pixels and multiplied
+   * back up, and a smeared patch reads high. The display is exact arithmetic on
+   * an assumed glyph size. Neither deserves to silently exclude the other, and
+   * a size that is not offered here can never be found later — calibration can
+   * only pick from this list, and picking wrong costs the whole recording its
+   * pointer. Three extra sizes on a rare disagreement is a cheap insurance.
+   */
+  if (cursorPx > 8 && fromScreen > 8 && (fromScreen > guess * 1.3 || fromScreen < guess * 0.75)) {
+    for (const k of [0.9, 1, 1.1]) sizes.add(Math.round(fromScreen * k));
+  }
   const make = (name, hp, dark) => bounds(prepare(buildTemplate(name, hp, { dark }), W));
   /** A hand drawn at the height an arrow of `hp` implies, so it votes for `hp`. */
   const asHand = (name, hp, dark, k = 1.21) =>
@@ -877,6 +840,26 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   }
 
   /**
+   * ── THE RESIZE POINTERS, KEPT OUT OF THE ORDINARY FRAME ───────────────────
+   * Four more templates on every frame would be a third again on the cost of
+   * the local search, paid on every frame of every recording, to catch the few
+   * seconds of the few demos where somebody drags a column edge. So they are
+   * not in `tpls` and never in `wide`: they are looked for only where the arrow
+   * and the hand have already come up empty, which is precisely the frame that
+   * is about to be lost anyway.
+   *
+   * They are also weaker templates than the other two — 60 pixels against the
+   * arrow's 116, and a norm around 500 against its 1183, because the thin bar
+   * between the two heads is all rim and no body. That is survivable HERE, next
+   * to a known position, and it is why they are never offered to the
+   * whole-frame scan, where a weak template is how the page gets mistaken for
+   * a pointer.
+   */
+  const extra = Object.entries(RESIZE).map(([name, k]) =>
+    bounds(prepare(buildTemplate(name, Math.round(cal.heightPx * k), { dark: cal.dark, setPx: cal.heightPx }), W))
+  );
+
+  /**
    * ── THE WHOLE-FRAME SCAN NEEDS TWO SHAPES, NOT ELEVEN ─────────────────────
    * Looking near where the pointer just was is cheap and uses every template;
    * scanning the entire frame is most of the cost of this file and only has to
@@ -891,81 +874,14 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   ];
 
   /**
-   * ── AND THE SAME TWO SHAPES AT HALF SIZE, FOR THE HUNTING ─────────────────
-   * Prepared against the half frame's own row stride, because a template is a
-   * list of byte offsets and those depend on how wide the picture is. See the
-   * coarse-to-fine note above for why the answer is still full resolution.
+   * ── AND NO CHEAPER VERSION OF THEM ────────────────────────────────────────
+   * A half-size copy of these two, hunting on a half-size frame and refining
+   * the answer at full resolution, was built and measured and removed. It is
+   * thirty per cent faster on a light 26px pointer and it located 65 frames of
+   * 376 on a dark 21px one — which left no pointer shape for confirmClicks() to
+   * judge a press by, so the demo came back with no zooms and no cursor at all.
+   * See the note in topTwo: the rim is the signal, and averaging destroys it.
    */
-  const HALF_W = W >> 1;
-  const HALF_H = H >> 1;
-  const halfPx = Math.round(cal.heightPx / 2);
-  /**
-   * ── OFF BY DEFAULT, AND THE REASON IS THE WHOLE POINT ─────────────────────
-   * Measured on a 78-second recording with a LIGHT 26px pointer: 139s to 96s,
-   * and 1000 located frames to 984. Sixteen frames in two and a half thousand.
-   * A good trade, and I shipped it on that one measurement.
-   *
-   * On a real recording with a DARK 21px pointer it located 65 frames out of
-   * 376. Seventeen per cent. With almost nothing located there is no pointer
-   * shape for confirmClicks() to judge a press by, so every press was refused,
-   * the demo came back with no zooms at all, and the drawn cursor had nothing
-   * to draw from. The whole product looked broken.
-   *
-   * The cause is the same one that killed it in calibrate(): a cursor is a
-   * one-pixel rim, and halving a 21px pointer leaves a 10px template whose rim
-   * has been averaged into its body. HALF_MIN_PX was set at 20 on no evidence,
-   * and 21 scraped past it.
-   *
-   * So it is off unless asked for. The code stays because the IDEA is sound —
-   * hunting cheap and refining precise is the right shape — but the threshold
-   * that makes it safe has to be found with fixtures/truth.html and
-   * scripts/truthScore.js across real recordings at several pointer sizes and
-   * both designs, not inferred from one light-UI clip.
-   *
-   *   STUDIO_LOCATE_HALF=on     to measure it again
-   */
-  const halfOn = String(process.env.STUDIO_LOCATE_HALF || "").trim().toLowerCase() === "on";
-  const useHalf = halfOn && cal.heightPx >= HALF_MIN_PX && HALF_W > 64 && HALF_H > 64;
-  const wideHalf = useHalf
-    ? [
-        bounds(prepare(buildTemplate("arrow", halfPx, { dark: cal.dark }), HALF_W)),
-        bounds(prepare(
-          buildTemplate(hands[0], Math.round(halfPx * 1.21), { dark: cal.dark, setPx: halfPx }),
-          HALF_W
-        )),
-      ]
-    : null;
-  const halfBuf = useHalf ? Buffer.alloc(HALF_W * HALF_H) : null;
-  let halfReady = false;
-  console.log(
-    "[studio] pointer search: " +
-      (useHalf
-        ? `hunting at ${HALF_W}x${HALF_H} and refining at ${W}x${H}`
-        : `whole frames at ${W}x${H}` +
-          (halfOn ? ` (pointer is only ${cal.heightPx}px; too small to halve)` : ""))
-  );
-
-  /**
-   * One whole-frame search, cheap side first. Returns full-resolution positions
-   * and full-resolution scores, so every threshold above this is unchanged.
-   */
-  const searchWide = (frame, k) => {
-    if (!useHalf) return topTwo(frame, W, H, wide[k]);
-    if (!halfReady) {
-      halve(frame, W, H, halfBuf);
-      halfReady = true;
-    }
-    const { best, second } = topTwo(halfBuf, HALF_W, HALF_H, wideHalf[k]);
-    if (!best) return { best: null, second: null };
-    return {
-      best: refine(frame, W, H, wide[k], best.x, best.y),
-      // The runner-up only ever decides whether the winner is the one clear
-      // match in the frame, and a half-resolution score answers that as well as
-      // a full one would. Refining it too would double the cost of the cheap
-      // half of this for a number nothing reads precisely.
-      second: second ? { x: second.x << 1, y: second.y << 1, score: second.score } : null,
-    };
-  };
 
   const hintAt = (t) => {
     let best = null;
@@ -995,9 +911,8 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    * ── AN ANALYSIS HAS TO FINISH ────────────────────────────────────────────
    * Searching the whole frame for every template is most of the cost of this
    * file, and how expensive it is depends on what is on the screen rather than
-   * on how long the recording is. COARSE_CAP bounds one search; this bounds all
-   * of them together, because a bound per unit of work is not the same as a
-   * bound on the work.
+   * on how long the recording is, so nothing inside one search bounds it and
+   * this bounds all of them together.
    *
    * Past the budget the global search stops and the cheap local tracking
    * carries on: the pointer is still followed frame to frame wherever it was
@@ -1009,8 +924,22 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    * Proportional to length, floored so a short recording is never cut off in
    * the middle, capped so a long one cannot run away.
    */
+  /**
+   * ── GENEROUS, BECAUSE GIVING UP COSTS THE CURSOR ──────────────────────────
+   * This was duration x 2.5s, floored at 90 seconds. On a dark, text-dense
+   * recording the search runs at six to nine seconds per second of video, so a
+   * thirty second demo hit the floor and stopped two thirds of the way through
+   * — and a locator that stops has no pointer for the rest of the recording,
+   * which shows up as a missing cursor and missing zooms rather than as a
+   * slightly rougher edit.
+   *
+   * It is a guard against a genuine runaway, not a performance setting. Fifteen
+   * seconds of budget per second of video is far more than any recording has
+   * needed, so in practice it never fires; what it still prevents is the
+   * forty-five minute hang this replaced.
+   */
   const budgetMs = Math.round(
-    clamp(num(process.env.STUDIO_LOCATE_BUDGET_MS) || duration * 2500, 90_000, 600_000)
+    clamp(num(process.env.STUDIO_LOCATE_BUDGET_MS) || duration * 15_000, 300_000, 1_800_000)
   );
   const startedAt = Date.now();
   let overBudget = false;
@@ -1065,9 +994,6 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
       }
       prevFrame = Buffer.from(frame);
       prevHit = null;
-      // The half-size copy is made once per frame, and only if something
-      // actually needs a whole-frame search on it.
-      halfReady = false;
 
       let hit = null;
 
@@ -1091,6 +1017,17 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
           const r = search(frame, W, H, tpls, h.x * W - NEAR, h.y * H - NEAR, h.x * W + NEAR, h.y * H + NEAR);
           if (r && (!hit || r.score > hit.score)) hit = r;
         }
+      }
+      // 2b. A resize pointer, where it last was. Only once the arrow and the
+      //     hand have failed, so dragging a splitter costs one extra local
+      //     search and an ordinary frame costs nothing. Continuity is the
+      //     evidence, exactly as in step 1: these templates are never trusted
+      //     to find a pointer, only to keep hold of one.
+      if ((!hit || hit.score < FOUND) && last) {
+        const px = last.x + (last.vx || 0);
+        const py = last.y + (last.vy || 0);
+        const r = search(frame, W, H, extra, px - NEAR, py - NEAR, px + NEAR, py + NEAR);
+        if (r && (!hit || r.score > hit.score)) hit = r;
       }
       // 3. Everywhere — and then it has to be the ONE clear match.
       /**
@@ -1124,9 +1061,8 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
          */
         const fresh = recent && lostFor <= 2;
         const bar = fresh ? FLICK : FOUND;
-        for (let k = 0; k < wide.length; k++) {
-          const tp = wide[k];
-          const { best, second } = searchWide(frame, k);
+        for (const tp of wide) {
+          const { best, second } = topTwo(frame, W, H, tp);
           if (!best || best.score < bar) continue;
           // A sure match is taken wherever it is; the extra conditions are only
           // for a soft one, which has to earn its place by being where a flick

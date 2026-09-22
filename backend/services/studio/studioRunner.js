@@ -35,6 +35,7 @@ import { transient } from "../edit/transient.js";
 import { analyseRecording, generateCaptions, visionPass, auditPass } from "./analyse.js";
 import { reviewEdit, newSpend } from "./vision.js";
 import { applyPatches } from "./audit.js";
+import { applySuggestion } from "./suggestions.js";
 import { renderTimeline } from "./render/compose.js";
 import { missingFonts, FONTS_DIR } from "./render/ass.js";
 import { sanitizeTimeline } from "./timeline.js";
@@ -46,6 +47,14 @@ const WORKER = `${os.hostname()}:${process.pid}`;
 const LEASE_MS = 90_000;
 const TICK_MS = 2500;
 const MAX_ATTEMPTS = 3;
+/**
+ * Whether a press the audit confirmed becomes a zoom on its own.
+ *
+ * On, because a demo that silently drops a click the model plainly saw is the
+ * wrong default. Set STUDIO_AUTO_PRESS_ZOOMS=0 to go back to offering them as
+ * suggestions and nothing more.
+ */
+const AUTO_APPLY_PRESSES = String(process.env.STUDIO_AUTO_PRESS_ZOOMS || "1") !== "0";
 /**
  * Network faults waited out per job: 15 s between tries, doubling, at most 10
  * minutes. A prepare or a render waits about an hour, because the work is all
@@ -375,6 +384,7 @@ const analyse = {
           "analysis.elements": result.elements || null,
           // The moments the screen changed, measured once. See the model.
           "analysis.changes": result.changes || null,
+          "analysis.rests": result.rests || null,
           /**
            * ── LAST TIME'S FINDINGS DO NOT SURVIVE A NEW EDIT ────────────────
            * The edit has just been rebuilt from scratch, so every zoom id a
@@ -685,6 +695,7 @@ const review = {
     /* ── Checked against the recording ───────────────────────────────────── */
     let audit = { findings: [], suggestions: [], patches: [], events: null, checked: 0 };
     const changes = Array.isArray(demo.analysis?.changes) ? demo.analysis.changes : [];
+    const rests = Array.isArray(demo.analysis?.rests) ? demo.analysis.rests : [];
 
     /**
      * ── AN UNCHANGED EDIT ASKS THE SAME QUESTIONS ────────────────────────────
@@ -705,7 +716,7 @@ const review = {
         checked: 0,
       };
       console.log("[studio] " + demo._id + " unchanged since its last check; keeping " + audit.findings.length + " finding(s)");
-    } else if (demo.recording?.mp4_key && changes.length) {
+    } else if (demo.recording?.mp4_key && (changes.length || rests.length)) {
       publishProgress(demo, { auditing: true });
       try {
         const video = await materialize(demo.recording.mp4_key, workDir, "recording.mp4");
@@ -715,6 +726,7 @@ const review = {
           duration,
           timeline: demo.timeline,
           changes,
+          rests,
         });
         audit = res;
         spend.usd += res.spend.usd;
@@ -785,13 +797,57 @@ const review = {
       updated_at: new Date(),
     };
 
-    const patched = audit.patches?.length && fresh.timeline;
+    /**
+     * ── THE CAMERA MOVES FOR A PRESS THE MODEL SAW, WITHOUT BEING ASKED ──────
+     * suggestions.js says nothing is applied automatically, and that rule is
+     * about the QUALITY REVIEWER: it reads a timeline the same models produced
+     * and offers opinions about it, so a reviewer that applies its own advice
+     * has stopped being a reviewer.
+     *
+     * The audit is not that. It reads the RECORDING — the same pixels the
+     * pixel pipeline read, through an instrument that does not share its blind
+     * spots — and answers a question of fact: was the thing at this position
+     * activated. When it says yes with confidence and the camera did not move,
+     * the demo has a hole in it that the creator can see, and leaving that
+     * behind a button means the default output is the wrong one.
+     *
+     *   "a user should never miss a click so on every click the zoom in must
+     *    happen"
+     *
+     * So a confident missed press becomes a zoom here. Only that: a `wrong_zoom`
+     * still only ever offers to REMOVE something, because taking a camera move
+     * away from a creator who wanted it is the mistake that cannot be undone by
+     * watching the result, and a `reframe` is a matter of taste. Everything the
+     * audit applied is still in `findings` and still listed as a suggestion, so
+     * what happened is visible and reversible in the editor.
+     */
+    let timeline = fresh.timeline;
+    const applied = [];
+    if (timeline && AUTO_APPLY_PRESSES) {
+      for (const s of audit.suggestions) {
+        if (s.change?.op !== "add_zoom") continue;
+        const res = applySuggestion(timeline, s, { duration: fresh.recording?.duration || duration });
+        if (res.applied) {
+          timeline = res.timeline;
+          applied.push(s.id);
+        } else {
+          console.log("[studio] audit zoom at " + (s.change.start || 0).toFixed(1) + "s not applied: " + res.why);
+        }
+      }
+      if (applied.length) {
+        console.log("[studio] " + applied.length + " zoom(s) added for presses the camera had missed");
+      }
+    }
+
+    const patched = (audit.patches?.length || applied.length) && timeline;
     if (patched) {
       set.timeline = sanitizeTimeline(
-        { ...fresh.timeline, events: applyPatches(fresh.timeline.events || [], audit.patches) },
+        { ...timeline, events: applyPatches(timeline.events || [], audit.patches) },
         { duration: fresh.recording?.duration || 0, source: fresh.timeline?.source }
       );
     }
+    // A suggestion the audit already carried out is not an offer any more.
+    if (applied.length) set["analysis.resolved"] = [...resolved, ...applied];
     // The rev this audit's findings describe — AFTER this write's own bump, or
     // they would be stale the moment they were stored.
     set["analysis.audited_rev"] = (fresh.rev || 0) + (patched ? 1 : 0);

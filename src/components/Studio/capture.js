@@ -36,6 +36,66 @@ const TRACK_EDGE = 960;
 const CHUNK_MS = 3000;
 
 /* ────────────────────────────────────────────────────────────────────────────
+   What machine this is
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The display and the operating system, recorded with the demo.
+ *
+ * ── WHY THE SERVER CANNOT WORK THIS OUT ──────────────────────────────────────
+ * The pointer is found in the recording by drawing a template of it and looking
+ * for the match (backend/services/studio/locate.js), and to draw one you must
+ * know HOW BIG the pointer is in the picture. The server only has the video, so
+ * it measures the size from the frames — which works while the pointer is
+ * moving and returns nothing at all on a demo where it mostly sits still. Its
+ * fallback is arithmetic on the frame width that quietly assumes the creator
+ * has a 1920-wide desktop at 100% zoom.
+ *
+ * The browser knows the real answer for nothing. A cursor is drawn at a fixed
+ * size in CSS pixels and scaled up by the display's pixel ratio, and the
+ * capture is that framebuffer, possibly resized on the way. So its height in
+ * the recording is
+ *
+ *     cursorPx  =  glyphCss  x  videoWidth / screenWidthCss
+ *
+ * and the pixel ratio cancels: a 150% Windows laptop and a Retina MacBook both
+ * fall out of the same line. `screen.width` is the one term the server can
+ * never see, which is the whole reason this is sent.
+ *
+ * ── AND THE PLATFORM, BECAUSE THE TWO DRAW DIFFERENT POINTERS ────────────────
+ * Windows draws a white arrow with a black outline; macOS draws a black one
+ * with a white outline. The locator discovers that from the pixels either way,
+ * and telling it which to expect makes the discovery quicker and its tie-breaks
+ * better. Reported, never trusted: a wrong guess here must not be able to cost
+ * a recording its pointer, so it is a prior and not an instruction.
+ *
+ * Everything here is non-identifying — a screen size, a scale factor and an OS
+ * family. No user agent string is stored.
+ */
+export function environment() {
+  const uaPlatform = navigator.userAgentData?.platform || "";
+  const legacy = navigator.platform || "";
+  const ua = navigator.userAgent || "";
+  const hay = (uaPlatform + " " + legacy + " " + ua).toLowerCase();
+  const platform =
+    /mac|iphone|ipad|ipod/.test(hay) && !/windows/.test(hay) ? "macos"
+      : /windows|win32|win64/.test(hay) ? "windows"
+        : /cros/.test(hay) ? "chromeos"
+          : /android/.test(hay) ? "android"
+            : /linux|x11/.test(hay) ? "linux"
+              : "unknown";
+  const s = window.screen || {};
+  return {
+    platform,
+    // Fractional on a scaled display, and that is the point of it.
+    dpr: Number(window.devicePixelRatio) || 1,
+    // CSS pixels, which is the unit the cursor's own size is fixed in.
+    screen_w: Number(s.width) || 0,
+    screen_h: Number(s.height) || 0,
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
    Is this browser going to be able to do it
    ──────────────────────────────────────────────────────────────────────────── */
 
@@ -499,5 +559,5 @@ export function sendRecording(blob, session, opts) {
   return uploadFile(blob, session, opts);
 }
 
-const capture = { captureSupport, bestMimeType, startCapture, createTracker, createRecorder, sendRecording, levelOf, TRACKER_VERSION }
+const capture = { captureSupport, environment, bestMimeType, startCapture, createTracker, createRecorder, sendRecording, levelOf, TRACKER_VERSION }
 export default capture;

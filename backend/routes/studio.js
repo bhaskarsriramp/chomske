@@ -74,6 +74,12 @@ const originOf = (req) =>
 
 const fail = (res, status, message, extra = {}) => res.status(status).json({ success: false, message, ...extra });
 
+/** A number from the browser, or 0 if it is not one or is outside all reason. */
+const clampNum = (v, lo, hi) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= lo && n <= hi ? n : 0;
+};
+
 const wrap = (fn) => async (req, res) => {
   try {
     await fn(req, res);
@@ -336,6 +342,18 @@ router.post("/demos/:id/upload/complete", wrap(async (req, res) => {
     samples: track.length,
     track,
     motion,
+    // Validated here rather than trusted: this steers how the pointer is looked
+    // for, and a nonsense screen width would steer it off a cliff. Anything
+    // unrecognised becomes a zero, which the locator reads as "not reported"
+    // and falls back to measuring the recording, exactly as before.
+    env: {
+      platform: ["windows", "macos", "linux", "chromeos", "android", "ios"].includes(cap.env?.platform)
+        ? cap.env.platform
+        : "unknown",
+      dpr: clampNum(cap.env?.dpr, 0.5, 8),
+      screen_w: clampNum(cap.env?.screen_w, 240, 16384),
+      screen_h: clampNum(cap.env?.screen_h, 240, 16384),
+    },
   };
   demo.status = "preparing";
   demo.stage = "Queued";

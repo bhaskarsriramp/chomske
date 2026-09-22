@@ -45,7 +45,7 @@ import { extractFrames } from "../media/ffmpeg.js";
 import {
   newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration,
 } from "./vision.js";
-import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed } from "./events.js";
+import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed, restMoments } from "./events.js";
 import { changeMoments, auditEdit, applyPatches } from "./audit.js";
 import { alignCapture, settleAfter } from "./sync.js";
 import { locatePointer, mergeLocated, stepPath, snapToLocated } from "./locate.js";
@@ -153,6 +153,15 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     duration,
     fps: 30,
     cursorPx: aligned.sync?.cursor_px || 0,
+    /**
+     * The machine this was recorded on. The pointer's height in the picture
+     * follows from the screen's width in CSS pixels, which nothing on this
+     * side can work out from the video — and the fallback that stands in for
+     * it assumes a 1920-wide desktop at 100% zoom. Absent on every recording
+     * made before the browser started reporting it, which is why it is only
+     * ever a prior. See capture.js environment() and locate.js.
+     */
+    env: capture.env || null,
     /**
      * ── THE HINTS ARE THE RAW LOG, NOT THE CLEANED ONE ────────────────────
      * alignCapture() throws away the samples where the tracker was following a
@@ -534,9 +543,33 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     );
   }
 
+  /**
+   * ── AND WHERE THE POINTER STOPPED, WHICH IS THE OTHER HALF OF "MISSED" ────
+   * The change list above finds moments the screen did something nobody
+   * accounted for. It cannot find a press whose result was too small or too
+   * far from the pointer to register as a change at all — a toggle flipping, a
+   * tab becoming selected, a checkbox. Those leave no event and no change, so
+   * nothing downstream has any reason to look at them.
+   *
+   * A person clicks with the pointer held still, so every click in the
+   * recording is inside one of these rests. Stored beside the changes, and for
+   * the same reason: a fact about the recording, measured once. The audit
+   * subtracts the rests that are already explained and asks the model about
+   * what is left. See events.js restMoments and audit.js plan().
+   */
+  const rests = restMoments(pointerPath);
+  if (rests.length) {
+    const bare = rests.filter((r) => !events.some((e) => Math.abs(num0(e.t) - r.t) <= 1.0));
+    console.log(
+      `[studio] pointer rested ${rests.length} time(s); ${bare.length} with no event within 1s` +
+        (bare.length ? " — " + bare.slice(0, 6).map((r) => r.t.toFixed(1) + "s").join(", ") + (bare.length > 6 ? ", …" : "") : "")
+    );
+  }
+
   return {
     timeline,
     changes,
+    rests,
     summary,
     product,
     language: captions.language,
