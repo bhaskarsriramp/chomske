@@ -42,6 +42,7 @@
  */
 import { createCanvas } from "@napi-rs/canvas";
 import { ffmpegToFrames } from "../media/ffmpeg.js";
+import { playingRegions, inPlaying } from "./sync.js";
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -481,7 +482,16 @@ const UNIQUE = 0.12;
  * bar, and each candidate is re-scored at every pixel around it before any
  * decision is made on the numbers.
  */
-function topTwo(frame, W, H, t) {
+/**
+ * @param {Function} [reject]  (x, y) => true for a position that is not a
+ *        candidate at all. It must exclude rather than merely lose, because
+ *        the caller decides by the GAP between the best two: a cursor inside a
+ *        playing video that is allowed to be `second` scores within a hair of
+ *        the real pointer, the gap collapses, and the uniqueness test then
+ *        throws away BOTH. That is not a theory — it is why a recording of a
+ *        page with a demo playing on it located 23% of its frames.
+ */
+function topTwo(frame, W, H, t, reject = null) {
   const sep = Math.max(20, t.heightPx * 1.5);
   // Coarse: every third pixel, with the test that tolerates a pixel of error.
   const hits = [];
@@ -528,6 +538,7 @@ function topTwo(frame, W, H, t) {
       }
     }
     if (!best) continue;
+    if (reject && reject(best.x, best.y)) continue;
     const near = found.find((c) => Math.abs(c.x - best.x) <= sep && Math.abs(c.y - best.y) <= sep);
     if (near) { if (best.score > near.score) Object.assign(near, best); }
     else found.push(best);
@@ -564,7 +575,8 @@ function topTwo(frame, W, H, t) {
  * A hand votes under the arrow height it implies, so both shapes accumulate
  * evidence for the same answer: one design, one size.
  */
-async function calibrate(video, W, H, all, duration, fps) {
+async function calibrate(video, W, H, all, duration, fps, { playing = null, screen = null } = {}) {
+  const veto = playing?.size ? (x, y) => inPlaying(playing, screen, x / W, y / H) : null;
   const want = new Set();
   const total = Math.max(1, Math.floor(duration * fps));
   for (let k = 0; k < CAL_FRAMES; k++) want.add(Math.floor(((k + 0.5) / CAL_FRAMES) * total));
@@ -607,7 +619,14 @@ async function calibrate(video, W, H, all, duration, fps) {
     onFrame: (frame, i) => {
       if (!want.has(i)) return;
       for (const t of all) {
-        const { best, second } = topTwo(frame, W, H, t);
+        /**
+         * ── A POINTER INSIDE A PLAYING VIDEO IS SOMEBODY ELSE'S POINTER ──────
+         * It fits the template perfectly and it moves, so every other test in
+         * this function passes it. Excluded as a CANDIDATE rather than refused
+         * afterwards, or it still counts as the runner-up and suppresses the
+         * real pointer through the uniqueness test. See sync.js playingRegions.
+         */
+        const { best, second } = topTwo(frame, W, H, t, veto);
         if (!best || best.score < FOUND) continue;
         const margin = best.score - (second ? second.score : 0.45);
         const key = (t.dark ? "dark" : "light") + ":" + t.heightPx;
@@ -734,9 +753,10 @@ async function calibrate(video, W, H, all, duration, fps) {
  * @param {number} [o.cursorPx]  the pointer's measured height, if known
  * @param {Array}  [o.hints]     where the difference tracker thought it was
  * @param {object} [o.env]       the recording machine: platform, dpr, screen_w
+ * @param {object} [o.screen]    readScreen(), for the regions that are video
  * @returns {Promise<{ track: Array, design: string|null, heightPx: number, found: number, frames: number }>}
  */
-export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], env = null, onDebug = null, onProgress = null } = {}) {
+export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], env = null, screen = null, onDebug = null, onProgress = null } = {}) {
   const W = Math.round(sourceWidth);
   const H = Math.round(sourceHeight);
 
@@ -825,7 +845,21 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
       for (const name of handNames(hp)) candidates.push(asHand(name, hp, dark));
     }
   }
-  const cal = await calibrate(video, W, H, candidates, duration, fps);
+  /**
+   * The parts of the screen that were animating for most of the recording: a
+   * product demo playing on a home page, a looping GIF, a background video.
+   * A pointer found inside one of those was recorded on somebody else's
+   * machine and is not the one this recording is about.
+   */
+  const playing = playingRegions(screen, { duration });
+  if (playing.size) {
+    console.log(
+      "[studio] " + playing.size + " region(s) of the screen were animating for most of the recording; " +
+        "a pointer found inside one is treated as content, not as the cursor"
+    );
+  }
+
+  const cal = await calibrate(video, W, H, candidates, duration, fps, { playing, screen });
   if (!cal) return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
 
   // Tracking uses only this recording's pointer: both shapes, at its size and
@@ -882,6 +916,16 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    * judge a press by, so the demo came back with no zooms and no cursor at all.
    * See the note in topTwo: the rim is the signal, and averaging destroys it.
    */
+
+  /**
+   * Re-acquiring a lost pointer has no continuity to reason from, so it is
+   * exactly where a video's cursor gets taken for the real one — and where it
+   * silently cancels the real one out as runner-up. A pointer already being
+   * FOLLOWED is never vetoed this way (step 1 of the loop): a creator moving
+   * their own pointer onto a playing video to press pause is ordinary, and
+   * continuity proves the pointer is theirs.
+   */
+  const veto = playing.size ? (x, y) => inPlaying(playing, screen, x / W, y / H) : null;
 
   const hintAt = (t) => {
     let best = null;
@@ -1062,7 +1106,7 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
         const fresh = recent && lostFor <= 2;
         const bar = fresh ? FLICK : FOUND;
         for (const tp of wide) {
-          const { best, second } = topTwo(frame, W, H, tp);
+          const { best, second } = topTwo(frame, W, H, tp, veto);
           if (!best || best.score < bar) continue;
           // A sure match is taken wherever it is; the extra conditions are only
           // for a soft one, which has to earn its place by being where a flick

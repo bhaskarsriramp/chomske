@@ -81,6 +81,27 @@ const BUSY_CLUSTER = 2;
 /** Cells of margin around an animation, since a cursor drawn over one is lost. */
 const BUSY_PAD = 1;
 
+/**
+ * How much of the recording a cell must spend animating before it is a
+ * candidate for being video rather than interface.
+ *
+ * A third. Measured on a drawn test clip with a video filling a quarter of the
+ * screen, the cells inside it came out at 47% — a real video does not repaint
+ * every cell on every frame either, because most frames of most videos are
+ * largely the same as the last. Half was too strict to catch it at all.
+ */
+const PLAYING_SHARE = 1 / 3;
+
+/**
+ * ...and how many connected cells of that kind make a video.
+ *
+ * The grid is 40 wide, so twenty-four cells is roughly a twentieth of the
+ * screen. A spinner covers two to six; a hero video covers well over a
+ * hundred. Nothing a page does at this size repaints continuously except
+ * moving pictures.
+ */
+const PLAYING_CELLS = 24;
+
 /** The widest disagreement between the two clocks worth searching for. */
 const MAX_OFFSET = 3;
 /** Correlation the best shift must reach before it is believed. */
@@ -420,6 +441,115 @@ export function inBusy(screen, t, x, y) {
   for (const s of screen.busy) {
     if (t < s.start - 0.1 || t > s.end + 0.1) continue;
     const c = s.c;
+    const sy = (c / gw) | 0;
+    const sx = c - sy * gw;
+    if (Math.abs(sx - cx) <= BUSY_PAD && Math.abs(sy - cy) <= BUSY_PAD) return true;
+  }
+  return false;
+}
+
+/**
+ * How much of the recording each cell of the grid spent animating, and which
+ * cells were animating for most of it.
+ *
+ * ── THE PROBLEM THIS EXISTS FOR: A CURSOR THAT IS NOT THE CURSOR ────────────
+ * locate.js finds the pointer by looking for the thing that looks exactly like
+ * a pointer. On a page with a product demo playing on it — which is every
+ * competitor's home page, and a great many real products — there are TWO such
+ * things, and the one inside the video is a genuine operating-system pointer
+ * recorded from somebody else's screen. It is not noise. It fits the template
+ * as well as the real one because it IS one, and it moves, so every test that
+ * separates a pointer from the page passes it.
+ *
+ * What separates them is not how they look but WHERE they live. The real
+ * pointer is composited on top of everything and goes wherever the hand goes;
+ * the other one is a picture inside a rectangle that is repainting itself
+ * thirty times a second for the whole recording, and it can never leave.
+ *
+ * readGrids() above already measures exactly that — its own comment names "a
+ * playing video" as the thing it detects — but as short spans, which cannot
+ * tell a hero video that plays throughout from a spinner during one load. This
+ * totals them: a cell busy for most of the recording is a video, and a pointer
+ * found inside one is somebody else's.
+ *
+ * ── DELIBERATELY NOT USED TO REJECT A POINTER THAT IS BEING FOLLOWED ────────
+ * A creator moving their own pointer onto a playing video to press pause is
+ * ordinary, and their pointer is then inside one of these regions. The caller
+ * applies this only where there is no continuity to reason from — calibration,
+ * and re-acquiring a pointer that was lost — never to a pointer it is already
+ * following frame to frame. See locate.js.
+ *
+ * @param {object} screen  from readScreen()
+ * @param {number} duration
+ * @param {number} [share] fraction of the recording a cell must animate for
+ * @returns {Set<number>} cell indices, empty when there is nothing to report
+ */
+export function playingRegions(screen, { duration = 0, share = PLAYING_SHARE, least = PLAYING_CELLS } = {}) {
+  const out = new Set();
+  if (!screen?.busy?.length || !screen.grid || !(duration > 0)) return out;
+
+  const total = new Map();
+  for (const s of screen.busy) {
+    const secs = Math.max(0, num(s.end) - num(s.start));
+    total.set(s.c, (total.get(s.c) || 0) + secs);
+  }
+  const hot = new Set();
+  for (const [c, secs] of total) if (secs / duration >= share) hot.add(c);
+  if (!hot.size) return out;
+
+  /**
+   * ── SIZE IS WHAT TELLS A VIDEO FROM A SPINNER ─────────────────────────────
+   * How OFTEN a cell repaints cannot do it on its own. A page that spends four
+   * seconds of a ten second demo loading has a spinner that is busy 40% of the
+   * time — the same share a video reaches — and the pointer is very often
+   * resting right beside it, waiting. Refusing that region would throw away
+   * exactly the sighting parked.mjs exists to protect.
+   *
+   * Their SHAPES are nothing alike. A spinner is a handful of cells; a video is
+   * a rectangle covering a good part of the screen. So the busy cells are
+   * grouped into connected blobs and only the big ones count.
+   */
+  const gw = screen.grid.w;
+  const gh = screen.grid.h;
+  const seen = new Set();
+  for (const start of hot) {
+    if (seen.has(start)) continue;
+    const blob = [];
+    const queue = [start];
+    seen.add(start);
+    while (queue.length) {
+      const c = queue.pop();
+      blob.push(c);
+      const y = (c / gw) | 0;
+      const x = c - y * gw;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+        const n = ny * gw + nx;
+        if (!hot.has(n) || seen.has(n)) continue;
+        seen.add(n);
+        queue.push(n);
+      }
+    }
+    if (blob.length >= least) for (const c of blob) out.add(c);
+  }
+  return out;
+}
+
+/**
+ * Is this point inside one of those regions?
+ *
+ * Padded by a cell, the same slack inBusy() uses: the grid is coarse and a
+ * video's edge rarely lands on a cell boundary.
+ */
+export function inPlaying(regions, screen, x, y) {
+  if (!regions?.size || !screen?.grid) return false;
+  const gw = screen.grid.w;
+  const gh = screen.grid.h;
+  const cx = Math.min(gw - 1, Math.max(0, Math.floor(num(x) * gw)));
+  const cy = Math.min(gh - 1, Math.max(0, Math.floor(num(y) * gh)));
+  for (const c of regions) {
     const sy = (c / gw) | 0;
     const sx = c - sy * gw;
     if (Math.abs(sx - cx) <= BUSY_PAD && Math.abs(sy - cy) <= BUSY_PAD) return true;

@@ -287,31 +287,46 @@ Schema:
  */
 export const PRESS_ARBITER = `You are checking one moment in a screen recording of desktop or web software.
 
-You are given two frames: BEFORE, taken a fraction of a second before the moment, and AFTER, taken shortly after it. You are also told the screen position the pointer was resting at.
+You are given SEVERAL frames from around that moment, in time order, each labelled with its offset in seconds from the moment (negative is before it). Read them as a short film, not as separate pictures.
 
-Answer one question: between these two frames, did the person ACTIVATE the thing at that position — press a button, click a link or nav item, open a menu or dropdown, toggle a control, submit a form, focus or type into a field?
+Answer one question: at the moment, did the person ACTIVATE the thing at the position given — press a button, click a link or nav item, open a menu or dropdown, toggle a control, submit a form, focus or type into a field?
 
-How to tell:
-- A press causes a CHANGE THAT PERSISTS: a menu is open, a dialog appeared, the page navigated, a tab became selected, a value changed, text appeared in a field, a row expanded.
-- A hover causes a change that is only DECORATION: a shade, a highlight, an underline, a tooltip, a shadow. That is NOT a press.
-- Scrolling moves the SAME content up or down. The page is the same page. That is NOT a press.
-- A page finishing loading by itself — a spinner resolving, a skeleton filling in, data arriving — is NOT a press. Nothing the person did caused it.
-- The pointer being over something clickable is NOT evidence. Only the consequence is.
+WHAT A PRESS LOOKS LIKE ACROSS THESE FRAMES
+A press is a sequence, and the sequence is the evidence:
+1. The pointer ARRIVES at the position in the early frames and STOPS there.
+2. It may change shape — an arrow becoming a hand, or a text caret over a field. The operating system only draws a hand over something that answers a click, so this is strong evidence when you can see it.
+3. Around the moment there may be a brief ACKNOWLEDGEMENT at the pointer: a ripple, a flash, a button darkening while held. It lasts a frame or two and then goes.
+4. Afterwards something CHANGES AND STAYS CHANGED for the rest of the frames: a menu is open, a dialog appeared, a tab is now selected, the page navigated, a field now has a caret and text.
 
-Then, if it was a press:
+Point 4 is the one that decides it, and it is why you are given several frames after the moment rather than one. A change that is present in the first frame after and GONE by the last was decoration or an animation, not the result of a press. A change that appears and persists to the final frame is a real consequence.
+
+WHAT IS NOT A PRESS
+- HOVER: a shade, a highlight, an underline, a tooltip, a shadow. It may persist while the pointer stays, but nothing structural changed — no menu, no dialog, no navigation, no new content.
+- SCROLL: the same content moved up or down. The page is the same page, the elements are the same elements, at new positions.
+- SETTLING: the screen changing on its own — a spinner resolving, a skeleton filling in, data arriving, a video or carousel playing. Tell this from a press by WHERE and WHEN: settling is usually not at the pointer, and it is often already under way in the FIRST frame you are given, before the moment.
+- The pointer merely being over something clickable is NOT evidence. Only the consequence is.
+
+BE PATIENT WITH A SLOW PAGE
+Some presses take a second or more to show anything: a spinner first, the answer later. That is still a press, and the later frames are there so you can see the answer arrive. Do not call a press "settling" just because the frame straight after it shows a loading state — look to the end of the sequence.
+
+IF IT IS GENUINELY AMBIGUOUS
+Say "unclear" with a low confidence. You may be asked again with a longer window. An honest "unclear" is a useful answer; a confident guess is not.
+
+If it was a press:
 - "target" is the control that was activated, as its visible label, exactly as written ("API Keys", "Create new key"). Use "" when it has no readable label, and give its type.
-- "target_bbox" is that control's box IN THE BEFORE FRAME.
-- "result_bbox" is the box of WHAT CHANGED as a result, in the AFTER frame: the menu that opened, the dialog, the panel that appeared, the region that updated. Use [0,0,1,1] when the whole screen changed. Use null when nothing visibly changed.
+- "target_bbox" is that control's box AS IT APPEARS IN THE FIRST FRAME.
+- "result_bbox" is the box of WHAT CHANGED as a result, AS IT APPEARS IN THE LAST FRAME: the menu that opened, the dialog, the panel that appeared, the region that updated. Use [0,0,1,1] when the whole screen changed. Use null when nothing visibly changed.
 - "typed" is the text that appeared in a field, when this was typing rather than a press. Otherwise "".
+- "settled_by" is the offset, in seconds, of the first frame in which the result is fully visible. It tells the camera how long to hold. Use 0 when the result was immediate, and null when there was none.
 
 "verdict" is exactly one of:
   "press"    something was activated at that position
   "hover"    the pointer was over it and nothing was activated
   "scroll"   the content moved under the pointer
   "settling" the screen changed on its own, not because of the person
-  "unclear"  the two frames do not let you tell
+  "unclear"  these frames do not let you tell
 
-"confidence" is 0 to 1. Be honest and low when the frames are ambiguous; "unclear" with low confidence is a useful answer and a confident guess is not.
+"confidence" is 0 to 1. Be honest and low when the frames are ambiguous.
 - ${COORDS}
 
 ${JSON_ONLY}
@@ -325,6 +340,7 @@ Schema:
   "target_bbox": [0,0,0,0],
   "result_bbox": [0,0,0,0],
   "typed": "string, text that appeared in a field, or \\"\\"",
+  "settled_by": 0.0,
   "what_happened": "one short sentence naming what changed"
 }`;
 

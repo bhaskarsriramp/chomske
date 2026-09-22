@@ -163,6 +163,13 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
      */
     env: capture.env || null,
     /**
+     * What the screen was doing, measured just above. The locator uses it for
+     * one thing: a region that was animating for most of the recording is a
+     * video playing on the page, and a pointer found inside one belongs to
+     * whoever recorded THAT — not to the creator. See sync.js playingRegions.
+     */
+    screen: aligned.screen,
+    /**
      * ── THE HINTS ARE THE RAW LOG, NOT THE CLEANED ONE ────────────────────
      * alignCapture() throws away the samples where the tracker was following a
      * spinner or a repaint instead of the pointer, because those would be

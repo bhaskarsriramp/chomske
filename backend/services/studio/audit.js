@@ -137,6 +137,49 @@ export const AUDIT = {
   /** ...and after the moment, for the AFTER frame. */
   after: 0.6,
   /**
+   * ── A PRESS IS A SEQUENCE, SO THE ARBITER IS SHOWN ONE ────────────────────
+   * Two frames, at -0.16s and +0.6s, is a keyhole 0.76 seconds wide, and three
+   * of the four things that prove a press happened fall outside it:
+   *
+   *   the approach     the pointer arriving and stopping, which is what
+   *                    separates a press from the pointer being parked there
+   *   the morph        arrow becoming a hand — the operating system itself
+   *                    saying the thing under it answers a click
+   *   the ripple       the interface's own acknowledgement, a frame or two long
+   *   PERSISTENCE      the one that actually decides it, and the one a single
+   *                    after-frame cannot show at all. "Did the change STAY?"
+   *                    is not answerable from one picture of the change.
+   *
+   * And the keyhole actively misleads on a slow page: at +0.6s a page that had
+   * to fetch is showing a spinner, so the model reads a real press as the
+   * screen settling on its own and the camera is withheld.
+   *
+   * These offsets cover approach, press, acknowledgement, and the result both
+   * arriving and still being there. Nothing here needs to happen in real time —
+   * the recording is finished and every frame of it is on disk — so the only
+   * cost of looking further is tokens, and they buy the evidence that matters.
+   */
+  strip: [-0.5, -0.18, 0.12, 0.4, 0.9, 1.8],
+  /**
+   * ...and where to look when that was still not enough.
+   *
+   * A verdict of "unclear" is the model saying the window did not contain the
+   * answer, which is a reason to widen it rather than to give up on the moment.
+   * Only an unclear verdict pays for this, so a recording of plain presses
+   * never does.
+   */
+  stripWide: [-1.2, -0.3, 0.15, 1.0, 2.5, 4.5],
+  /**
+   * Long side of an arbiter frame.
+   *
+   * Smaller than the 1280 the UI pass uses, because this question is about what
+   * CHANGES between frames rather than about reading every label on them, and
+   * six frames at 1024 cost about what four would at 1280. The control's own
+   * label is still legible at this size, which is the one detail the answer
+   * needs.
+   */
+  stripEdge: 1024,
+  /**
    * Confidence below which a finding is recorded but not offered.
    *
    * The model is asked to answer "unclear" and to be honest about confidence,
@@ -660,6 +703,42 @@ async function framePair(video, t, dir, { duration = 0 } = {}) {
   }
 }
 
+/**
+ * Several frames around a moment, in time order, each tagged with its offset.
+ *
+ * Unlike framePair() above this is for the PRESS question, where the answer is
+ * a shape in time — arrive, morph, acknowledge, change, stay changed — and no
+ * pair of stills can carry it. See AUDIT.strip.
+ *
+ * Offsets that fall outside the recording are dropped rather than clamped: two
+ * frames at the same instant would be shown to the model as two moments and
+ * invite it to read a change that is not there.
+ */
+async function frameStrip(video, t, dir, { duration = 0, offsets = AUDIT.strip } = {}) {
+  const out = [];
+  const seen = new Set();
+  for (const d of offsets) {
+    const at = t + d;
+    if (at < 0) continue;
+    if (duration && at > duration) continue;
+    const key = Math.round(at * 1000);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const file = path.join(dir, `strip_${Math.round(t * 1000)}_${key}.jpg`);
+    try {
+      await extractFrameAt(video, file, at, { longEdge: AUDIT.stripEdge });
+      out.push({ file, at: round3(at), offset: round3(d) });
+    } catch (err) {
+      // One frame that would not cut is not a reason to lose the moment: the
+      // sequence is still readable with five frames instead of six.
+      console.warn("[studio] could not cut a frame at " + at.toFixed(2) + "s: " + err.message);
+    }
+  }
+  // Below three frames there is no sequence to read and the question is not
+  // worth paying for.
+  return out.length >= 3 ? out : null;
+}
+
 /** A finding, in the one shape everything downstream reads. */
 function finding(kind, o) {
   return {
@@ -667,6 +746,13 @@ function finding(kind, o) {
     kind,
     t: round3(num(o.t)),
     confidence: clamp(num(o.confidence, 0.5), 0, 1),
+    /**
+     * How long the result took to appear, when the arbiter could see it. The
+     * camera holds until then rather than for a fixed beat, so a press on
+     * something that had to fetch does not have its loading state framed and
+     * its answer missed. Null where it was not read.
+     */
+    settled_by: Number.isFinite(Number(o.settled_by)) ? round3(Number(o.settled_by)) : null,
     label: String(o.label || "").slice(0, 80),
     why: String(o.why || "").slice(0, 200),
     bbox: o.bbox ? [round4(o.bbox.x), round4(o.bbox.y), round4(o.bbox.w), round4(o.bbox.h)] : null,
@@ -764,14 +850,40 @@ export async function auditEdit({
 
   /* ── The presses ────────────────────────────────────────────────────────── */
   for (const p of presses) {
-    const pair = await framePair(video, p.t, dir, { duration });
-    if (!pair) {
+    const frames = await frameStrip(video, p.t, dir, { duration });
+    if (!frames) {
       step();
       continue;
     }
-    const said = await arbitratePress({ pair, at: p, spend });
+    let said = await arbitratePress({ frames, at: p, spend });
     step();
     if (!said) continue;
+
+    /**
+     * ── AN "UNCLEAR" IS A REQUEST FOR MORE TIME, NOT A VERDICT ───────────────
+     * The model saying it cannot tell is the model saying the window it was
+     * given did not contain the answer. Treating that as "no press" throws away
+     * exactly the moments the audit exists for — and the recording is finished,
+     * so there is nothing stopping us looking further out.
+     *
+     * The wide window reaches four and a half seconds past the moment, which
+     * covers a page that had to fetch before it showed anything. Only an
+     * unclear answer pays for it, so a recording of ordinary presses never does.
+     */
+    if (said.verdict === "unclear") {
+      const wider = await frameStrip(video, p.t, dir, { duration, offsets: AUDIT.stripWide });
+      if (wider) {
+        const again = await arbitratePress({ frames: wider, at: p, spend });
+        step();
+        if (again && again.verdict !== "unclear") {
+          console.log(
+            "[studio] press at " + p.t.toFixed(2) + "s was unclear in 2.3s of frames; " +
+              "over 5.7s it reads as " + again.verdict
+          );
+          said = again;
+        }
+      }
+    }
 
     const target = said.target_bbox ? clampRect(said.target_bbox) : null;
     const result = said.result_bbox ? clampRect(said.result_bbox) : null;
@@ -817,8 +929,9 @@ export async function auditEdit({
           t: p.t,
           confidence: said.confidence,
           label: said.target || said.what || "a press with no zoom",
-          why: `the camera stayed put because ${p.why}, but the frames either side show ${said.what || "the control being used"}`,
+          why: `the camera stayed put because ${p.why}, but the frames around it show ${said.what || "the control being used"}`,
           bbox,
+          settled_by: said.settled_by,
           event: p.id,
           acted: confident,
         })
@@ -950,6 +1063,8 @@ function summarise(findings) {
 /** How long a proposed zoom runs, either side of the moment. */
 const LEAD = 0.45;
 const HOLD = 1.5;
+/** How long to stay after a slow result finally appears, so it can be read. */
+const RESULT_BEAT = 0.9;
 
 /**
  * Findings, as suggestions.
@@ -964,7 +1079,16 @@ export function toSuggestions(findings, { duration = 0 } = {}) {
   for (const f of findings) {
     if (!f.acted) continue;
     const start = Math.max(0, f.t - LEAD);
-    const end = Math.min(duration || Infinity, f.t + HOLD);
+    /**
+     * ── THE CAMERA LEAVES WHEN THE RESULT IS UP, NOT ON A STOPWATCH ─────────
+     * HOLD is the beat a control that answers instantly deserves. The arbiter
+     * now reads the sequence rather than a pair, so it can say WHEN the result
+     * became visible — and a press whose answer took two seconds to arrive had
+     * the camera pull out exactly as it appeared. Plus a beat to read it by.
+     * Same reasoning as settleAfter() in the analysis path.
+     */
+    const hold = f.settled_by > 0 ? Math.max(HOLD, f.settled_by + RESULT_BEAT) : HOLD;
+    const end = Math.min(duration || Infinity, f.t + hold);
 
     if (f.kind === "missed_press" || f.kind === "missed_moment") {
       if (!f.bbox) continue;

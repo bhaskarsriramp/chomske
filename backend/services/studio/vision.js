@@ -737,16 +737,30 @@ const KINDS = new Set(["action", "result", "scroll", "loading", "noise", "unclea
  * @param {{t: number, x: number, y: number}} at  where the pointer was resting
  * @returns {Promise<object|null>} null when the call failed or the answer was unusable
  */
-export async function arbitratePress({ pair, at, spend = newSpend() }) {
-  if (!pair?.before || !pair?.after) return null;
+export async function arbitratePress({ frames, at, spend = newSpend() }) {
+  if (!Array.isArray(frames) || frames.length < 2) return null;
+
+  /**
+   * ── THE MODEL IS TOLD WHEN EACH FRAME IS, NOT JUST THAT THERE ARE SEVERAL ──
+   * Without the offsets it can see that things differ and not how far apart
+   * they are, and the whole question is about time: whether a change lasted,
+   * whether a page was already loading before the moment, how long the result
+   * took to arrive. The list below is the key to the images that follow it.
+   */
+  const legend = frames
+    .map((f, i) => `  ${i + 1}. ${f.offset >= 0 ? "+" : ""}${f.offset.toFixed(2)}s`)
+    .join("\n");
 
   const text =
     `${PRESS_ARBITER}\n\n` +
     `The pointer was resting at ${(num(at.x) * 100).toFixed(1)}% across and ${(num(at.y) * 100).toFixed(1)}% down the frame.\n` +
-    `The first image is BEFORE, the second is AFTER.`;
+    `The moment in question is 0.00s. The ${frames.length} images that follow are, in order:\n${legend}`;
+
+  const parts = [{ text }];
+  for (const f of frames) parts.push(await imagePart(f.file));
 
   const json = await ask({
-    parts: [{ text }, await imagePart(pair.before), await imagePart(pair.after)],
+    parts,
     spend,
     label: `arbitratePress at ${num(at.t).toFixed(2)}s`,
     maxOutputTokens: 1024,
@@ -754,6 +768,7 @@ export async function arbitratePress({ pair, at, spend = newSpend() }) {
   if (!json) return null;
 
   const verdict = VERDICTS.has(json.verdict) ? json.verdict : "unclear";
+  const settled = Number(json.settled_by);
   return {
     t: round3(num(at.t)),
     verdict,
@@ -764,6 +779,12 @@ export async function arbitratePress({ pair, at, spend = newSpend() }) {
     target_bbox: box(json.target_bbox),
     result_bbox: box(json.result_bbox),
     typed: str(json.typed, 120),
+    /**
+     * How long the result took to appear, which is how long the camera should
+     * stay. Clamped to the window it could have been observed in: a number
+     * outside that is the model guessing rather than reading.
+     */
+    settled_by: Number.isFinite(settled) ? clamp(settled, 0, 6) : null,
     what: str(json.what_happened, 160),
   };
 }
