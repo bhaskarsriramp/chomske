@@ -826,6 +826,8 @@ const review = {
     if (timeline && AUTO_APPLY_PRESSES) {
       for (const s of audit.suggestions) {
         if (s.change?.op !== "add_zoom") continue;
+        // Only the findings sure enough to act on unasked. See AUDIT.apply.
+        if (!s.auto) continue;
         const res = applySuggestion(timeline, s, { duration: fresh.recording?.duration || duration });
         if (res.applied) {
           timeline = res.timeline;

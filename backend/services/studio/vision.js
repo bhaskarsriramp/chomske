@@ -727,8 +727,13 @@ export async function writeNarration({ steps, summary, product, duration, spend 
  */
 
 /** A verdict this product knows how to act on. Anything else is "unclear". */
-const VERDICTS = new Set(["press", "hover", "scroll", "settling", "unclear"]);
-const KINDS = new Set(["action", "result", "scroll", "loading", "noise", "unclear"]);
+/**
+ * "content" is the verdict that stops a stranger's mouse moving our camera: the
+ * position is inside a video or screenshot on the page, so whatever happened
+ * there was recorded on somebody else's screen. See PRESS_ARBITER.
+ */
+const VERDICTS = new Set(["press", "hover", "scroll", "settling", "content", "unclear"]);
+const KINDS = new Set(["content", "action", "result", "scroll", "loading", "noise", "unclear"]);
 
 /**
  * Was there a press at this moment, and on what?

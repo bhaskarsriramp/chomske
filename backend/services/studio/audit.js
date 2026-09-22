@@ -188,6 +188,28 @@ export const AUDIT = {
    * never becomes a button.
    */
   accept: 0.6,
+  /**
+   * ...and the higher bar a finding must clear to be CARRIED OUT rather than
+   * offered.
+   *
+   * ── WHY THESE ARE TWO NUMBERS AND NOT ONE ─────────────────────────────────
+   * They answer different questions. `accept` asks "is this worth showing the
+   * creator", where being wrong costs them a moment reading a suggestion and
+   * dismissing it. This asks "is this worth doing to their edit without being
+   * asked", where being wrong costs them a camera move they did not want and
+   * have to find and delete.
+   *
+   * The gap is not theoretical. On a recording of a page with a demo video
+   * playing on it, the arbiter answered "press" for ten moments inside that
+   * video — honestly, because a real person really had pressed those things,
+   * on their own machine, before this recording existed — and ten camera moves
+   * onto a stranger's mouse were applied to an edit that had correctly decided
+   * on none. The model is now asked whether a position is inside a picture of
+   * another screen before it is asked anything else, which is the real fix;
+   * this is what keeps the cost of the next unforeseen case a suggestion
+   * rather than an edit.
+   */
+  apply: 0.8,
 };
 
 
@@ -915,6 +937,28 @@ export async function auditEdit({
 
     const confident = said.confidence >= AUDIT.accept;
 
+    /**
+     * ── A PRESS INSIDE A PICTURE OF ANOTHER SCREEN IS NOT OUR PRESS ─────────
+     * The arbiter is shown frames and asked whether the thing at a position was
+     * activated. Inside an embedded demo video the honest answer is yes — a
+     * real person really did press it, on their own machine, before this
+     * recording existed. Six of those came back "press" on one real demo and
+     * became six camera moves onto a stranger's mouse.
+     *
+     * So the model is now asked the prior question first, and when it says the
+     * position is inside a video or a screenshot this stops here: no finding,
+     * nothing offered, nothing applied. Recorded on the event so the next
+     * person to wonder why this moment got no zoom can see that it was looked
+     * at and why. See PRESS_ARBITER.
+     */
+    if (said.verdict === "content") {
+      console.log(
+        "[studio] press at " + p.t.toFixed(2) + "s is inside " +
+          (said.what || "a video or screenshot on the page") + " — somebody else's screen, not this one"
+      );
+      continue;
+    }
+
     if (said.verdict === "press" && !p.zoomable) {
       /**
        * ── AND IF THE MODEL NAMED NO BOX, THE ARITHMETIC DID ──────────────────
@@ -989,6 +1033,20 @@ export async function auditEdit({
     const said = await auditChange({ pair, at: g, spend });
     step();
     if (!said) continue;
+
+    /**
+     * Inside a picture of another screen, so whatever changed was recorded on
+     * somebody else's machine. worth_camera should already be false — this is
+     * the belt to that braces, because the cost of getting it wrong is a camera
+     * move onto a stranger's mouse and the cost of this line is nothing.
+     */
+    if (said.kind === "content") {
+      console.log(
+        "[studio] change at " + num(g.t).toFixed(2) + "s is inside " +
+          (said.what || "a video or screenshot on the page") + " — somebody else's screen, not this one"
+      );
+      continue;
+    }
 
     if (!said.worth) {
       // Recorded anyway, at low weight. A run that decided twenty moments were
@@ -1101,6 +1159,9 @@ export function toSuggestions(findings, { duration = 0 } = {}) {
         why: f.why,
         severity: "medium",
         source: "audit",
+        // Sure enough to carry out unasked, rather than only to offer. The
+        // runner applies these and leaves the rest as buttons. See AUDIT.apply.
+        auto: num(f.confidence) >= AUDIT.apply,
         change: {
           op: "add_zoom",
           id: "",

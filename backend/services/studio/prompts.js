@@ -302,6 +302,13 @@ A press is a sequence, and the sequence is the evidence:
 
 Point 4 is the one that decides it, and it is why you are given several frames after the moment rather than one. A change that is present in the first frame after and GONE by the last was decoration or an animation, not the result of a press. A change that appears and persists to the final frame is a real consequence.
 
+BEFORE ANYTHING ELSE: IS THIS A PICTURE OF ANOTHER SCREEN?
+Look at what surrounds the given position. If it sits inside an embedded video player, a screenshot or mockup of another application, a phone or laptop frame with a user interface drawn inside it, an animated GIF of software being used, or any other picture of a screen within the screen, then answer "content" and stop.
+
+This matters more than every other rule here. Such a recording was made on somebody else's machine and it contains THEIR mouse pointer, moving, clicking, opening menus and navigating between pages. Everything you are told to look for below — a pointer arriving, a shape changing, a change that persists — is present inside it, perfectly and repeatedly, because a real person really did press those things. They are simply not the person whose recording this is, and a camera move onto them is a camera move onto a stranger's mouse.
+
+Tell it apart by its FRAME, not by its content: a browser window with its own tab strip and address bar sitting inside the page, a rounded rectangle with a drop shadow floating over a marketing layout, a device bezel, a play button or scrubber, letterboxing. A real application fills its window to the edges of the recording; a picture of one sits inside a page with margins around it.
+
 WHAT IS NOT A PRESS
 - HOVER: a shade, a highlight, an underline, a tooltip, a shadow. It may persist while the pointer stays, but nothing structural changed — no menu, no dialog, no navigation, no new content.
 - SCROLL: the same content moved up or down. The page is the same page, the elements are the same elements, at new positions.
@@ -326,6 +333,8 @@ If it was a press:
   "hover"    the pointer was over it and nothing was activated
   "scroll"   the content moved under the pointer
   "settling" the screen changed on its own, not because of the person
+  "content"  this position is inside a video, screenshot or mockup on the page:
+             whatever happened there was recorded on somebody else's screen
   "unclear"  these frames do not let you tell
 
 "confidence" is 0 to 1. Be honest and low when the frames are ambiguous.
@@ -335,7 +344,7 @@ ${JSON_ONLY}
 
 Schema:
 {
-  "verdict": "press|hover|scroll|settling|unclear",
+  "verdict": "press|hover|scroll|settling|content|unclear",
   "confidence": 0.0,
   "target": "string, the label of what was activated, or \\"\\"",
   "target_type": "button|link|nav_item|tab|text_field|dropdown|toggle|checkbox|menu|list_item|icon_button|other|none",
@@ -374,7 +383,13 @@ Something changed on screen here and the recording's own click tracking found no
 
 Say what happened, and whether a viewer watching this demo would want the camera to emphasise it.
 
+BEFORE ANYTHING ELSE: IS THIS A PICTURE OF ANOTHER SCREEN?
+If what changed is inside an embedded video player, a screenshot or mockup of another application, a device frame with a user interface inside it, or any other picture of a screen within the screen, answer "content" and set worth_camera false.
+
+Such a region is a recording made on somebody else's machine. It contains their pointer, their clicks and their page navigations, and all of it looks exactly like a person using software — because it is one, just not this one. Pointing the camera at it shows the viewer a stranger's mouse instead of the demo. Tell it apart by its FRAME: a browser window with its own tab strip inside the page, a rounded rectangle floating over a marketing layout, a device bezel, a play button or scrubber, letterboxing.
+
 "kind" is exactly one of:
+  "content"   inside a video, screenshot or mockup on the page — somebody else's screen
   "action"    the person did something: pressed a control, opened a menu, submitted a form, typed
   "result"    something arrived or completed on its own: data loaded, a success message, an error, a value updated, a chart rendered
   "scroll"    the same content moved up or down
@@ -393,7 +408,7 @@ ${JSON_ONLY}
 
 Schema:
 {
-  "kind": "action|result|scroll|loading|noise|unclear",
+  "kind": "content|action|result|scroll|loading|noise|unclear",
   "worth_camera": false,
   "confidence": 0.0,
   "label": "under 6 words, what a viewer would call this: \\"API key created\\", \\"Billing page loaded\\"",
