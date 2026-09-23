@@ -796,6 +796,69 @@ export function mendCommas(text) {
   return mended > 0 ? out : null;
 }
 
+/**
+ * A bracket closed with the wrong character, put right.
+ *
+ * ── THE THIRD SHAPE, FOUND BY ELIMINATION ────────────────────────────────────
+ * Three malformed replies in a row gave the same parser complaint mid-document
+ * — "Expected ',' or ']' after array element" at 1555 of 5969, at 3827 of 8950,
+ * at 4389 of 7618 — and mendCommas() repaired none of them. Enumerating what
+ * else produces exactly that sentence leaves a short list, and only one item on
+ * it is something a model writing this product's prompts does constantly:
+ *
+ *     "bbox": [0.039, 0.240, 0.106, 0.050}
+ *
+ * A four-number box is the only array in the reply that appears hundreds of
+ * times, and closing it with the wrong bracket is an ordinary slip. The parser
+ * is then inside an array looking for `,` or `]` and finds `}`.
+ *
+ * The repair is local and total: walk with a stack, and where a closer does not
+ * match the bracket it is closing, emit the one that does. Nothing is moved and
+ * no structure is invented — the nesting the model actually wrote is what
+ * decides the answer, and a reply whose brackets all match is left alone.
+ *
+ * ── AND IF THIS IS THE WRONG GUESS, THE LOG SAYS SO ──────────────────────────
+ * This is a hypothesis reached by elimination, not a fault anybody has read off
+ * a real reply. So the failure path now prints the structure around the break
+ * (see `shape` below). If these carry on, that window names the real shape and
+ * the guessing stops.
+ *
+ * @returns {string|null} null when every bracket already matched
+ */
+export function mendClosers(text) {
+  const s = String(text || "");
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  const stack = [];
+  let fixed = 0;
+
+  for (const c of s) {
+    if (inStr) {
+      out += c;
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; out += c; continue; }
+    if (c === "{" || c === "[") { stack.push(c); out += c; continue; }
+    if (c === "}" || c === "]") {
+      const open = stack.pop();
+      // Nothing open: a stray closer is a different kind of broken and guessing
+      // at it would be inventing structure. Left exactly as it came.
+      if (!open) { out += c; continue; }
+      const right = open === "[" ? "]" : "}";
+      if (right !== c) fixed++;
+      out += right;
+      continue;
+    }
+    out += c;
+  }
+
+  return fixed > 0 ? out : null;
+}
+
 /** Why the model stopped, when it says. MAX_TOKENS, SAFETY, RECITATION, STOP. */
 const stoppedBecause = (res) => String(res?.candidates?.[0]?.finishReason || "");
 
@@ -852,13 +915,21 @@ export async function generateJson(opts) {
      * Each repair returns null when it has nothing to do, so an ordinary
      * malformed reply costs two walks of a string and no guesses.
      */
+    const both = (...fns) => (t) => {
+      let v = t;
+      let any = false;
+      for (const fn of fns) {
+        const next = fn(v);
+        if (next) { v = next; any = true; }
+      }
+      return any ? v : null;
+    };
     const repairs = [
       ["a separator was put back", mendCommas],
+      ["a bracket was closed properly", mendClosers],
       ["it was closed off", closeTruncated],
-      ["a separator was put back and it was closed off", (t) => {
-        const m = mendCommas(t);
-        return m ? closeTruncated(m) : null;
-      }],
+      ["a separator and a bracket were put right", both(mendCommas, mendClosers)],
+      ["it was put right and closed off", both(mendCommas, mendClosers, closeTruncated)],
     ];
     for (const [what, repair] of repairs) {
       const fixed = repair(text);
@@ -886,7 +957,43 @@ export async function generateJson(opts) {
      * only the length, and a mid-document fault was read as a cut-off reply for
      * a day because of it.
      */
+    /**
+     * ── AND WHAT THE BREAK ACTUALLY LOOKS LIKE ───────────────────────────────
+     * Twice now a malformed reply has been diagnosed by reasoning about which
+     * fault it PROBABLY was, and the second guess was wrong: the message said
+     * "mid-reply: arrived whole and malformed", the missing-comma repair ran,
+     * and it still would not parse. Guessing again is not a plan.
+     *
+     * So the window around the break is logged — with every string's CONTENTS
+     * replaced by an ellipsis. That is not only a privacy measure, though it is
+     * one: the model's reply describes whatever was on the creator's screen and
+     * this goes to a server log. It is also the better diagnostic. The fault is
+     * structural every time, and a window of pure structure shows it at a
+     * glance where sixty characters of interface text would bury it.
+     */
     const at = Number(/position (\d+)/.exec(err.message)?.[1]);
+    const shape = (s) => {
+      let out = "";
+      let inStr = false;
+      let esc = false;
+      for (const c of s) {
+        if (inStr) {
+          if (esc) esc = false;
+          else if (c === "\\") esc = true;
+          else if (c === '"') { inStr = false; out += '…"'; }
+          continue;
+        }
+        if (c === '"') { inStr = true; out += '"'; continue; }
+        out += c === "\n" ? "⏎" : c;
+      }
+      // An unterminated string at the edge of the window closes itself.
+      return inStr ? out + '…"' : out;
+    };
+    const window = Number.isFinite(at)
+      ? " ── around the break: " +
+        JSON.stringify(shape(text.slice(Math.max(0, at - 70), at)) + "  ⟪HERE⟫  " + shape(text.slice(at, at + 70)))
+      : "";
+
     const where = Number.isFinite(at)
       ? ` — broke at ${at} of ${text.length} characters (${at > text.length - 16 ? "the end: cut off" : "mid-reply: arrived whole and malformed"})`
       : ` — ${text.length} characters`;
@@ -895,7 +1002,7 @@ export async function generateJson(opts) {
       new Error(
         err.message +
           (why && why !== "STOP" ? ` (the model stopped early: ${why})` : "") +
-          where + `, ${spentOn(res)}, unrepairable`
+          where + `, ${spentOn(res)}, unrepairable` + window
       ),
       { usd, input, output, cause: err }
     );

@@ -21,7 +21,7 @@
  *   structure inside strings is ignored  a brace in a label is not a container
  *   a genuinely broken reply still fails rather than being quietly half-read
  */
-import { closeTruncated, mendCommas } from "../../services/ai/provider.js";
+import { closeTruncated, mendCommas, mendClosers } from "../../services/ai/provider.js";
 
 let pass = true;
 const ok = (name, cond, detail = "") => {
@@ -177,6 +177,74 @@ ok(
 ok(
   "and neither is one in a label beside a broken box",
   JSON.parse(mendCommas('{"label":"New playlist button","bbox":[0.1 0.2 0.3 0.4]}')).label === "New playlist button"
+);
+
+/* ════════════════════════════════════════════════════════════════════════════
+   And the third shape: a bracket closed with the wrong character
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Three malformed replies in a row gave the same complaint mid-document —
+ * "Expected ',' or ']' after array element" at 1555 of 5969, at 3827 of 8950,
+ * at 4389 of 7618 — and mendCommas() repaired none of them.
+ *
+ * Enumerating what else produces exactly that sentence leaves a short list, and
+ * only one item on it is something a model writing this product's prompts does
+ * hundreds of times a reply:
+ *
+ *     "bbox": [0.039, 0.240, 0.106, 0.050}
+ *
+ * This is a hypothesis reached by elimination rather than a fault read off a
+ * real reply, which is why the failure path also logs the structure around the
+ * break. If these carry on, that window names the real shape.
+ */
+console.log("\n" + "=".repeat(80));
+console.log("  A box closed with the wrong bracket");
+console.log("=".repeat(80) + "\n");
+
+const badClose = '{"screen":"settings","elements":[{"label":"Save video","bbox":[0.1,0.2,0.3,0.4}}]}';
+let closeErr = "";
+try { JSON.parse(badClose); } catch (e) { closeErr = e.message; }
+const shut = mendClosers(badClose);
+const whole = shut ? JSON.parse(shut) : null;
+
+console.log("    JSON.parse says   " + closeErr.replace(/ in JSON at position.*/, ""));
+console.log("    repaired box      " + JSON.stringify(whole?.elements?.[0]?.bbox));
+console.log("");
+
+ok("the parser rejects it the same way production did", /Expected ',' or '\]' after array element/.test(closeErr));
+ok("the bracket is closed properly", !!whole);
+ok(
+  "and the box survives intact",
+  JSON.stringify(whole?.elements?.[0]?.bbox) === JSON.stringify([0.1, 0.2, 0.3, 0.4]),
+  JSON.stringify(whole?.elements?.[0]?.bbox)
+);
+ok("the label survives too", whole?.elements?.[0]?.label === "Save video");
+
+/**
+ * The bounds. Nothing is moved and no structure is invented: the nesting the
+ * model actually wrote decides the answer, a reply whose brackets all match is
+ * untouched, and a closer with nothing open is a different kind of broken that
+ * this must not paper over.
+ */
+console.log("");
+ok("a correct reply is left alone", mendClosers('{"elements":[{"bbox":[0.1,0.2]}]}') === null);
+ok(
+  "a brace inside a label is text, not a bracket",
+  mendClosers('{"elements":[{"label":"Insert {block}","bbox":[0.1,0.2]}]}') === null
+);
+ok("a stray closer with nothing open is not invented around", mendClosers('{"a":1}}') === null);
+ok(
+  "an element closed with a bracket is put right too",
+  JSON.parse(mendClosers('{"elements":[{"label":"Save","bbox":[0.1,0.2]]]}')).elements[0].label === "Save"
+);
+ok(
+  "and a reply with both faults is repaired by the chain",
+  (() => {
+    const c = mendCommas('{"elements":[{"bbox":[0.1 0.2,0.3,0.4}}]}');
+    const b = c ? mendClosers(c) : null;
+    try { return JSON.parse(b).elements[0].bbox.length === 4; } catch { return false; }
+  })()
 );
 
 console.log(pass ? "\nall passed\n" : "\nFAILED\n");

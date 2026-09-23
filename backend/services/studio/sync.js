@@ -1081,7 +1081,7 @@ export function inPlaying(regions, screen, x, y) {
  * be: "we need to zoom in the area where a button or clickable UI element needs
  * to be zoomed in so on screen every user can see what the user has clicked".
  * That is showing WHAT WAS PRESSED, not waiting out whatever it loaded. A
- * second and a bit is long enough to read a control and see it respond; past
+ * second is long enough to read a control and see it respond; past
  * that the viewer is watching a crop of a page for reasons of their own.
  *
  * `min` is untouched, so a control that answers at once is unaffected — this
@@ -1089,7 +1089,7 @@ export function inPlaying(regions, screen, x, y) {
  *
  * @returns {number} seconds after `t`, within [min, max]
  */
-export function settleAfter(screen, t, { min = 0.45, max = 1.2, quiet = 0.012, forMs = 300 } = {}) {
+export function settleAfter(screen, t, { min = 0.45, max = 0.8, quiet = 0.012, forMs = 300 } = {}) {
   const series = screen?.motion;
   if (!Array.isArray(series) || !series.length) return min;
 
