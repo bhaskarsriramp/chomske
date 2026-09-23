@@ -22,6 +22,7 @@ import { confirmClicks, inferEvents, capZoomed, zoomsFromClicks, restToFull } fr
 import { snapToLocated } from "../../services/studio/locate.js";
 
 const FPS = 30;
+const NL = String.fromCharCode(10);
 
 /** A stretch of located frames: the pointer sitting at one spot, one shape. */
 function rest(from, to, x, y, shape) {
@@ -874,6 +875,91 @@ console.log("\nA new screen that barely changes a pixel is still a new screen\n"
     pressed({ e: 0.019, x: 0.35, y: 0.40, w: 0.64, h: 0.60 }).found, false);
   check("a panel filling mid-screen is not a new screen",
     pressed({ e: 0.019, x: 0.30, y: 0.30, w: 0.60, h: 0.50 }).found, false);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Two faults found in one real recording
+   ────────────────────────────────────────────────────────────────────────── */
+
+console.log(NL + "The press that worked, and the two that never happened" + NL);
+
+{
+  /**
+   * ── 1. A POINTER THAT LEAVES AFTER THE PRESS WORKED ───────────────────
+   * The hand arrives, rests across the press, then moves away — because the
+   * chat it opened is now on screen and the creator is reading it. That is what
+   * a press that WORKED looks like.
+   *
+   * osShapeAt measured the rest as a share of a fixed window reaching a second
+   * past the press, so the pointer leaving counted against it: 23 sightings at
+   * the spot out of 78 in the window, a density of 0.29, and `held` came back
+   * zero. confirmClicks read "the pointer never settled here", subtracted
+   * W_MOVING, and the press finished on 0.45 against a bar of 0.50. The zoom
+   * was lost by five hundredths, for the pointer having done its job.
+   *
+   * Measured on a real recording, pressing a chat in the sidebar at 8.17s.
+   */
+  /**
+   * The rest begins well before the press, as a real one does: the creator
+   * scrolls the list, the hand settles on the row, and the press follows. Only
+   * the last third of a second of it is inside the window `held` is measured
+   * over, which is the case that used to fail.
+   */
+  const restedThenLeft = [
+    ...rest(7.30, 8.25, 0.073, 0.733, "pointer"),
+    ...sweep(8.27, 9.17, { x: 0.10, y: 0.67 }, { x: 0.42, y: 0.40 }, "pointer"),
+  ];
+  check("a press the pointer left straight after, because it worked",
+    confirmClicks([press(8.17, 0.073, 0.733)], [], { located: restedThenLeft })[0].zoomable, true);
+
+  /**
+   * ── 2. A NAMED CONTROL AND A BUSY SCREEN ARE NOT A PRESS ───────────────
+   * The creator scrolled inside a settings dialog with their hand drifting over
+   * the left-hand nav. The model named a control under the pointer (+0.50) and
+   * the screen changed (+0.25), which cleared the bar at 0.75 — and neither of
+   * those channels is about a press at all. Two camera moves were minted onto
+   * items nobody had touched:
+   *
+   *   "why uncessary zoom-in happneded without any my clicks"
+   *
+   * The pointer never settled in either case. It cannot have pressed anything.
+   */
+  /**
+   * Sparse on purpose. At 19.28s on the real recording the locator had barely
+   * seen the pointer, so W_MOVING never fired either — the press was not
+   * refused for moving, it was ACCEPTED on two channels that say nothing about
+   * a press. That is the shape this has to reproduce: 0.50 + 0.25 = 0.75,
+   * clean over the bar, with nothing having observed a press at all.
+   */
+  const drifting = [
+    { t: 19.10, x: 0.050, y: 0.40, shape: "default", located: true },
+    { t: 19.32, x: 0.056, y: 0.47, shape: "default", located: true },
+    { t: 19.60, x: 0.060, y: 0.52, shape: "default", located: true },
+  ];
+  const shots = [{
+    t: 19.3, screen: "settings dialog", busy: false,
+    elements: [{ type: "nav_item", label: "Memory", bbox: [0.03, 0.44, 0.10, 0.04], importance: "medium", state: "normal", sticky: false }],
+  }];
+  const drifted = confirmClicks([press(19.28, 0.055, 0.46)], shots, { located: drifting })[0];
+  check("a control named under a pointer that never stopped", drifted.zoomable, false);
+  check("...and it says which channel was missing", drifted.basis, "no-press-seen");
+
+  /** The same with no sighting of the pointer at all — the second phantom. */
+  const nothingSeen = confirmClicks([press(24.44, 0.30, 0.62)], [{
+    t: 24.5, screen: "usage panel", busy: false,
+    elements: [{ type: "button", label: "Search", bbox: [0.26, 0.60, 0.09, 0.04], importance: "medium", state: "normal", sticky: false }],
+  }], { located: [] })[0];
+  check("a control named with no sighting of the pointer at all", nothingSeen.zoomable, false);
+
+  /**
+   * And the case the rule must NOT take away: a site that draws a plain arrow
+   * over a real button, which is canvas apps and much of Electron. The
+   * difference from the two above is not the glyph — it is that the pointer
+   * stopped. Kept beside its opposite so the two are read together.
+   */
+  const stoppedOnIt = rest(18.9, 19.9, 0.055, 0.46, "default");
+  check("but an arrow that STOPPED on a named control still counts",
+    confirmClicks([press(19.28, 0.055, 0.46)], shots, { located: stoppedOnIt })[0].zoomable, true);
 }
 
 console.log("\n" + (failures ? failures + " failed" : "all passed") + "\n");

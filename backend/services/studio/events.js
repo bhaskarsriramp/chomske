@@ -2335,9 +2335,35 @@ export function osShapeAt(path, t, { reach = SHAPE_REACH, window = SHAPE_WINDOW,
    * pointer riding a scrollbar never comes back to where it was, so its span
    * is only as long as the moment it spent crossing this one band.
    */
+  /**
+   * ── AND THE DENSITY IS MEASURED OVER THE REST, NOT OVER THE WINDOW ───────
+   * This divided by every sighting in [t-0.3, t+1.0], which asks "what share
+   * of the next second and a third was spent here" — and punishes the pointer
+   * for LEAVING AFTER THE PRESS WORKED. That is what every successful press
+   * looks like: you click the thing, the thing happens, your hand moves on.
+   *
+   * Measured on a real recording, pressing a chat in the sidebar: the pointer
+   * sat motionless at one spot from 7.88s to 8.25s, spanning the press at
+   * 8.17s, then moved away because the chat had opened. 23 sightings at the
+   * spot out of 78 in the window is a density of 0.29, so `held` came back 0,
+   * so confirmClicks read "the pointer never settled here", subtracted
+   * W_MOVING, and the press finished on 0.45 against a bar of 0.50. The zoom
+   * was lost by five hundredths, for the pointer having done its job.
+   *
+   * What the density is actually FOR is the case the comment above describes:
+   * telling a dropout in the middle of a rest from two unrelated sightings
+   * that happen to straddle the press. Both of those are answered INSIDE the
+   * span, so the span is what it is measured over. A pointer that left
+   * afterwards is not in the span and no longer votes on whether it rested.
+   */
   let held = 0;
-  if (from !== null && from <= t + 1e-9 && to >= t - 1e-9 && total > 0) {
-    if (atSpot / total >= HELD_DENSITY) held = to - from;
+  if (from !== null && from <= t + 1e-9 && to >= t - 1e-9 && to > from) {
+    let inSpan = 0;
+    for (const p of path) {
+      const pt = num(p.t);
+      if (pt >= from - 1e-9 && pt <= to + 1e-9) inSpan++;
+    }
+    if (inSpan > 0 && atSpot / inSpan >= HELD_DENSITY) held = to - from;
   }
 
   return { shape, share: n / here.length, n: here.length, seen, held: round3(held) };
@@ -2678,7 +2704,7 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
     if (pressedLook) add(W_PRESSED, "it was drawn as being pressed");
     // How the pointer got here: thrown and landed, or still moving through.
     const approach = approachOf(located, num(e.t));
-    if (approach.phase === "aimed") add(W_AIMED, "the pointer was aimed here and stopped");
+    if (approach.phase === "aimed") add(W_AIMED, settled ? "the pointer was aimed here and stopped" : "the pointer was thrown at this");
     /**
      * The penalty defers to every better reading of the same question. A
      * settled glyph, an acknowledgement, a control drawn as pressed — each is a
@@ -2774,13 +2800,60 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
     const stuck = (on && on.sticky === true) || isSticky(screen, num(e.x, 0.5), num(e.y, 0.5));
     if (scrolled && !lit && !pressedLook && !stuck) add(-W_SCROLLED, "the page was scrolling");
 
-    zoomable = score >= PRESS_BAR;
+    /**
+     * ── SOMETHING HAS TO HAVE OBSERVED THE PRESS ────────────────────────
+     * The sum alone let two channels mint a press between them that neither of
+     * them is about. "The model named a control here" says a press COULD have
+     * landed on something; "the screen changed" says something happened
+     * somewhere. Added up they clear the bar at 0.75, and on a real recording
+     * they did it twice: the creator scrolled inside a settings dialog with
+     * their hand resting over the left-hand nav, and two camera moves were
+     * minted onto items they never pressed — "why uncessary zoom-in happneded
+     * without any my clicks".
+     *
+     * Neither of those channels observes a press. Four channels do:
+     *
+     *   flash      the interface drew its own acknowledgement at the pointer
+     *   pressed    …or the model read the control as drawn held down
+     *   settled    the pointer STOPPED here, whatever glyph it was wearing
+     *   held       …or a clickable glyph was held here long enough to press
+     *
+     * At least one is now required. This is not another weight: no amount of
+     * circumstantial evidence adds up to somebody having clicked, and a rule
+     * that lets it is a rule that invents presses wherever a page is busy
+     * under a resting hand.
+     *
+     * ── WHY SETTLING AND NOT THE HAND ───────────────────────────────────────
+     * The first version of this asked for a clickable GLYPH, and it refused a
+     * case clicks.mjs has a name for: "an arrow on a button the model named",
+     * which is the canvas app and the Electron app drawing a plain arrow over
+     * a real control. What separates that from the two phantoms is not the
+     * glyph at all — it is that the pointer stopped. Neither phantom had any
+     * settled reading: at 19.28s the arrow never came to rest, and at 24.44s
+     * the locator had no sighting of the pointer whatsoever.
+     *
+     * Which is the older rule, made structural. W_MOVING already subtracts for
+     * a pointer that never settled, and a weight can be outvoted by two
+     * channels that are not about the press. You cannot press a thing without
+     * stopping on it, so this is not a matter of degree.
+     *
+     * ── AND IT IS A REFUSAL THE AUDIT CAN OVERTURN ──────────────────────────
+     * `no-press-seen` is in HEURISTIC_REFUSAL (audit.js), so a press turned
+     * down here is one the arbiter is asked about with six frames of the
+     * moment. The case this could otherwise cost is the site that draws a
+     * plain arrow over a real button — and that case now has better
+     * instruments than it did: the crosshair template for canvas apps, and the
+     * pressed state the model reads off the control itself.
+     */
+    const sawPress = !!lit || !!pressedLook || settled || heldClickable(os);
+    zoomable = score >= PRESS_BAR && sawPress;
 
     /**
      * The dominant reason, for code downstream to switch on (audit.js reads it
      * to tell a refusal made on a heuristic from one made on a reading).
      */
-    const basis = lit ? "flash"
+    const basis = !sawPress && score >= PRESS_BAR ? "no-press-seen"
+      : lit ? "flash"
       // Ranked with the flash rather than under "control": both are the
       // interface acknowledging a press, and audit.js reads `basis` to decide
       // which refusals are worth a second opinion. See FIRST_HAND there.
@@ -2796,9 +2869,11 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
 
     why = zoomable
       ? ev.filter((w) => !w.startsWith("something changed")).slice(0, 2).join(", ") || "something changed here"
-      : ev.length > 1
-        ? "not enough to call it a press: " + ev.slice(1).join(", ")
-        : "nothing says this was a press";
+      : !sawPress && score >= PRESS_BAR
+        ? "nothing here saw a press — only " + ev.slice(1).join(" and ")
+        : ev.length > 1
+          ? "not enough to call it a press: " + ev.slice(1).join(", ")
+          : "nothing says this was a press";
 
     onNote({ t: num(e.t), zoomable, why });
     return {
