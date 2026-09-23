@@ -844,8 +844,26 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
     }
     if (v > best.v) best = { hp, v };
   }
-  return { dark, heightPx: best.hp, votes: ranked[0][1].n, moves: ranked[0][1].moves };
+  /**
+   * `fit` is how well the winner actually looked like a pointer, and it is
+   * returned because the caller has to be able to ask. This file's own note on
+   * the ranking gives the two bands: a template that matches text scores 0.74
+   * to 0.77, and the pointer it was drawn for scores 0.85 and up. FOUND, the
+   * bar a candidate clears to be counted at all, is 0.72 — BELOW the noise —
+   * so "something won" has never meant "a pointer was found".
+   */
+  return { dark, heightPx: best.hp, votes: ranked[0][1].n, moves: ranked[0][1].moves, fit: round3(ranked[0][1].mean) };
 }
+
+/**
+ * The fit below which a calibration winner is text rather than a cursor.
+ *
+ * Between the two bands the ranking comment names: noise tops out around 0.77
+ * and a real pointer starts around 0.85. Set at the noise end rather than the
+ * middle, because refusing a real pointer costs a whole recording and doubting
+ * a marginal one costs one more pass.
+ */
+const POINTER_FIT = 0.8;
 
 /**
  * Find the pointer in every frame of a recording.
@@ -1028,16 +1046,33 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
 
   let cal = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen, moving });
   /**
-   * ── AND IF VETOING THAT MUCH LEFT NOTHING, IT IS DROPPED ──────────────────
+   * ── A VETO LEAVES A WORSE ANSWER MORE OFTEN THAN IT LEAVES NONE ──────────
    * The uncapped veto is deliberately crude: on a recording that really is
    * mostly moving picture it can cover the part of the screen the pointer
-   * actually lives in. Nothing is lost by trying — a calibration that comes
-   * back empty costs one pass and is retried here exactly as it would have run
-   * before this existed.
+   * actually lives in. This used to test only for NOTHING coming back, which
+   * is the rare case — the common one is that the real pointer was inside the
+   * vetoed region and what wins instead is whatever noise was left.
+   *
+   * Measured, on a recording made after that guard shipped: calibration
+   * returned a 12px dark pointer on a Windows machine whose browser had just
+   * read its own cursor at 17px and whose other recordings calibrate to light
+   * 18px. Twelve pixels of dark arrow is text. The creator saw it as the drawn
+   * cursor sliding onto the scrollbar, onto the video's own cursor, and a zoom
+   * on a nav item they had not pressed yet.
+   *
+   * So the retry asks about the FIT rather than about existence, and the two
+   * answers are compared on it. Both can still be poor — a page can be mostly
+   * video with a cursor that lives in it — and then this is no worse than
+   * before, having spent one extra pass to find that out.
    */
-  if (!cal && moving?.size) {
-    console.log("[studio] calibration found nothing outside the moving regions; searching the whole frame");
-    cal = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen });
+  if (moving?.size && (!cal || num(cal.fit) < POINTER_FIT)) {
+    console.log(
+      "[studio] calibration outside the moving regions " +
+        (cal ? "fitted only " + num(cal.fit).toFixed(3) + " — that is text, not a cursor" : "found nothing") +
+        "; searching the whole frame"
+    );
+    const open = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen });
+    if (open && (!cal || num(open.fit) > num(cal.fit))) cal = open;
   }
   /**
    * A narrowed search that comes back empty is the one case where the browser's
@@ -1419,7 +1454,7 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     );
   }
 
-  return { track, flashes, design: cal.dark ? "dark" : "light", heightPx: cal.heightPx, found: track.length, frames };
+  return { track, flashes, design: cal.dark ? "dark" : "light", heightPx: cal.heightPx, fit: cal.fit, found: track.length, frames };
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

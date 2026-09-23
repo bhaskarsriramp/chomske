@@ -292,7 +292,18 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   const locatedShare = located.frames ? located.found / located.frames : 0;
   console.log(
     "[studio] pointer located by shape in " + located.found + " of " + located.frames + " frames" +
-      (located.design ? " (" + located.design + " pointer, " + located.heightPx + "px)" : " — no pointer design recognised, tracker only")
+      (located.design
+        ? " (" + located.design + " pointer, " + located.heightPx + "px" +
+          /**
+           * How well the chosen template actually looked like a pointer. Text
+           * matches in the 0.74–0.77 band and a real cursor from 0.85; the bar
+           * to be counted at all is 0.72, so a number in the seventies here
+           * means the whole recording was tracked against noise. It was not
+           * printed anywhere until a recording came back calibrated to a 12px
+           * dark arrow and nothing in the log said it was a bad fit.
+           */
+          (located.fit ? ", fit " + Number(located.fit).toFixed(3) : "") + ")"
+        : " — no pointer design recognised, tracker only")
   );
   const pointerPath = located.track.length ? mergeLocated(located.track, capturedTrack) : capturedTrack;
 
@@ -673,7 +684,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
         bbox: (el.bbox || []).map((v) => Math.round(Number(v) * 1000) / 1000),
       })),
     })),
-        locate: { found: located.found, frames: located.frames, design: located.design, height_px: located.heightPx },
+        locate: { found: located.found, frames: located.frames, design: located.design, height_px: located.heightPx, fit: located.fit },
     frames_read: shots.length,
     /**
      * Whether the frames were checked for private information, which is NOT the
