@@ -288,6 +288,46 @@ export function soften(v, lo, hi, soft = EDGE_SOFT) {
 }
 
 /**
+ * The same resistance, but measured from where the shot was AIMED.
+ *
+ * ── soften() MOVED SHOTS THAT WERE NOT GOING ANYWHERE ────────────────────────
+ * soften() resists a limit asymptotically, which means the limit is reached
+ * only in the limit: feed it a value sitting exactly ON the edge of the legal
+ * range and it returns a value 0.368 × EDGE_SOFT inside it. For a camera
+ * travelling toward the edge that is the whole point. For a camera that is not
+ * travelling at all it is a bug, and it fired on every zoom whose subject was
+ * against a side of the screen — which is every top nav bar, every left rail,
+ * every bottom-right send button.
+ *
+ * containingBox() had already clamped those shots to the closest legal frame,
+ * so the aim was exactly on the limit, and soften() then pushed the frame
+ * 0.022 of the screen back toward the middle. The outer 2.2% of the recording
+ * was never shown. Measured on a 1080p capture: a top-left logo lost 14% of
+ * itself, a top-right call-to-action lost 18%, and the planner's y = 0.000
+ * came out of the camera as y = 0.022.
+ *
+ * So the resistance is applied to the TRAVEL rather than to the position. An
+ * excursion of e toward a limit with `room` to spare comes out as
+ *
+ *     room × (1 − e^(−e/room))
+ *
+ * which is zero when the camera is not moving, has slope 1 when it starts to,
+ * and approaches the limit without ever crossing it. A shot already pinned to
+ * the edge has no room in that direction and simply does not go, which is
+ * correct: there are no pixels out there to show.
+ */
+export function resist(base, aim, lo, hi) {
+  if (!(hi > lo)) return (lo + hi) / 2;
+  const b = clamp(base, lo, hi);
+  const d = aim - b;
+  if (!Number.isFinite(d) || d === 0) return b;
+  const room = d > 0 ? hi - b : b - lo;
+  if (room <= 0) return b;
+  const moved = room * (1 - Math.exp(-Math.abs(d) / room));
+  return d > 0 ? b + moved : b - moved;
+}
+
+/**
  * How far the pointer may wander before a following camera answers it.
  *
  * ── A TREMOR AT 1.0x IS A WHIP PAN AT 2.5x ───────────────────────────────────
@@ -437,8 +477,17 @@ export function zoomRect(z, tl, t, track) {
   const w = clamp(Math.max(1 / level, need), 0.05, 1);
   const h = w;
 
-  let cx = frac(num(z.x) + num(z.w) / 2, 0.5);
-  let cy = frac(num(z.y) + num(z.h) / 2, 0.5);
+  /**
+   * Where the shot was aimed, clamped to the closest frame that is actually on
+   * the picture. This is the answer when the camera is not following anything,
+   * and it is returned UNCHANGED below — see resist(). A zoom built around a
+   * control in the top nav is aimed at the top of the screen and has to arrive
+   * there.
+   */
+  const bx = clamp(frac(num(z.x) + num(z.w) / 2, 0.5), w / 2, 1 - w / 2);
+  const by = clamp(frac(num(z.y) + num(z.h) / 2, 0.5), h / 2, 1 - h / 2);
+  let cx = bx;
+  let cy = by;
 
   if (z.follow && track?.length) {
     // The trajectory, not the newest sighting. See trailAt.
@@ -485,10 +534,12 @@ export function zoomRect(z, tl, t, track) {
   }
 
   // Resist the edge, then clamp to it. The first is how it looks; the second is
-  // the guarantee that the crop is never off the picture.
+  // the guarantee that the crop is never off the picture. The resistance is
+  // measured from the shot's own aim, so a shot that is not following anything
+  // lands exactly where it was pointed — including hard against a side.
   return clampRect({
-    x: soften(cx, w / 2, 1 - w / 2) - w / 2,
-    y: soften(cy, h / 2, 1 - h / 2) - h / 2,
+    x: resist(bx, cx, w / 2, 1 - w / 2) - w / 2,
+    y: resist(by, cy, h / 2, 1 - h / 2) - h / 2,
     w,
     h,
   });

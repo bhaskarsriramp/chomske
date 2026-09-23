@@ -46,7 +46,7 @@ import crypto from "crypto";
  */
 import {
   EASE, easeFn, RAMP, RAMP_IN, RAMP_OUT, FULL,
-  clampRect, lerpRect, soften, activeZooms, rampsOf, project, CAMERA_TUNING,
+  clampRect, lerpRect, soften, resist, activeZooms, rampsOf, project, CAMERA_TUNING,
   cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS,
   zoomRect, cameraAt,
 } from "../../../src/components/Studio/camera.mjs";
@@ -508,7 +508,7 @@ const round4 = (v) => Math.round(v * 10000) / 10000;
  */
 export {
   EASE, easeFn, RAMP, RAMP_IN, RAMP_OUT, FULL,
-  clampRect, lerpRect, soften, activeZooms, rampsOf, project, CAMERA_TUNING,
+  clampRect, lerpRect, soften, resist, activeZooms, rampsOf, project, CAMERA_TUNING,
   cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS, zoomRect, cameraAt,
 };
 

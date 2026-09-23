@@ -23,6 +23,13 @@
  * not stored, so the acknowledgement channel and the sticky/scroll measurement
  * are absent here. Every press they would have rescued shows as unchanged, so
  * this UNDERSTATES the effect of a change rather than overstating it.
+ *
+ * One rule is invisible here in the other direction, and it is worth knowing:
+ * ownConsequence() refuses a press that lands while the screen is still
+ * finishing the press before it, and it needs `screen` to know that. With no
+ * screen measurement it does nothing at all, so a press this prints as kept
+ * may still be refused in production. Nothing here can tell you which — the
+ * window is measured from the video.
  */
 import mongoose from "mongoose";
 import connectToMongo from "../db.js";

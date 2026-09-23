@@ -20,7 +20,7 @@
 /** The camera, defined once in camera.mjs and imported by the server too. */
 import {
   EASE, easeFn, RAMP, RAMP_IN, RAMP_OUT, FULL,
-  clampRect, lerpRect, soften, activeZooms, rampsOf, project, CAMERA_TUNING,
+  clampRect, lerpRect, soften, resist, activeZooms, rampsOf, project, CAMERA_TUNING,
   cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS, zoomRect, cameraAt,
 } from "./camera.mjs";
 
@@ -170,7 +170,7 @@ export function placedCues(tl, lay = layout(tl)) {
  */
 export {
   EASE, easeFn, RAMP, RAMP_IN, RAMP_OUT, FULL,
-  clampRect, lerpRect, soften, activeZooms, rampsOf, project, CAMERA_TUNING,
+  clampRect, lerpRect, soften, resist, activeZooms, rampsOf, project, CAMERA_TUNING,
   cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS, zoomRect, cameraAt,
 };
 

@@ -1050,24 +1050,41 @@ export function settleAfter(screen, t, { min = 0.55, max = 2.6, quiet = 0.012, f
   if (!Array.isArray(series) || !series.length) return min;
 
   const fps = num(screen.fps) || 12;
-  const need = Math.max(2, Math.round((forMs / 1000) * fps));
-  let run = 0;
+  const beat = Math.max(2, Math.round((forMs / 1000) * fps)) / fps;
+
+  /**
+   * ── A PAGE THAT IS WAITING LOOKS EXACTLY LIKE A PAGE THAT IS FINISHED ─────
+   * This used to return at the FIRST quiet run, and quiet is not the same
+   * question as done. Click something that fetches and the screen goes: the
+   * panel opens, then nothing at all while the request is in flight, then the
+   * data lands. That silence in the middle is the wait, and reading it as the
+   * answer sent the camera home before the answer existed.
+   *
+   * A spinner does not save it either — it is the one thing that CANNOT show
+   * up here, because self-animating cells are held in the busy mask and
+   * excluded from `cover` on purpose (see readScreen). So a panel showing a
+   * spinner over a grey skeleton is, to this measurement, perfectly still.
+   *
+   * Measured against the shapes real pages make, the old rule missed the
+   * payoff on four loading patterns out of five, by up to 1.4 seconds.
+   *
+   * The fix is to ask when the screen last changed rather than when it first
+   * stopped, and to leave a beat after that. A control that answers instantly
+   * has nothing after its own response and still gets `min`, which is what
+   * every recording analysed before this got.
+   */
+  let last = -Infinity;
 
   for (const m of series) {
     const dt = num(m.t) - t;
-    if (dt < min) continue;          // the minimum beat is owed regardless
+    if (dt < 0) continue;
     if (dt > max) break;
-    if (num(m.cover) <= quiet) {
-      run++;
-      // Quiet for long enough: the result is up and holding still. The camera
-      // may leave at the START of the quiet run, not the end of it — the
-      // stillness is the evidence, not part of what there is to look at.
-      if (run >= need) return clamp(dt - (need - 1) / fps, min, max);
-    } else {
-      run = 0;
-    }
+    if (num(m.cover) > quiet) last = dt;
   }
-  return max;
+
+  // Nothing moved at all in the window: the beat a fast control is owed.
+  if (!Number.isFinite(last)) return min;
+  return clamp(last + beat, min, max);
 }
 
 /**

@@ -34,7 +34,7 @@
  * one by hand. A missed click costs a zoom; it does not cost the recording.
  */
 import { newId, rampsOf, clampRect, RAMP_IN, RAMP_OUT } from "./timeline.js";
-import { busyShare, isSticky, scrollAt, explainMotion, chromeBand } from "./sync.js";
+import { busyShare, isSticky, scrollAt, explainMotion, chromeBand, settleAfter } from "./sync.js";
 
 /**
  * How much of a changed region has to be animating before the change is the
@@ -2537,7 +2537,7 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
    * zero when nothing conclusive was measured. See sync.js chromeBand.
    */
   const chrome = chromeBand(screen, capture);
-  return (events || []).map((e) => {
+  const judged = (events || []).map((e) => {
     if (e.type !== "click" && e.type !== "dblclick") return e;
 
     const on = controlUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5), { screen });
@@ -2921,6 +2921,98 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
       why,
     };
   });
+
+  return ownConsequence(judged, screen, onNote);
+}
+
+/**
+ * A basis that means the interface itself said a press landed here.
+ *
+ * Everything else on the list is circumstantial — a hand resting somewhere, a
+ * control named nearby, the screen having changed. Those are the readings that
+ * a page finishing its work can imitate; an acknowledgement is not, because
+ * nothing draws a ripple or a pressed state on its own.
+ */
+const ACKNOWLEDGED = new Set(["flash", "pressed"]);
+
+/**
+ * Two presses closer together than this are one interaction, not a press and
+ * its consequence — a double click, or the second half of one the detector
+ * split. zoomsFromClicks() merges them into a single camera move regardless,
+ * so there is nothing to protect them from.
+ */
+const SAME_INTERACTION = 0.45;
+
+/**
+ * A press may not claim a change the press before it is still making.
+ *
+ * ── THE CLICK THAT NOBODY MADE, AT THE MOMENT THE DATA ARRIVED ───────────────
+ * A press is believed partly because the screen changed afterwards. That is
+ * sound when the change is the press's own, and a page that fetches breaks the
+ * assumption: the panel opens, the request goes out, and one to three seconds
+ * later the skeleton is replaced by real content — a large, sudden, entirely
+ * genuine screen change with nobody's finger anywhere near it.
+ *
+ * The creator described the shape of it exactly:
+ *
+ *   "those spinners will go off, the skeletons will go off and it will render
+ *    the real-time data … so what exactly happens here"
+ *
+ * What happened is that the hand, having finished clicking, came to rest over
+ * something hoverable in the panel it had just opened — which is where a hand
+ * naturally ends up — and when the data landed, "a hand here" plus "the screen
+ * changed" reached 0.75 against a bar of 0.50. Measured, on exactly that
+ * sequence. The existing guards do not reach it: a rest may only be clicked
+ * once (timeline.js `spent`), but the pointer MOVED before it settled again,
+ * so this is a different rest; and the arrow test lets it through because the
+ * glyph really is a hand.
+ *
+ * The missing statement is about ownership. settleAfter() already measures how
+ * long a press's result takes to finish arriving — it is what holds the camera
+ * there. For that same stretch the screen is spoken for, and a candidate with
+ * no acknowledgement of its own is the previous press still landing.
+ *
+ * ── WHAT THIS DELIBERATELY DOES NOT REFUSE ───────────────────────────────────
+ * A press that the interface acknowledged. A ripple or a pressed control is
+ * first-hand evidence and outranks any inference about who owns the change, so
+ * an impatient second click on a loading page is kept whenever the page said
+ * anything back. And `still-arriving` is in HEURISTIC_REFUSAL (audit.js), so
+ * the arbiter is asked about the rest with frames of the moment.
+ *
+ * Without a screen measurement there is no window to speak of and nothing
+ * changes, which is every recording analysed before this existed.
+ */
+function ownConsequence(judged, screen, onNote) {
+  if (!screen) return judged;
+
+  const order = judged
+    .map((e, i) => ({ i, e, t: num(e.t) }))
+    .filter((r) => r.e.type === "click" || r.e.type === "dblclick")
+    .sort((a, b) => a.t - b.t);
+
+  const out = judged.slice();
+  // When the press that is currently landing will have finished landing.
+  let owned = -Infinity;
+  // The press that owns it, for the sentence on the refusal.
+  let owner = null;
+
+  for (const { i, e, t } of order) {
+    if (e.zoomable !== true) continue;
+
+    if (t <= owned && t - owner >= SAME_INTERACTION && !ACKNOWLEDGED.has(e.basis)) {
+      const why = "the screen was still finishing the press at " + owner.toFixed(2) + "s";
+      out[i] = { ...e, zoomable: false, basis: "still-arriving", why };
+      onNote({ t, zoomable: false, why });
+      // A press that was refused owns nothing, so the window is not extended
+      // by it — the next candidate is still measured against the real press.
+      continue;
+    }
+
+    owned = t + settleAfter(screen, t);
+    owner = t;
+  }
+
+  return out;
 }
 
 /**
@@ -3422,6 +3514,15 @@ export function restToFull(zooms, { rest = 0.35 } = {}) {
    * responsibility for, and that press would be on screen with the camera
    * somewhere else entirely. It is the same "one press, silently unserved"
    * this function exists to stop, one step further along.
+   *
+   * ── AND WHERE THE HOLD WAS EXTENDED, IT PROTECTS THE PAYOFF ──────────────
+   * `end` is no longer always `press + HOLD`: a press on something that
+   * fetches holds until the result is actually drawn (sync.js settleAfter), so
+   * on those `end - HOLD` lands after the press, on the moment the answer
+   * arrived. That is the right floor. The thing this zoom must not be trimmed
+   * past is not the click, it is the thing the click was for — and when there
+   * is no room for that AND the next press, the branch below makes them one
+   * move that holds both rather than cutting away mid-load.
    */
   const mustHold = new Map();
   const keep = (z) => {
