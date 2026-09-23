@@ -1089,7 +1089,7 @@ export function inPlaying(regions, screen, x, y) {
  *
  * @returns {number} seconds after `t`, within [min, max]
  */
-export function settleAfter(screen, t, { min = 0.45, max = 0.8, quiet = 0.012, forMs = 300 } = {}) {
+export function settleAfter(screen, t, { min = 0.45, max = 0.5, quiet = 0.012, forMs = 300 } = {}) {
   const series = screen?.motion;
   if (!Array.isArray(series) || !series.length) return min;
 

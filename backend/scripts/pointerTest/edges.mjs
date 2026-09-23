@@ -220,7 +220,7 @@ const holds = LOAD_CASES.map((c) => ({ c, hold: settleAfter(series(c.spans), CLI
  */
 ok(
   "every hold is inside its bounds",
-  holds.every((h) => h.hold >= 0.45 - 1e-9 && h.hold <= 0.8 + 1e-9),
+  holds.every((h) => h.hold >= 0.45 - 1e-9 && h.hold <= 0.5 + 1e-9),
   holds.map((h) => h.hold.toFixed(2)).join(", ")
 );
 /**
@@ -232,10 +232,27 @@ ok(
  * That is the trade this ceiling makes, written down rather than discovered
  * later: shots are short, and a genuinely slow panel is no longer waited for.
  */
+/**
+ * ── AND AT THIS CEILING THE ADAPTIVE PART IS OFF ─────────────────────────────
+ * This used to assert that a press whose result takes a moment is held longer
+ * than one that answers instantly, which is what settleAfter() was written for.
+ * With the floor at 0.45 and the ceiling at 0.50 there is a twentieth of a
+ * second between them, so every press gets the same beat whatever the screen
+ * does. The measurement still runs; it simply has nowhere to go.
+ *
+ * That is deliberate, and it is a choice about what a zoom is FOR — "we need to
+ * zoom in the area where a button or clickable UI element needs to be zoomed in
+ * so on screen every user can see what the user has clicked". Showing the press
+ * takes a fixed beat. Waiting for what it loaded does not.
+ *
+ * Asserted rather than deleted so the day somebody wants slow content waited
+ * for again, this line says which number switched it off.
+ */
+const spread = Math.max(...holds.map((h) => h.hold)) - Math.min(...holds.map((h) => h.hold));
 ok(
-  "work inside the window still lengthens the hold",
-  Math.max(...holds.map((h) => h.hold)) > Math.min(...holds.map((h) => h.hold)) + 0.2,
-  holds.map((h) => h.hold.toFixed(2)).join(", ")
+  "at this ceiling every press gets the same beat, whatever it loaded",
+  spread <= 0.06,
+  holds.map((h) => h.hold.toFixed(2)).join(", ") + " — raise settleAfter's max to bring the waiting back"
 );
 ok(
   "and a result landing past the ceiling is simply not waited for",
@@ -244,7 +261,7 @@ ok(
 );
 ok(
   "and none of them runs past the ceiling",
-  holds.every((h) => h.hold <= 0.8 + 1e-9),
+  holds.every((h) => h.hold <= 0.5 + 1e-9),
   "longest " + Math.max(...holds.map((h) => h.hold)).toFixed(2) + "s"
 );
 
@@ -265,7 +282,7 @@ console.log("");
 ok(
   "an instant control gets a short hold, nothing like the maximum",
   settleAfter(series([[1.0, 1.25, 0.18]]), CLICK) < 0.7,
-  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK).toFixed(2) + "s against a ceiling of 0.80s"
+  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK).toFixed(2) + "s against a ceiling of 0.50s"
 );
 ok(
   "a press that changed nothing at all gets the minimum beat",
@@ -273,7 +290,7 @@ ok(
 );
 ok(
   "a screen that never settles is still let go of",
-  settleAfter(series([[1.0, 9.0, 0.2]]), CLICK) <= 0.8,
+  settleAfter(series([[1.0, 9.0, 0.2]]), CLICK) <= 0.5,
   settleAfter(series([[1.0, 9.0, 0.2]]), CLICK).toFixed(2) + "s"
 );
 ok("no measurement at all falls back to the beat", settleAfter(null, CLICK) === 0.45);
