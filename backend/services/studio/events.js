@@ -1540,6 +1540,20 @@ const MERGE = 1.6;
  */
 const MERGE_MAX = 0.62;
 /**
+ * The longest one merged shot may run.
+ *
+ * Merging exists so the camera does not pull out and dive back in between two
+ * presses a second apart, and that argument is about a PAIR. It says nothing
+ * about a chain: each press inside the window pushes the end out again, so six
+ * presses two seconds apart hold one crop for twelve seconds.
+ *
+ * Four seconds is about the longest a close-up reads as emphasis. Past it the
+ * viewer has stopped seeing "look at this" and started seeing a recording that
+ * happens to be cropped — and on a page they are reading, the crop is hiding
+ * the part they came for.
+ */
+const MERGE_LONGEST = 4.0;
+/**
  * The same, for two presses the step detector puts in the same step.
  *
  * Only ever used when the steps exist, which means the model pass has run. A
@@ -3325,12 +3339,40 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
       : null;
     if (Array.isArray(c.target) && c.target.length >= 4 && num(c.target[2]) > 0) {
       const box = { x: num(c.target[0]), y: num(c.target[1]), w: num(c.target[2]), h: num(c.target[3]) };
-      // Only when the ripple is actually inside the box: outside it, one of the
-      // two readings is wrong and the box is the one with a label on it.
-      if (hit && hit.x >= box.x && hit.x <= box.x + box.w && hit.y >= box.y && hit.y <= box.y + box.h) {
-        return { ...box, ax: hit.x, ay: hit.y };
+      /**
+       * ── A BOX NOWHERE NEAR THE PRESS IS NOT THE PRESS'S BOX ───────────────
+       * `target` arrives from two places and only one of them has been checked.
+       * confirmClicks writes it when controlUnder() matched a control, and that
+       * match required the press to be within EDGE_SLOP of the box. The audit
+       * ALSO writes it, from its own reading of the frames, and nothing has ever
+       * asked whether the box it names is anywhere near where the press landed.
+       *
+       * Measured on a real export: a press recovered at (0.810, 0.062) — the
+       * close icon, top right — carrying a patched box for "Projects" at
+       * x = 0.039 in the left sidebar. Two thirds of a screen apart. The camera
+       * framed the box, so the first shot of the demo was of the sidebar while
+       * the creator watched their click happen off-screen:
+       *
+       *   "first zoom was on left side you can see not on the close icon"
+       *
+       * When the two disagree this far, one of them is wrong and it is not the
+       * press: that coordinate is measured from the pixels at that instant,
+       * while the box is a model's reading of a frame sampled seconds away. So
+       * the box is dropped and the shot is built around the press, exactly as
+       * it is on every recording where nothing named a control at all.
+       */
+      const off = Math.hypot(
+        Math.max(box.x - num(c.x, 0.5), 0, num(c.x, 0.5) - (box.x + box.w)),
+        Math.max(box.y - num(c.y, 0.5), 0, num(c.y, 0.5) - (box.y + box.h))
+      );
+      if (off <= EDGE_SLOP) {
+        // Only when the ripple is actually inside the box: outside it, one of the
+        // two readings is wrong and the box is the one with a label on it.
+        if (hit && hit.x >= box.x && hit.x <= box.x + box.w && hit.y >= box.y && hit.y <= box.y + box.h) {
+          return { ...box, ax: hit.x, ay: hit.y };
+        }
+        return box;
       }
-      return box;
     }
     const p = hit || { x: frac(c.x, 0.5), y: frac(c.y, 0.5) };
     return { x: p.x, y: p.y, w: 0, h: 0 };
@@ -3443,7 +3485,24 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
       // not hold two, and containingBox() lowers it further if it has to.
       const lvl = Math.min(prev.level, want);
       const grown = containingBox([...prev.boxes, mine], lvl);
-      if (grown.w <= MERGE_MAX) {
+      /**
+       * ── AND A SHOT HAS A LENGTH LIMIT AS WELL AS A WIDTH ONE ─────────────
+       * MERGE_MAX stops a merged rect growing until it is the whole screen with
+       * the edges trimmed. Nothing stopped it growing in TIME: each press inside
+       * the window pushes `end` out, so a run of presses a couple of seconds
+       * apart chains one shot for as long as the run lasts.
+       *
+       * Measured on a real export: four presses between 12.9s and 17.5s became
+       * a single 7.46-second shot at 1.4x. At that length it has stopped being
+       * emphasis — the viewer is simply watching a cropped recording, which is
+       * the thing a zoom is supposed to be the exception to.
+       *
+       *   "there was a long zoom combined as well"
+       *
+       * Past the limit the press starts its own shot instead, which is what
+       * merging already does when the rect gets too wide.
+       */
+      if (grown.w <= MERGE_MAX && end - prev.start <= MERGE_LONGEST) {
         prev.end = round3(Math.max(prev.end, end));
         prev.at = c.t;
         prev.boxes.push(mine);

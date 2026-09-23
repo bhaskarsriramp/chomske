@@ -503,8 +503,17 @@ const withScroll = [
   { id: "s2", type: "scroll", t: 9.83 },
   pressAt(11.39, "Log out", 0.34, 0.62),
 ];
-/** The same three presses with nothing moving between them. */
-const noScroll = withScroll.filter((e) => e.type !== "scroll");
+/**
+ * The control: the first two presses, 1.2s apart, with nothing moving between
+ * them. They must still be ONE shot — merging exists because pulling out and
+ * back in between two presses a second apart is what makes auto-zoom seasick,
+ * and none of this may quietly turn that off.
+ *
+ * Two and not three, because all three span 4.67s once merged and MERGE_LONGEST
+ * refuses a shot that long on its own account. Testing the scroll rule against
+ * a case the length rule also rejects would prove nothing about either.
+ */
+const noScroll = withScroll.filter((e) => e.type !== "scroll" && e.t < 10);
 
 /**
  * All three inside one step, which is what the real recording had and what
@@ -550,13 +559,51 @@ ok(
  * this must not have quietly turned that off for everybody.
  */
 ok(
-  "with nothing moving, the same presses are still one shot",
+  "with nothing moving, two presses 1.2s apart are still one shot",
   merged.length === 1,
-  merged.length + " zoom covering all three"
+  merged.length + " zoom covering both"
 );
 ok(
   "so the rule is about the scroll, not about the gap",
   merged.length === 1 && split.length === 2
+);
+
+/**
+ * ── AND A CHAIN OF PRESSES DOES NOT BECOME ONE LONG CROP ────────────────────
+ * MERGE_MAX stops a merged rect growing until it is the whole screen with the
+ * edges trimmed. Nothing stopped it growing in TIME: every press inside the
+ * window pushes the end out again. Measured on a real export, four presses
+ * between 12.9s and 17.5s became a single 7.46-second shot at 1.4x — at which
+ * length the viewer has stopped seeing emphasis and is watching a cropped
+ * recording.
+ */
+const chain = [
+  pressAt(12.90, "Plugins", 0.20, 0.64),
+  pressAt(14.33, "More", 0.21, 0.30),
+  pressAt(16.26, "Usage", 0.22, 0.35),
+  pressAt(17.45, "Usage again", 0.25, 0.33),
+];
+const chained = zoomsFromClicks(chain, {
+  duration: 22.6, sourceWidth: 1920,
+  steps: [{ id: "st2", start: 12.0, end: 18.0, title: "Look through plugins" }],
+});
+const longest = chained.reduce((a, z) => Math.max(a, z.end - z.start), 0);
+console.log("");
+console.log("    four presses over 4.6s, all in one step:");
+for (const z of chained) {
+  console.log("      " + z.start.toFixed(2).padStart(6) + " – " + z.end.toFixed(2).padStart(6) +
+    "   " + (z.end - z.start).toFixed(2) + "s   " + String(z.label || "").slice(0, 20));
+}
+console.log("");
+ok(
+  "a chain of presses does not become one long crop",
+  longest <= 4.0 + 1e-6,
+  "longest shot " + longest.toFixed(2) + "s against a limit of 4.00s"
+);
+ok(
+  "and every press in the chain is still served",
+  chained.length >= 2 && chain.every((c) => chained.some((z) => c.t >= z.start && c.t <= z.end)),
+  chained.length + " shots covering all four presses"
 );
 
 console.log(pass ? "\nall passed\n" : "\nFAILED\n");
