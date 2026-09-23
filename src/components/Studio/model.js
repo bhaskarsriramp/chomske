@@ -17,6 +17,13 @@
  * render loop and from a canvas painter, and it must not allocate a surprise.
  */
 
+/** The camera, defined once in camera.mjs and imported by the server too. */
+import {
+  EASE, easeFn, RAMP, RAMP_IN, RAMP_OUT, FULL,
+  clampRect, lerpRect, soften, activeZooms, rampsOf, project, CAMERA_TUNING,
+  cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS, zoomRect, cameraAt,
+} from "./camera.mjs";
+
 export const ASPECTS = {
   "16:9": [1920, 1080],
   "9:16": [1080, 1920],
@@ -27,7 +34,6 @@ export const ASPECTS = {
 export const CURSOR_MODES = ["intent", "recorded"];
 export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
 export const CAPTION_STYLES = ["trylipi", "hormozi", "apple", "minimal", "neon"];
-export const EASINGS = ["smooth", "snappy", "slow", "linear"];
 export const BLUR_KINDS = ["blur", "pixelate", "box"];
 
 /** Ids are minted in the browser so a new zoom is selectable before it saves. */
@@ -144,141 +150,30 @@ export function placedCues(tl, lay = layout(tl)) {
    The pointer
    ──────────────────────────────────────────────────────────────────────────── */
 
+
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   The camera, which is defined once and imported twice
+   ───────────────────────────────────────────────────────────────────────────── */
+
 /**
- * The path that gets drawn: the composed one when the creator asked for it,
- * the recovered one otherwise. Mirrors timeline.js drawnTrack — see it for why
- * "recorded" is the default.
+ * ── THE PREVIEW AND THE EXPORT NOW COMPUTE THE SAME NUMBERS ──────────────────
+ * This file used to carry its own copy of every function below, marked
+ * "Mirrors timeline.js". Two copies of a rule is one rule that will differ, and
+ * these two already had: centring an out-of-range zoom landed at 0.5 on the
+ * server and at the frame edge here. Nobody had hit it, which is the point —
+ * the next divergence would have shipped the same way.
+ *
+ * The wrappers stay because `cursorAt` is this file's, and the shared module
+ * takes it as an argument rather than having an opinion about pointer tracks.
  */
-export function drawnTrack(tl) {
-  if (!tl || tl.cursor?.enabled === false) return null;
-  const composed = tl.composed;
-  if (tl.cursor?.mode === "intent" && composed && composed.length > 1) return composed;
-  return tl.track || null;
-}
-
-export function cursorAt(track, t) {
-  if (!track?.length) return null;
-  const first = track[0];
-  const last = track[track.length - 1];
-  // Nothing before the first sighting, held after the last. The tracker cannot
-  // see a pointer that is not moving, so the first sample is where it ARRIVED,
-  // not where it started; holding it backwards draws a second pointer at the
-  // top of every demo. Mirrors timeline.js cursorAt, which explains it in full.
-  if (t < first.t - EDGE_GRACE) return null;
-  if (t <= first.t) return { x: first.x, y: first.y, shape: first.shape || "default" };
-  if (t >= last.t) return { x: last.x, y: last.y, shape: last.shape || "default" };
-
-  let lo = 0;
-  let hi = track.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (track[mid].t <= t) lo = mid;
-    else hi = mid;
-  }
-  const a = track[lo];
-  const b = track[hi];
-  const span = b.t - a.t;
-  // A gap longer than a few dropped samples is held, not crossed. Mirrors
-  // timeline.js cursorAt — see it for why interpolating one draws a second
-  // pointer gliding across the picture.
-  if (span > GAP_HOLD) {
-    const near = t - a.t <= span / 2 ? a : b;
-    return { x: near.x, y: near.y, shape: near.shape || "default" };
-  }
-  const k = span > 0 ? (t - a.t) / span : 0;
-  return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, shape: a.shape || "default" };
-}
-
-/** Longest gap in the track still worth interpolating across. */
-const GAP_HOLD = 0.2;
-
-/** How far before the first sighting the pointer may still be drawn. */
-const EDGE_GRACE = 0.1;
-
-/* ────────────────────────────────────────────────────────────────────────────
-   The camera
-   ──────────────────────────────────────────────────────────────────────────── */
-
-export const EASE = {
-  smooth: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
-  snappy: (t) => 1 - Math.pow(1 - t, 4),
-  slow: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
-  linear: (t) => t,
+export {
+  EASE, easeFn, RAMP, RAMP_IN, RAMP_OUT, FULL,
+  clampRect, lerpRect, soften, activeZooms, rampsOf, project, CAMERA_TUNING,
+  cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS, zoomRect, cameraAt,
 };
-export const RAMP = { smooth: 0.55, snappy: 0.32, slow: 0.9, linear: 0.5 };
 
-export function clampRect(r) {
-  const w = clamp(num(r.w, 1), 0.05, 1);
-  const h = clamp(num(r.h, 1), 0.05, 1);
-  return { x: clamp(num(r.x), 0, 1 - w), y: clamp(num(r.y), 0, 1 - h), w, h };
-}
-
-export function activeZooms(tl) {
-  const total = num(tl?.duration);
-  return (tl?.zooms || [])
-    .map((z) => ({ ...z, start: clamp(num(z.start), 0, total), end: clamp(num(z.end), 0, total) }))
-    .filter((z) => z.end - z.start > 0.05)
-    .sort((a, b) => a.start - b.start);
-}
-
-export function zoomRect(z, tl, t, track) {
-  const level = Math.max(1, num(z.level, 1.6));
-  // Never crop tighter than the zoom's own rectangle: it was sized to hold the
-  // clicks this zoom exists to show. Mirrors timeline.js zoomRect.
-  const w = clamp(Math.max(1 / level, num(z.w, 0), num(z.h, 0)), 0.05, 1);
-  let cx = clamp(num(z.x) + num(z.w) / 2, 0, 1);
-  let cy = clamp(num(z.y) + num(z.h) / 2, 0, 1);
-
-  if (z.follow && track?.length) {
-    const p = cursorAt(track, t);
-    if (p) {
-      const k = clamp(num(z.follow_strength, 0.7), 0, 1);
-      cx += (p.x - cx) * k;
-      cy += (p.y - cy) * k;
-    }
-  }
-  return clampRect({ x: cx - w / 2, y: cy - w / 2, w, h: w });
-}
-
-/**
- * A zoom's two ramps. Mirrors timeline.js rampsOf — see it for why going in and
- * coming out are different moves, and why `== null` rather than isFinite.
- */
-export function rampsOf(z) {
-  const base = RAMP[z?.easing] || RAMP.smooth;
-  const given = (v) => v != null && v !== "" && Number.isFinite(Number(v));
-  return {
-    in: given(z?.ramp_in) ? clamp(Number(z.ramp_in), 0.05, 2) : base,
-    out: given(z?.ramp_out) ? clamp(Number(z.ramp_out), 0.05, 2) : base,
-    easeIn: EASE[z?.easing] ? z.easing : "smooth",
-    easeOut: EASE[z?.ease_out] ? z.ease_out : EASE[z?.easing] ? z.easing : "smooth",
-  };
-}
-
-/** The camera at a moment of the RECORDING. */
-export function cameraAt(tl, t, { track = null } = {}) {
-  const FULL = { x: 0, y: 0, w: 1, h: 1 };
-  const zooms = activeZooms(tl);
-  if (!zooms.length) return FULL;
-
-  let z = null;
-  for (const cand of zooms) {
-    const r = rampsOf(cand);
-    if (t >= cand.start - r.in && t <= cand.end + r.out) z = cand;
-  }
-  if (!z) return FULL;
-
-  const r = rampsOf(z);
-  const target = zoomRect(z, tl, t, track);
-
-  if (t < z.start) return lerpRect(FULL, target, EASE[r.easeIn](clamp((t - (z.start - r.in)) / r.in, 0, 1)));
-  if (t > z.end) return lerpRect(target, FULL, EASE[r.easeOut](clamp((t - z.end) / r.out, 0, 1)));
-  return target;
-}
-
-function lerpRect(a, b, k) {
-  return clampRect({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, w: a.w + (b.w - a.w) * k, h: a.h + (b.h - a.h) * k });
-}
 
 /**
  * The camera at a moment of the FINISHED video.
@@ -291,11 +186,6 @@ function lerpRect(a, b, k) {
 export function cameraAtOutput(tl, outT, lay = layout(tl)) {
   const srcT = toSource(outT, lay);
   return cameraAt(tl, srcT, { track: tl.cursor?.enabled === false ? null : tl.track });
-}
-
-/** A point of the source frame, as a fraction of the output frame. */
-export function project(pt, cam) {
-  return { x: (pt.x - cam.x) / cam.w, y: (pt.y - cam.y) / cam.h, scale: 1 / cam.w };
 }
 
 /** A rect of the source frame, as a rect of the output frame. */

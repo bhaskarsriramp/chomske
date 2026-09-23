@@ -47,7 +47,7 @@ import {
 } from "./vision.js";
 import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed, restMoments } from "./events.js";
 import { changeMoments, auditEdit, applyPatches } from "./audit.js";
-import { alignCapture, settleAfter } from "./sync.js";
+import { alignCapture, settleAfter, playingRegions } from "./sync.js";
 import { locatePointer, mergeLocated, stepPath, snapToLocated } from "./locate.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
@@ -84,6 +84,34 @@ import { STUDIO_LIMITS } from "./demoService.js";
  */
 export const VISION_ON_ANALYSE =
   String(process.env.STUDIO_VISION_ON_ANALYSE || "off").trim().toLowerCase() === "on";
+
+/**
+ * ── WHETHER THE BLUR PASS RUNS AT ALL ────────────────────────────────────────
+ *
+ * Off, on the creator's instruction, while the camera is being worked on:
+ *
+ *   "we are automatically applying the blur for the sensitive information on
+ *    the screen right, lets pause it for now, cause i'm testing the clicks and
+ *    mouse, camera related stuff. Once we master in this area then we will move
+ *    to the blur, captions."
+ *
+ * ── AND THIS FILE ARGUES THE OPPOSITE, SO SAY SO PLAINLY ─────────────────────
+ * The header above says the blur pass is the one that is not optional, because
+ * "a missed API key cannot be un-published, and the creator who most needs it is
+ * the one who did not think to ask for it". That reasoning has not stopped being
+ * true. What has changed is who is recording: while this is a tool being tested
+ * by the person who built it, on recordings they choose, the argument is about a
+ * risk nobody is currently taking, and every model call it makes is noise in the
+ * measurements the camera work is being judged by.
+ *
+ * So it is a switch and not a deletion — `STUDIO_BLUR=on` restores it with no
+ * deploy — and it must be turned back on BEFORE anybody else records anything.
+ * The editor still tells the creator that nothing has been checked for private
+ * information, which is now an interface promise rather than a pipeline one,
+ * exactly as it already is when the vision pass is off.
+ */
+export const BLUR_ON =
+  String(process.env.STUDIO_BLUR || "off").trim().toLowerCase() === "on";
 
 /**
  * Build the first edit.
@@ -273,7 +301,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // The pointer log goes in with the frames: a blur is released when the screen
   // changes under it, not when the model happens to miss a sample. See
   // vision.js joinRegions.
-  const blurTask = VISION_ON_ANALYSE
+  const blurTask = VISION_ON_ANALYSE && BLUR_ON
     ? findSensitive(frames, { every, duration, events, spend }).catch((err) => {
         console.error("[studio] blur pass failed:", err);
         return [];
@@ -311,7 +339,27 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * withheld. See confirmClicks().
    */
   const notes = [];
-  const graded = confirmClicks(events, shots, { located: located.track, flashes: located.flashes, onNote: (n) => notes.push(n) });
+  const graded = confirmClicks(events, shots, {
+    located: located.track,
+    flashes: located.flashes,
+    /**
+     * Which parts of the screen do not scroll, measured from pixels. This is
+     * what stops a press on a fixed navigation bar being refused because the
+     * page behind it moved — five of ten presses on one real recording. See
+     * sync.js isSticky.
+     */
+    screen: aligned.screen,
+    /**
+     * The regions that were animating for most of the recording, and which
+     * surface was shared. The first lets a change be attributed to a video
+     * playing rather than to the press; the second says whether there is any
+     * browser furniture in the picture at all. See sync.js explainMotion and
+     * chromeBand.
+     */
+    playing: playingRegions(aligned.screen, { duration }),
+    capture,
+    onNote: (n) => notes.push(n),
+  });
   for (const n of notes) {
     console.log("[studio] press at " + n.t.toFixed(2) + "s " + (n.zoomable ? "moves the camera" : "does not move the camera") + " — " + n.why);
   }
@@ -391,7 +439,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     : [];
 
   /* ── The passes that were running all along ──────────────────────────── */
-  if (VISION_ON_ANALYSE) onProgress(0.82, "Checking for anything private");
+  if (VISION_ON_ANALYSE && BLUR_ON) onProgress(0.82, "Checking for anything private");
   const blurs = await blurTask;
   onProgress(0.9, wantCaptions ? "Writing captions" : "Finishing");
   const captions = await captionTask;
@@ -436,7 +484,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   const wh = { sourceWidth: source?.width || 1920, sourceHeight: source?.height || 1080 };
   const steady = steadyPath(capturedTrack, wh);
   const rested = restOnControls(steady, shots, wh);
-  const shaped = shapeFromControls(rested, shots);
+  const shaped = shapeFromControls(rested, shots, { screen: aligned.screen });
   const stilled = capturedTrack.length - countMoves(steady, wh);
   if (stilled > 0) console.log("[studio] " + stilled + " brief deviation(s) of the pointer were not drawn");
   /**
@@ -601,6 +649,14 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     })),
         locate: { found: located.found, frames: located.frames, design: located.design, height_px: located.heightPx },
     frames_read: shots.length,
+    /**
+     * Whether the frames were checked for private information, which is NOT the
+     * same question as whether they were read. With the blur pass paused they
+     * are read for the steps and not checked for anything, and the editor must
+     * go on saying so — "Every sampled frame was checked" when none was is the
+     * one claim this product cannot make. See BLUR_ON.
+     */
+    blur_checked: BLUR_ON,
     frames_failed: Math.max(0, frames.length - shots.length),
     sync: aligned.sync,
     spend,
@@ -681,10 +737,18 @@ export async function visionPass({ video, workDir, duration, events = [], onProg
     return [];
   });
 
-  const blurTask = findSensitive(frames, { every, duration, events, spend }).catch((err) => {
-    console.error("[studio] blur pass failed:", err);
-    return [];
-  });
+  /**
+   * Paused while the camera is being worked on — see BLUR_ON. The steps, the
+   * narration and the frame reading all still run: those are what the creator
+   * asked to keep, because the camera needs the model's understanding of the
+   * flow and needs none of its opinion about what is private.
+   */
+  const blurTask = BLUR_ON
+    ? findSensitive(frames, { every, duration, events, spend }).catch((err) => {
+        console.error("[studio] blur pass failed:", err);
+        return [];
+      })
+    : Promise.resolve([]);
 
   const shots = await uiTask;
 
@@ -699,7 +763,10 @@ export async function visionPass({ video, workDir, duration, events = [], onProg
     ? await writeNarration({ steps, summary, product, duration, spend }).catch(() => [])
     : [];
 
-  onProgress(0.9, "Checking for anything private");
+  // Only claimed when it is actually happening: a progress bar that says it
+  // checked for private information when the pass is paused is the one kind of
+  // lie this product must not tell.
+  if (BLUR_ON) onProgress(0.9, "Checking for anything private");
   const blurs = await blurTask;
 
   /**
@@ -754,6 +821,14 @@ export async function visionPass({ video, workDir, duration, events = [], onProg
       })),
     })),
     frames_read: shots.length,
+    /**
+     * Whether the frames were checked for private information, which is NOT the
+     * same question as whether they were read. With the blur pass paused they
+     * are read for the steps and not checked for anything, and the editor must
+     * go on saying so — "Every sampled frame was checked" when none was is the
+     * one claim this product cannot make. See BLUR_ON.
+     */
+    blur_checked: BLUR_ON,
     frames_failed: Math.max(0, frames.length - shots.length),
     spend,
   };

@@ -45,6 +45,12 @@ import { EASE, rampsOf, activeZooms, cameraAt, clampRect, layout, toSource, draw
 
 /** Samples per second for a zoom that follows the pointer. */
 const FOLLOW_HZ = 10;
+/**
+ * And how often where two moves overlap, which is a faster thing to sample: a
+ * blend runs for a quarter of a second, so ten a second would describe it with
+ * two keys and a straight line between them.
+ */
+const BLEND_HZ = 30;
 
 const round4 = (v) => Math.round(v * 10000) / 10000;
 const round3 = (v) => Math.round(v * 1000) / 1000;
@@ -129,21 +135,80 @@ export function cameraKeys(tl, { fps = 30 } = {}) {
     keys.push(k);
   };
 
-  const FULL = { x: 0, y: 0, w: 1, h: 1 };
   const at = (srcT) => cameraAt(tl, srcT, { track });
 
   for (const z of zooms) {
     // In and out are separate moves with separate lengths and curves: see
-    // timeline.js rampsOf. A click zoom eases in over half a second and snaps
-    // out in a fifth of one.
+    // timeline.js rampsOf. A click zoom eases in over a quarter of a second and
+    // snaps out in a fifth of one.
     const r = rampsOf(z);
     const inStart = Math.max(0, z.start - r.in);
     const outEnd = Math.min(tl.duration, z.end + r.out);
 
+    /**
+     * ── WHERE TWO MOVES OVERLAP, TWO KEYS CANNOT DESCRIBE THE CAMERA ─────────
+     * Everywhere else a move is one eased curve between two rects, and two keys
+     * plus a curve name say so exactly. Where a second move begins before the
+     * first has finished, the camera is doing something neither curve
+     * describes: it is easing toward a target that is itself moving. Two keys
+     * with a curve between them then draw a different path, and the conformance
+     * test measured that difference at 807 pixels of 1920 — a third of the way
+     * across the frame, in the export only.
+     *
+     * So contested stretches are sampled instead, thirty times a second, with
+     * linear keys between the samples. It is the same answer the follow camera
+     * already reaches for the same reason, and the thinning pass below removes
+     * whatever the shape does not need.
+     */
+    const contested = (from, to) =>
+      zooms.some((o) => {
+        if (o === z) return false;
+        const ro = rampsOf(o);
+        return o.start - ro.in < to && o.end + ro.out > from;
+      });
+
+    const dense = (span) => {
+      const step = 1 / BLEND_HZ;
+      let t = span.src_start;
+      /**
+       * ── DO NOT RE-EMIT THE MOMENT THE SECTION BEFORE ALREADY PLACED ────────
+       * The sections meet: a ramp-in ends at z.start and the hold begins there.
+       * push() treats two keys inside one frame as one and keeps the later,
+       * so a dense hold starting at z.start replaced the ramp-in's final key —
+       * and with it the curve name. The move in was then drawn as a straight
+       * line, which measured 487 pixels of 1920 away from the preview at the
+       * midpoint of the ramp. The rect was right and the easing was gone.
+       */
+      const prev = keys[keys.length - 1];
+      if (prev && round3(Math.max(0, span.start)) <= prev.t + 1 / (fps * 2)) t += step;
+      for (; t < span.src_end; t += step) {
+        push(span.start + (t - span.src_start), at(t), "linear");
+      }
+      push(span.end, at(span.src_end), "linear");
+    };
+
+    /**
+     * ── EVERY KEY IS A SAMPLE OF cameraAt, INCLUDING THE FIRST AND LAST ──────
+     * Both ends of every move used to be the literal full frame. That was true
+     * while cameraAt also ramped every zoom in from the full frame, and it
+     * stopped being true the moment a move was allowed to start from wherever
+     * the camera already was (camera.mjs cameraAt). The renderer then drew a
+     * pull-out and a dive-in that the preview did not — a divergence of more
+     * than half the frame width, which the conformance test
+     * (scripts/pointerTest/camera.mjs) caught on its first run.
+     *
+     * Sampling instead of asserting is also the right shape: there is one
+     * camera, and this file's job is to turn it into keyframes, not to have a
+     * second opinion about where it points. When nothing precedes a zoom, the
+     * sample IS the full frame and these keys come out exactly as before.
+     */
     // ── The move in ───────────────────────────────────────────────────────
     for (const span of spansOf(inStart, z.start, lay)) {
-      push(span.start, FULL, "linear");
-      push(span.end, at(span.src_end), r.easeIn);
+      if (contested(span.src_start, span.src_end)) dense(span);
+      else {
+        push(span.start, at(span.src_start), "linear");
+        push(span.end, at(span.src_end), r.easeIn);
+      }
     }
 
     // ── The hold ──────────────────────────────────────────────────────────
@@ -154,6 +219,8 @@ export function cameraKeys(tl, { fps = 30 } = {}) {
           push(span.start + (t - span.src_start), at(t), "linear");
         }
         push(span.end, at(span.src_end), "linear");
+      } else if (contested(span.src_start, span.src_end)) {
+        dense(span);
       } else {
         const rect = at((span.src_start + span.src_end) / 2);
         push(span.start, rect, r.easeIn);
@@ -163,8 +230,14 @@ export function cameraKeys(tl, { fps = 30 } = {}) {
 
     // ── The move out ──────────────────────────────────────────────────────
     for (const span of spansOf(z.end, outEnd, lay)) {
-      push(span.start, at(span.src_start), "hold");
-      push(span.end, FULL, r.easeOut);
+      if (contested(span.src_start, span.src_end)) dense(span);
+      else {
+        push(span.start, at(span.src_start), "hold");
+        // Also a sample, for the same reason: when the next move has already
+        // begun by the time this one finishes pulling out, the camera is on its
+        // way somewhere rather than at the full frame.
+        push(span.end, at(span.src_end), r.easeOut);
+      }
     }
   }
 
@@ -324,6 +397,14 @@ const EASE_EXPR = {
   snappy: "1-pow(1-ld(0),4)",
   slow: "if(lt(ld(0),0.5), 2*ld(0)*ld(0), 1-pow(-2*ld(0)+2,2)/2)",
   linear: "ld(0)",
+  /**
+   * easeOutBack, with the same PUNCH_BACK as camera.mjs. Written out as a
+   * literal rather than interpolated from the constant because this string is
+   * what ffmpeg parses, and a template that silently produced "undefined" would
+   * render every punch zoom as a jump. The conformance test
+   * (scripts/pointerTest/camera.mjs) is what keeps the two numbers equal.
+   */
+  punch: "1+1.9*pow(ld(0)-1,3)+0.9*pow(ld(0)-1,2)",
   hold: "0",
 };
 

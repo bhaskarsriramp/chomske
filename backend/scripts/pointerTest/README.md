@@ -11,6 +11,8 @@ export — on any page, not just the one demo these were written against.
     node scripts/pointerTest/content.mjs      # a cursor inside a video on the page
     node scripts/pointerTest/glyph.mjs        # what the BROWSER measures, at full size
     node scripts/pointerTest/profile.mjs      # ...and what the server does with it
+    node scripts/pointerTest/camera.mjs       # do the preview and the export agree?
+    node scripts/pointerTest/sticky.mjs       # a fixed nav bar, and a page that scrolls under it
     node scripts/pointerTest/real.mjs         # actual recordings, in fixtures/
 
 They build their own test recordings, so they need no fixtures: a page is drawn
@@ -66,6 +68,38 @@ and also the new way to lose. A confidently wrong measurement would send the
 search looking for a pointer that is not there. locate.js reopens the search
 when a narrowed one comes back empty, and this is the test that takes that
 path — a fallback nobody has ever exercised is not a fallback.
+
+`camera.mjs` is the odd one out twice over: it tests no pointer at all, and it
+is the only test here guarding something a creator cannot work around. The same
+camera move is computed in three places — the editor's preview, the server, and
+ffmpeg's expression strings. Two of them now import one module
+(`src/components/Studio/camera.mjs`); the third evaluates strings and cannot, so
+it is checked numerically instead. It translates the ffmpeg easing expressions
+back into JavaScript and compares them against the functions they mirror, then
+samples a built timeline every frame and requires both routes to agree within
+two pixels of 1920.
+
+It has already earned it. On its first run it found the renderer starting every
+camera move from the full frame while the preview blended from wherever the
+camera was — 807 pixels apart, in the export only — and then a dense sample
+quietly overwriting the curve name on the key before it, worth another 487.
+Neither would have shown up in any other test here.
+
+`sticky.mjs` is the production bug, reproduced. A creator pressed "Pricing" in
+a navigation bar, the page scrolled to the pricing section — which is what an
+anchor link does — and the camera did not move. Five of ten presses in that
+recording were refused for "the page was scrolling", and events.js said in a
+comment that the two cases could not be told apart: an anchor click and a wheel
+scroll with the pointer resting on a nav item are the same evidence.
+
+They are not the same GEOMETRY. The bar is fixed; it does not move when the page
+scrolls under it, so "the page scrolled" is a fact about a different part of the
+screen. sync.js now measures each region's travel separately, and this builds a
+page with a real fixed bar, scrolls it hard, prints the map of what was found to
+be fixed, and then judges the same press twice — with and without that knowledge
+— to show the refusal flipping. It also checks the other half: that a control
+read on one frame and pressed two seconds later, after the page has moved most
+of a frame height, is still found.
 
 `real.mjs` is the one that catches what nobody thought of. The drawn pages
 above can only contain the difficulties we imagined; every real failure so far

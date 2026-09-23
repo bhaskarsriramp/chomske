@@ -177,6 +177,7 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
       product: d.analysis?.product || "",
       language_label: d.analysis?.language_label || "",
       frames_read: d.analysis?.frames_read || 0,
+      blur_checked: !!d.analysis?.blur_checked,
       frames_failed: d.analysis?.frames_failed || 0,
       verdict: d.analysis?.verdict || "",
       suggestions: (d.analysis?.suggestions || []).filter((s) => !(d.analysis?.resolved || []).includes(s.id)),

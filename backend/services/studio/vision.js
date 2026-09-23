@@ -70,6 +70,12 @@ export const AUDIO_MODEL = MODEL.audio;
  * difference visible now.
  */
 const FRAMES_PER_READ = 1;
+
+/**
+ * How a control may be drawn, per UI_ANALYZER. Anything else reads as "normal",
+ * which is the value that contributes nothing either way.
+ */
+const ELEMENT_STATES = new Set(["normal", "hovered", "pressed", "focused", "selected", "disabled"]);
 /**
  * How wide this pass fans out.
  *
@@ -221,6 +227,20 @@ export async function readFrames(frames, { spend = newSpend(), onProgress = () =
               label: str(e.label, 80),
               bbox: [b.x, b.y, b.w, b.h],
               importance: ["high", "medium", "low"].includes(e.importance) ? e.importance : "medium",
+              /**
+               * ── HOW THE CONTROL IS DRAWN, WHICH IS THE INTERFACE TALKING ───
+               * "pressed" is the only first-hand observation of a click this
+               * product can get from a still frame: the interface acknowledging
+               * one as it happens. Everything else in the pipeline infers a
+               * press from what followed it.
+               *
+               * Unrecognised becomes "normal", which contributes nothing —
+               * absence of a reading must never be evidence against a press.
+               */
+              state: ELEMENT_STATES.has(e.state) ? e.state : "normal",
+              // Whether it stays put while the page scrolls under it. See
+              // events.js confirmClicks for why a sticky nav bar matters.
+              sticky: e.sticky === true,
             };
           })
           .filter(Boolean)
@@ -733,6 +753,14 @@ export async function writeNarration({ steps, summary, product, duration, spend 
  * there was recorded on somebody else's screen. See PRESS_ARBITER.
  */
 const VERDICTS = new Set(["press", "hover", "scroll", "settling", "content", "unclear"]);
+/**
+ * Which kind of activation a press was. The camera treats them differently — a
+ * drag wants the shot to travel, a text selection wants it to stay put, a menu
+ * wants room for what opened — so this is a field the edit acts on rather than
+ * a label for a report. Anything unrecognised becomes "other", which behaves
+ * exactly as a press with no kind attached always did.
+ */
+const INTERACTIONS = new Set(["click", "menu", "type", "drag", "resize", "submit", "select", "other", "none"]);
 const KINDS = new Set(["content", "action", "result", "scroll", "loading", "noise", "unclear"]);
 
 /**
@@ -777,6 +805,15 @@ export async function arbitratePress({ frames, at, spend = newSpend() }) {
   return {
     t: round3(num(at.t)),
     verdict,
+    // Only meaningful on a press; forced to "none" otherwise rather than
+    // trusted, because a model that has just said "hover" naming a drag is
+    // contradicting itself and the verdict is the harder judgement.
+    interaction:
+      verdict === "press" && INTERACTIONS.has(json.interaction_type) && json.interaction_type !== "none"
+        ? json.interaction_type
+        : verdict === "press"
+          ? "other"
+          : "none",
     // An answer with no confidence attached is not a confident answer.
     confidence: clamp(num(json.confidence, 0.5), 0, 1),
     target: str(json.target, 80),

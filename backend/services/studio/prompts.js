@@ -63,6 +63,17 @@ Rules:
 - Read labels exactly as written, including capitalisation. Do not translate them.
 - "screen" is a short name for what this view IS, in two or three words, as a product person would say it: "project dashboard", "API keys settings", "code editor", "signup form", "loading".
 - "busy" is true when the screen is mid-transition: a spinner, a skeleton, a half-painted page, a progress bar. A busy frame is one this tool will consider cutting, so be accurate.
+
+- "state" is how the control is DRAWN in this frame, which is the interface telling you what is happening to it. Use "normal" unless you can actually see one of the others:
+    "hovered"   a shade, a highlight, an underline or a shadow that the others in its group do not have. The pointer is over it and nothing more.
+    "pressed"   it is drawn as being held down AT THIS INSTANT: darkened or inset past a hover, a ripple spreading from under the pointer, a button visibly depressed. This is the interface acknowledging a click as it happens.
+    "focused"   a focus ring or outline, or a text caret sitting in it.
+    "selected"  a persistent chosen state: the current tab, the active nav item, a checked checkbox, a highlighted row that stays highlighted.
+    "disabled"  greyed out and not usable.
+  Tell "pressed" from "hovered" carefully and do not guess between them. A hover is a shade that appears when the pointer arrives and stays for as long as it is there; a press is deeper, is centred under the pointer, and is gone within a frame or two. Reporting a hover as a press puts a camera move on a click nobody made, and that is the single most common complaint about tools like this one. When you are not sure, "hovered" is the honest answer.
+
+- "sticky" is true when the element stays put while the page scrolls underneath it: a fixed top bar, a docked sidebar, a floating action button, a toolbar pinned above a scrolling list. It is usually visible as the element sitting over content that runs underneath it, or as a shadow it casts onto the content below.
+  This matters more than it looks. When somebody clicks a link in a sticky navigation bar and the page scrolls in response, this tool cannot currently tell that from somebody scrolling the page with the pointer resting on the bar — and it refuses the click. Knowing the bar does not move is what separates the two.
 - ${COORDS}
 
 ${JSON_ONLY}
@@ -73,7 +84,7 @@ Schema:
   "busy": boolean,
   "app": "string, the application or site if identifiable from chrome/branding, else \\"\\"",
   "elements": [
-    { "type": "string", "label": "string", "bbox": [0,0,0,0], "importance": "high|medium|low" }
+    { "type": "string", "label": "string", "bbox": [0,0,0,0], "importance": "high|medium|low", "state": "normal|hovered|pressed|focused|selected|disabled", "sticky": boolean }
   ]
 }`;
 
@@ -337,6 +348,17 @@ If it was a press:
              whatever happened there was recorded on somebody else's screen
   "unclear"  these frames do not let you tell
 
+"interaction_type" says WHICH KIND of activation it was, when the verdict is "press". The camera treats them differently, so this is not a label for a report:
+  "click"   a button, link, nav item or tab was activated once
+  "menu"    something opened over the page: a dropdown, a context menu, a modal, a popover
+  "type"    text was entered into a field
+  "drag"    something was picked up and moved: a slider, a handle, a card between columns, a selection being drawn out. The pointer holds and TRAVELS while the thing under it follows
+  "resize"  an edge or corner was dragged to change a size
+  "submit"  a form was sent: the fields clear, a result appears, the page navigates
+  "select"  text was highlighted by dragging across it
+  "other"   an activation none of these describe
+Use "none" when the verdict is not "press".
+
 "confidence" is 0 to 1. Be honest and low when the frames are ambiguous.
 - ${COORDS}
 
@@ -345,6 +367,7 @@ ${JSON_ONLY}
 Schema:
 {
   "verdict": "press|hover|scroll|settling|content|unclear",
+  "interaction_type": "click|menu|type|drag|resize|submit|select|other|none",
   "confidence": 0.0,
   "target": "string, the label of what was activated, or \\"\\"",
   "target_type": "button|link|nav_item|tab|text_field|dropdown|toggle|checkbox|menu|list_item|icon_button|other|none",

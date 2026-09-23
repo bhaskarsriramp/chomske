@@ -58,6 +58,78 @@ const GRID_W = 40;
 const CELL_MIN = 3;
 /** The window over which a cell is judged to be animating rather than reacting. */
 const BUSY_WINDOW = 1.5;
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Reading the page as something that moves under a viewport
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ── SCROLL WAS A BOOLEAN, AND THAT COST REAL CLICKS ──────────────────────────
+ * Everything upstream knows one thing about scrolling: it happened, or it did
+ * not. That is enough to refuse a press and not enough to refuse the right
+ * ones. On one production recording FIVE OF TEN presses were turned down for
+ * "the page was scrolling", and both of the creator's real clicks were on the
+ * navigation bar — which is FIXED. It does not move when the page scrolls, so
+ * "the page scrolled" says nothing whatever about whether the thing under the
+ * pointer was clicked.
+ *
+ * events.js states the problem and concludes there is no way out:
+ *
+ *   "There is no cheap third signal that separates them."
+ *
+ * There is, and it is this: measure the translation of each PART of the screen
+ * separately. A part that stays still while the rest of the frame moves is
+ * fixed, and a click on something fixed is not explained away by a scroll.
+ *
+ * ── HOW A REGION'S TRANSLATION IS MEASURED ───────────────────────────────────
+ * The frame is divided into a coarse grid. Each cell's rows are summed into a
+ * brightness profile, and that profile is slid against the PREVIOUS frame's
+ * profile for the same columns — over the whole frame height, not just the
+ * cell's own. Sliding a short template over a long one is what lets a cell
+ * thirty pixels tall report a shift of eighty: the question is not "how far did
+ * this cell move" but "where did this cell's content come from".
+ *
+ * A cell with nothing in it has a flat profile and would answer "no shift" with
+ * total confidence, which is how a blank margin would be reported as a fixed
+ * navigation bar. So a cell only votes when it has texture to measure.
+ */
+const SCROLL_COLS = 4;
+/**
+ * Sixteen rows and not eight, because of what is actually being looked for. A
+ * fixed navigation bar is about seventy pixels on a 1020-tall recording —
+ * seven per cent of the frame. Against eight rows that is barely half a cell,
+ * so the cell holds the bar AND the page scrolling under it, and whichever has
+ * more texture wins: the answer would be decided by how busy the page happened
+ * to be rather than by where the bar ends. Sixteen puts the bar in a cell of
+ * its own.
+ */
+const SCROLL_ROWS = 16;
+/**
+ * How far the page may have travelled between two frames, as a share of the
+ * frame's height. A quarter covers a hard wheel flick at 12fps; beyond that the
+ * two pictures have nothing in common and the answer would be arbitrary.
+ */
+const SCROLL_RANGE = 0.25;
+/** Below this variance a cell's profile is flat and it does not get a vote. */
+const SCROLL_TEXTURE = 8;
+/** Frame shift, in rows of the read frame, below which nothing really moved. */
+const SCROLL_MOVED = 3;
+/** ...and how close to zero a cell must be, in the same units, to be "fixed". */
+const SCROLL_STILL = 1.5;
+/** How many scrolling frames a cell must sit out before it is called fixed. */
+const STICKY_VOTES = 3;
+/**
+ * And how decisively. A cell that sits out some scrolls and rides others is a
+ * cell the measurement is confused about, not a fixed one, and calling it fixed
+ * would retire the scroll penalty exactly where the penalty is right.
+ */
+const STICKY_MARGIN = 2;
+/**
+ * The most of the frame browser furniture may be. A tab strip and an address
+ * bar are about a tenth of a 1080p screen; past this it is a page whose upper
+ * part happens not to scroll, and reporting none is better than discounting it.
+ */
+const CHROME_MAX = 0.15;
 /**
  * Share of that window a cell must change in before it counts as an animation.
  *
@@ -140,6 +212,7 @@ const MIN_MARGIN = 1.2;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const round3 = (v) => Math.round(v * 1000) / 1000;
+const round4 = (v) => Math.round(v * 10000) / 10000;
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -171,6 +244,89 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
  *
  * @returns {{ fps, energy: number[], cursorPx: number, frames: number, parked }}
  */
+/**
+ * Row-brightness profiles for each cell of the scroll grid, one frame.
+ *
+ * Returned as one flat array of Float32Arrays, cell-major, so a frame's worth
+ * is allocated once and compared against the frame before it without copying
+ * anything the size of the picture.
+ */
+function scrollProfiles(buf, W, H) {
+  const sw = W / SCROLL_COLS;
+  const out = [];
+  for (let s = 0; s < SCROLL_COLS; s++) {
+    const x0 = Math.floor(s * sw);
+    const x1 = Math.min(W, Math.floor((s + 1) * sw));
+    const prof = new Float32Array(H);
+    for (let y = 0; y < H; y++) {
+      let sum = 0;
+      const base = y * W;
+      // Every second column: a brightness profile does not need the detail and
+      // this is the inner loop of the whole pass.
+      for (let x = x0; x < x1; x += 2) sum += buf[base + x];
+      prof[y] = sum;
+    }
+    out.push(prof);
+  }
+  return out;
+}
+
+/**
+ * Where a band of one strip came from, in rows, or null when it cannot say.
+ *
+ * `null` is a real answer and the common one: a cell showing a flat panel, an
+ * empty margin or a solid header has no vertical texture, and a correlation
+ * over it is a measurement of nothing. Voting anyway is how a blank margin
+ * becomes a fixed navigation bar.
+ */
+function bandShift(cur, prev, y0, y1, range) {
+  let mean = 0;
+  for (let y = y0; y < y1; y++) mean += cur[y];
+  mean /= Math.max(1, y1 - y0);
+
+  let varSum = 0;
+  for (let y = y0; y < y1; y++) {
+    const d = cur[y] - mean;
+    varSum += d * d;
+  }
+  // Normalised against the band's own brightness, so a dark region is not
+  // called flat for being dark.
+  if (varSum / Math.max(1, y1 - y0) / Math.max(1, mean) < SCROLL_TEXTURE) return null;
+
+  let best = 0;
+  let bestErr = Infinity;
+  let second = Infinity;
+  const H = cur.length;
+  for (let s = -range; s <= range; s++) {
+    let err = 0;
+    let n = 0;
+    for (let y = y0; y < y1; y++) {
+      const py = y + s;
+      if (py < 0 || py >= H) continue;
+      const d = cur[y] - prev[py];
+      err += d * d;
+      n++;
+    }
+    if (n < (y1 - y0) * 0.6) continue;
+    err /= n;
+    if (err < bestErr) {
+      second = bestErr;
+      bestErr = err;
+      best = s;
+    } else if (err < second) {
+      second = err;
+    }
+  }
+  /**
+   * A match that is no better than the runner-up is not a match. Repeating
+   * content — a list of identical rows, a table, a grid of cards — fits
+   * equally well at several offsets, and picking whichever won by a rounding
+   * error would report a scroll that never happened.
+   */
+  if (!Number.isFinite(bestErr) || (Number.isFinite(second) && bestErr > second * 0.85)) return null;
+  return best;
+}
+
 export async function readScreen(video, { duration = 0, sourceWidth = 1920, sourceHeight = 1080 } = {}) {
   const fps = duration > LONG_SECONDS ? LONG_FPS : READ_FPS;
   const W = READ_EDGE;
@@ -184,6 +340,19 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
   const grids = [];
   let parked = null;
   let prev = null;
+
+  /**
+   * ── THE PAGE AS SOMETHING THAT MOVES UNDER A VIEWPORT ────────────────────
+   * Per-frame vertical translation, and which parts of the screen sat it out.
+   * See scrollProfiles / bandShift above for how a region's travel is measured
+   * and why a region with no texture does not get a vote.
+   */
+  const scroll = [];
+  const stayed = new Int32Array(SCROLL_COLS * SCROLL_ROWS);
+  const rode = new Int32Array(SCROLL_COLS * SCROLL_ROWS);
+  const range = Math.max(4, Math.round(H * SCROLL_RANGE));
+  let prevProf = null;
+  let offset = 0;
   const N = W * H;
   const gw = GRID_W;
   const gh = Math.max(4, Math.round((gw * H) / W));
@@ -201,6 +370,8 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
         prev = Buffer.from(buf);
         energy.push(0);
         grids.push(new Uint8Array(gw * gh));
+        scroll.push({ t: 0, dy: 0, offset: 0 });
+        prevProf = scrollProfiles(buf, W, H);
         return;
       }
       const mask = new Uint8Array(N);
@@ -256,6 +427,56 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
           }
         }
       }
+      /**
+       * ── AND HOW FAR THE PAGE TRAVELLED, PART BY PART ────────────────────
+       * Measured on every frame rather than only on frames that look like a
+       * scroll: a fixed bar can only be recognised by what it does WHILE the
+       * page moves, and which frames those are is what this is working out.
+       */
+      const prof = scrollProfiles(buf, W, H);
+      const bh = H / SCROLL_ROWS;
+      const shifts = new Array(SCROLL_COLS * SCROLL_ROWS).fill(null);
+      const seen = [];
+      for (let sx = 0; sx < SCROLL_COLS; sx++) {
+        for (let by = 0; by < SCROLL_ROWS; by++) {
+          const y0 = Math.floor(by * bh);
+          const y1 = Math.min(H, Math.floor((by + 1) * bh));
+          const d = bandShift(prof[sx], prevProf[sx], y0, y1, range);
+          shifts[by * SCROLL_COLS + sx] = d;
+          if (d != null) seen.push(d);
+        }
+      }
+
+      /**
+       * The frame's own travel is the MEDIAN of what its regions reported, not
+       * the mean. A fixed bar reports zero however far the page went, and a
+       * mean would let it drag the answer toward zero — which is the one error
+       * that matters here, because it would hide the scroll that the bar is
+       * being recognised by sitting out.
+       */
+      let dy = 0;
+      if (seen.length >= 3) {
+        seen.sort((a, b) => a - b);
+        dy = seen[seen.length >> 1];
+      }
+      if (Math.abs(dy) >= SCROLL_MOVED) {
+        offset += dy;
+        for (let c = 0; c < shifts.length; c++) {
+          const d = shifts[c];
+          if (d == null) continue;
+          if (Math.abs(d) <= SCROLL_STILL) stayed[c]++;
+          else if (Math.abs(d - dy) <= Math.max(SCROLL_STILL, Math.abs(dy) * 0.3)) rode[c]++;
+        }
+      }
+      scroll.push({
+        t: round3((energy.length - 1) / fps),
+        // In frame heights, so nothing downstream has to know this pass reads
+        // at 480 wide. Positive means the content moved DOWN the screen.
+        dy: round4(dy / H),
+        offset: round4(offset / H),
+      });
+      prevProf = prof;
+
       buf.copy(prev);
     },
   });
@@ -284,7 +505,214 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
     grid: { w: gw, h: gh },
     busy: read.busy,
     motion: read.motion,
+    /**
+     * ── THE VIEWPORT, RECONSTRUCTED ──────────────────────────────────────────
+     * `scroll` is per-frame travel and the running total, both in frame
+     * heights. `sticky` is the coarse grid of regions that stayed put while the
+     * rest of the picture moved — a fixed navigation bar, a docked rail, a
+     * toolbar pinned above a list.
+     *
+     * Both are pixels only. They work with the model pass off, on a recording
+     * of any application, and they are what lets confirmClicks() stop refusing
+     * a press on a fixed bar because the page behind it moved.
+     */
+    scroll,
+    sticky: stickyCells(stayed, rode),
+    scrollGrid: { w: SCROLL_COLS, h: SCROLL_ROWS },
   };
+}
+
+/**
+ * Which cells of the scroll grid are fixed.
+ *
+ * ── DECISIVELY, OR NOT AT ALL ────────────────────────────────────────────────
+ * A cell qualifies by sitting out several scrolls AND by riding along with
+ * hardly any. A cell that does both is not a fixed bar, it is a cell the
+ * measurement is unsure about — a region half covered by a sticky header, a
+ * panel that scrolls independently, a page whose own content happens to hold
+ * still — and calling it fixed would retire the scroll penalty in exactly the
+ * place the penalty is right.
+ */
+function stickyCells(stayed, rode) {
+  const out = new Uint8Array(stayed.length);
+  for (let c = 0; c < stayed.length; c++) {
+    out[c] = stayed[c] >= STICKY_VOTES && stayed[c] >= rode[c] * STICKY_MARGIN ? 1 : 0;
+  }
+  return out;
+}
+
+/**
+ * Is this point inside a part of the screen that does not scroll?
+ *
+ * @param {object} screen  as readScreen() returns it
+ * @param {number} x       0..1 across the frame
+ * @param {number} y       0..1 down the frame
+ */
+export function isSticky(screen, x, y) {
+  const g = screen?.scrollGrid;
+  const cells = screen?.sticky;
+  if (!g || !cells?.length) return false;
+  // sync.js num() has no default, so the fallback is spelled out: a point
+  // nobody could place is treated as the middle of the frame, which is not
+  // sticky on any layout this has seen.
+  const fx = Number.isFinite(Number(x)) ? Number(x) : 0.5;
+  const fy = Number.isFinite(Number(y)) ? Number(y) : 0.5;
+  const cx = Math.min(g.w - 1, Math.max(0, Math.floor(fx * g.w)));
+  const cy = Math.min(g.h - 1, Math.max(0, Math.floor(fy * g.h)));
+  return cells[cy * g.w + cx] === 1;
+}
+
+/**
+ * What explains the motion at a point, at a moment.
+ *
+ * ── THE SEGMENTATION WAS ALREADY THERE, IN FOUR PLACES ───────────────────────
+ * Four different things make pixels change in a screen recording and this
+ * pipeline already tells them apart — but each with its own instrument, in its
+ * own file, answering its own question:
+ *
+ *   the page scrolling      readScreen's per-region translation, above
+ *   a video playing         playingRegions(), which finds what animates all
+ *                           recording long
+ *   an animation running    readGrids()'s busy cells, which find what changes
+ *                           in one place for half a second
+ *   the pointer itself      locate.js, which finds the thing shaped like a
+ *                           cursor
+ *
+ * Nothing had ever put them together and asked the obvious question — WHY did
+ * this change — so every caller that wanted the answer re-derived a piece of it.
+ * This is that question, answered once.
+ *
+ * The order matters and is not arbitrary. A region that is a video is a video
+ * whatever else is true of it; a frame that scrolled is explained by the scroll
+ * before it is explained by anything local; an animation is a local fact about
+ * one place. What is left — motion at a point, on a frame that did not scroll,
+ * outside any video or animation — is the page responding to something, which
+ * is the only kind this product wants to point a camera at.
+ *
+ * @returns {"video"|"scroll"|"animation"|"content"|"still"}
+ */
+export function explainMotion(screen, t, x, y, { playing = null } = {}) {
+  if (!screen) return "still";
+  if (playing?.size && inPlaying(playing, screen, x, y)) return "video";
+
+  const list = screen.scroll;
+  if (Array.isArray(list) && list.length) {
+    let near = null;
+    for (const p of list) {
+      if (near && Math.abs(num(p.t) - t) >= Math.abs(num(near.t) - t)) break;
+      near = p;
+    }
+    if (near && Math.abs(num(near.dy)) >= 0.004 && !isSticky(screen, x, y)) return "scroll";
+  }
+
+  if (inBusy(screen, t, x, y)) return "animation";
+
+  const cover = coverAt(screen, t);
+  return cover > 0.002 ? "content" : "still";
+}
+
+/** How much of the screen changed at a moment, from the motion series. */
+function coverAt(screen, t) {
+  const series = screen?.motion;
+  if (!Array.isArray(series) || !series.length) return 0;
+  let best = null;
+  for (const m of series) {
+    if (best && Math.abs(num(m.t) - t) >= Math.abs(num(best.t) - t)) break;
+    best = m;
+  }
+  return best ? num(best.cover) : 0;
+}
+
+/**
+ * How much of the top of the frame is the browser's own furniture.
+ *
+ * ── DETECTED GENERICALLY, BECAUSE A LIST OF BROWSERS IS A BLOCKLIST ──────────
+ * The obvious way to do this is to recognise Chrome's tab strip, Arc's
+ * sidebar, Safari's compact toolbar and Edge's Copilot rail. That is a list,
+ * and a list is only ever as long as the browsers somebody thought to test —
+ * which is the pattern this codebase already refused once, in confirmClicks:
+ *
+ *   "we should not hard code what things need to be ignored … if we follow that
+ *    simple rule, any other new interaction comes, it simply ignores it."
+ *
+ * Two signals do it without naming anybody:
+ *
+ *   the capture surface   a TAB capture has no browser furniture in it at all,
+ *                         by construction. getDisplayMedia says which was
+ *                         shared and capture.js already records it, so this is
+ *                         free and exact for the commonest case.
+ *   what does not scroll  browser furniture is at the top of the frame and
+ *                         never moves, whatever browser drew it. The sticky
+ *                         grid already knows.
+ *
+ * ── AND WHAT THIS CANNOT DO ──────────────────────────────────────────────────
+ * It cannot tell a browser's chrome from a page's own fixed header, because
+ * from pixels alone they are the same thing: a band at the top that does not
+ * move. So it is used as weak evidence and never as a veto — clicking a tab or
+ * an address bar is a real thing to show in a demo, and a press there with a
+ * named control or an acknowledgement behind it is believed exactly as any
+ * other is.
+ */
+export function chromeBand(screen, capture = null) {
+  /**
+   * ── ONLY WHERE FURNITURE IS EVEN POSSIBLE ─────────────────────────────────
+   * A tab capture contains the page and nothing else, so there is nothing to
+   * find. And an UNKNOWN surface is treated the same way, deliberately: the
+   * band this looks for — rows at the top that never scroll — is exactly what
+   * a page's own fixed header looks like, and discounting one of those is the
+   * opposite of what the sticky work was for. Measured on the test page with a
+   * seventy-pixel nav bar, guessing wrong took a real press from 0.75 to the
+   * bar itself.
+   *
+   * So it fires only when getDisplayMedia actually said a whole screen or a
+   * window was shared, which is when browser furniture is in the picture at
+   * all. Anything else reports none.
+   */
+  const surface = String(capture?.surface || "");
+  if (surface !== "monitor" && surface !== "window") return 0;
+  const g = screen?.scrollGrid;
+  const cells = screen?.sticky;
+  if (!g || !cells?.length) return 0;
+
+  let rows = 0;
+  for (let cy = 0; cy < g.h; cy++) {
+    let stuck = 0;
+    for (let cx = 0; cx < g.w; cx++) if (cells[cy * g.w + cx]) stuck++;
+    // Most of the row, not some of it: furniture spans the window.
+    if (stuck < g.w * 0.6) break;
+    rows++;
+  }
+  /**
+   * A band more than a fifth of the frame tall is not furniture, it is a page
+   * whose whole upper half happens not to scroll — a hero section, a dashboard
+   * header, a sidebar layout read row-wise. Better to report none than to
+   * discount a fifth of the picture.
+   */
+  const band = rows / g.h;
+  return band > CHROME_MAX ? 0 : band;
+}
+
+/**
+ * How far the page had scrolled by a moment, in frame heights.
+ *
+ * The running total, so two moments can be compared: a control seen at y = 0.4
+ * when the offset was 2.1 and again at y = 0.4 when it was 3.6 is not the same
+ * control, and one seen at 0.4 and then 0.25 after the page moved 0.15 is.
+ */
+export function scrollAt(screen, t) {
+  const list = screen?.scroll;
+  if (!Array.isArray(list) || !list.length) return 0;
+  const want = num(t);
+  let lo = 0;
+  let hi = list.length - 1;
+  if (want <= num(list[0].t)) return num(list[0].offset);
+  if (want >= num(list[hi].t)) return num(list[hi].offset);
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (num(list[mid].t) <= want) lo = mid;
+    else hi = mid;
+  }
+  return num(list[lo].offset);
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

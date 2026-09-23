@@ -610,7 +610,13 @@ const HEURISTIC_REFUSAL = new Set(["moving", "scrolling", "arrow", "off-control"
  * no second opinion about WHETHER it happened; it may still be worth a look for
  * what it landed on, which is a different and cheaper question.
  */
-const FIRST_HAND = new Set(["flash"]);
+/**
+ * "pressed" joins "flash" here for the same reason: it is the interface
+ * acknowledging a press AS IT HAPPENS rather than something changing
+ * afterwards. A press kept on either needs no second opinion about whether it
+ * happened, which is what this set is asked.
+ */
+const FIRST_HAND = new Set(["flash", "pressed"]);
 
 export function uncertainPresses(events, { limit = AUDIT.maxChecks } = {}) {
   const out = [];
@@ -928,6 +934,9 @@ export async function auditEdit({
         id: p.id,
         fields: {
           checked: said.verdict,
+          // What KIND of activation, when it was one. Kept on the event so the
+          // camera can act on it later without paying for the look again.
+          ...(said.interaction && said.interaction !== "none" ? { interaction: said.interaction } : {}),
           ...(said.target ? { control: said.target } : {}),
           ...(said.typed ? { text: said.typed } : {}),
           ...(target ? { target: [round4(target.x), round4(target.y), round4(target.w), round4(target.h)] } : {}),
@@ -1227,7 +1236,7 @@ export function toSuggestions(findings, { duration = 0 } = {}) {
  * agreement with itself. An audit that edits the thing it is auditing has
  * audited nothing.
  */
-const WRITABLE = new Set(["checked", "control", "text", "target"]);
+const WRITABLE = new Set(["checked", "control", "text", "target", "interaction"]);
 
 export function applyPatches(events, patches) {
   if (!patches?.length) return events;

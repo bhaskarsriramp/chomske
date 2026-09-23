@@ -175,6 +175,68 @@ const SHAPES = {
       [-0.5, 0.5], [-0.125, 0.5], [-0.266, 0.359], [0.359, -0.266], [0.5, -0.125],
     ],
   },
+
+  /* ──────────────────────────────────────────────────────────────────────────
+     The two that are not an arrow and not a hand
+     ──────────────────────────────────────────────────────────────────────────
+
+     ── THE CROSSHAIR IS THE GATE'S DOCUMENTED BLIND SPOT ─────────────────────
+     confirmClicks() refuses a press where the operating system drew a plain
+     arrow, on the sound reasoning that an arrow means "nothing here answers a
+     click". The refusal is recorded as `arrow` and audit.js calls it a
+     heuristic worth a second opinion because of exactly one family of
+     applications: "a site that draws a plain arrow over a real button — canvas
+     apps, design tools, a lot of Electron".
+
+     Most of those do not draw a plain arrow. They draw a CROSSHAIR, and until
+     now the locator had no template for one, so it either found nothing (the
+     track goes quiet and the press is judged on no pointer reading at all) or
+     matched the arrow badly. Figma, Canva, Excalidraw, a charting library's
+     plot area, any drawing surface: the crosshair IS the interface saying this
+     surface responds to the pointer, and it is as good evidence as a hand.
+
+     Measured from C:/Windows/Cursors/cross_r.cur at the 32px set: a 19x19
+     glyph with its hotspot at the centre, arms about three pixels thick.
+     ────────────────────────────────────────────────────────────────────────── */
+  crosshair: {
+    shape: "crosshair",
+    poly: (() => {
+      // Half the arm thickness, in units of the glyph's height: 1.5 of 19.
+      const a = 0.079;
+      const e = 0.5;
+      return [
+        [-a, -e], [a, -e], [a, -a], [e, -a], [e, a], [a, a],
+        [a, e], [-a, e], [-a, a], [-e, a], [-e, -a], [-a, -a],
+      ];
+    })(),
+  },
+
+  /**
+   * ── AND THE FOUR-WAY, WHICH MEANS SOMETHING IS BEING MOVED ─────────────────
+   * Drawn while a window, a panel, a node on a canvas or a card between columns
+   * is being dragged. Like the resize pointers it is not evidence of a press —
+   * it is evidence of the opposite, that the pointer is busy doing something
+   * else — and like them its real job is to stop the track going quiet for the
+   * whole of a drag.
+   *
+   * Measured from aero_move.cur: 23 x 23, hotspot at the centre.
+   */
+  move: {
+    shape: "move",
+    poly: (() => {
+      const s = 0.065; // half the shaft's thickness
+      const h = 0.18;  // half an arrowhead's width
+      const b = 0.3;   // where each head begins
+      const e = 0.5;   // the tip
+      return [
+        [0, -e], [h, -b], [s, -b], [s, -s],
+        [b, -s], [b, -h], [e, 0], [b, h], [b, s], [s, s],
+        [s, b], [h, b], [0, e], [-h, b], [-s, b], [-s, s],
+        [-b, s], [-b, h], [-e, 0], [-b, -h], [-b, -s], [-s, -s],
+        [-s, -b], [-h, -b],
+      ];
+    })(),
+  },
 };
 
 /**
@@ -183,6 +245,20 @@ const SHAPES = {
  * units: the flat double arrow spans 8, the upright one 22, the corner pair 16.
  */
 const RESIZE = { ew: 8 / 18, ns: 22 / 18, nwse: 16 / 18, nesw: 16 / 18 };
+
+/**
+ * The same, for the shapes that are neither an arrow nor a hand nor a resize.
+ * Measured on the same 32px Windows set: cross_r spans 19 coordinate units and
+ * aero_move 23, against the arrow's 18.
+ *
+ * Kept apart from RESIZE because the two sets mean opposite things downstream —
+ * a crosshair is a surface that answers a click and a four-way is a pointer
+ * already busy — and a single table would invite treating them alike.
+ */
+const OTHER = { crosshair: 19 / 18, move: 23 / 18 };
+
+/** Every shape searched only once the arrow and the hand have both failed. */
+const FALLBACK_SHAPES = { ...RESIZE, ...OTHER };
 
 
 /**
@@ -959,7 +1035,7 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    * whole-frame scan, where a weak template is how the page gets mistaken for
    * a pointer.
    */
-  const extra = Object.entries(RESIZE).map(([name, k]) =>
+  const extra = Object.entries(FALLBACK_SHAPES).map(([name, k]) =>
     bounds(prepare(buildTemplate(name, Math.round(cal.heightPx * k), { dark: cal.dark, setPx: cal.heightPx }), W))
   );
 
@@ -1232,7 +1308,16 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     if (!stirred) track.unshift({ ...track[0], t: 0, held: true });
   }
 
-  const flashes = flashesFrom(rings, { fps });
+  /**
+   * Normalised on the way out, like everything else that leaves this file. The
+   * rings are measured in source pixels because that is where the search
+   * happens; nothing downstream knows or should know what resolution that was.
+   */
+  const flashes = flashesFrom(rings, { fps }).map((f) => ({
+    ...f,
+    x: round4(clamp(f.x / W, 0, 1)),
+    y: round4(clamp(f.y / H, 0, 1)),
+  }));
   if (flashes.length) {
     console.log(
       "[studio] " + flashes.length + " click acknowledgement(s) seen at the pointer: " +
@@ -1393,11 +1478,36 @@ function scan(run, out, fps) {
       if (ended && len <= FLASH_MAX) {
         let peak = 0;
         for (let j = from; j < i; j++) peak = Math.max(peak, Math.abs(means[j] - base));
+        /**
+         * ── WHERE THE ACKNOWLEDGEMENT WAS, NOT JUST THAT THERE WAS ONE ──────
+         * The ring is read at the pointer's hotspot, so the run already knows
+         * exactly where the interface lit up — and that position was being
+         * thrown away. It is the best anchor in the whole product: a ripple
+         * spreads from where the finger actually went down, a button darkens
+         * around its own middle, a focus ring lands on the field. Framing a
+         * zoom on it instead of on the recovered click coordinate is the
+         * difference between a shot that looks aimed and one that looks
+         * approximately aimed. See events.js confirmClicks, which puts it on
+         * the event, and zoomsFromClicks, which frames on it.
+         *
+         * Averaged over the frames of the flash rather than taken from the
+         * first: the pointer is held still through a press by definition, so
+         * the samples agree to within a pixel or two, and averaging removes
+         * the last of that.
+         */
+        let ax = 0;
+        let ay = 0;
+        for (let j = from; j < i; j++) {
+          ax += run[j].x;
+          ay += run[j].y;
+        }
         out.push({
           t: run[from].t,
           strength: Math.round((peak / Math.max(1, bar)) * 100) / 100,
           frames: len,
           levels: Math.round(peak * 10) / 10,
+          x: ax / len,
+          y: ay / len,
         });
       }
       from = -1;

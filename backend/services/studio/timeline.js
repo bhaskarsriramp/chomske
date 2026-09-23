@@ -40,6 +40,16 @@
  *   narration[{ id, start, end, text }]
  */
 import crypto from "crypto";
+/**
+ * The camera. One definition, imported here and by the editor's preview — see
+ * camera.mjs for why it is not written out twice any more.
+ */
+import {
+  EASE, easeFn, RAMP, RAMP_IN, RAMP_OUT, FULL,
+  clampRect, lerpRect, soften, activeZooms, rampsOf, project, CAMERA_TUNING,
+  cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS,
+  zoomRect, cameraAt,
+} from "../../../src/components/Studio/camera.mjs";
 
 /** Output frame shapes. Keyed the way a creator names them, not W:H maths. */
 /**
@@ -65,11 +75,16 @@ export const ASPECT_KEYS = ["source", ...Object.keys(ASPECTS)];
 
 export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
 export const CAPTION_STYLES = ["trylipi", "hormozi", "apple", "minimal", "neon"];
-export const EASINGS = ["smooth", "snappy", "slow", "linear"];
 export const BLUR_KINDS = ["blur", "pixelate", "box"];
 
 /** What a zoom is for. Drives the default rect and how the camera behaves. */
 export const CAMERA_MODES = ["cursor", "element", "modal", "region", "full"];
+
+/**
+ * What a zoom is OF, which is not the same as where it points. See events.js
+ * intentOf() and INTENT_CAMERA for what each one does to the shot.
+ */
+export const ZOOM_INTENTS = ["click", "menu", "type", "drag", "resize", "submit", "select", "other"];
 
 export const newId = (prefix) => `${prefix}_${crypto.randomBytes(5).toString("hex")}`;
 
@@ -285,110 +300,7 @@ export function spanToOutput(start, end, lay) {
  * Returns null before the first sample and after the last, where there is
  * genuinely nothing to draw rather than a guess worth making.
  */
-/**
- * The path that gets drawn.
- *
- * ── BOTH ARE KEPT, AND THE CHOICE IS MADE AT RENDER TIME ─────────────────────
- * The recovered path and the composed one are both written at analysis time,
- * because they cost nothing to keep and recomputing either means re-reading the
- * recording. The cursor's `mode` picks between them when the frame is drawn, so
- * switching is instant in the editor instead of another analysis.
- *
- * "recorded" is the default. A composed path is steadier and better aimed, but
- * it goes where the pointer in the RECORDING does not, and that pointer is
- * burnt into the pixels — so composing it only looks right if the original can
- * also be removed, and removing it means reconstructing whatever it was sitting
- * on. On a flat panel that is invisible; over a heading it takes a bite out of
- * the text. Until the recording can be made without a cursor in it at all, the
- * honest default is the one that puts our pointer exactly where theirs is and
- * covers it.
- */
-export function drawnTrack(tl) {
-  if (!tl || tl.cursor?.enabled === false) return null;
-  const composed = tl.composed;
-  if (tl.cursor?.mode === "intent" && composed && composed.length > 1) return composed;
-  return tl.track || null;
-}
 
-export function cursorAt(track, t) {
-  if (!track?.length) return null;
-  const first = track[0];
-  const last = track[track.length - 1];
-
-  /**
-   * ── THE TWO ENDS ARE NOT THE SAME QUESTION ────────────────────────────────
-   * This looks like an off-by-one and is the reason finished demos opened with
-   * two pointers on screen.
-   *
-   * The tracker finds the pointer by differencing frames, so it cannot see one
-   * that is not moving — and a demo begins with the pointer parked while the
-   * creator gets ready. The first sample is therefore not "where the pointer
-   * started". It is the first place it was seen MOVING, which is where it
-   * ARRIVED. Holding it backwards asserts the pointer spent the opening of the
-   * demo somewhere it had not reached yet, and on a real recording that put our
-   * pointer on a sidebar item for five seconds while the one burnt into the
-   * video sat two hundred and sixty pixels away. Two cursors, neither moving.
-   *
-   * The other end is the opposite case and holding IS right there: the tracker
-   * stopped seeing the pointer because it stopped moving, so it is still where
-   * it was last seen.
-   *
-   * So: nothing before the first sighting, held after the last. Where nothing
-   * is known the renderer draws nothing, which leaves the captured pointer on
-   * its own rather than putting a second one next to it.
-   */
-  if (t < first.t - EDGE_GRACE) return null;
-  if (t <= first.t) return { x: first.x, y: first.y, shape: first.shape || "default" };
-  if (t >= last.t) return { x: last.x, y: last.y, shape: last.shape || "default" };
-
-  let lo = 0;
-  let hi = track.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (track[mid].t <= t) lo = mid;
-    else hi = mid;
-  }
-  const a = track[lo];
-  const b = track[hi];
-  const span = b.t - a.t;
-
-  /**
-   * ── A LONG GAP IS HELD, NOT CROSSED ───────────────────────────────────────
-   * The tracker reports nothing while the screen is repainting, which is
-   * exactly what a page navigation is. That leaves a hole in the track, and
-   * interpolating across it draws the pointer gliding in a straight line from
-   * wherever it was to wherever it turns up next — usually right through the
-   * middle of the picture, while the real pointer burnt into the frames sat
-   * perfectly still on the link that was clicked. Two pointers, moving apart.
-   *
-   * Nobody knows where the pointer was during the hole. But the overwhelmingly
-   * common case is that it did not move: you click, the page loads, your hand
-   * stays put. So a gap longer than one dropped sample holds the last known
-   * position and snaps at the far end, where there is evidence again.
-   */
-  if (span > GAP_HOLD) {
-    const near = t - a.t <= span / 2 ? a : b;
-    return { x: near.x, y: near.y, shape: near.shape || "default" };
-  }
-
-  const k = span > 0 ? (t - a.t) / span : 0;
-  return {
-    x: a.x + (b.x - a.x) * k,
-    y: a.y + (b.y - a.y) * k,
-    // The shape is what it was at the last sample, never blended: a pointer is
-    // an arrow or a hand, and half of each is not a thing.
-    shape: a.shape || "default",
-  };
-}
-
-/**
- * Longest gap in the track still worth interpolating across.
- *
- * The tracker runs at 24 Hz, so a normal step is 42ms and one dropped frame is
- * 83ms. Past a fifth of a second the pointer was not seen for five samples and
- * there is no path to draw, only a guess.
- */
-const GAP_HOLD = 0.2;
 
 /**
  * How far before the first sighting the pointer may still be drawn.
@@ -396,7 +308,6 @@ const GAP_HOLD = 0.2;
  * Only enough to stop it blinking on at a frame boundary. Anything longer is
  * the guess this function exists not to make.
  */
-const EDGE_GRACE = 0.1;
 
 /**
  * The track with jitter taken out, resampled to a fixed rate.
@@ -580,184 +491,27 @@ function catmull(p0, p1, p2, p3, t) {
 const round3 = (v) => Math.round(v * 1000) / 1000;
 const round4 = (v) => Math.round(v * 10000) / 10000;
 
-/* ────────────────────────────────────────────────────────────────────────────
-   The camera
-   ──────────────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────────
+   The camera, which is defined once and imported twice
+   ───────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Easing curves, as functions of progress 0..1.
+ * ── THIS USED TO BE A SECOND COPY OF THE ARITHMETIC ──────────────────────────
+ * Every function below was written out here AND in src/components/Studio, kept
+ * in step by hand and by comments saying "mirrors timeline.js". They had
+ * already drifted in one place nobody had hit yet. A preview that disagrees
+ * with the export is the one bug a creator cannot work around, so there is now
+ * one definition and this file imports it.
  *
- * Never linear. A linear zoom is the single clearest tell that a demo was made
- * by a machine: real camera moves accelerate and settle, and the eye reads a
- * constant-rate zoom as a glitch rather than a move.
+ * Only the wrappers stay, because `cursorAt` lives here: the shared module has
+ * no opinion about how a pointer track is sampled and takes it as an argument.
  */
-export const EASE = {
-  smooth: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
-  snappy: (t) => 1 - Math.pow(1 - t, 4),
-  slow: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
-  linear: (t) => t,
+export {
+  EASE, easeFn, RAMP, RAMP_IN, RAMP_OUT, FULL,
+  clampRect, lerpRect, soften, activeZooms, rampsOf, project, CAMERA_TUNING,
+  cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS, zoomRect, cameraAt,
 };
 
-export const easeFn = (name) => EASE[name] || EASE.smooth;
-
-/** How long a zoom takes to get in, and to come back out. */
-export const RAMP = { smooth: 0.55, snappy: 0.32, slow: 0.9, linear: 0.5 };
-
-/**
- * A zoom's two ramps, which are NOT the same length.
- *
- * ── GOING IN AND COMING OUT ARE DIFFERENT MOVES ──────────────────────────────
- * A zoom onto a button has to arrive gently: the viewer is being asked to look
- * somewhere, and a hard push-in reads as a jump cut. Coming out is the
- * opposite. The click has happened, the screen has changed underneath, and
- * what the viewer needs is the whole page NOW. Easing out over half a second
- * means half a second of watching a crop of a page that has already moved on,
- * and it is the single thing that makes an automatic edit feel laggy.
- *
- * So a zoom carries its own `ramp_in` / `ramp_out` in seconds, and its own
- * `ease_out` curve. Nothing is required to set them — without them a zoom
- * behaves exactly as it always did, symmetric on its easing — but the camera
- * built from clicks (events.js clickCamera) sets a fast snappy way out.
- */
-export function rampsOf(z) {
-  const base = RAMP[z?.easing] || RAMP.smooth;
-  // `== null` and not Number.isFinite(Number(v)): Number(null) is 0, which IS
-  // finite, so the obvious version silently turned every unset ramp into the
-  // 0.05s minimum. The symptom was a zoom that jumped from 1× to 2× inside a
-  // frame and a half — the exact opposite of the eased approach this whole
-  // file exists to guarantee.
-  const given = (v) => v != null && v !== "" && Number.isFinite(Number(v));
-  const inR = given(z?.ramp_in) ? clamp(Number(z.ramp_in), 0.05, 2) : base;
-  const outR = given(z?.ramp_out) ? clamp(Number(z.ramp_out), 0.05, 2) : base;
-  return {
-    in: inR,
-    out: outR,
-    easeIn: z?.easing || "smooth",
-    easeOut: EASE[z?.ease_out] ? z.ease_out : z?.easing || "smooth",
-  };
-}
-
-/**
- * The camera rect at a moment of the RECORDING: which part of the source frame
- * fills the output, as fractions.
- *
- * Zooms are applied in order and each one ramps in from, and back out to,
- * whatever was on screen before it. Overlapping zooms are not blended; the last
- * one to start wins, because two cameras is not a thing and the alternative
- * (a crossfade between two crops) reads as a wobble.
- */
-export function cameraAt(tl, t, { track = null } = {}) {
-  const full = { x: 0, y: 0, w: 1, h: 1 };
-  const zooms = activeZooms(tl);
-  if (!zooms.length) return full;
-
-  // The last zoom whose influence (ramp in + hold + ramp out) covers t.
-  let z = null;
-  for (const cand of zooms) {
-    const r = rampsOf(cand);
-    if (t >= cand.start - r.in && t <= cand.end + r.out) z = cand;
-  }
-  if (!z) return full;
-
-  const r = rampsOf(z);
-  const target = zoomRect(z, tl, t, track);
-
-  if (t < z.start) {
-    const k = easeFn(r.easeIn)(clamp((t - (z.start - r.in)) / r.in, 0, 1));
-    return lerpRect(full, target, k);
-  }
-  if (t > z.end) {
-    const k = easeFn(r.easeOut)(clamp((t - z.end) / r.out, 0, 1));
-    return lerpRect(target, full, k);
-  }
-  return target;
-}
-
-/** Zooms that are real: inside the recording, with a positive length. */
-export function activeZooms(tl) {
-  const total = num(tl?.duration);
-  return (tl?.zooms || [])
-    .map((z) => ({ ...z, start: clamp(num(z.start), 0, total), end: clamp(num(z.end), 0, total) }))
-    .filter((z) => z.end - z.start > 0.05)
-    .sort((a, b) => a.start - b.start);
-}
-
-/**
- * The rect one zoom is holding at time t.
- *
- * A following zoom re-centres on the pointer as it moves, which is what makes
- * a scroll or a drag readable; it is damped so the frame does not chase every
- * tremor, and clamped so the camera never leaves the picture.
- */
-export function zoomRect(z, tl, t, track) {
-  const level = Math.max(1, num(z.level, 1.6));
-  /**
-   * ── THE RECT WINS WHEN IT IS WIDER THAN THE LEVEL ─────────────────────────
-   * The frame used to be sized from `level` alone and the zoom's own rectangle
-   * was used only for its centre. But a rectangle is not decoration: a zoom
-   * built from several clicks is sized by events.js containing() so that every
-   * one of those clicks is inside the frame when it happens. Throwing that size
-   * away and cropping to 1/level put the clicks back outside — the exact fault
-   * that shipped a demo where nothing could be seen being pressed.
-   *
-   * So `level` is the intent and the rectangle is the floor. A zoom never
-   * crops tighter than the thing it was built to show.
-   */
-  const need = Math.max(num(z.w, 0), num(z.h, 0));
-  const w = clamp(Math.max(1 / level, need), 0.05, 1);
-  const h = w;
-
-  let cx = frac(z.x + z.w / 2, 0.5);
-  let cy = frac(z.y + z.h / 2, 0.5);
-
-  if (z.follow && track?.length) {
-    const p = cursorAt(track, t);
-    if (p) {
-      // Damped toward the pointer rather than locked to it: at 1.0 the frame is
-      // rigidly attached to the mouse and every small correction becomes a whip
-      // pan across the screen.
-      const k = clamp(num(z.follow_strength, 0.7), 0, 1);
-      cx = cx + (p.x - cx) * k;
-      cy = cy + (p.y - cy) * k;
-    }
-  }
-
-  return clampRect({ x: cx - w / 2, y: cy - h / 2, w, h });
-}
-
-/** Keeps the camera inside the frame: a crop that hangs off the edge is black. */
-export function clampRect(r) {
-  const w = clamp(num(r.w, 1), 0.05, 1);
-  const h = clamp(num(r.h, 1), 0.05, 1);
-  return {
-    x: clamp(num(r.x), 0, 1 - w),
-    y: clamp(num(r.y), 0, 1 - h),
-    w,
-    h,
-  };
-}
-
-function lerpRect(a, b, k) {
-  return clampRect({
-    x: a.x + (b.x - a.x) * k,
-    y: a.y + (b.y - a.y) * k,
-    w: a.w + (b.w - a.w) * k,
-    h: a.h + (b.h - a.h) * k,
-  });
-}
-
-/**
- * A point of the SOURCE frame, as a point of the OUTPUT frame, under the camera.
- * Everything drawn on top (cursor, annotations, blur) goes through this, so a
- * zoom moves the pointer and the arrow pointing at it by exactly the same amount.
- */
-export function project(pt, cam) {
-  return {
-    x: (pt.x - cam.x) / cam.w,
-    y: (pt.y - cam.y) / cam.h,
-    scale: 1 / cam.w,
-  };
-}
 
 /* ────────────────────────────────────────────────────────────────────────────
    Captions
@@ -904,6 +658,14 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       follow: !!x.follow,
       follow_strength: clamp(num(x.follow_strength, 0.7), 0, 1),
       label: text(x.label, 80),
+      /**
+       * What the shot is OF: a click, a drag, typing, a menu opening. Set by
+       * zoomsFromClicks from the pointer's own glyph and from what the arbiter
+       * read, and kept so the editor and the reviewer can say why a shot is
+       * framed the way it is rather than inferring it back from the numbers.
+       * Absent on every timeline built before this existed.
+       */
+      intent: pick(x.intent, ZOOM_INTENTS, "click"),
       auto: !!x.auto,
     }))
     .filter((x) => x.end - x.start > 0.05)

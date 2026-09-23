@@ -128,6 +128,12 @@ const AnalysisSchema = new Schema(
     language: { type: String, default: "" },
     language_label: { type: String, default: "" },
     frames_read: { type: Number, default: 0 },
+    /**
+     * Whether those frames were checked for private information. Separate from
+     * frames_read because the blur pass can be paused while the rest of the
+     * vision pass runs, and the editor promises one thing and not the other.
+     */
+    blur_checked: { type: Boolean, default: false },
     frames_failed: { type: Number, default: 0 },
     // How far the browser's clock turned out to be from the video's, and
     // whether the opening could be filled in. services/studio/sync.js.

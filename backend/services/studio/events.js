@@ -33,8 +33,8 @@
  * the editor shows the low ones differently, and the creator can add or remove
  * one by hand. A missed click costs a zoom; it does not cost the recording.
  */
-import { newId, rampsOf, clampRect } from "./timeline.js";
-import { busyShare } from "./sync.js";
+import { newId, rampsOf, clampRect, RAMP_IN, RAMP_OUT } from "./timeline.js";
+import { busyShare, isSticky, scrollAt, explainMotion, chromeBand } from "./sync.js";
 
 /**
  * How much of a changed region has to be animating before the change is the
@@ -1458,7 +1458,12 @@ const SETTLE = 0.3;
 /** Held after the press: the ripple, and the interface beginning to respond. */
 const HOLD = 0.55;
 /** How long the camera takes to leave. Long enough to be a move, not a cut. */
-const RAMP_OUT = 0.42;
+/**
+ * RAMP_IN and RAMP_OUT now live in camera.mjs beside the curves they pair with,
+ * and are re-exported through timeline.js. They were declared here as well,
+ * which is two places for one number and exactly the kind of duplication the
+ * camera unification was for.
+ */
 /** Two clicks closer than this are one move; further apart, the camera resets. */
 const MERGE = 1.6;
 /**
@@ -1549,6 +1554,45 @@ const MEDIA = new Set(["video", "image"]);
 const MEDIA_MIN_AREA = 0.03;
 
 /**
+ * A frame's element box, moved to where that element is NOW.
+ *
+ * ── A TWO-SECOND FRAME GRID IS A LONG TIME ON A SCROLLING PAGE ───────────────
+ * The model reads one frame every two seconds and every question about what was
+ * under the pointer is answered from the nearest of them, up to SEEN_WITHIN
+ * away. That is fine on a still page and wrong on a moving one: a page scrolling
+ * at half a frame height per second moves a button most of the way across the
+ * screen inside that window, so the box says the pointer was on a heading when
+ * it was on the button two rows down. The press is then refused as "off-control"
+ * — the model named controls and none was under the pointer — which reads
+ * exactly like a press on empty space and is nothing of the kind.
+ *
+ * sync.js now measures how far the page travelled between any two moments
+ * (readScreen, scrollAt), so the box can simply be moved by the difference. It
+ * is the cheap two-thirds of persistent object tracking: no optical flow, no
+ * descriptors, no re-detection — just the observation that a page which scrolled
+ * by d took everything on it with it.
+ *
+ * ── EXCEPT WHAT IT DID NOT TAKE ──────────────────────────────────────────────
+ * A fixed bar does not move, so compensating its box would be introducing the
+ * error rather than removing it. Anything the model called sticky, or that sat
+ * in a region sync.js measured as fixed, is left where it was.
+ */
+function atTime(el, shotT, t, screen) {
+  const box = el.bbox || [];
+  if (!screen || shotT === t) return box;
+  const [ex, ey, ew, eh] = box;
+  if (!(eh > 0)) return box;
+  // Fixed things do not travel. The model's own reading first, then the
+  // measured one, because the model can see a bar that never happened to be on
+  // screen during a scroll.
+  if (el.sticky === true || isSticky(screen, ex + ew / 2, ey + eh / 2)) return box;
+  const moved = scrollAt(screen, t) - scrollAt(screen, shotT);
+  if (!moved) return box;
+  // The page scrolling DOWN by d moves everything on it UP by d.
+  return [ex, ey - moved, ew, eh];
+}
+
+/**
  * Is this point inside a picture of another screen?
  *
  * Read from the nearest frame the model looked at, the same way controlUnder()
@@ -1558,13 +1602,13 @@ const MEDIA_MIN_AREA = 0.03;
  *
  * @returns {{type: string, label: string, area: number}|null}
  */
-export function mediaUnder(shots, t, x, y) {
+export function mediaUnder(shots, t, x, y, { screen = null } = {}) {
   let best = null;
   for (const shot of shots || []) {
     if (Math.abs(num(shot.t) - t) > SEEN_WITHIN) continue;
     for (const el of shot.elements || []) {
       if (!MEDIA.has(String(el.type))) continue;
-      const [ex, ey, ew, eh] = el.bbox || [];
+      const [ex, ey, ew, eh] = atTime(el, num(shot.t), t, screen);
       if (!(ew > 0) || !(eh > 0)) continue;
       const area = ew * eh;
       if (area < MEDIA_MIN_AREA) continue;
@@ -1673,7 +1717,7 @@ function navColumn(els) {
   };
 }
 
-export function controlUnder(shots, t, x, y) {
+export function controlUnder(shots, t, x, y, { screen = null } = {}) {
   let looked = false;
   let best = null;
   let bestArea = Infinity;
@@ -1690,7 +1734,9 @@ export function controlUnder(shots, t, x, y) {
     const column = navColumn(els);
     for (const el of els) {
       if (!PRESSABLE.has(String(el.type))) continue;
-      let [ex, ey, ew, eh] = el.bbox || [];
+      // Moved to where it is at `t` rather than where it was when the frame was
+      // read, which on a scrolling page is not the same place. See atTime.
+      let [ex, ey, ew, eh] = atTime(el, num(shot.t), t, screen);
       if (!(ew > 0) || !(eh > 0)) continue;
       const area = ew * eh;
       if (area > CONTROL_MAX_AREA) continue;
@@ -1743,6 +1789,21 @@ export function controlUnder(shots, t, x, y) {
            * believe covers the item.
            */
           bbox: clampRect({ x: ex, y: ey, w: ew, h: eh }),
+          /**
+           * ── AND HOW THE INTERFACE WAS DRAWING IT ──────────────────────────
+           * "pressed" is the only first-hand observation of a click available
+           * from a still frame — the control acknowledging one as it happens,
+           * rather than something changing afterwards. "sticky" says the
+           * element does not move when the page scrolls, which is what tells an
+           * anchor click in a fixed nav bar from a wheel scroll with the
+           * pointer resting on it. Both are read by confirmClicks.
+           *
+           * Absent on every recording analysed before UI_ANALYZER was asked for
+           * them, and on every one analysed with the model pass off, so both
+           * default to the value that changes nothing.
+           */
+          state: String(el.state || "normal"),
+          sticky: el.sticky === true,
         };
       }
     }
@@ -1757,7 +1818,7 @@ export function controlUnder(shots, t, x, y) {
     if (Math.abs(num(shot.t) - t) > SEEN_WITHIN) continue;
     for (const el of shot.elements || []) {
       if (!CONTAINER.has(String(el.type))) continue;
-      const [ex, ey, ew, eh] = el.bbox || [];
+      const [ex, ey, ew, eh] = atTime(el, num(shot.t), t, screen);
       if (!(ew > 0) || !(eh > 0)) continue;
       if (x >= ex && x <= ex + ew && y >= ey && y <= ey + eh) return null;
     }
@@ -1790,13 +1851,13 @@ export function controlUnder(shots, t, x, y) {
  * next to the big one. A frame of one export shows exactly that — our arrow on
  * the Billing item with the real hand still visible beside it.
  */
-export function shapeFromControls(track, shots) {
+export function shapeFromControls(track, shots, { screen = null } = {}) {
   if (!shots || !shots.length) return track || [];
   return (track || []).map((p) => {
     // A text caret is a real reading of a real shape and is left alone; it is
     // the arrow-or-hand decision that the blob classifier cannot make.
     if (p.shape === "text") return p;
-    const on = controlUnder(shots, num(p.t), num(p.x, 0.5), num(p.y, 0.5));
+    const on = controlUnder(shots, num(p.t), num(p.x, 0.5), num(p.y, 0.5), { screen });
     return { ...p, shape: on ? "pointer" : "default" };
   });
 }
@@ -1921,7 +1982,183 @@ export function restOnControls(track) {
  * the one that held AT THE PLACE THE PRESS LANDED, not the one in a single
  * frame.
  */
-export const CLICKABLE_SHAPES = new Set(["pointer", "hand", "text"]);
+/**
+ * ── AND WHY THE CROSSHAIR IS IN HERE ────────────────────────────────────────
+ * The arrow rule refuses a press where the operating system drew a plain arrow,
+ * and it has exactly one documented blind spot: "a site that draws a plain
+ * arrow over a real button — canvas apps, design tools, a lot of Electron".
+ *
+ * Most of those do not draw a plain arrow. They draw a CROSSHAIR — Figma,
+ * Canva, Excalidraw, a chart's plot area, any drawing surface — and it means
+ * precisely what a hand means: the thing under the pointer answers it. The
+ * locator had no template for one until now, so those frames reported no shape
+ * at all and every press on a canvas was judged on nothing. See locate.js
+ * SHAPES.crosshair.
+ *
+ * "move" and "resize" are deliberately NOT here. They are the operating system
+ * saying the pointer is already busy dragging something, which is evidence
+ * against a press rather than for one.
+ */
+export const CLICKABLE_SHAPES = new Set(["pointer", "hand", "text", "crosshair"]);
+
+/**
+ * The shapes that mean the pointer is holding something rather than pressing
+ * it. Read by the interaction classifier — see intentOf().
+ */
+export const DRAGGING_SHAPES = new Set(["move", "resize", "grabbing"]);
+
+/* ────────────────────────────────────────────────────────────────────────────
+   How the pointer arrived
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ── A HAND SLOWS DOWN BEFORE IT PRESSES SOMETHING ────────────────────────────
+ * Every other signal in this file asks what the pointer WAS — its shape, what
+ * was under it, whether the screen changed. This one asks how it GOT there, and
+ * it turns out to be nearly as informative, for free, from the path the locator
+ * already produced.
+ *
+ * Pressing a button is a ballistic movement followed by a correction: the hand
+ * throws the pointer most of the way, then slows sharply to land on the target.
+ * Fitts's law describes it and every person doing it produces the same shape —
+ * a peak speed partway through and a decay to near zero at the moment of the
+ * press. Passing OVER a control on the way somewhere else produces the opposite
+ * shape: speed at its highest exactly where the press is supposed to be.
+ *
+ * So a press whose approach decelerated is a press that was aimed. It is the
+ * one channel here that reads intention rather than consequence, and it costs
+ * a dozen subtractions.
+ *
+ * ── WHAT THE PHASES ARE FOR ──────────────────────────────────────────────────
+ *   aimed       thrown, then slowed sharply onto the spot. A deliberate press.
+ *   hesitant    slowed, but never travelled — the pointer was already about
+ *               here. Neither evidence for nor against; people do press things
+ *               their hand is already resting near.
+ *   passing     fastest at the moment of the press. Nobody presses a button on
+ *               the way past it.
+ *   unknown     not enough of the path was recovered to say. Contributes
+ *               nothing, which is the only honest answer.
+ */
+/** How far back the approach is read, in seconds. A throw-and-land is ~400ms. */
+const APPROACH = 0.5;
+/** Frame widths a second that count as the pointer really travelling. */
+const APPROACH_FAST = 0.35;
+/** ...and the share of that peak it must fall to by the press to have landed. */
+const APPROACH_LANDED = 0.3;
+
+export function approachOf(path, t, { window = APPROACH } = {}) {
+  const pts = (path || []).filter((p) => num(p.t) >= t - window && num(p.t) <= t + 0.05);
+  if (pts.length < 4) return { phase: "unknown", travel: 0, last: 0 };
+
+  /**
+   * ── NET DISPLACEMENT, NOT PEAK SPEED ──────────────────────────────────────
+   * The first version of this took the highest instantaneous speed in the
+   * window, and one bad sighting destroyed it: the difference tracker briefly
+   * preferring a spinner puts a single sample across the screen and back, which
+   * reads as a hand moving at enormous speed AT THE MOMENT OF THE PRESS. Four
+   * real cases in clicks.mjs went from passing to refused on exactly that —
+   * "a still hand, one bad frame at the press" is one of them by name.
+   *
+   * Net displacement between the ENDS of each stretch cannot be fooled that
+   * way: a flier that goes out and comes back contributes nothing to where the
+   * pointer got to. And the ends are medians of a few samples rather than
+   * single ones, so a flier sitting on the boundary cannot move them either.
+   */
+  const mid = (list) => {
+    if (!list.length) return null;
+    const xs = list.map((p) => num(p.x)).sort((a2, b2) => a2 - b2);
+    const ys = list.map((p) => num(p.y)).sort((a2, b2) => a2 - b2);
+    return { x: xs[xs.length >> 1], y: ys[ys.length >> 1] };
+  };
+
+  const LAST = 0.12;
+  const start = mid(pts.filter((p) => num(p.t) <= t - window + LAST));
+  const turn = mid(pts.filter((p) => num(p.t) > t - window + LAST && num(p.t) <= t - LAST));
+  const end = mid(pts.filter((p) => num(p.t) > t - LAST));
+  if (!start || !turn || !end) return { phase: "unknown", travel: 0, last: 0 };
+
+  const travel = Math.hypot(turn.x - start.x, turn.y - start.y);
+  const last = Math.hypot(end.x - turn.x, end.y - turn.y);
+
+  const phase =
+    travel + last < APPROACH_FAST * window * 0.3 ? "hesitant"
+      : last <= travel * APPROACH_LANDED ? "aimed"
+        : "passing";
+  return { phase, travel: Math.round(travel * 1000) / 1000, last: Math.round(last * 1000) / 1000 };
+}
+
+/**
+ * What KIND of interaction a press was, and what the camera should do about it.
+ *
+ * ── ONE ZOOM FOR EVERY PRESS WAS ALWAYS AN APPROXIMATION ─────────────────────
+ * The camera has treated every accepted press identically: push in on the
+ * thing, hold, pull out. That is right for a button and wrong for the other
+ * half of what people do in software.
+ *
+ *   dragging a slider    the thing travels, and a fixed shot watches it leave
+ *   typing into a field  the caret marches across the field; a tight shot on
+ *                        the click point frames the first character
+ *   selecting text       the same, except the camera must NOT chase it — the
+ *                        viewer is reading, and a moving frame is unreadable
+ *   resizing a panel     what matters is both edges, so the shot has to be wide
+ *                        enough to contain a change of size
+ *
+ * ── WHERE THE ANSWER COMES FROM, BEST FIRST ──────────────────────────────────
+ *   the arbiter    audit.js asks PRESS_ARBITER what kind of activation it was
+ *                  and writes the answer onto the event. It has six frames of
+ *                  the moment and is by far the best-informed.
+ *   the glyph      the operating system draws a different pointer for a drag,
+ *                  a resize and a text field, and that is free and needs no
+ *                  model at all.
+ *   nothing        a click, which is what every press was treated as before
+ *                  this existed and is what most presses are.
+ *
+ * Deliberately not a guess from motion alone: "the pointer moved while
+ * something changed" describes a drag and also describes somebody clicking and
+ * then moving on, and the two are not separable without one of the readings
+ * above.
+ */
+const INTENT_FROM_SHAPE = {
+  move: "drag",
+  grabbing: "drag",
+  resize: "resize",
+  text: "type",
+};
+
+export function intentOf(e) {
+  const said = String(e?.interaction || "");
+  if (said && said !== "none" && said !== "other") return said;
+  const byShape = INTENT_FROM_SHAPE[String(e?.pointer_shape || "")];
+  if (byShape) return byShape;
+  return "click";
+}
+
+/**
+ * How each kind of interaction wants to be filmed.
+ *
+ *   follow  the shot travels with the pointer, for a thing that MOVES
+ *   widen   a ceiling on the zoom level, for a thing that needs room around it
+ *
+ * Everything absent keeps exactly the behaviour every demo has had: a punch
+ * onto the control, held, then out.
+ */
+const INTENT_CAMERA = {
+  // The slider, the handle, the card crossing a board. The subject is going
+  // somewhere and a fixed frame watches it leave.
+  drag: { follow: true, widen: 1.8 },
+  // Both edges matter, and they are moving apart.
+  resize: { follow: false, widen: 1.6 },
+  /**
+   * Typing and selecting both put text under the camera, and text is the one
+   * subject a moving frame makes worse. The caret marches; the eye reads. So
+   * neither follows, and both sit wider than a button would — a field is a wide
+   * short thing and a shot tight enough for its left edge frames one word.
+   */
+  type: { follow: false, widen: 1.5 },
+  select: { follow: false, widen: 1.5 },
+  // A menu opens BESIDE what was pressed, so the shot has to hold both.
+  menu: { follow: false, widen: 1.7 },
+};
 
 /** A press has to land within this of a located sighting for one to describe it. */
 const SHAPE_REACH = 0.35;
@@ -2150,6 +2387,47 @@ const W_CONTROL = 0.5;    // the model named a control under the pointer
 const W_ARROW = 0.2;      // the OS drew a plain arrow: weak evidence against
 const W_MOVING = 0.3;     // the pointer never settled — a proxy, see above
 const W_SCROLLED = 0.35;  // the page was scrolling — also a proxy
+
+/**
+ * ── THE CONTROL DRAWN AS BEING PRESSED ───────────────────────────────────────
+ * Weighted with the flash, because it is the same observation seen a different
+ * way: the interface acknowledging a click AT THE MOMENT IT HAPPENS, rather
+ * than something changing afterwards. The flash finds it in the pixels around
+ * the pointer (locate.js); this is the model reading it off the control itself,
+ * which works on the presses the ring test misses — a control too large for the
+ * ring, an acknowledgement that is an inset border rather than a brightness
+ * change, a press on a dark interface where the ring barely moves.
+ *
+ * Slightly under W_FLASH on purpose. The flash is measured; this is read, and
+ * the prompt has to tell a press from a hover, which it warns is the easiest
+ * mistake to make here.
+ */
+const W_PRESSED = 0.5;
+
+/**
+ * ── THE POINTER WAS THROWN AT THIS AND STOPPED ON IT ─────────────────────────
+ * Weaker than the channels that observe the press itself, because it observes
+ * the INTENTION to press rather than the press — a hand can aim at something
+ * and then not click it. But it is the only channel that reads the approach,
+ * it is free, and it is exactly what distinguishes a deliberate press from the
+ * pointer happening to be somewhere. See approachOf.
+ */
+const W_AIMED = 0.3;
+/**
+ * ...and the matching penalty, which is not a proxy for anything. "The pointer
+ * was at its fastest at the moment of the press" is a direct observation that
+ * nobody landed on this: a hand does not press a button while accelerating
+ * across it. Distinct from W_MOVING, which is a speed threshold standing in for
+ * "did they hold still" — this is about the SHAPE of the approach.
+ */
+const W_PASSING = 0.3;
+
+/**
+ * The browser's own toolbar, tab strip or address bar. Weak on purpose and
+ * retired by any positive reading — see sync.js chromeBand for why this can
+ * never be a veto.
+ */
+const W_CHROME = 0.25;
 /** Total at or above which the camera moves. */
 const PRESS_BAR = 0.5;
 
@@ -2226,11 +2504,17 @@ function flashAt(flashes, t) {
  * @param {Array} shots    from readFrames — per-frame elements the model named
  * @param {Array} located  from locatePointer — the real pointer, frame by frame
  */
-export function confirmClicks(events, shots, { located = null, flashes = null, onNote = () => {} } = {}) {
+export function confirmClicks(events, shots, { located = null, flashes = null, screen = null, playing = null, capture = null, onNote = () => {} } = {}) {
+  /**
+   * How much of the top of the frame is the browser's own furniture, worked out
+   * once for the recording rather than per press. Zero on a tab capture, and
+   * zero when nothing conclusive was measured. See sync.js chromeBand.
+   */
+  const chrome = chromeBand(screen, capture);
   return (events || []).map((e) => {
     if (e.type !== "click" && e.type !== "dblclick") return e;
 
-    const on = controlUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5));
+    const on = controlUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5), { screen });
     const had = e.corroborated !== false;
     const scrolled = e.scrolled === true;
 
@@ -2349,7 +2633,7 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
      * exactly the same way. Only the model knows the region is a video, and it
      * has been reporting that all along. See mediaUnder().
      */
-    const media = mediaUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5));
+    const media = mediaUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5), { screen });
     if (media) {
       zoomable = false;
       const what = media.label ? '"' + media.label + '"' : "a " + media.type + " on the page";
@@ -2359,7 +2643,22 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
         on_control: on ? true : on === false ? false : null, control: on ? on.label || on.type : "",
         pointer_shape: os && os.shape ? os.shape : null };
     }
-    add(W_CHANGED, "something changed");
+    /**
+     * ── AND WHAT MADE IT CHANGE ─────────────────────────────────────────────
+     * "Something came of it" has always been worth a quarter of the bar, and it
+     * has never asked what the something WAS. A video playing on the page
+     * changes pixels continuously; a spinner changes them in one place forever;
+     * a page sliding under a resting hand changes all of them. None of those is
+     * a consequence of a press, and each was contributing to the case for one.
+     * See sync.js explainMotion, which puts the four instruments that already
+     * tell these apart behind one question.
+     */
+    const why_moved = explainMotion(screen, num(e.t), num(e.x, 0.5), num(e.y, 0.5), { playing });
+    if (why_moved === "video" || why_moved === "animation") {
+      add(0, "something changed, but it was " + (why_moved === "video" ? "a video playing" : "an animation running"));
+    } else {
+      add(W_CHANGED, "something changed");
+    }
 
     // The acknowledgement the interface itself drew at the pointer, in the
     // frames around the press. First-hand evidence of the press, not of its
@@ -2373,6 +2672,34 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
     else if (heldClickable(os)) add(W_HELD, "a clickable pointer was held here");
 
     if (on) add(W_CONTROL, "on " + (on.label ? '"' + on.label + '"' : on.type));
+    // The interface drawing the control as held down, which is a press being
+    // acknowledged rather than a consequence being inferred. See W_PRESSED.
+    const pressedLook = on && on.state === "pressed";
+    if (pressedLook) add(W_PRESSED, "it was drawn as being pressed");
+    // How the pointer got here: thrown and landed, or still moving through.
+    const approach = approachOf(located, num(e.t));
+    if (approach.phase === "aimed") add(W_AIMED, "the pointer was aimed here and stopped");
+    /**
+     * The penalty defers to every better reading of the same question. A
+     * settled glyph, an acknowledgement, a control drawn as pressed — each is a
+     * direct observation that the pointer stopped here, and "it was still
+     * travelling" is an inference from a path that may be missing samples. The
+     * inference does not get to overrule the observation.
+     */
+    else if (approach.phase === "passing" && !settled && !lit && !pressedLook) {
+      add(-W_PASSING, "the pointer was still moving through");
+    }
+
+    /**
+     * ── AND WHETHER IT WAS THE BROWSER'S OWN FURNITURE ──────────────────────
+     * Weak, and retired by anything positive. Pressing a tab or an address bar
+     * is a perfectly ordinary thing to show in a demo; what this is for is the
+     * accidental press on furniture that nothing else supports.
+     */
+    if (chrome > 0 && num(e.y, 0.5) < chrome && !lit && !on && !pressedLook) {
+      add(-W_CHROME, "in the browser's own toolbar");
+    }
+
     if (arrow) add(-W_ARROW, "a plain arrow here");
 
     /**
@@ -2387,7 +2714,7 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
      * the page moving under a resting hand". An acknowledgement drawn at the
      * pointer answers that outright.
      */
-    if (moving && !lit && !heldClickable(os)) add(-W_MOVING, "the pointer never settled here");
+    if (moving && !lit && !pressedLook && !heldClickable(os)) add(-W_MOVING, "the pointer never settled here");
     /**
      * ── A SCROLL IS SOMETIMES WHAT THE CLICK DID, AND WE CANNOT TELL ──────
      * Half the links on a marketing page are anchors: pressing "Pricing" in a
@@ -2417,7 +2744,35 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
      * So the gate stays strict and the rescue happens where there is evidence
      * to rescue it with. Trading a missing zoom for a phantom one is not a fix.
      */
-    if (scrolled && !lit) add(-W_SCROLLED, "the page was scrolling");
+    /**
+     * ── AND THE THIRD SIGNAL THE COMMENT ABOVE SAID DID NOT EXIST ────────────
+     * It said there was no cheap way to separate an anchor click from a wheel
+     * scroll, because both are: hand on a link, page scrolls, pointer stays
+     * put. That was true while the only things known about the control were its
+     * label and its box.
+     *
+     * A sticky element is the difference. A fixed navigation bar DOES NOT MOVE
+     * when the page scrolls under it, so "the page scrolled" says nothing at
+     * all about whether the thing the pointer was on was clicked — the penalty
+     * is not weak evidence here, it is evidence about a different element. On
+     * the recording that prompted all of this, both real clicks were on a
+     * sticky nav bar and five of ten presses were refused for scrolling.
+     *
+     * Narrow on purpose: it retires only where the model actually reported the
+     * element as sticky. A control that scrolls with the page keeps the full
+     * penalty, which is the false positive this was added for — "the creator
+     * scrolled a billing page with the pointer resting on a dropdown".
+     */
+    /**
+     * ── AND THE SAME ANSWER WITHOUT A MODEL CALL ────────────────────────────
+     * The model reports `sticky` per element, which is the better reading when
+     * it is there — but the vision pass is off by default, so on most
+     * recordings it is not. sync.js measures the same fact from pixels alone:
+     * a region that held still while the rest of the frame translated is fixed,
+     * whatever is drawn in it. Either one is enough.
+     */
+    const stuck = (on && on.sticky === true) || isSticky(screen, num(e.x, 0.5), num(e.y, 0.5));
+    if (scrolled && !lit && !pressedLook && !stuck) add(-W_SCROLLED, "the page was scrolling");
 
     zoomable = score >= PRESS_BAR;
 
@@ -2426,6 +2781,10 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
      * to tell a refusal made on a heuristic from one made on a reading).
      */
     const basis = lit ? "flash"
+      // Ranked with the flash rather than under "control": both are the
+      // interface acknowledging a press, and audit.js reads `basis` to decide
+      // which refusals are worth a second opinion. See FIRST_HAND there.
+      : pressedLook ? "pressed"
       : hand ? "hand"
       : on ? "control"
       : heldClickable(os) ? "held"
@@ -2457,10 +2816,31 @@ export function confirmClicks(events, shots, { located = null, flashes = null, o
        * exactly as it always did.
        */
       target: on && on.bbox ? [round4(on.bbox.x), round4(on.bbox.y), round4(on.bbox.w), round4(on.bbox.h)] : undefined,
+      /**
+       * ── WHERE THE INTERFACE ITSELF SAID THE PRESS LANDED ──────────────────
+       * A ripple spreads from where the finger went down; a button darkens
+       * around its own middle; a focus ring lands on the field. locate.js finds
+       * that acknowledgement at the pointer and knows where it was, and until
+       * now only its EXISTENCE was used.
+       *
+       * It is a better anchor than either of the alternatives. The click
+       * coordinate is the recovered pointer hotspot, which is a few pixels of
+       * guesswork; the control's box is the model's, which is right about WHAT
+       * and roughly right about WHERE by its own admission. This is neither
+       * guessed nor read — it is the interface drawing its own answer.
+       * zoomsFromClicks frames on it when it is there.
+       */
+      anchor: lit && Number.isFinite(lit.x) ? [round4(lit.x), round4(lit.y)] : undefined,
       // What the evidence added up to. Kept because a threshold is only
       // reviewable next to the numbers it was applied to.
       score: Math.round(score * 100) / 100,
       pointer_shape: os && os.shape ? os.shape : null,
+      // How the pointer arrived. Kept because a threshold is only reviewable
+      // next to the numbers it was applied to, and because audit.js can tell a
+      // refusal made on an approach from one made on a shape.
+      approach: approach.phase,
+      // What made the screen change here, when anything did. See explainMotion.
+      moved_by: why_moved,
       // The sentence above, kept on the event: it is the only record of why a
       // zoom is or is not there, and reading it back beats reconstructing it.
       why,
@@ -2581,10 +2961,38 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
    * then behaves exactly as containing() always did, which is what keeps every
    * recording analysed without the model framed the way it was before.
    */
-  const boxOf = (c) =>
-    Array.isArray(c.target) && c.target.length >= 4 && num(c.target[2]) > 0
-      ? { x: num(c.target[0]), y: num(c.target[1]), w: num(c.target[2]), h: num(c.target[3]) }
-      : { x: frac(c.x, 0.5), y: frac(c.y, 0.5), w: 0, h: 0 };
+  /**
+   * ── WHERE THE SHOT IS AIMED, BEST EVIDENCE FIRST ─────────────────────────
+   *   the control's box   the model read it off the frame: right about WHAT,
+   *                       roughly right about WHERE by its own admission
+   *   the acknowledgement  the interface's own ripple, measured to the pixel
+   *                       (locate.js flashesFrom). Neither guessed nor read.
+   *   the click point      the recovered pointer hotspot, a few pixels of
+   *                       guesswork on a difference image
+   *
+   * The box wins when there is one, because a shot has to hold a THING and a
+   * point has no size. But where the box is absent — which is every recording
+   * analysed with the model pass off — the ripple beats the click point, and
+   * where both exist the ripple re-centres the box on the part of it that was
+   * actually pressed. A wide toolbar pressed at its right-hand end should not
+   * be framed on its middle.
+   */
+  const boxOf = (c) => {
+    const hit = Array.isArray(c.anchor) && Number.isFinite(num(c.anchor[0]))
+      ? { x: frac(c.anchor[0], 0.5), y: frac(c.anchor[1], 0.5) }
+      : null;
+    if (Array.isArray(c.target) && c.target.length >= 4 && num(c.target[2]) > 0) {
+      const box = { x: num(c.target[0]), y: num(c.target[1]), w: num(c.target[2]), h: num(c.target[3]) };
+      // Only when the ripple is actually inside the box: outside it, one of the
+      // two readings is wrong and the box is the one with a label on it.
+      if (hit && hit.x >= box.x && hit.x <= box.x + box.w && hit.y >= box.y && hit.y <= box.y + box.h) {
+        return { ...box, ax: hit.x, ay: hit.y };
+      }
+      return box;
+    }
+    const p = hit || { x: frac(c.x, 0.5), y: frac(c.y, 0.5) };
+    return { x: p.x, y: p.y, w: 0, h: 0 };
+  };
 
   const stepAt = (t) => (steps || []).find((s) => t >= num(s.start) - 0.05 && t <= num(s.end) + 0.05) || null;
 
@@ -2605,7 +3013,21 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
     const mine = boxOf(c);
     // A named control sets the strength of the shot; an unnamed one keeps the
     // caller's constant, which is the behaviour every existing demo has.
-    const want = mine.w > 0 ? levelForBox(mine, { sourceWidth }) : Math.min(level, levelForBox(null, { sourceWidth }));
+    const base = mine.w > 0 ? levelForBox(mine, { sourceWidth }) : Math.min(level, levelForBox(null, { sourceWidth }));
+
+    /**
+     * ── AND WHAT KIND OF THING IS BEING FILMED ──────────────────────────────
+     * A press on a button and a drag of a slider are not the same shot. See
+     * intentOf() and INTENT_CAMERA. A press with no reading behind it comes
+     * back as "click" and nothing below changes, which is every demo analysed
+     * before this existed.
+     */
+    const intent = intentOf(c);
+    const how = INTENT_CAMERA[intent] || null;
+    // A ceiling, never a floor: a shot that already had to be wide to hold its
+    // control stays wide. Widening is about the SUBJECT needing room, and a
+    // subject that needs room needs it whatever the box measured.
+    const want = how?.widen ? Math.min(base, how.widen) : base;
 
     /**
      * ── TWO PRESSES IN ONE STEP ARE ONE SHOT ──────────────────────────────
@@ -2659,7 +3081,23 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
       end: round3(end),
       ...containingBox([mine], want),
       level: want,
-      easing: "smooth",
+      /**
+       * ── A PRESS IS A PUNCH, NOT A GLIDE ────────────────────────────────────
+       * Every zoom used to ease in over 0.55s on the `smooth` curve, because
+       * there was one ramp length and one curve for all of them. That is the
+       * right move for a slow reveal and about twice the right length for a
+       * press: SETTLE puts the camera fully arrived 0.3s before the click, so
+       * the move began 0.85s before a press the viewer has not been told about
+       * yet, and what they watch is the camera travelling rather than the thing
+       * that was pressed.
+       *
+       * A quarter of a second is what a hand-cut demo uses, and `punch` is what
+       * keeps that short a move from reading as a jump cut: it carries about
+       * three per cent past the mark and settles back, which is the correction
+       * a camera operator makes and an interpolator does not. See camera.mjs.
+       */
+      easing: "punch",
+      ramp_in: RAMP_IN,
       // Gentle in, hard out. See timeline.js rampsOf for why these are not the
       // same number.
       ramp_out: RAMP_OUT,
@@ -2667,10 +3105,19 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
       // A shot built around a named control is holding an element, which is
       // what "element" means; one built around a click point is following the
       // cursor. Saying which is not cosmetic — render/camera reads it.
-      camera: mine.w > 0 ? "element" : "cursor",
-      follow: false,
+      camera: how?.follow ? "cursor" : mine.w > 0 ? "element" : "cursor",
+      /**
+       * A drag is the one interaction whose subject MOVES, so it is the one
+       * shot that travels. The dead zone and the freeze in camera.mjs are what
+       * make that affordable: the frame answers real travel and ignores both
+       * tremor and the stretches where the pointer could not be seen at all.
+       */
+      follow: how?.follow === true,
       follow_strength: 0.7,
-      label: c.control ? String(c.control).slice(0, 60) : "click",
+      label: c.control ? String(c.control).slice(0, 60) : intent === "click" ? "click" : intent,
+      // What the shot is OF, kept so the editor and the reviewer can say why it
+      // is framed the way it is rather than inferring it back from the numbers.
+      intent,
       auto: true,
       boxes: [mine],
       step: here?.id || "",
@@ -2744,8 +3191,31 @@ export function containingBox(boxes, level, { margin = BOX_MARGIN } = {}) {
 
   const need = Math.max(maxX - minX, maxY - minY) + margin * 2;
   const w = clamp(Math.max(1 / Math.max(1, level), need), 0.08, 1);
-  const cx = clamp((minX + maxX) / 2, w / 2, 1 - w / 2);
-  const cy = clamp((minY + maxY) / 2, w / 2, 1 - w / 2);
+
+  /**
+   * ── CENTRED ON WHAT WAS PRESSED, NOT ON THE MIDDLE OF THE BOX ────────────
+   * A shot the size of the window it has to hold has only one place to sit, and
+   * the middle of the bounding box is that place. A shot WIDER than what it has
+   * to hold has room to choose, and the honest choice is the part that was
+   * actually pressed: a toolbar pressed at its right-hand end framed on its
+   * middle looks like the camera missed. `ax`/`ay` come from the interface's
+   * own acknowledgement — see boxOf and locate.js flashesFrom — and are absent
+   * unless one was seen, in which case this is the arithmetic it always was.
+   *
+   * Pulled toward the anchor only as far as the slack allows, so nothing the
+   * box was sized to contain is ever pushed out of frame.
+   */
+  const anchored = list.filter((b) => Number.isFinite(b.ax));
+  let cx = (minX + maxX) / 2;
+  let cy = (minY + maxY) / 2;
+  if (anchored.length) {
+    const ax = anchored.reduce((a, b) => a + b.ax, 0) / anchored.length;
+    const ay = anchored.reduce((a, b) => a + b.ay, 0) / anchored.length;
+    cx = clamp(ax, maxX - w / 2, minX + w / 2);
+    cy = clamp(ay, maxY - w / 2, minY + w / 2);
+  }
+  cx = clamp(cx, w / 2, 1 - w / 2);
+  cy = clamp(cy, w / 2, 1 - w / 2);
   return { x: round4(cx - w / 2), y: round4(cy - w / 2), w: round4(w), h: round4(w) };
 }
 

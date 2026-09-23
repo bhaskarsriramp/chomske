@@ -608,6 +608,16 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
    * been checked — so all three say it.
    */
   const screensRead = (demo.analysis?.frames_read || 0) > 0;
+  /**
+   * ── READING THE FRAMES AND CHECKING THEM ARE DIFFERENT PROMISES ───────────
+   * The blur pass can be paused while the rest of the vision pass runs, and
+   * when it is, the frames have been read for the steps and checked for
+   * nothing. Keyed off `screensRead` the panel said "Every sampled frame was
+   * checked for emails, keys, tokens and personal details" when none had been —
+   * which is the one claim this product must never make. The server now says
+   * which of the two happened. See analysis.blur_checked.
+   */
+  const blurChecked = demo.analysis?.blur_checked === true;
   /** What that reading costs, so the button can say so before it is pressed. */
   const readCost =
     (config?.pricing?.analyse_per_min || 0) * Math.max(1, Math.ceil((demo.recording?.duration || 0) / 60));
@@ -792,7 +802,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         />
       )}
       {tab === "zoom" && <ZoomPanel {...panelProps} />}
-      {tab === "blur" && <BlurPanel {...panelProps} read={screensRead} reading={reading} onRead={onRead} readCost={readCost} />}
+      {tab === "blur" && <BlurPanel {...panelProps} read={blurChecked} reading={reading} onRead={onRead} readCost={readCost} />}
       {tab === "captions" && (
         <CaptionsPanel
           {...panelProps}
