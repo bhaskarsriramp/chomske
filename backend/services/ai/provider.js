@@ -654,13 +654,145 @@ export function generate({
 }
 
 /**
+ * A reply that stops in the middle, closed off so the part that arrived can be read.
+ *
+ * ── A MISSING BRACE THREW AWAY THE WHOLE FRAME ───────────────────────────────
+ * Seen in production:
+ *
+ *   [studio] readFrames batch 8 failed: Expected ',' or ']' after array
+ *            element in JSON at position 3316
+ *   [studio] vision batch 8 answered 0 of 1 frames; asking again one at a time
+ *
+ * That error is what JSON.parse says when a document stops immediately after a
+ * complete element inside an array — a truncated reply, not a malformed one.
+ * The model had already named most of the controls on that frame and every one
+ * of them was discarded over the closing bracket, the call was billed, and the
+ * frame was read again from scratch.
+ *
+ * This is the same salvage transcribeYouTube() has always done for transcripts,
+ * and generate()'s own comment says why it exists: it "salvages the text with a
+ * string match rather than throwing away an expensive read over a missing
+ * brace". Every other caller in this product went through JSON.parse bare.
+ *
+ * The text is walked once, tracking strings and escapes so a brace inside a
+ * label is not mistaken for structure, and cut back to the last point where a
+ * container held nothing but complete elements — a comma, or a bracket that
+ * closed. The containers open at that point are then closed. Nothing is
+ * invented: what comes back is a prefix of what the model actually said.
+ *
+ * @returns {string|null} null when the text is not a truncated container
+ */
+export function closeTruncated(text) {
+  const s = String(text || "");
+  const stack = [];
+  let inStr = false;
+  let esc = false;
+  let safe = -1;
+  let safeStack = null;
+  // Only inside a container, and only where an element has just finished.
+  const mark = (i) => {
+    if (stack.length) {
+      safe = i;
+      safeStack = stack.slice();
+    }
+  };
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === "{" || c === "[") { stack.push(c === "{" ? "}" : "]"); continue; }
+    if (c === "}" || c === "]") { stack.pop(); mark(i + 1); continue; }
+    // Cut BEFORE the comma: everything up to it is complete, what follows it
+    // is the element that never finished arriving.
+    if (c === ",") { mark(i); continue; }
+  }
+
+  // Balanced already, or nothing complete ever closed: not something to repair.
+  if (!stack.length || safe < 0 || !safeStack) return null;
+
+  let out = s.slice(0, safe).replace(/,\s*$/, "");
+  for (let i = safeStack.length - 1; i >= 0; i--) out += safeStack[i];
+  return out;
+}
+
+/** Why the model stopped, when it says. MAX_TOKENS, SAFETY, RECITATION, STOP. */
+const stoppedBecause = (res) => String(res?.candidates?.[0]?.finishReason || "");
+
+/**
+ * What the output budget was actually spent on.
+ *
+ * ── THINKING COMES OUT OF THE SAME ALLOWANCE AS THE ANSWER ───────────────────
+ * Worth naming in the log, because it is the one cause of a short reply that
+ * looks like nothing at all from the outside. maxOutputTokens covers thoughts
+ * AND text, so a model that thinks for most of it has little left to answer
+ * with and stops mid-sentence — with plenty of nominal budget on paper. Every
+ * prompt here asks for thinkingBudget 0 for exactly that reason, and a model
+ * that refuses the field (see _noZeroThinking) silently goes back to thinking.
+ */
+const spentOn = (res) => {
+  const u = res?.usageMetadata || {};
+  const thoughts = num(u.thoughtsTokenCount);
+  const said = num(u.candidatesTokenCount);
+  return thoughts > 0
+    ? `${said} tokens of answer after ${thoughts} of thinking`
+    : `${said} tokens of answer`;
+};
+
+/**
  * One request for JSON, parsed. What almost everything in this product wants.
+ *
+ * ── AND WHEN THE PARSE FAILS, IT SAYS WHY ────────────────────────────────────
+ * The bare JSON.parse that used to be here reported the parser's complaint and
+ * nothing else, which is the one thing that does not tell you what to do about
+ * it. "Expected ',' after array element" reads as a bad model when it usually
+ * means the reply was cut off, and whether it was cut off for length, for a
+ * safety filter, or not at all is the difference between raising a token cap,
+ * fixing a prompt, and looking somewhere else entirely. The model says which;
+ * nothing was reading it.
  *
  * @returns {Promise<{ json, usd, input, output }>}
  */
 export async function generateJson(opts) {
   const { res, usd, input, output } = await generate({ ...opts, json: true });
-  return { json: JSON.parse(res?.text || "{}"), usd, input, output };
+  const text = res?.text || "{}";
+
+  try {
+    return { json: JSON.parse(text), usd, input, output };
+  } catch (err) {
+    const why = stoppedBecause(res);
+    const mended = closeTruncated(text);
+    if (mended) {
+      try {
+        const json = JSON.parse(mended);
+        console.warn(
+          `[ai] a reply stopped early (${why || "no reason given"}, ${spentOn(res)}) ` +
+            `and was closed off: kept ${mended.length} of ${text.length} characters`
+        );
+        return { json, usd, input, output };
+      } catch {
+        /* The repair did not parse either. Fall through and report honestly. */
+      }
+    }
+    /**
+     * The call was made and billed whatever the reply looked like, so the cost
+     * travels with the failure — ask() in vision.js reads it off the error to
+     * keep the spend counter honest through a pass that fails.
+     */
+    throw Object.assign(
+      new Error(
+        err.message +
+          (why && why !== "STOP" ? ` (the model stopped early: ${why})` : "") +
+          ` — ${text.length} characters, ${spentOn(res)}, unrepairable`
+      ),
+      { usd, input, output, cause: err }
+    );
+  }
 }
 
 /**

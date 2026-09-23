@@ -189,7 +189,7 @@ export async function readFrames(frames, { spend = newSpend(), onProgress = () =
     if (answers.length < batch.length) {
       console.warn(
         "[studio] vision batch " + (bi + 1) + " answered " + answers.length +
-          " of " + batch.length + " frames; asking again one at a time"
+          " of " + batch.length + " frames; asking again" + (many ? " one at a time" : "")
       );
       const retried = [];
       for (let k = 0; k < batch.length; k++) {
@@ -198,7 +198,21 @@ export async function readFrames(frames, { spend = newSpend(), onProgress = () =
           parts: [{ text: UI_ANALYZER + "\n\nAnswer for this one frame." }, await imagePart(batch[k].file)],
           spend,
           label: "readFrames batch " + (bi + 1) + " frame " + (k + 1) + " (retry)",
-          maxOutputTokens: 8192,
+          /**
+           * ── A SECOND ASK WITH LESS ROOM IS NOT A RETRY ────────────────────
+           * This used to halve the allowance to 8192, on the reasoning that
+           * one frame needs less than a batch of them. FRAMES_PER_READ is 1,
+           * so the "batch" it is retrying was already a single frame asked
+           * with the full 16384 — the retry was the identical request with
+           * half the space to answer in.
+           *
+           * Which is the wrong direction for the commonest reason to be here.
+           * A reply that stopped early stopped because it ran out of room, and
+           * asking again with less of it makes a second failure more likely,
+           * not less. Seen in production as batch 8 failing on a truncated
+           * reply and being asked again the same way.
+           */
+          maxOutputTokens: 16384,
         }).catch(() => null);
         retried[k] = one && Array.isArray(one.frames) ? one.frames[0] : one;
       }
