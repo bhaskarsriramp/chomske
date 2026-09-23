@@ -1127,9 +1127,22 @@ function summarise(findings) {
    Part four: findings, as things the creator can press a button on
    ──────────────────────────────────────────────────────────────────────────── */
 
-/** How long a proposed zoom runs, either side of the moment. */
+/**
+ * How long a proposed zoom runs, either side of the moment.
+ *
+ * ── THIS IS NOT THE SAME BEAT THE ANALYSIS USES, AND IT SHOULD BE ────────────
+ * events.js SETTLE/HOLD say 0.30 and 0.41 for the identical question, so a
+ * press the pixel pipeline catches gets a shorter close-up than the same press
+ * recovered from the frames. Both carry the same sentence about "the beat a
+ * control that answers instantly deserves" and disagree about the number. In an
+ * export where both paths fire, the pacing changes for no visible reason.
+ *
+ * Cut by the same quarter as the analysis so the ratio is at least unchanged
+ * while the difference stands. Unifying them is a decision about how a demo
+ * should feel, not a bug fix, and it has not been made.
+ */
 const LEAD = 0.45;
-const HOLD = 1.5;
+const HOLD = 1.13;
 /** How long to stay after a slow result finally appears, so it can be read. */
 const RESULT_BEAT = 0.9;
 

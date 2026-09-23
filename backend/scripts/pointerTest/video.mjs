@@ -28,24 +28,48 @@
  * presses were written down at the position where it was last seen — two
  * thirds of a screen away, with nothing under it.
  *
- * ── WHAT IS ASSERTED ─────────────────────────────────────────────────────────
- *   the video is measured        most of the screen animates, past the valve
- *   the decoy is not a candidate  the dark cursor inside the video never
- *                                 reaches the ranking at all
- *   the light cursor wins         which is the one actually drawn
- *   and it is found               often enough for a press to land on a control
+ * ── AND THE SAME FAULT, ONE STEP LATER ───────────────────────────────────────
+ * Getting the template right is not the end of it. A screen recording of
+ * Windows contains a Windows cursor, so the decoy inside the player is the SAME
+ * drawing as the creator's and the one template fits both. While the creator's
+ * pointer is off the surface, the loop falls through to the hints — which on
+ * this page nearly all point into the player — and picks up the stranger's.
  *
- * ── AND WHAT IT HONESTLY DOES NOT SHOW ───────────────────────────────────────
- * It does not reproduce the LOSS. The cursor drawn here is crisper than one
- * that has been through a display scale and a video encoder, so it scores 0.868
- * and the decoy 0.840 — the right answer wins on this clip either way. What the
- * fix changes, and what is asserted, is that the decoy is not in the running:
+ * The presses are still refused correctly, because mediaUnder() reads the
+ * region from the model and vetoes a press inside somebody else's screen. But
+ * the DRAWN pointer comes from this track, so the stylised cursor was painted
+ * onto the video's own:
+ *
+ *   "our code has already identified … that is not the user's mouse movement or
+ *    cursor, but somehow it is applying our own mouse … on that interaction of
+ *    that video … of course zoom is not happening"
+ *
+ * Measured on this clip against the code before the fix: 31 track points of 159
+ * sat on the decoy, and the run reported finding the pointer in 99% of frames —
+ * a confident wrong answer, which is the worst kind.
+ *
+ * ── WHAT IS ASSERTED ─────────────────────────────────────────────────────────
+ *   the video is measured         most of the screen animates, past the valve
+ *   the decoy is not a candidate  no dark template reaches the ranking
+ *   the light cursor wins         which is the one actually drawn
+ *   it is found                   often enough for a press to land on a control
+ *   every sighting is the creator's, not the one in the video
+ *   and it is still followed straight ACROSS the player, because a route over a
+ *   video is an ordinary route and erasing the pointer there would be worse
+ *   than the bug
+ *
+ * ── AND WHAT THIS HONESTLY DOES NOT SHOW ─────────────────────────────────────
+ * It does not reproduce the calibration LOSS. The cursor drawn here is crisper
+ * than one that has been through a display scale and a video encoder, so light
+ * scores 0.868 against the dark candidate's 0.840 and the right answer wins on
+ * this clip either way. What is asserted there is narrower: that the dark
+ * candidate is not in the running at all.
  *
  *   without the veto   light:23 0.868  |  dark:29 0.840  |  light:21 0.777
  *   with it            light:23 0.867  |  light:21 0.778  |  light:25 0.768
  *
- * In production the same two candidates came out the other way round — dark
- * 0.842 against light 0.798 — and there the second row is the whole recording.
+ * In production those two came out the other way round — dark 0.842 against
+ * light 0.798 — and there the second row is the whole recording.
  */
 import path from "path";
 import os from "os";
@@ -83,8 +107,18 @@ const VID = { x: 300, y: 150, w: 1280, h: 700 };
  */
 function truth(t) {
   if (t < 1) return { x: 240, y: 960, shape: "default" };
+  /**
+   * ── AND THEN IT IS GONE ──────────────────────────────────────────────────
+   * Off the edge of the shared surface for a second and a half. This is the
+   * state the bug lives in and it is not an unusual one: on the recording this
+   * test comes from the locator had no sighting in 62% of frames. While the
+   * pointer is missing, step 1 of the tracking loop has nothing to follow, and
+   * the loop falls through to the hints — which on this page nearly all point
+   * into the player. That is where somebody else's cursor gets picked up.
+   */
+  if (t < 2.6) return null;
   if (t < 4) {
-    const k = (t - 1) / 3;
+    const k = (t - 2.6) / 1.4;
     return { x: 240 + k * 120, y: 960 - k * 40, shape: "default" };
   }
   if (t < 5) return { x: 360, y: 920, shape: "default" };
@@ -101,8 +135,18 @@ function truth(t) {
  * This is the whole reason playingRegions exists — "a pointer found inside one
  * of those was recorded on somebody else's machine" — and it is not a contrived
  * case here. The page being recorded is a screen-recorder's landing page, and
- * the thing playing on it is a screen recording, with a cursor in it. It moves,
- * it is unmistakably the best match wherever it sits, and it is DARK.
+ * the thing playing on it is a screen recording, with a cursor in it.
+ *
+ * ── AND IT IS THE SAME DESIGN AS THE CREATOR'S ──────────────────────────────
+ * The first version of this drew the decoy dark, and nothing ever confused the
+ * two: the template calibrates to light, a light template does not match a dark
+ * arrow, and the test passed with every guard switched off. That was the test
+ * being wrong, not the code being right.
+ *
+ * A screen recording of Windows contains a Windows cursor. It is the SAME
+ * drawing as the creator's, a little larger because a full screen is being
+ * shown inside a player — so the one template fits both, perfectly, and the
+ * only thing that separates them is where they are.
  */
 function decoy(t) {
   const k = (t % 4) / 4;
@@ -112,7 +156,7 @@ function decoy(t) {
 async function clip() {
   const out = path.join(S, "video_page.mp4");
   const arrow = await loadImage(path.join(S, "cur_light_arrow.png")).catch(() => null);
-  const darkArrow = await loadImage(path.join(S, "cur_dark_arrow.png")).catch(() => null);
+  const darkArrow = await loadImage(path.join(S, "cur_decoy_arrow.png")).catch(() => null);
   const c = createCanvas(W, H);
   const g = c.getContext("2d");
 
@@ -194,7 +238,7 @@ console.log("  A light Windows cursor on a page that is mostly a dark playing vi
 console.log("=".repeat(84) + "\n");
 
 drawArrow("cur_light_arrow.png", { dark: false, scale: 1 });
-drawArrow("cur_dark_arrow.png", { dark: true, scale: 1.35 });
+drawArrow("cur_decoy_arrow.png", { dark: false, scale: 1.35 });
 const file = await clip();
 const screen = await readScreen(file, { width: W, height: H, duration: D, fps: 12 });
 
@@ -220,8 +264,29 @@ console.log = (...a) => {
   if (line.startsWith("[studio] pointer calibration:")) ranking = line;
   realLog(...a);
 };
+/**
+ * What the browser's frame-difference tracker would have reported. This is the
+ * part that matters: it sees the PLAYER changing on every frame, so most of
+ * what it offers is a place inside the video. That is not a flaw in it — it is
+ * a motion detector and the video is motion — but it is why a hint cannot be
+ * trusted as evidence that the pointer is somewhere. See locate.js hintAt.
+ */
+const hints = [];
+for (let i = 0; i < D * FPS; i++) {
+  const t = i / FPS;
+  const p = truth(t);
+  const prev = truth(Math.max(0, t - 1 / FPS));
+  const d = decoy(t);
+  // The video repaints every frame, so the tracker always has something there.
+  hints.push({ t, x: (d.x + 16) / W, y: (d.y + 16) / H });
+  // And the creator's own pointer, but only while it exists and is moving.
+  if (p && prev && Math.hypot(p.x - prev.x, p.y - prev.y) > 2) {
+    hints.push({ t, x: (p.x + (Math.random() * 10 - 5)) / W, y: (p.y + (Math.random() * 10 - 5)) / H });
+  }
+}
+
 const r = await locatePointer(file, {
-  sourceWidth: W, sourceHeight: H, duration: D, fps: FPS, screen, cursorPx: 22,
+  sourceWidth: W, sourceHeight: H, duration: D, fps: FPS, screen, cursorPx: 22, hints,
 });
 console.log = realLog;
 const hit = r.frames ? r.found / r.frames : 0;
@@ -232,7 +297,48 @@ console.log("    pointer found       " + (100 * hit).toFixed(0) + "%  (" + r.fou
 /* Was it there for the press on the nav bar, which is the whole point. */
 const onNav = r.track.filter((p) => p.t >= 6.0 && p.t <= 7.9);
 const nearNav = onNav.filter((p) => p.y * H < 120).length;
-console.log("    on the nav bar      " + nearNav + " of " + onNav.length + " sightings in the last two seconds\n");
+console.log("    on the nav bar      " + nearNav + " of " + onNav.length + " sightings in the last two seconds");
+
+/**
+ * ── AND THE TRACK IS WHAT GETS DRAWN ─────────────────────────────────────────
+ * Refusing to ZOOM inside somebody else's screen is only half of it. The
+ * stylised cursor in the finished video is drawn from this track, so a sighting
+ * that lands on the video's own cursor puts two pointers on screen — ours,
+ * moving with a stranger's hand. Reported from a real export:
+ *
+ *   "our code has already identified … that is not the user's mouse movement
+ *    or cursor, but somehow it is applying our own mouse … on that interaction
+ *    of that video"
+ *
+ * ── AND "INSIDE THE PLAYER" IS THE WRONG QUESTION ────────────────────────────
+ * The first version of this asserted that no track point lands inside the video
+ * rectangle, and it failed on correct behaviour: the creator's route up to the
+ * navigation bar crosses the player, and those sightings are real and SHOULD be
+ * drawn. Refusing them would erase the pointer every time it passed over a
+ * video, which is worse than the bug.
+ *
+ * The honest question is which cursor each sighting is ON. Both are known here,
+ * so every point is measured against both.
+ */
+const wrongOne = r.track.filter((p) => {
+  const x = p.x * W;
+  const y = p.y * H;
+  const mine = truth(p.t);
+  const theirs = decoy(p.t);
+  const toTheirs = Math.hypot(x - (theirs.x + 16), y - (theirs.y + 16));
+  // While the creator's pointer is off the surface there is nothing of theirs
+  // to be nearer to, so anything sitting on the decoy is the decoy.
+  if (!mine) return toTheirs < 70;
+  return toTheirs < Math.hypot(x - mine.x, y - mine.y);
+});
+const crossing = r.track.filter((p) => {
+  const x = p.x * W;
+  const y = p.y * H;
+  return x >= VID.x && x <= VID.x + VID.w && y >= VID.y && y <= VID.y + VID.h;
+});
+console.log("    over the player     " + crossing.length + " of " + r.track.length + " track points (the route to the nav bar crosses it)");
+console.log("    on THEIR cursor     " + wrongOne.length + " of " + r.track.length +
+  (wrongOne.length ? "   << would be drawn on somebody else's cursor" : "") + "\n");
 
 ok(
   "the page really is mostly moving picture",
@@ -262,6 +368,16 @@ ok(
   "and it is found often enough to put a press on a control",
   hit >= 0.6,
   (100 * hit).toFixed(0) + "% of frames"
+);
+ok(
+  "every sighting is the creator's cursor, not the one in the video",
+  wrongOne.length === 0,
+  wrongOne.length + " of " + r.track.length + " track points sat on the decoy"
+);
+ok(
+  "and it is still followed straight across the player",
+  crossing.length > 0,
+  crossing.length + " sightings over the video, which is the honest route"
 );
 ok(
   "including while it sits on the navigation bar",

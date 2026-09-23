@@ -1115,12 +1115,62 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    * their own pointer onto a playing video to press pause is ordinary, and
    * continuity proves the pointer is theirs.
    */
-  const veto = playing.size ? (x, y) => inPlaying(playing, screen, x / W, y / H) : null;
+  /**
+   * ── AND THE SAME FALLBACK CALIBRATION GETS ────────────────────────────────
+   * `playing` reports nothing when more of the screen animates than could
+   * plausibly be a video on a page, so on the recording that needs this most it
+   * was empty and re-acquisition had no veto at all. Calibration was given the
+   * uncapped measurement for exactly that reason; the tracking loop was not,
+   * and it shows in the finished video rather than in the log:
+   *
+   *   "our code has already identified … that is not the user's mouse movement
+   *    or cursor, but somehow it is applying our own mouse … on that
+   *    interaction of that video"
+   *
+   * The presses were refused correctly — mediaUnder() reads the region from the
+   * model and vetoes a press inside somebody else's screen — so no camera move
+   * went there. But the DRAWN pointer is taken from this track, so the stylised
+   * cursor was painted onto the video's own cursor: two pointers on screen, one
+   * of them ours, moving with somebody else's hand.
+   *
+   * A pointer already being FOLLOWED is still never vetoed (step 1 of the
+   * loop): a creator moving their own pointer onto a playing video to press
+   * pause is ordinary, and continuity proves the pointer is theirs. This only
+   * governs re-acquisition, which has no continuity to reason from and is
+   * exactly where a video's cursor gets taken for the real one — and where it
+   * silently cancels the real one out as runner-up.
+   */
+  const guard = playing.size ? playing : moving?.size ? moving : null;
+  const veto = guard ? (x, y) => inPlaying(guard, screen, x / W, y / H) : null;
 
+  /**
+   * ── A HINT FROM INSIDE A PLAYING VIDEO IS THE VIDEO ──────────────────────
+   * The hints are the browser's frame-difference tracker saying "something
+   * moved here", and a video moves there thirty times a second for the whole
+   * recording. Two places trusted them without asking where they were:
+   *
+   *   step 2   searches around the hint with no uniqueness test at all, because
+   *            a hint is meant to be independent evidence that the pointer is
+   *            there. Inside a player it is evidence of nothing.
+   *   step 3   lets a hint CORROBORATE a weak match, waiving the requirement to
+   *            be the one clear match in the frame.
+   *
+   * So on a page with a player on it, the decoy cursor in the video was found
+   * by step 2, accepted with no uniqueness test, and drawn. Measured on the
+   * clip in scripts/pointerTest/video.mjs: 16 track points of 160 landed inside
+   * the player, every one of them somebody else's cursor wearing ours.
+   *
+   * Vetoing the hint does not cost the honest case. A creator who moves their
+   * own pointer onto a video to press pause gets there by moving, and step 1
+   * follows it in on continuity — which is the evidence the whole exemption
+   * rests on and is untouched here.
+   */
   const hintAt = (t) => {
     let best = null;
     for (const h of hints) { const d = Math.abs(h.t - t); if (d <= 0.25 && (!best || d < best.d)) best = { d, h }; }
-    return best ? best.h : null;
+    if (!best) return null;
+    if (veto && veto(best.h.x * W, best.h.y * H)) return null;
+    return best.h;
   };
 
   const track = [];
