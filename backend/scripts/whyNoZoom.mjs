@@ -60,6 +60,26 @@ console.log("\nPRESSES  (" + events.length + ")\n");
 console.log(
   "    t      zoom?  score  basis          shape     approach  moved_by   on control"
 );
+/**
+ * ── A LABEL THE ANALYSIS NEVER HAD ───────────────────────────────────────────
+ * `control` is written twice by two different passes. confirmClicks() sets it
+ * from what was under the pointer, and the audit PATCHES it afterwards with
+ * what it read off the frames — which is often a control the analysis never
+ * matched, because the pointer was somewhere else entirely.
+ *
+ * Printed the same way, the second kind reads as though the gate knew what was
+ * pressed and refused anyway. On one real recording this column said "Pricing"
+ * beside a press whose own evidence was `on_control: false`, and it took a dump
+ * of the raw event to see that the press had been written down two thirds of a
+ * screen away from the button the label names. `on_control` is what says which
+ * is which, so it is shown.
+ */
+const controlOf = (e) => {
+  if (e.on_control === true) return String(e.control || "");
+  if (e.control) return String(e.control) + " (audit)";
+  return e.on_control === false ? "(nothing)" : "-";
+};
+
 for (const e of events) {
   console.log(
     "  " + f2(e.t).padStart(6) +
@@ -69,7 +89,7 @@ for (const e of events) {
       " " + String(e.pointer_shape || "-").padEnd(9) +
       " " + String(e.approach || "-").padEnd(9) +
       " " + String(e.moved_by || "-").padEnd(10) +
-      " " + String(e.control || (e.on_control === false ? "(nothing)" : "-")).slice(0, 28)
+      " " + controlOf(e).slice(0, 28)
   );
   if (e.why) console.log("           " + e.why);
 }

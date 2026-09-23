@@ -936,12 +936,38 @@ export function inBusy(screen, t, x, y) {
  * and re-acquiring a pointer that was lost — never to a pointer it is already
  * following frame to frame. See locate.js.
  *
+ * ── THE VALVE IS ABOUT REJECTING, NOT ABOUT CHOOSING ────────────────────────
+ * `cap` is how much of the screen may animate before this refuses to answer.
+ * The default exists because the answer is used to REJECT a pointer sighting,
+ * and a measurement that calls most of the screen a video would reject the
+ * real pointer everywhere — better to say nothing.
+ *
+ * Calibration asks the same question for the opposite purpose. There the veto
+ * keeps a template from being FITTED to video pixels, and saying nothing means
+ * the video gets to pick the cursor. That is exactly what happened on a
+ * recording of a landing page with an embedded player:
+ *
+ *   456 of 840 screen cells look like moving pictures … the content-cursor
+ *   check is skipped for this recording
+ *   pointer calibration: dark:21 … mean 0.842  |  light:17 … mean 0.798
+ *
+ * The creator is on Windows, whose arrow is light, and their other recordings
+ * on the same machine calibrate to light 18px and find the pointer in 88% of
+ * frames. This one chose dark on five sample frames it was free to match
+ * inside a dark video, and found the pointer in 38% — losing it precisely
+ * during the fast moves to the navigation bar, so every press there was
+ * written down at a stale position with nothing under it.
+ *
+ * So the cap is the caller's to set. `cap: 1` returns the measurement whatever
+ * its size, for a caller that would rather have a crude veto than none.
+ *
  * @param {object} screen  from readScreen()
  * @param {number} duration
  * @param {number} [share] fraction of the recording a cell must animate for
+ * @param {number} [cap]   share of the screen past which this reports nothing
  * @returns {Set<number>} cell indices, empty when there is nothing to report
  */
-export function playingRegions(screen, { duration = 0, share = PLAYING_SHARE, least = PLAYING_CELLS } = {}) {
+export function playingRegions(screen, { duration = 0, share = PLAYING_SHARE, least = PLAYING_CELLS, cap = PLAYING_MAX_COVER } = {}) {
   const out = new Set();
   if (!screen?.busy?.length || !screen.grid || !(duration > 0)) return out;
 
@@ -993,7 +1019,7 @@ export function playingRegions(screen, { duration = 0, share = PLAYING_SHARE, le
   }
 
   // Past the valve this says nothing rather than something wrong. See above.
-  if (out.size > gw * gh * PLAYING_MAX_COVER) {
+  if (out.size > gw * gh * cap) {
     console.log(
       "[studio] " + out.size + " of " + gw * gh + " screen cells look like moving pictures, which is too much of it " +
         "to be a video playing on a page; the content-cursor check is skipped for this recording"

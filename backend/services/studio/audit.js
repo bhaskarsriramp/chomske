@@ -600,7 +600,7 @@ export function plan({ changes = [], events = [], zooms = [], rests = [], durati
  * ones the creator keeps reporting as missing zooms are `moving` and
  * `scrolling` — which the first version of this function did not check at all.
  */
-const HEURISTIC_REFUSAL = new Set(["moving", "scrolling", "arrow", "off-control", "nothing-read", "held", "no-press-seen", "still-arriving"]);
+export const HEURISTIC_REFUSAL = new Set(["moving", "scrolling", "arrow", "off-control", "nothing-read", "held", "no-press-seen", "still-arriving", "no-consequence-busy"]);
 
 /**
  * ── AND THE EVIDENCE CHANNELS THAT ARE FIRST-HAND ───────────────────────────

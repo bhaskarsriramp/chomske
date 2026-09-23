@@ -44,6 +44,7 @@
 import { levelForBox, containingBox, confirmClicks } from "../../services/studio/events.js";
 import { zoomRect, resist } from "../../services/studio/timeline.js";
 import { settleAfter } from "../../services/studio/sync.js";
+import { HEURISTIC_REFUSAL } from "../../services/studio/audit.js";
 
 let pass = true;
 const ok = (name, cond, detail = "") => {
@@ -310,6 +311,51 @@ ok(
   acknowledged[1].zoomable === true,
   "basis " + acknowledged[1].basis
 );
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Four: "nothing came of it", measured on a screen that was mostly moving
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * `cover` counts only the cells that were NOT already animating, so a press
+ * whose consequence lands inside a playing video is invisible to it. That is
+ * right — a video must not corroborate every press on the page — but it means
+ * the veto is taken on very little evidence when most of the screen IS video,
+ * and this veto is the one refusal the arbiter is never asked about.
+ *
+ * Measured on a real recording: 456 of 840 cells were moving pictures and
+ * seven presses of thirteen died here unseen, two of them on the navigation
+ * bar. See events.js SCREEN_DROWNED.
+ */
+const screenOf = (busyCells) => {
+  const busy = [];
+  for (let c = 0; c < busyCells; c++) busy.push({ c, start: 0, end: 30 });
+  return { grid: { w: 10, h: 10 }, busy, motion: [], fps: 12 };
+};
+const nothingCame = { id: "n1", type: "click", t: 5, x: 0.5, y: 0.5, confidence: 0.8, corroborated: false };
+const quiet = confirmClicks([nothingCame], [], { screen: screenOf(8) })[0];
+const drowned = confirmClicks([nothingCame], [], { screen: screenOf(48) })[0];
+
+console.log("");
+console.log("=".repeat(84));
+console.log("  A press nothing came of: on a quiet screen, and on one full of video");
+console.log("=".repeat(84));
+console.log("");
+console.log("     8 of 100 cells moving   " + quiet.basis.padEnd(20) + quiet.why);
+console.log("    48 of 100 cells moving   " + drowned.basis.padEnd(20) + drowned.why);
+console.log("");
+
+ok("on a quiet screen it stays a plain fact", quiet.basis === "no-consequence", quiet.basis);
+ok(
+  "on a screen mostly moving it is named as the guess it is",
+  drowned.basis === "no-consequence-busy",
+  drowned.basis
+);
+ok(
+  "...and that name is one the arbiter may overturn, while the plain one is final",
+  HEURISTIC_REFUSAL.has("no-consequence-busy") && !HEURISTIC_REFUSAL.has("no-consequence")
+);
+ok("the camera still moves for neither", quiet.zoomable === false && drowned.zoomable === false);
 
 console.log(pass ? "\nall passed\n" : "\nFAILED\n");
 process.exit(pass ? 0 : 1);

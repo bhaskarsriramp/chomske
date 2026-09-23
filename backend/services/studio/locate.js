@@ -662,8 +662,27 @@ function topTwo(frame, W, H, t, reject = null) {
  * A hand votes under the arrow height it implies, so both shapes accumulate
  * evidence for the same answer: one design, one size.
  */
-async function calibrate(video, W, H, all, duration, fps, { playing = null, screen = null } = {}) {
-  const veto = playing?.size ? (x, y) => inPlaying(playing, screen, x / W, y / H) : null;
+async function calibrate(video, W, H, all, duration, fps, { playing = null, screen = null, moving = null } = {}) {
+  /**
+   * ── A TEMPLATE MUST NOT BE FITTED TO SOMEBODY ELSE'S SCREEN ───────────────
+   * `playing` is the measurement everything else uses, and it reports nothing
+   * when more of the screen animates than could plausibly be a video on a page
+   * — because its other job is to REJECT sightings, and rejecting everywhere
+   * would lose the real pointer. See sync.js playingRegions.
+   *
+   * Choosing is the opposite problem. With no veto, the animating half of the
+   * screen is the part a template is most free to match, and on a recording of
+   * a landing page with an embedded player it chose the wrong cursor design on
+   * five sample frames — after which the pointer was found in 38% of frames
+   * instead of 88%, and every press made during a fast move was written down
+   * at a stale position with nothing under it.
+   *
+   * So when the ordinary measurement has stood down, `moving` carries the same
+   * cells uncapped and calibration uses them anyway. A crude veto beats none,
+   * and the caller retries without it if nothing survives.
+   */
+  const region = playing?.size ? playing : moving?.size ? moving : null;
+  const veto = region ? (x, y) => inPlaying(region, screen, x / W, y / H) : null;
   const want = new Set();
   const total = Math.max(1, Math.floor(duration * fps));
   for (let k = 0; k < CAL_FRAMES; k++) want.add(Math.floor(((k + 0.5) / CAL_FRAMES) * total));
@@ -994,7 +1013,32 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     );
   }
 
-  let cal = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen });
+  /**
+   * The same cells, measured without the valve, for calibration only. Empty
+   * unless the valve actually tripped, so on an ordinary recording this is
+   * exactly what it always was. See calibrate() and sync.js playingRegions.
+   */
+  const moving = playing.size ? null : playingRegions(screen, { duration, cap: 1 });
+  if (moving?.size) {
+    console.log(
+      "[studio] calibrating around those " + moving.size + " cell(s) anyway: a template fitted to a video " +
+        "picks the wrong cursor for the whole recording"
+    );
+  }
+
+  let cal = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen, moving });
+  /**
+   * ── AND IF VETOING THAT MUCH LEFT NOTHING, IT IS DROPPED ──────────────────
+   * The uncapped veto is deliberately crude: on a recording that really is
+   * mostly moving picture it can cover the part of the screen the pointer
+   * actually lives in. Nothing is lost by trying — a calibration that comes
+   * back empty costs one pass and is retried here exactly as it would have run
+   * before this existed.
+   */
+  if (!cal && moving?.size) {
+    console.log("[studio] calibration found nothing outside the moving regions; searching the whole frame");
+    cal = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen });
+  }
   /**
    * A narrowed search that comes back empty is the one case where the browser's
    * reading has to be overruled. It can be wrong — a creator using a cursor
@@ -1004,7 +1048,7 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    */
   if (!cal && designs.length === 1) {
     console.log("[studio] the measured pointer design found nothing; searching both designs");
-    cal = await calibrate(video, W, H, candidatesFor([false, true]), duration, fps, { playing, screen });
+    cal = await calibrate(video, W, H, candidatesFor([false, true]), duration, fps, { playing, screen, moving });
   }
   if (!cal) return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
 

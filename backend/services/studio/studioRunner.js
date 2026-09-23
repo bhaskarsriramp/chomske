@@ -825,11 +825,36 @@ const review = {
      */
     let timeline = fresh.timeline;
     const applied = [];
+    // Only the findings sure enough to act on unasked. See AUDIT.apply.
+    const ready = (audit.suggestions || []).filter((s) => s.change?.op === "add_zoom" && s.auto);
+
+    /**
+     * ── A SAFETY NET THAT SILENTLY DOES NOTHING IS NOT A SAFETY NET ──────────
+     * Every branch that skips this used to skip it without a word, and one of
+     * them was being taken in production: six analysed recordings, between four
+     * and ten confident zooms offered on each, `resolved` empty on every one.
+     * On a recording of a landing page the arbiter had correctly recovered the
+     * press on "Pricing" with confidence 1.00 and named the zoom for it, and
+     * the exported video had no camera move anywhere in it.
+     *
+     * Nothing in the log said so. The audit reported its findings, the review
+     * reported its suggestions, and the line in between — the one that turns a
+     * finding into a camera move — was never reached.
+     *
+     * So the skip is now as loud as the work. This is the difference between
+     * "the arbiter found nothing" and "the arbiter found it and was not
+     * allowed to act", which are the same silence and opposite problems.
+     */
+    if (ready.length && !(timeline && AUTO_APPLY_PRESSES)) {
+      console.warn(
+        "[studio] " + ready.length + " zoom(s) for presses the camera missed were NOT applied: " +
+          (!timeline ? "this demo has no timeline to apply them to" : "STUDIO_AUTO_PRESS_ZOOMS is off") +
+          ". They are offered as suggestions instead."
+      );
+    }
+
     if (timeline && AUTO_APPLY_PRESSES) {
-      for (const s of audit.suggestions) {
-        if (s.change?.op !== "add_zoom") continue;
-        // Only the findings sure enough to act on unasked. See AUDIT.apply.
-        if (!s.auto) continue;
+      for (const s of ready) {
         const res = applySuggestion(timeline, s, { duration: fresh.recording?.duration || duration });
         if (res.applied) {
           timeline = res.timeline;
@@ -840,6 +865,8 @@ const review = {
       }
       if (applied.length) {
         console.log("[studio] " + applied.length + " zoom(s) added for presses the camera had missed");
+      } else if (ready.length) {
+        console.warn("[studio] none of the " + ready.length + " zoom(s) for missed presses could be applied");
       }
     }
 

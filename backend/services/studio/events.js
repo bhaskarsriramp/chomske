@@ -48,6 +48,20 @@ import { busyShare, isSticky, scrollAt, explainMotion, chromeBand, settleAfter }
  */
 const MOSTLY_ANIMATION = 0.75;
 
+/** The whole frame, for asking a question about the screen rather than a place. */
+const FULL_FRAME = { x: 0, y: 0, w: 1, h: 1 };
+
+/**
+ * How much of the screen has to be moving by itself before "nothing came of
+ * it" stops being a fact and becomes a guess.
+ *
+ * The same number sync.js uses to decide a measurement is too big to be a
+ * video on a page (PLAYING_MAX_COVER), and for the same reason: past about a
+ * third, the animating area is no longer a thing ON the screen that can be
+ * discounted, it is most of what there is to measure with.
+ */
+const SCREEN_DROWNED = 0.35;
+
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const frac = (v, d = 0) => clamp(num(v, d), 0, 1);
@@ -2640,9 +2654,35 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
      * there is nothing for any amount of further evidence to be about.
      */
     if (!had) {
+      /**
+       * ── UNLESS THE INSTRUMENT THAT SAID SO WAS SWAMPED ────────────────────
+       * "Nothing came of it" is a fact about the screen, and it is only as
+       * good as the measurement behind it. `cover` is the share of the
+       * NOT-ALREADY-MOVING cells that changed, because a playing video would
+       * otherwise corroborate every press on the page — and on a recording
+       * where most of the screen is a video, that leaves few cells to measure
+       * with and a real consequence can fall entirely outside them.
+       *
+       * Measured on a recording of a landing page with an embedded player:
+       * 456 of 840 cells were moving pictures and seven presses of thirteen
+       * were vetoed here, including two on the navigation bar that navigated
+       * the page. The arbiter later recovered several of them from the frames
+       * with confidence 1.00 — but it was never asked about these, because a
+       * veto is not a heuristic and only heuristics get a second opinion.
+       *
+       * So the veto stands — there is still nothing measurable to point a
+       * camera at — but it is named differently when it was reached on a
+       * screen this busy, and `no-consequence-busy` is in HEURISTIC_REFUSAL
+       * (audit.js). The camera does not move on a guess; it moves when
+       * somebody has looked at the frames and said what happened.
+       */
+      const drowned = busyShare(screen, num(e.t), FULL_FRAME) >= SCREEN_DROWNED;
       zoomable = false;
-      onNote({ t: num(e.t), zoomable, why: "nothing came of it" });
-      return { ...e, zoomable, basis: "no-consequence", why: "nothing came of it", score: 0,
+      const why = drowned
+        ? "nothing came of it that could be measured — most of the screen was moving on its own"
+        : "nothing came of it";
+      onNote({ t: num(e.t), zoomable, why });
+      return { ...e, zoomable, basis: drowned ? "no-consequence-busy" : "no-consequence", why, score: 0,
         on_control: on ? true : on === false ? false : null, control: on ? on.label || on.type : "",
         pointer_shape: os && os.shape ? os.shape : null };
     }
