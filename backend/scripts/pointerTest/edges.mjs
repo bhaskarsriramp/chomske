@@ -357,5 +357,75 @@ ok(
 );
 ok("the camera still moves for neither", quiet.zoomable === false && drowned.zoomable === false);
 
+/* ════════════════════════════════════════════════════════════════════════════
+   Five: the press written down where the pointer used to be
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Taken from the event as it is stored, on a real recording:
+ *
+ *   t 23.736   x 0.7813  y 0.9176   on_control false   basis "scrolling"
+ *   target [0.407, 0.020, 0.05, 0.05]        ← "Pricing", from the audit
+ *   track ends 22.93 at (0.781, 0.918)       ← the last sighting, 0.81s before
+ *
+ * The creator pressed Pricing in the navigation bar. The locator lost the
+ * pointer during the move up, the press was written down in the bottom-right
+ * corner where it had last been seen, and the lookup correctly reported that
+ * nothing pressable was there. `on_control: false` — a confident statement
+ * about a place nobody had clicked.
+ */
+const NAV = [
+  { type: "nav_item", label: "Pricing", bbox: [0.407, 0.020, 0.05, 0.05], importance: "high", state: "normal", sticky: true },
+  { type: "nav_item", label: "Editor", bbox: [0.530, 0.020, 0.05, 0.05], importance: "high", state: "normal", sticky: true },
+];
+const navShots = [{ t: 23.7, screen: "landing page", busy: false, elements: NAV }];
+/* The pointer, last seen down in the corner and then lost. */
+const lostTrack = [];
+for (let t = 22.5; t <= 22.93; t += 0.05) lostTrack.push({ t: Number(t.toFixed(2)), x: 0.781, y: 0.918, shape: "default" });
+
+const pricing = (age) => ({
+  id: "pr", type: "click", t: 23.736, x: 0.7813, y: 0.9176,
+  confidence: 0.75, corroborated: true, scrolled: true, position_age: age,
+});
+
+const asFact = confirmClicks([pricing(0.02)], navShots, { located: lostTrack })[0];
+const asGuess = confirmClicks([pricing(0.81)], navShots, { located: lostTrack })[0];
+
+console.log("");
+console.log("=".repeat(84));
+console.log("  A press written down 0.81s of pointer travel away from the button");
+console.log("=".repeat(84));
+console.log("");
+console.log("    sighting fresh (0.02s)   on_control " + String(asFact.on_control).padEnd(6) +
+  "  basis " + String(asFact.basis).padEnd(18) + asFact.why);
+console.log("    sighting stale (0.81s)   on_control " + String(asGuess.on_control).padEnd(6) +
+  "  basis " + String(asGuess.basis).padEnd(18) + asGuess.why);
+console.log("");
+
+ok(
+  "a fresh sighting still says plainly that nothing was under it",
+  asFact.on_control === false,
+  "on_control " + asFact.on_control
+);
+ok(
+  "a stale one does not claim to have looked where they clicked",
+  asGuess.on_control === null,
+  "on_control " + asGuess.on_control
+);
+ok(
+  "and it says so, instead of blaming the scroll detector",
+  asGuess.basis === "position-unknown",
+  asGuess.basis + " — " + asGuess.why
+);
+ok(
+  "which is a refusal the arbiter is asked about with frames",
+  HEURISTIC_REFUSAL.has("position-unknown")
+);
+ok(
+  "no control is invented for it either way",
+  !asGuess.control && !asFact.control,
+  "control " + JSON.stringify(asGuess.control)
+);
+
 console.log(pass ? "\nall passed\n" : "\nFAILED\n");
 process.exit(pass ? 0 : 1);

@@ -62,6 +62,19 @@ const FULL_FRAME = { x: 0, y: 0, w: 1, h: 1 };
  */
 const SCREEN_DROWNED = 0.35;
 
+/**
+ * How old a pointer sighting may be before the press built on it is a guess.
+ *
+ * The locator runs on every frame, so while it is following the pointer the
+ * newest sighting is a fiftieth of a second old. Past about a third of a
+ * second a hand at ordinary speed has crossed a good part of the screen, and
+ * the last known position stops being evidence about where the press landed.
+ *
+ * Measured on the recording this came from: 0.81s, and 0.9 of a screen width
+ * between where the press was written down and the button that was pressed.
+ */
+const STALE_SIGHTING = 0.35;
+
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const frac = (v, d = 0) => clamp(num(v, d), 0, 1);
@@ -823,6 +836,9 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
       corroborated: true,
       scrolled: false,
       scroll_shift: 0,
+      // How long before the press the pointer was last actually seen. See
+      // restAt() — without this, a guessed position reads as a measured one.
+      position_age: round3(spot.age),
     }));
     claim(at);
   }
@@ -913,6 +929,9 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
         // without this it is minted as one.
         scrolled: slid >= SCROLL_SUM || scrollingAround(mot, at) || sustained(mot, best.m.t, best.m.energy),
         scroll_shift: round3(slid),
+        // How long before the press the pointer was last actually seen. See
+        // restAt() — without this, a guessed position reads as a measured one.
+        position_age: round3(spot.age),
       })
     );
     spent.add(rest);
@@ -1332,6 +1351,31 @@ function event(type, t, x, y, extra = {}) {
  * The press happened at a moment. The pointer was somewhere at that moment.
  * That is the position, and nothing later gets a vote.
  */
+/**
+ * Where the pointer was when the press happened — and how long ago that was
+ * actually seen.
+ *
+ * ── A STALE POSITION USED TO BE INDISTINGUISHABLE FROM A MEASURED ONE ────────
+ * This has always returned the last sighting before the moment asked about, and
+ * the comment below says plainly that on a blind dwell there are no samples at
+ * all. What it never said was HOW OLD the answer is, so every caller has been
+ * treating a guess and a measurement as the same thing.
+ *
+ * On a real recording that difference was the whole bug. The creator pressed
+ * "Pricing" in a navigation bar at 23.74s; the pointer was last seen at 22.93s
+ * at (0.781, 0.918), down in the opposite corner, because the locator lost it
+ * during the fast move up. The press was written down there. controlUnder()
+ * then looked at the bottom-right of the screen, correctly found nothing, and
+ * the press died with `on_control: false` — a confident statement about a place
+ * nobody had clicked.
+ *
+ * The position is still the best guess available and is still returned. What is
+ * new is `age`: how many seconds before the press the pointer was last really
+ * seen. A caller that knows the difference can stop treating "nothing there" as
+ * a reading. See confirmClicks() and STALE_SIGHTING.
+ *
+ * @returns {{x:number,y:number,age:number}} age is Infinity when never seen
+ */
 function restAt(pts, rest, t) {
   const until = Math.min(num(t), num(rest.end, t)) + 0.05;
   let best = null;
@@ -1340,9 +1384,17 @@ function restAt(pts, rest, t) {
     if (p.t > until) break;
     best = p;
   }
+  /**
+   * How stale the answer is, measured from the press rather than from the end
+   * of the window: a sighting half a second before the press is half a second
+   * old whatever else was going on.
+   */
+  if (best) return { x: best.x, y: best.y, age: Math.max(0, num(t) - num(best.t)) };
+
   // A blind dwell — a hole in the track — has no samples inside it at all, and
   // the dwell already carries the last place the pointer was seen before it.
-  return best ? { x: best.x, y: best.y } : { x: rest.x, y: rest.y };
+  // Nothing here was measured at this moment, so nothing about it is fresh.
+  return { x: rest.x, y: rest.y, age: Infinity };
 }
 
 /** How far a changed region is from where the pointer was resting. 0 when over it. */
@@ -2554,7 +2606,32 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
   const judged = (events || []).map((e) => {
     if (e.type !== "click" && e.type !== "dblclick") return e;
 
-    const on = controlUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5), { screen });
+    /**
+     * ── WHERE WE LOOKED, AND WHETHER IT WAS WHERE THEY CLICKED ──────────────
+     * `position_age` is how long before the press the pointer was last really
+     * seen (events.js restAt). When the locator has been following it, that is
+     * a frame or two — fiftieths of a second — and the position is measured.
+     * When the locator has lost it, the press carries the last place it was,
+     * which may be the far corner of the screen.
+     *
+     * The distinction matters most for the ANSWER NO. controlUnder() returning
+     * `false` means "frames were read here and nothing pressable was under the
+     * pointer", and downstream that is treated as a fact about the press. It is
+     * only a fact if the pointer was where we say it was.
+     *
+     * Measured: a press on "Pricing" in a navigation bar, written down at
+     * (0.781, 0.918) because the pointer was last seen there 0.81s earlier
+     * while the button is at (0.407, 0.020). The lookup correctly found nothing
+     * in the bottom-right corner, and a real click became `on_control: false`.
+     *
+     * So a stale sighting turns that `false` back into "nobody looked", which
+     * is what it actually is. It does not invent a control and it does not let
+     * the press through — it stops the pipeline asserting something it cannot
+     * know, and routes the press to the one instrument that can settle it.
+     */
+    const stale = num(e.position_age, 0) >= STALE_SIGHTING;
+    const seenAt = controlUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5), { screen });
+    const on = stale && seenAt === false ? null : seenAt;
     const had = e.corroborated !== false;
     const scrolled = e.scrolled === true;
 
@@ -2901,6 +2978,20 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
       : hand ? "hand"
       : on ? "control"
       : heldClickable(os) ? "held"
+      /**
+       * ── NOTHING POSITIVE, AND WE DID NOT KNOW WHERE TO LOOK ───────────────
+       * Ranked above the readings below it because every one of those is an
+       * inference from the pointer's position — it was scrolling, it was still
+       * moving, it was a plain arrow, it was off any control — and with a
+       * stale sighting there is no position to make them from. Naming this
+       * instead of "scrolling" is the difference between a refusal somebody
+       * can act on and one that sends them looking at the scroll detector.
+       *
+       * In HEURISTIC_REFUSAL (audit.js), so the arbiter is asked with frames
+       * of the moment. That is the right instrument for it: the pixels say
+       * what was pressed whether or not this pass could follow the cursor.
+       */
+      : stale ? "position-unknown"
       : scrolled ? "scrolling"
       : moving ? "moving"
       : arrow ? "arrow"
@@ -2911,9 +3002,11 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
       ? ev.filter((w) => !w.startsWith("something changed")).slice(0, 2).join(", ") || "something changed here"
       : !sawPress && score >= PRESS_BAR
         ? "nothing here saw a press — only " + ev.slice(1).join(" and ")
-        : ev.length > 1
-          ? "not enough to call it a press: " + ev.slice(1).join(", ")
-          : "nothing says this was a press";
+        : basis === "position-unknown"
+          ? "the pointer was last seen " + num(e.position_age).toFixed(2) + "s earlier, so where this landed is a guess"
+          : ev.length > 1
+            ? "not enough to call it a press: " + ev.slice(1).join(", ")
+            : "nothing says this was a press";
 
     onNote({ t: num(e.t), zoomable, why });
     return {
