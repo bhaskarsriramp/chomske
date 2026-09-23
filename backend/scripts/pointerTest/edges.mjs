@@ -41,7 +41,7 @@
  *
  * The question is not when the screen first stopped, it is when it last moved.
  */
-import { levelForBox, containingBox, confirmClicks } from "../../services/studio/events.js";
+import { levelForBox, containingBox, confirmClicks, zoomsFromClicks } from "../../services/studio/events.js";
 import { zoomRect, resist } from "../../services/studio/timeline.js";
 import { settleAfter } from "../../services/studio/sync.js";
 import { HEURISTIC_REFUSAL } from "../../services/studio/audit.js";
@@ -425,6 +425,96 @@ ok(
   "no control is invented for it either way",
   !asGuess.control && !asFact.control,
   "control " + JSON.stringify(asGuess.control)
+);
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Six: the shot that stayed in while the page scrolled past behind it
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Taken from a real export, as the timeline stored it:
+ *
+ *   zoom   7.27 – 13.65   6.38s held   1.8x
+ *   press        7.57   8.81   11.39
+ *   scroll              9.38   9.83        ← both inside the zoom
+ *
+ * Three presses close enough together to merge into one shot, and the creator
+ * scrolled in the middle of it. For four of those six seconds the camera was
+ * holding a third of the screen around a control nobody was looking at any
+ * more, while the page they WERE looking at slid past behind the crop.
+ *
+ *   "when user clicks and scrolls the rendered page then in that zoom in only
+ *    the content is showing closer … user can see the whole page as it is"
+ *
+ * Merging is a rule about time and time is the wrong question here: two presses
+ * either side of a scroll are not one subject however close together they are.
+ */
+const pressAt = (t, label, x, y) => ({
+  id: "c" + t, type: "click", t, x, y, confidence: 0.9, corroborated: true,
+  zoomable: true, control: label, on_control: true,
+  target: [x - 0.05, y - 0.02, 0.1, 0.04],
+});
+const withScroll = [
+  pressAt(7.57, "Blocking channels", 0.30, 0.35),
+  pressAt(8.81, "Browser-based editing", 0.32, 0.46),
+  { id: "s1", type: "scroll", t: 9.38 },
+  { id: "s2", type: "scroll", t: 9.83 },
+  pressAt(11.39, "Log out", 0.34, 0.62),
+];
+/** The same three presses with nothing moving between them. */
+const noScroll = withScroll.filter((e) => e.type !== "scroll");
+
+/**
+ * All three inside one step, which is what the real recording had and what
+ * makes this a merge at all: MERGE alone is 1.6s and would not reach the third
+ * press, while MERGE_IN_STEP is 3.2s and does. Without this the test proves
+ * nothing — the presses come apart on the clock and the scroll rule is never
+ * asked the question.
+ */
+const oneStep = [{ id: "st1", start: 7.0, end: 12.5, title: "Look through the settings" }];
+const opts = { duration: 22.4, sourceWidth: 1920, steps: oneStep };
+
+const split = zoomsFromClicks(withScroll, opts);
+const merged = zoomsFromClicks(noScroll, opts);
+
+console.log("");
+console.log("=".repeat(84));
+console.log("  Three presses 1.2s and 2.6s apart, with and without a scroll between");
+console.log("=".repeat(84));
+console.log("");
+for (const [name, set] of [["scrolled at 9.38", split], ["nothing moved", merged]]) {
+  console.log("    " + name);
+  for (const z of set) {
+    console.log("      " + z.start.toFixed(2).padStart(6) + " – " + z.end.toFixed(2).padStart(6) +
+      "   " + (z.end - z.start).toFixed(2) + "s held   " + String(z.label || "").slice(0, 26));
+  }
+}
+console.log("");
+
+ok("a scroll between two presses ends the shot", split.length === 2, split.length + " zooms");
+ok(
+  "and the camera is out before the page moves",
+  split[0].end <= 9.38 + 1e-9,
+  "leaves at " + split[0].end.toFixed(2) + "s, scroll at 9.38s"
+);
+ok(
+  "the press after the scroll still gets its own",
+  split[1] && split[1].start < 11.39 && split[1].end > 11.39,
+  split[1] ? split[1].start.toFixed(2) + "–" + split[1].end.toFixed(2) : "none"
+);
+/**
+ * The other half of the contract. Merging exists because pulling out and back
+ * in between two presses a second apart is what makes auto-zoom seasick, and
+ * this must not have quietly turned that off for everybody.
+ */
+ok(
+  "with nothing moving, the same presses are still one shot",
+  merged.length === 1,
+  merged.length + " zoom covering all three"
+);
+ok(
+  "so the rule is about the scroll, not about the gap",
+  merged.length === 1 && split.length === 2
 );
 
 console.log(pass ? "\nall passed\n" : "\nFAILED\n");

@@ -1551,6 +1551,22 @@ const MERGE_MAX = 0.62;
 const MERGE_IN_STEP = 3.2;
 
 /**
+ * How long after a press a scroll still belongs to it.
+ *
+ * An anchor link scrolls the page as its own consequence: press "Pricing" in a
+ * navigation bar and the page goes to the pricing section, and that movement is
+ * the thing the press was FOR. Ending the shot on it would cut away from the
+ * answer at the moment it arrives, which is the fault settleAfter exists to
+ * prevent and the one sticky.mjs was written about.
+ *
+ * Past this the page is moving because the creator is reading it, and a shot
+ * holding a third of the screen is in the way. Half a second is comfortably
+ * longer than a click-driven scroll takes to start and comfortably shorter than
+ * the pause before somebody reaches for the wheel.
+ */
+const SCROLL_OWN = 0.5;
+
+/**
  * ── WAS IT A CONTROL, OR WAS IT JUST SOMEWHERE? ──────────────────────────────
  * Everything above this line is pixels. It can tell that the pointer stopped
  * and that the screen changed, and from those two facts alone it cannot tell a
@@ -3296,6 +3312,21 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
 
   const stepAt = (t) => (steps || []).find((s) => t >= num(s.start) - 0.05 && t <= num(s.end) + 0.05) || null;
 
+  /**
+   * When the page moved under the camera. Read off the same event list the
+   * presses come from, so a recording where nothing scrolled costs nothing and
+   * behaves exactly as it did before this existed.
+   */
+  const scrolls = (events || [])
+    .filter((e) => e.type === "scroll")
+    .map((e) => num(e.t))
+    .sort((a, b) => a - b);
+  const firstScrollAfter = (t) => {
+    for (const s of scrolls) if (s >= t) return s;
+    return null;
+  };
+  const scrolledBetween = (a, b) => scrolls.some((s) => s >= a && s < b);
+
   for (const c of clicks) {
     const start = Math.max(0, c.t - settle);
     /**
@@ -3361,13 +3392,34 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
      * Past the point where the move would stop reading as emphasis, the clicks
      * get their own zooms instead.
      */
-    if (prev && start < prev.end + window) {
+    /**
+     * ── AND A SCROLL ENDS THE SHOT, WHATEVER THE CLOCK SAYS ─────────────────
+     * Merging is a rule about time, and time is the wrong question when the
+     * page has moved under the camera in between. A viewer scrolling is reading
+     * the page, and a shot holding a third of it is hiding the thing they are
+     * reading — so two presses either side of a scroll are not one subject
+     * however close together they happen to be.
+     *
+     * Measured on a real export: presses at 7.57, 8.81 and 11.39 merged into
+     * one 6.4-second shot at 1.8x, with scrolls at 9.38 and 9.83 inside it.
+     *
+     *   "when user clicks and scrolls the rendered page then in that zoom in
+     *    only the content is showing closer … user can see the whole page"
+     *
+     * The grace matters as much as the rule. An anchor link scrolls the page as
+     * its own consequence — press "Pricing" in a nav bar and the page goes to
+     * the pricing section — and that scroll IS the thing the press was for.
+     * Below SCROLL_OWN it belongs to the press; past it, the hand has moved on.
+     */
+    const crossed = prev && scrolledBetween(num(prev.at, prev.start) + SCROLL_OWN, c.t);
+    if (prev && !crossed && start < prev.end + window) {
       // The wider of the two shots wins: a level that holds one control will
       // not hold two, and containingBox() lowers it further if it has to.
       const lvl = Math.min(prev.level, want);
       const grown = containingBox([...prev.boxes, mine], lvl);
       if (grown.w <= MERGE_MAX) {
         prev.end = round3(Math.max(prev.end, end));
+        prev.at = c.t;
         prev.boxes.push(mine);
         prev.level = lvl;
         Object.assign(prev, grown);
@@ -3377,6 +3429,10 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
 
     out.push({
       id: newId("z"),
+      // The last press this shot is holding for. A working field, stripped by
+      // sanitizeTimeline like `boxes` and `step`; it is what the scroll rules
+      // above and below measure their grace from.
+      at: c.t,
       start: round3(start),
       end: round3(end),
       ...containingBox([mine], want),
@@ -3431,8 +3487,26 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
     });
   }
 
-  // `boxes` and `step` are working state, not part of the timeline schema.
-  return out.map(({ boxes, step, ...z }) => z);
+  /**
+   * ── AND A SHOT STILL RUNNING WHEN THE PAGE MOVES IS CUT SHORT ────────────
+   * Refusing to MERGE across a scroll is half of it. The other half is the
+   * hold: a press whose result took a while to arrive holds the camera until
+   * it settles (sync.js settleAfter, up to 2.6s), and the creator can easily
+   * start scrolling inside that. Then the shot is cropped around a control
+   * nobody is looking at any more while the page they ARE looking at slides
+   * past behind the crop.
+   *
+   * So the end is brought back to the moment the page moved — never below
+   * MIN_HOLD after the press, because a shot too short to read is not an
+   * improvement on one that overstays.
+   */
+  for (const z of out) {
+    const moved = firstScrollAfter(num(z.at, z.start) + SCROLL_OWN);
+    if (moved !== null && moved < z.end) z.end = round3(Math.max(num(z.at, z.start) + MIN_HOLD, moved));
+  }
+
+  // `at`, `boxes` and `step` are working state, not part of the timeline schema.
+  return out.filter((z) => z.end - z.start > 0.05).map(({ at, boxes, step, ...z }) => z);
 }
 
 /**
