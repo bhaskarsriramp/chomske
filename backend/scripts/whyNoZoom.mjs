@@ -49,6 +49,23 @@ console.log("  recorded  " + f2(rec.duration) + "s  " + rec.width + "x" + rec.he
 console.log("  tracker   " + (demo.capture?.tracker || "(none)") + "   surface " + (demo.capture?.surface || "?"));
 console.log("  env       " + JSON.stringify(demo.capture?.env || {}));
 console.log("  cursor    " + JSON.stringify(demo.capture?.cursor || {}));
+/**
+ * How often the browser handed over a frame, against the 30 the export writes.
+ * The recording's own fps is frames ÷ duration and cannot separate "the capture
+ * was slow" from "the screen was still"; the busiest quarter can. See
+ * capture.js cadenceOf().
+ */
+const cad = demo.capture?.frames;
+if (cad?.supported) {
+  console.log(
+    "  cadence   " + cad.frames + " frames   median " + f2(cad.median_hz) + "fps" +
+      "   busiest quarter " + f2(cad.fastest_quarter_hz) + "fps" +
+      "   p10–p90 " + f2(cad.p10_ms) + "–" + f2(cad.p90_ms) + "ms" +
+      "   spread " + f2(cad.spread) + "x"
+  );
+} else if (cad) {
+  console.log("  cadence   this browser does not report frame timing");
+}
 console.log("  analysis  frames_read " + num(demo.analysis?.frames_read) +
   "   blur_checked " + (demo.analysis?.blur_checked === true) +
   "   locate " + JSON.stringify(demo.analysis?.locate || {}));

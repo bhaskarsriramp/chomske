@@ -370,6 +370,27 @@ router.post("/demos/:id/upload/complete", wrap(async (req, res) => {
         confidence: clampNum(cap.cursor.confidence, 0, 1),
       }
       : undefined,
+    /**
+     * How often the browser handed over a frame, measured while recording. Each
+     * field is clamped rather than trusted, same as everything else here — this
+     * arrives from a page and nothing that arrives from a page decides anything
+     * until it has been given a range. See capture.js cadenceOf().
+     */
+    frames: cap.frames && cap.frames.supported === true
+      ? {
+        supported: true,
+        frames: clampNum(cap.frames.frames, 0, 1e6),
+        presented: clampNum(cap.frames.presented, 0, 1e6),
+        p10_ms: clampNum(cap.frames.p10_ms, 0, 5000),
+        median_ms: clampNum(cap.frames.median_ms, 0, 5000),
+        p90_ms: clampNum(cap.frames.p90_ms, 0, 5000),
+        fastest_quarter_hz: clampNum(cap.frames.fastest_quarter_hz, 0, 1000),
+        median_hz: clampNum(cap.frames.median_hz, 0, 1000),
+        spread: clampNum(cap.frames.spread, 0, 10000),
+      }
+      : cap.frames
+        ? { supported: false }
+        : undefined,
   };
   demo.status = "preparing";
   demo.stage = "Queued";

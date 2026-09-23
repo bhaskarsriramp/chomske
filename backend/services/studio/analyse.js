@@ -129,6 +129,32 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   const spend = newSpend();
   const every = Math.max(0.5, STUDIO_LIMITS.frameEvery);
 
+  /**
+   * ── HOW SMOOTHLY THE RECORDING WAS TAKEN, BEFORE ANYTHING IS DONE TO IT ───
+   * Nothing reads this yet. It is here because a creator reported that smooth
+   * scrolling comes out of the export stepping, and the recording's average
+   * frame rate cannot say whether that was already true of the capture: a
+   * screen capture emits a frame only when the screen changes, so thirteen a
+   * second may be thirty during a scroll and two over a still page.
+   *
+   * `fastest_quarter_hz` is the recording at its busiest, which is the number
+   * that answers it. Near 30 means the motion was captured smoothly and what
+   * follows is ours to fix; far below means the browser never had the frames.
+   * See capture.js cadenceOf().
+   */
+  const cad = capture?.frames;
+  if (cad?.supported) {
+    console.log(
+      "[studio] capture cadence: " + cad.frames + " frames, median " +
+        Number(cad.median_ms || 0).toFixed(1) + "ms (" + Number(cad.median_hz || 0).toFixed(1) + "fps), " +
+        "busiest quarter " + Number(cad.fastest_quarter_hz || 0).toFixed(1) + "fps, " +
+        "p10–p90 " + Number(cad.p10_ms || 0).toFixed(1) + "–" + Number(cad.p90_ms || 0).toFixed(1) + "ms " +
+        "(spread " + Number(cad.spread || 0).toFixed(1) + "x)"
+    );
+  } else if (cad) {
+    console.log("[studio] capture cadence: this browser does not report frame timing");
+  }
+
   /* ── Frames ──────────────────────────────────────────────────────────── */
   onProgress(0.02, "Sampling the recording");
   const framesDir = path.join(workDir, "frames");

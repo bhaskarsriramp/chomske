@@ -116,6 +116,20 @@ const CaptureSchema = new Schema(
       samples: { type: Number, default: 0 },
       confidence: { type: Number, default: 0 },
     },
+    /**
+     * How often the browser actually handed over a frame while recording.
+     *
+     * `recording.fps` is frames ÷ duration, and a screen capture only emits a
+     * frame when the screen CHANGES — so an average of thirteen a second may be
+     * thirty during every scroll and two over a still page. Those two have
+     * opposite causes and opposite fixes, and the average cannot tell them
+     * apart. This is the distribution: see capture.js cadenceOf().
+     *
+     * Mixed because it is a measurement whose shape will change as we learn
+     * what to ask of it, and because nothing decides anything from it yet.
+     * Absent on every recording made before this existed.
+     */
+    frames: { type: Schema.Types.Mixed, default: null },
   },
   { _id: false }
 );

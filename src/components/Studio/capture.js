@@ -505,6 +505,105 @@ export function createTracker() {
     }
   }
 
+  /* ──────────────────────────────────────────────────────────────────────────
+     How often the browser actually hands over a frame
+     ────────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * ── WHY THE RECORDING'S AVERAGE FRAME RATE CANNOT ANSWER THIS ─────────────
+   * A creator watched an export and said the scrolling came out "chunk chunk,
+   * step step" rather than the smooth scroll they had performed. The recordings
+   * report 13 to 25 frames a second against the 30 every preset exports at, so
+   * each captured frame is held for 1.2 to 2.2 output frames — never a whole
+   * number, which is exactly what stepping looks like.
+   *
+   * But that average is frames ÷ duration, and a screen capture only emits a
+   * frame when the screen CHANGES. Thirteen a second could be thirty during
+   * every scroll and two while the creator talks over a still page — in which
+   * case the capture is healthy and the fault is ours, in the resample. Or it
+   * could be a flat thirteen throughout, in which case the encoder or this
+   * tracker is starving it. The two have opposite fixes and the average cannot
+   * tell them apart.
+   *
+   * `requestVideoFrameCallback` can: it fires once per frame the browser
+   * presents, carrying that frame's own `mediaTime`. The gaps between those are
+   * the recording's real cadence, and the QUICKEST QUARTER of them is the
+   * recording at its busiest — which is the number that says whether smooth
+   * motion was captured smoothly.
+   *
+   * It costs nothing: the callback is hung on the video element the tracker
+   * already has, does no pixel work, and where the browser does not implement
+   * it (Firefox, at the time of writing) this reports that it could not look
+   * rather than guessing.
+   */
+  const gaps = [];
+  let lastMediaS = 0;
+  let firstPresented = 0;
+  let lastPresented = 0;
+  let cadenceOn = false;
+
+  function watchCadence(el) {
+    if (typeof el?.requestVideoFrameCallback !== "function") return;
+    cadenceOn = true;
+    const step = (_now, meta) => {
+      // The element is torn down on stop(); asking it for another callback
+      // then throws, and there is nothing left to measure anyway.
+      if (!video) return;
+      const mt = Number(meta?.mediaTime);
+      if (Number.isFinite(mt)) {
+        // The frame's OWN timestamp, not the wall clock: this is the number
+        // that ends up in the file and that the renderer later resamples.
+        if (lastMediaS > 0 && mt > lastMediaS) {
+          const ms = (mt - lastMediaS) * 1000;
+          // A gap of seconds is the creator leaving the screen alone, which is
+          // real and worth counting; anything past that is a pause or a tab
+          // switch and says nothing about cadence.
+          if (ms < 5000) gaps.push(Math.round(ms * 10) / 10);
+        }
+        lastMediaS = mt;
+      }
+      const pf = Number(meta?.presentedFrames);
+      if (Number.isFinite(pf)) {
+        if (!firstPresented) firstPresented = pf;
+        lastPresented = pf;
+      }
+      try { el.requestVideoFrameCallback(step); } catch { /* torn down */ }
+    };
+    try { el.requestVideoFrameCallback(step); } catch { cadenceOn = false; }
+  }
+
+  function cadenceOf() {
+    if (!cadenceOn) return { supported: false };
+    if (gaps.length < 8) return { supported: true, frames: gaps.length + 1 };
+
+    const sorted = [...gaps].sort((a, b) => a - b);
+    const at = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+    const hz = (ms) => (ms > 0 ? Math.round((1000 / ms) * 10) / 10 : 0);
+    const quarter = sorted.slice(0, Math.max(1, Math.round(sorted.length / 4)));
+    const busyMean = quarter.reduce((a, b) => a + b, 0) / quarter.length;
+
+    return {
+      supported: true,
+      frames: gaps.length + 1,
+      // What the browser says it presented over the same stretch. More than
+      // `frames` means this callback missed some, which is itself a reading:
+      // the page was too busy to be told about its own frames.
+      presented: Math.max(0, lastPresented - firstPresented),
+      p10_ms: round3(at(0.1)),
+      median_ms: round3(at(0.5)),
+      p90_ms: round3(at(0.9)),
+      /** The recording at its busiest. Near 30 means smooth motion was caught. */
+      fastest_quarter_hz: hz(busyMean),
+      median_hz: hz(at(0.5)),
+      /**
+       * How uneven the spacing is, p90 over p10. A locked frame rate is 1. A
+       * capture that only emits on change is high however good its average, and
+       * that unevenness is what survives into the export as stepping.
+       */
+      spread: round3(at(0.9) / Math.max(0.1, at(0.1))),
+    };
+  }
+
   return {
     async start(stream) {
       worker = new Worker(new URL("./tracker.worker.js", import.meta.url));
@@ -515,6 +614,8 @@ export function createTracker() {
       video.playsInline = true;
       video.srcObject = new MediaStream(stream.getVideoTracks());
       await video.play().catch(() => {});
+
+      watchCadence(video);
 
       t0 = performance.now();
       paused = 0;
@@ -554,7 +655,11 @@ export function createTracker() {
 
     /** Everything seen, for POST /studio/demos/:id/upload/complete. */
     report() {
-      return { track, motion, tracker: TRACKER_VERSION, samples: track.length, cursor: profileOf(glyphs) };
+      return {
+        track, motion, tracker: TRACKER_VERSION, samples: track.length,
+        cursor: profileOf(glyphs),
+        frames: cadenceOf(),
+      };
     },
 
     get samples() {
