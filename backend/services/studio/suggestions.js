@@ -71,7 +71,18 @@ export function applySuggestion(timeline, suggestion, { duration }) {
           start, end,
           ...rect,
           level: num(c.level, 0) > 1 ? num(c.level) : 1.8,
-          easing: "smooth",
+          /**
+           * ── THE SUGGESTION MAY SAY HOW THE CAMERA SHOULD MOVE ─────────────
+           * "smooth" with no ramps means rampsOf falls back to 0.55s at both
+           * ends, which is a reveal. A zoom onto a press the analysis missed is
+           * not a reveal, and the audit now says so (audit.js toSuggestions).
+           * Anything that does not is unchanged, which is every suggestion the
+           * quality reviewer has ever produced.
+           */
+          easing: c.easing || "smooth",
+          ...(c.ease_out ? { ease_out: c.ease_out } : {}),
+          ...(num(c.ramp_in, 0) > 0 ? { ramp_in: num(c.ramp_in) } : {}),
+          ...(num(c.ramp_out, 0) > 0 ? { ramp_out: num(c.ramp_out) } : {}),
           camera: "element",
           follow: false,
           follow_strength: 0.7,

@@ -111,8 +111,26 @@ export const RAMP_IN = 0.24;
 /**
  * And coming out is a different move again — see rampsOf. Kept here beside the
  * one it pairs with rather than in events.js, where it used to live alone.
+ *
+ * ── THE TAIL IS THE HOLD PLUS THIS, AND ONLY THE HOLD WAS CUT ────────────────
+ * 0.42s, until the creator watched an export with the shortened hold in it and
+ * said the camera was still "staying a little bit longer until camera goes
+ * back". That is this number: after the hold ends, the shot is still on screen
+ * for the whole of the journey home, so what a viewer experiences after a click
+ * is HOLD + RAMP_OUT and cutting one of them moves the total by half as much as
+ * it looks like it should.
+ *
+ *     was   0.55 hold + 0.42 out = 0.97s
+ *     now   0.41 hold + 0.30 out = 0.71s
+ *
+ * Which is the same direction rampsOf already argues for in as many words —
+ * "easing out over half a second means half a second of watching a crop of a
+ * page that has already moved on, and it is the single thing that makes an
+ * automatic edit feel laggy". The number simply had not followed the reasoning
+ * down. It stays well clear of a cut: at 0.30s the move is still six or seven
+ * frames at 24fps and reads as a camera pulling back, not as an edit.
  */
-export const RAMP_OUT = 0.42;
+export const RAMP_OUT = 0.3;
 
 /* ────────────────────────────────────────────────────────────────────────────
    Where the pointer was
