@@ -1069,9 +1069,27 @@ export function inPlaying(regions, screen, x, y) {
  * and never longer than `max` — a page that never settles (a video, a ticker, a
  * progress bar that runs for a minute) must not hold the camera hostage.
  *
+ * ── AND `max` TURNED OUT TO BE THE WHOLE LENGTH OF A SHOT ────────────────────
+ * It was 2.6s, chosen as a ceiling for the rare page that keeps moving. On a
+ * real demo it was not rare at all — measured across one 33.7s recording, five
+ * of seven shots held 2.25 to 2.59 seconds after their press, every one of them
+ * up against that ceiling. An app whose content streams in after a click never
+ * goes quiet inside the window, so the ceiling stopped being an exception and
+ * became the normal length of a zoom.
+ *
+ * The creator named what the shot is for, which settles what the ceiling should
+ * be: "we need to zoom in the area where a button or clickable UI element needs
+ * to be zoomed in so on screen every user can see what the user has clicked".
+ * That is showing WHAT WAS PRESSED, not waiting out whatever it loaded. A
+ * second and a bit is long enough to read a control and see it respond; past
+ * that the viewer is watching a crop of a page for reasons of their own.
+ *
+ * `min` is untouched, so a control that answers at once is unaffected — this
+ * shortens only the shots that were running to the ceiling.
+ *
  * @returns {number} seconds after `t`, within [min, max]
  */
-export function settleAfter(screen, t, { min = 0.45, max = 2.6, quiet = 0.012, forMs = 300 } = {}) {
+export function settleAfter(screen, t, { min = 0.45, max = 1.2, quiet = 0.012, forMs = 300 } = {}) {
   const series = screen?.motion;
   if (!Array.isArray(series) || !series.length) return min;
 

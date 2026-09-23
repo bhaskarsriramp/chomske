@@ -3115,6 +3115,17 @@ const ACKNOWLEDGED = new Set(["flash", "pressed"]);
 const SAME_INTERACTION = 0.45;
 
 /**
+ * How long a press may still be the reason the screen is changing.
+ *
+ * Deliberately longer than the camera's own hold and independent of it: this is
+ * about what CAUSED a change, not about how long a shot should run. A panel
+ * that takes two and a half seconds to render is still rendering because of the
+ * press that opened it, and a shot that left after one second does not make the
+ * change at 2.4s somebody's new click.
+ */
+const OWNS_FOR = 2.6;
+
+/**
  * A press may not claim a change the press before it is still making.
  *
  * ── THE CLICK THAT NOBODY MADE, AT THE MOMENT THE DATA ARRIVED ───────────────
@@ -3205,7 +3216,20 @@ function ownConsequence(judged, screen, onNote) {
       continue;
     }
 
-    owned = t + settleAfter(screen, t);
+    /**
+     * ── HOW LONG A PRESS OWNS THE SCREEN IS NOT HOW LONG THE CAMERA STAYS ───
+     * Both questions used the same call, and they are not the same question.
+     * The hold is an editorial choice about how long a shot should run; this is
+     * a statement of fact about causation — a panel that takes two and a half
+     * seconds to render still CAUSED that change, whether or not the camera is
+     * there to watch it.
+     *
+     * They came apart the moment the hold's ceiling was lowered: shortening the
+     * shots also shortened this, and the phantom press at the moment data lands
+     * came straight back. So this keeps the ceiling it needs, and the hold is
+     * free to be whatever reads best.
+     */
+    owned = t + settleAfter(screen, t, { max: OWNS_FOR });
     owner = t;
   }
 

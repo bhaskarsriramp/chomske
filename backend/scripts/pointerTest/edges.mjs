@@ -192,14 +192,54 @@ for (const c of LOAD_CASES) {
 }
 console.log("");
 
-for (const c of LOAD_CASES) {
-  const hold = settleAfter(series(c.spans), CLICK);
-  ok(
-    "the camera is still on it when " + c.name.replace(/^an? /, "") + " finishes",
-    CLICK + hold >= c.answer - 1e-6,
-    "leaves " + (CLICK + hold).toFixed(2) + "s, answer up " + c.answer.toFixed(2) + "s"
-  );
-}
+/**
+ * ── AND THIS GUARANTEE WAS DELIBERATELY GIVEN UP ─────────────────────────────
+ * These used to assert that the camera stays until the answer is fully drawn,
+ * however long that takes up to the ceiling. The ceiling was 2.6s, and on a
+ * real recording that stopped being an exception: an app whose content streams
+ * in after a click never goes quiet inside the window, so five of seven shots
+ * ran to it and 2.5 seconds became the normal length of a zoom.
+ *
+ * The creator named what a shot is for — "zoom in the area where a button or
+ * clickable UI element needs to be zoomed in so on screen every user can see
+ * what the user has clicked" — and that is showing WHAT WAS PRESSED, not
+ * waiting out whatever it loaded. So the ceiling came down to 1.2s and the
+ * promise changed with it.
+ *
+ * What survives, and is asserted here instead: the hold still GROWS with the
+ * work, so a press whose result takes a moment is still held longer than one
+ * that answers instantly. It is bounded now, where before it was not.
+ */
+const holds = LOAD_CASES.map((c) => ({ c, hold: settleAfter(series(c.spans), CLICK) }));
+ok(
+  "an instant control is held the shortest of all of them",
+  holds[0].hold === Math.min(...holds.map((h) => h.hold)),
+  holds[0].hold.toFixed(2) + "s"
+);
+/**
+ * And the honest limit of that: the hold answers work it can SEE, and with the
+ * ceiling at 1.2s a result that lands after it is outside the window entirely.
+ * The skeleton-then-data-at-2.6s case therefore gets the same beat as a tab
+ * that just switches — the camera has left long before the answer appears.
+ *
+ * That is the trade this ceiling makes, written down rather than discovered
+ * later: shots are short, and a genuinely slow panel is no longer waited for.
+ */
+ok(
+  "work inside the window still lengthens the hold",
+  holds.filter((h) => h.hold > holds[0].hold).length >= 2,
+  holds.map((h) => h.hold.toFixed(2)).join(", ")
+);
+ok(
+  "and a result landing past the ceiling is simply not waited for",
+  holds[2].hold === holds[0].hold,
+  "data at 2.6s held " + holds[2].hold.toFixed(2) + "s, same as an instant control"
+);
+ok(
+  "and none of them runs past the ceiling",
+  holds.every((h) => h.hold <= 1.2 + 1e-9),
+  "longest " + Math.max(...holds.map((h) => h.hold)).toFixed(2) + "s"
+);
 
 /**
  * The other half of the contract: waiting longer is only right when there was
@@ -218,7 +258,7 @@ console.log("");
 ok(
   "an instant control gets a short hold, nothing like the maximum",
   settleAfter(series([[1.0, 1.25, 0.18]]), CLICK) < 0.7,
-  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK).toFixed(2) + "s against a ceiling of 2.60s"
+  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK).toFixed(2) + "s against a ceiling of 1.20s"
 );
 ok(
   "a press that changed nothing at all gets the minimum beat",
@@ -226,7 +266,7 @@ ok(
 );
 ok(
   "a screen that never settles is still let go of",
-  settleAfter(series([[1.0, 9.0, 0.2]]), CLICK) <= 2.6,
+  settleAfter(series([[1.0, 9.0, 0.2]]), CLICK) <= 1.2,
   settleAfter(series([[1.0, 9.0, 0.2]]), CLICK).toFixed(2) + "s"
 );
 ok("no measurement at all falls back to the beat", settleAfter(null, CLICK) === 0.45);

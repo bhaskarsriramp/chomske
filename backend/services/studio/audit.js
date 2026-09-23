@@ -715,20 +715,63 @@ const REFUSAL_WORDS = {
  * press against a frame up to 1.4 seconds away, by which time the page it
  * landed on may already be gone.
  */
+/**
+ * How far inside the recording a frame has to be cut from.
+ *
+ * ── ffmpeg CAN SUCCEED AND WRITE NOTHING ─────────────────────────────────────
+ * Seeking to the very last instant of a stream lands past the final frame.
+ * ffmpeg reports no error for that — it exits cleanly having written no file —
+ * so the extraction "worked", a path was handed on for a file that was never
+ * created, and the failure surfaced much later and somewhere else:
+ *
+ *   audit failed: ENOENT … open '…/audit/pair_33417_b.jpg'
+ *     at async imagePart (vision.js:116)
+ *
+ * 33.417s, on a recording 33.7 seconds long, with AUDIT.after at 0.6: the
+ * "after" frame was clamped to the duration itself. One press at the very end
+ * of a demo threw an exception out of a pass that is built to degrade, and the
+ * whole review came back "0 moment(s) checked, 0 finding(s)".
+ */
+const AUDIT_EDGE = 0.08;
+
+/**
+ * One frame, cut and confirmed to exist.
+ *
+ * Both of the things that can go wrong here are silent on their own: a seek
+ * past the end writes nothing without complaining, and a zero-byte file reads
+ * as a file until something tries to decode it. Neither is a reason to lose a
+ * pass — every caller here already copes with a frame it could not get — but
+ * both have to be turned into an answer rather than left for the next function
+ * to discover.
+ */
+async function cutFrame(video, file, at, { duration = 0, longEdge = 0 } = {}) {
+  const last = duration > 0 ? Math.max(0, duration - AUDIT_EDGE) : Infinity;
+  const when = Math.min(Math.max(0, at), last);
+  try {
+    await extractFrameAt(video, file, when, longEdge ? { longEdge } : undefined);
+  } catch (err) {
+    console.warn("[studio] could not cut a frame at " + when.toFixed(2) + "s: " + err.message);
+    return false;
+  }
+  try {
+    if ((await fsp.stat(file)).size > 0) return true;
+  } catch { /* nothing was written at all */ }
+  console.warn(
+    "[studio] ffmpeg wrote no frame at " + when.toFixed(2) + "s" +
+      (duration ? " of " + duration.toFixed(2) + "s" : "") + "; that moment is skipped"
+  );
+  return false;
+}
+
 async function framePair(video, t, dir, { duration = 0 } = {}) {
   const before = Math.max(0, t - AUDIT.before);
-  const after = Math.min(duration || Infinity, t + AUDIT.after);
+  const after = t + AUDIT.after;
   const tag = String(Math.round(t * 1000));
   const a = path.join(dir, `pair_${tag}_a.jpg`);
   const b = path.join(dir, `pair_${tag}_b.jpg`);
-  try {
-    await extractFrameAt(video, a, before);
-    await extractFrameAt(video, b, after);
-    return { before: a, after: b };
-  } catch (err) {
-    console.warn("[studio] could not cut a frame pair at " + t.toFixed(2) + "s: " + err.message);
-    return null;
-  }
+  const gotA = await cutFrame(video, a, before, { duration });
+  const gotB = await cutFrame(video, b, after, { duration });
+  return gotA && gotB ? { before: a, after: b } : null;
 }
 
 /**
@@ -753,13 +796,13 @@ async function frameStrip(video, t, dir, { duration = 0, offsets = AUDIT.strip }
     if (seen.has(key)) continue;
     seen.add(key);
     const file = path.join(dir, `strip_${Math.round(t * 1000)}_${key}.jpg`);
-    try {
-      await extractFrameAt(video, file, at, { longEdge: AUDIT.stripEdge });
+    // One frame that would not cut is not a reason to lose the moment: the
+    // sequence is still readable with five frames instead of six. cutFrame
+    // says so rather than throwing, and confirms the file is really there —
+    // a seek to the last instant of the stream writes nothing and reports
+    // success. See AUDIT_EDGE.
+    if (await cutFrame(video, file, at, { duration, longEdge: AUDIT.stripEdge })) {
       out.push({ file, at: round3(at), offset: round3(d) });
-    } catch (err) {
-      // One frame that would not cut is not a reason to lose the moment: the
-      // sequence is still readable with five frames instead of six.
-      console.warn("[studio] could not cut a frame at " + at.toFixed(2) + "s: " + err.message);
     }
   }
   // Below three frames there is no sequence to read and the question is not
