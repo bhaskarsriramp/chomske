@@ -3382,21 +3382,28 @@ export function zoomsFromClicks(events, { duration = 0, level = 2.0, settle = SE
       ...containingBox([mine], want),
       level: want,
       /**
-       * ── A PRESS IS A PUNCH, NOT A GLIDE ────────────────────────────────────
-       * Every zoom used to ease in over 0.55s on the `smooth` curve, because
-       * there was one ramp length and one curve for all of them. That is the
-       * right move for a slow reveal and about twice the right length for a
-       * press: SETTLE puts the camera fully arrived 0.3s before the click, so
-       * the move began 0.85s before a press the viewer has not been told about
-       * yet, and what they watch is the camera travelling rather than the thing
-       * that was pressed.
+       * ── A PRESS WAS A PUNCH, AND IT READ AS A FLASH ───────────────────────
+       * This was `punch` for a while, and the reasoning was sound on paper: a
+       * quarter of a second is what a hand-cut demo uses, and easeOutBack's
+       * little overshoot is the correction a camera operator makes and an
+       * interpolator does not.
        *
-       * A quarter of a second is what a hand-cut demo uses, and `punch` is what
-       * keeps that short a move from reading as a jump cut: it carries about
-       * three per cent past the mark and settles back, which is the correction
-       * a camera operator makes and an interpolator does not. See camera.mjs.
+       * Watched rather than reasoned about, it is a snap. easeOutBack has NO
+       * ease-in — it leaves at full speed on the first frame — so at 0.24s the
+       * whole move is over in six frames and what the eye gets is a cut with a
+       * wobble on the end, not a camera:
+       *
+       *   "zoom in and zoom out (camera movement) is too crisp and like a
+       *    flash … so camera movement will be buttery smooth"
+       *
+       * `smooth` is easeInOutCubic: it accelerates out of rest and decelerates
+       * into place, which is the shape of a real move. The cost is the one the
+       * old comment named — the camera is travelling for longer before a press
+       * the viewer has not been told about — and it is paid deliberately here,
+       * at 0.45s rather than the 0.55s that prompted the change in the first
+       * place. See camera.mjs RAMP_IN.
        */
-      easing: "punch",
+      easing: "smooth",
       ramp_in: RAMP_IN,
       // Gentle in, hard out. See timeline.js rampsOf for why these are not the
       // same number.

@@ -106,13 +106,29 @@ export const RAMP = { smooth: 0.55, snappy: 0.32, slow: 0.9, linear: 0.5, punch:
  * A quarter of a second is what a hand-cut demo uses, and it is short enough
  * that `SETTLE` (0.3s, in events.js) still has the camera fully arrived before
  * the press lands. The punch curve is what keeps that from reading as a cut.
+ *
+ * ── EXCEPT THAT IT DID READ AS ONE ───────────────────────────────────────────
+ * 0.24s is six frames at 24fps, and on the `punch` curve — easeOutBack, which
+ * has no ease-in and leaves at full speed on the first frame — six frames is a
+ * cut with a wobble on the end. The creator watched it and called it a flash.
+ *
+ * 0.45s on `smooth` accelerates out of rest and settles into place, which is
+ * what a camera does. It is still short of the 0.55s this was cut down FROM,
+ * so the objection that produced `punch` — that the viewer spends the approach
+ * watching the camera travel rather than the thing about to be pressed — is
+ * answered by a shorter move rather than by a snappier curve.
  */
-export const RAMP_IN = 0.24;
+export const RAMP_IN = 0.45;
 /**
  * And coming out is a different move again — see rampsOf. Kept here beside the
  * one it pairs with rather than in events.js, where it used to live alone.
+ *
+ * Lifted from 0.42 with the same complaint in mind, and only a little: this one
+ * was already on the `smooth` curve, so it was never the flash — and the tail
+ * after a press is the hold PLUS this, which the creator has separately said is
+ * long enough. Smoother, not slower.
  */
-export const RAMP_OUT = 0.42;
+export const RAMP_OUT = 0.5;
 
 /* ────────────────────────────────────────────────────────────────────────────
    Where the pointer was
