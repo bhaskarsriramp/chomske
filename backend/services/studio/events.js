@@ -3148,7 +3148,33 @@ function ownConsequence(judged, screen, onNote) {
   for (const { i, e, t } of order) {
     if (e.zoomable !== true) continue;
 
-    if (t <= owned && t - owner >= SAME_INTERACTION && !ACKNOWLEDGED.has(e.basis)) {
+    /**
+     * ── AND ONLY WHERE THE PRESS HAS NO CASE OF ITS OWN ──────────────────────
+     * The first version asked only whether the interface had acknowledged the
+     * press. That is too little: a hand settled on a control the model named is
+     * not circumstantial evidence, it is two independent readings agreeing, and
+     * a press with those behind it is a press whatever else the screen is busy
+     * doing.
+     *
+     * Measured on a real recording, where this refused three of them:
+     *
+     *   6.30   score 1.25   a hand on "Projects"
+     *  10.29   score 0.55   on "Browser-based video editing"
+     *  14.01   score 0.75   a hand on "Settings"
+     *
+     * Every one of those was a click the creator made, thrown away for landing
+     * a second or so after the one before it — and with them went three camera
+     * moves. The phantom this rule was built for looked nothing like them: it
+     * scored 0.75 on a hand resting over NOTHING the model had named, with the
+     * screen change from the previous press as its only other evidence.
+     *
+     * So the case has to be circumstantial in both directions before this can
+     * refuse it: no acknowledgement AND nothing named underneath. A missed
+     * click is the fault this product cannot afford, and a rule that guesses
+     * wrong should guess in the direction of keeping one.
+     */
+    const circumstantial = !ACKNOWLEDGED.has(e.basis) && e.on_control !== true;
+    if (t <= owned && t - owner >= SAME_INTERACTION && circumstantial) {
       const why = "the screen was still finishing the press at " + owner.toFixed(2) + "s";
       out[i] = { ...e, zoomable: false, basis: "still-arriving", why };
       onNote({ t, zoomable: false, why });

@@ -312,6 +312,48 @@ ok(
   "basis " + acknowledged[1].basis
 );
 
+/**
+ * ── AND THE COST WHEN THAT BOUND WAS TOO LOOSE ───────────────────────────────
+ * The first version of the rule asked only about the acknowledgement, and on a
+ * real recording it refused three presses the creator had made:
+ *
+ *   6.30   score 1.25   a hand on "Projects"
+ *  10.29   score 0.55   on "Browser-based video editing"
+ *  14.01   score 0.75   a hand on "Settings"
+ *
+ * A hand settled on a control the model named is two independent readings
+ * agreeing. That is not the previous press still landing, whatever else the
+ * screen is doing, and throwing it away costs a camera move the creator asked
+ * for by clicking.
+ */
+const onNamed = {
+  id: "p2", type: "click", t: ARRIVE, x: 0.55, y: 0.42,
+  confidence: 0.8, corroborated: true, scrolled: false,
+};
+const namedShots = [{
+  t: ARRIVE, screen: "billing settings", busy: false,
+  elements: [
+    { type: "button", label: "Billing", bbox: [0.18, 0.27, 0.10, 0.05], importance: "high", state: "normal", sticky: false },
+    { type: "button", label: "Projects", bbox: [0.50, 0.39, 0.12, 0.06], importance: "high", state: "normal", sticky: false },
+  ],
+}];
+const keptNamed = confirmClicks([realPress, onNamed], namedShots, { located: track, screen: panelScreen });
+console.log("");
+console.log("    a hand on a named control, inside the same window:");
+console.log("      " + Number(keptNamed[1].t).toFixed(2) + "s  " + (keptNamed[1].zoomable ? "YES" : "no ") +
+  "  score " + Number(keptNamed[1].score).toFixed(2) + "  " + keptNamed[1].basis + "  on " + (keptNamed[1].control || "(nothing)"));
+console.log("");
+ok(
+  "a press with a control named under it survives the window",
+  keptNamed[1].zoomable === true,
+  "basis " + keptNamed[1].basis + ", on " + (keptNamed[1].control || "(nothing)")
+);
+ok(
+  "...because that is two readings agreeing, not one press still landing",
+  keptNamed[1].on_control === true && Number(keptNamed[1].score) > 0.5,
+  "score " + Number(keptNamed[1].score).toFixed(2)
+);
+
 /* ════════════════════════════════════════════════════════════════════════════
    Four: "nothing came of it", measured on a screen that was mostly moving
    ════════════════════════════════════════════════════════════════════════════ */
