@@ -1521,8 +1521,16 @@ export function idleCuts(events, { duration = 0, minSeconds = 1.6, pad = 0.35 } 
  */
 /** Fully zoomed this long before the press, so the camera has settled. */
 const SETTLE = 0.3;
-/** Held after the press: the ripple, and the interface beginning to respond. */
-const HOLD = 0.55;
+/**
+ * Held after the press: the ripple, and the interface beginning to respond.
+ *
+ * ── AND IT IS WRITTEN IN TWO PLACES, SO BOTH MOVE OR NEITHER DOES ────────────
+ * The hold a press actually gets is `max(HOLD, settleAfter(...))`, and
+ * settleAfter's own minimum is this same beat. Cutting one of them alone is a
+ * no-op — the other floors it straight back — which is how an earlier attempt
+ * at exactly this change appeared to do nothing at all.
+ */
+const HOLD = 0.45;
 /** How long the camera takes to leave. Long enough to be a move, not a cut. */
 /**
  * RAMP_IN and RAMP_OUT now live in camera.mjs beside the curves they pair with,

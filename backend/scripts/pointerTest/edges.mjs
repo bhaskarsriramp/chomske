@@ -207,21 +207,29 @@ for (const c of LOAD_CASES) {
  * camera, or every shot in a demo becomes the maximum.
  */
 console.log("");
+/**
+ * An instant control settles at once, so what it gets is its own change ending
+ * plus the quiet run that proves it ended — half a second, near the floor
+ * rather than exactly on it. Asserting the floor itself only worked while the
+ * floor happened to be the larger of the two, and broke the moment it was
+ * lowered. What matters is that it is nowhere near the ceiling: a demo where
+ * every shot ran to `max` would be unwatchable.
+ */
 ok(
-  "an instant control still gets only the minimum beat",
-  Math.abs(settleAfter(series([[1.0, 1.25, 0.18]]), CLICK) - 0.55) < 1e-6,
-  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK).toFixed(2) + "s"
+  "an instant control gets a short hold, nothing like the maximum",
+  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK) < 0.7,
+  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK).toFixed(2) + "s against a ceiling of 2.60s"
 );
 ok(
   "a press that changed nothing at all gets the minimum beat",
-  Math.abs(settleAfter(series([]), CLICK) - 0.55) < 1e-6
+  Math.abs(settleAfter(series([]), CLICK) - 0.45) < 1e-6
 );
 ok(
   "a screen that never settles is still let go of",
   settleAfter(series([[1.0, 9.0, 0.2]]), CLICK) <= 2.6,
   settleAfter(series([[1.0, 9.0, 0.2]]), CLICK).toFixed(2) + "s"
 );
-ok("no measurement at all falls back to the beat", settleAfter(null, CLICK) === 0.55);
+ok("no measurement at all falls back to the beat", settleAfter(null, CLICK) === 0.45);
 
 /* ════════════════════════════════════════════════════════════════════════════
    Three: and the press nobody made, at the moment the data arrived

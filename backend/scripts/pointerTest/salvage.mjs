@@ -21,7 +21,7 @@
  *   structure inside strings is ignored  a brace in a label is not a container
  *   a genuinely broken reply still fails rather than being quietly half-read
  */
-import { closeTruncated } from "../../services/ai/provider.js";
+import { closeTruncated, mendCommas } from "../../services/ai/provider.js";
 
 let pass = true;
 const ok = (name, cond, detail = "") => {
@@ -107,6 +107,76 @@ ok(
   "a truncated batch keeps the frames that did arrive",
   batchGot.frames.length === 2 && batchGot.frames[1].screen === "two",
   batchGot.frames.map((f) => f.screen).join(", ")
+);
+
+/* ════════════════════════════════════════════════════════════════════════════
+   And the other way a reply breaks: whole, and missing a comma
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * From production, after the truncation repair above had shipped:
+ *
+ *   readFrames batch 5 failed: Expected ',' or ']' after array element in JSON
+ *   at position 4389 — 7618 characters … unrepairable
+ *
+ * 4389 of 7618. Three thousand characters of valid reply AFTER the fault, so
+ * nothing was cut off — the model sent a complete answer with a comma missing
+ * in the middle of it, and closeTruncated() has nothing to offer a document
+ * that does not stop.
+ *
+ * In this product's prompts that error has one overwhelming cause: the
+ * four-number box every element carries, written as [0.039 0.240 0.106 0.050].
+ * JSON.parse says exactly that sentence for exactly that input.
+ */
+console.log("\n" + "=".repeat(80));
+console.log("  A reply that arrived whole with a comma missing from a bbox");
+console.log("=".repeat(80) + "\n");
+
+const noCommas = '{"screen":"settings","elements":[{"type":"button","label":"Save video to...","bbox":[0.039 0.240 0.106 0.050]}]}';
+let midErr = "";
+try { JSON.parse(noCommas); } catch (e) { midErr = e.message; }
+const put = mendCommas(noCommas);
+const back = put ? JSON.parse(put) : null;
+
+console.log("    JSON.parse says   " + midErr);
+console.log("    broke at          " + /position (\d+)/.exec(midErr)?.[1] + " of " + noCommas.length + " characters");
+console.log("    repaired bbox     " + JSON.stringify(back?.elements?.[0]?.bbox));
+console.log("");
+
+ok("the parser really does reject it", /Expected ',' or '\]'/.test(midErr), midErr.slice(0, 46));
+ok("the fault is mid-reply, not at the end", Number(/position (\d+)/.exec(midErr)?.[1]) < noCommas.length - 16);
+ok("the separators are put back", !!back);
+ok(
+  "and the box comes out as four numbers",
+  JSON.stringify(back?.elements?.[0]?.bbox) === JSON.stringify([0.039, 0.24, 0.106, 0.05]),
+  JSON.stringify(back?.elements?.[0]?.bbox)
+);
+ok(
+  "the label is untouched, spaces and all",
+  back?.elements?.[0]?.label === "Save video to...",
+  JSON.stringify(back?.elements?.[0]?.label)
+);
+
+/**
+ * The half that matters as much: this must not touch a reply that is already
+ * right, and must not invent structure where two values sit side by side at the
+ * top level — that is a different kind of broken and guessing at it would be
+ * making an answer up.
+ */
+console.log("");
+ok("a valid reply is left alone", mendCommas('{"elements":[{"bbox":[0.1,0.2,0.3,0.4]}]}') === null);
+ok("an empty object is left alone", mendCommas("{}") === null);
+ok(
+  "two elements missing their comma are joined",
+  JSON.parse(mendCommas('{"frames":[{"screen":"one"} {"screen":"two"}]}')).frames.length === 2
+);
+ok(
+  "a space inside a string is never a missing comma",
+  mendCommas('{"label":"Save video to playlist"}') === null
+);
+ok(
+  "and neither is one in a label beside a broken box",
+  JSON.parse(mendCommas('{"label":"New playlist button","bbox":[0.1 0.2 0.3 0.4]}')).label === "New playlist button"
 );
 
 console.log(pass ? "\nall passed\n" : "\nFAILED\n");

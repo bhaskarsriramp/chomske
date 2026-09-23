@@ -721,6 +721,81 @@ export function closeTruncated(text) {
   return out;
 }
 
+/**
+ * A reply that dropped a comma, put back.
+ *
+ * ── THE OTHER WAY A MODEL BREAKS JSON, AND THE COMMONER ONE ──────────────────
+ * closeTruncated() mends a document that STOPS. This one mends a document that
+ * is complete and wrong in the middle, which is what production actually keeps
+ * producing:
+ *
+ *   [studio] readFrames batch 5 failed: Expected ',' or ']' after array element
+ *            in JSON at position 4389 — 7618 characters … unrepairable
+ *
+ * 4389 of 7618: three thousand characters of valid reply AFTER the fault, so
+ * nothing was cut off. "Expected ',' or ']' after array element" in mid-
+ * document has one overwhelming cause in this product's prompts, and it is the
+ * four-number box every element carries — the model writes
+ *
+ *     "bbox": [0.039 0.240 0.106 0.050]
+ *
+ * and leaves the commas out. JSON.parse says exactly that sentence for exactly
+ * that input, and the whole frame is then thrown away over three characters.
+ *
+ * The text is walked once, tracking strings and escapes so a space inside a
+ * label is untouched, and a comma is inserted wherever one value ends and
+ * another begins inside a container with nothing between them. Nothing is
+ * reordered and nothing is invented: the only edit is a separator where the
+ * grammar already required one.
+ *
+ * @returns {string|null} null when there was nothing to put back
+ */
+export function mendCommas(text) {
+  const s = String(text || "");
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  // The last thing that mattered was a complete value, so the next one needs a
+  // separator before it.
+  let afterValue = false;
+  let depth = 0;
+  let mended = 0;
+
+  const startsValue = (c) =>
+    c === '"' || c === "{" || c === "[" || c === "-" || (c >= "0" && c <= "9") ||
+    c === "t" || c === "f" || c === "n";
+  const inToken = (c) => c !== undefined && /[0-9a-zA-Z.+-]/.test(c);
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      out += c;
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') { inStr = false; afterValue = true; }
+      continue;
+    }
+    if (c === " " || c === "\n" || c === "\r" || c === "\t") { out += c; continue; }
+
+    // Only ever INSIDE something. Two values at the top level are a different
+    // kind of broken and guessing at it would be inventing structure.
+    if (afterValue && depth > 0 && startsValue(c)) { out += ","; mended++; }
+
+    if (c === '"') { inStr = true; out += c; afterValue = false; continue; }
+    if (c === "{" || c === "[") { depth++; out += c; afterValue = false; continue; }
+    if (c === "}" || c === "]") { depth = Math.max(0, depth - 1); out += c; afterValue = true; continue; }
+    // A separator of either kind: what follows is not a value that needs one.
+    if (c === "," || c === ":") { out += c; afterValue = false; continue; }
+
+    // A bare token — a number, or true/false/null. It is complete once the next
+    // character cannot belong to it.
+    out += c;
+    afterValue = !inToken(s[i + 1]);
+  }
+
+  return mended > 0 ? out : null;
+}
+
 /** Why the model stopped, when it says. MAX_TOKENS, SAFETY, RECITATION, STOP. */
 const stoppedBecause = (res) => String(res?.candidates?.[0]?.finishReason || "");
 
@@ -766,17 +841,37 @@ export async function generateJson(opts) {
     return { json: JSON.parse(text), usd, input, output };
   } catch (err) {
     const why = stoppedBecause(res);
-    const mended = closeTruncated(text);
-    if (mended) {
+    /**
+     * ── THE TWO WAYS A REPLY BREAKS, AND BOTH AT ONCE ────────────────────────
+     * A missing separator is repaired first because it is the commoner fault
+     * and it can sit anywhere in the document; closing a truncated reply is
+     * second; and a long reply can easily be both — a dropped comma early on
+     * and the end cut off — so the combination is tried last rather than
+     * failing a document each half could have saved.
+     *
+     * Each repair returns null when it has nothing to do, so an ordinary
+     * malformed reply costs two walks of a string and no guesses.
+     */
+    const repairs = [
+      ["a separator was put back", mendCommas],
+      ["it was closed off", closeTruncated],
+      ["a separator was put back and it was closed off", (t) => {
+        const m = mendCommas(t);
+        return m ? closeTruncated(m) : null;
+      }],
+    ];
+    for (const [what, repair] of repairs) {
+      const fixed = repair(text);
+      if (!fixed) continue;
       try {
-        const json = JSON.parse(mended);
+        const json = JSON.parse(fixed);
         console.warn(
-          `[ai] a reply stopped early (${why || "no reason given"}, ${spentOn(res)}) ` +
-            `and was closed off: kept ${mended.length} of ${text.length} characters`
+          `[ai] a reply would not parse (${why || "no reason given"}, ${spentOn(res)}) and ${what}: ` +
+            `${fixed.length} characters from ${text.length}`
         );
         return { json, usd, input, output };
       } catch {
-        /* The repair did not parse either. Fall through and report honestly. */
+        /* This repair did not parse either. Try the next, then report honestly. */
       }
     }
     /**
@@ -784,11 +879,23 @@ export async function generateJson(opts) {
      * travels with the failure — ask() in vision.js reads it off the error to
      * keep the spend counter honest through a pass that fails.
      */
+    /**
+     * Where the parser gave up, against how much there was. At the very end it
+     * is a truncation; well before it, the reply arrived whole and malformed,
+     * and those want opposite fixes. The first version of this message printed
+     * only the length, and a mid-document fault was read as a cut-off reply for
+     * a day because of it.
+     */
+    const at = Number(/position (\d+)/.exec(err.message)?.[1]);
+    const where = Number.isFinite(at)
+      ? ` — broke at ${at} of ${text.length} characters (${at > text.length - 16 ? "the end: cut off" : "mid-reply: arrived whole and malformed"})`
+      : ` — ${text.length} characters`;
+
     throw Object.assign(
       new Error(
         err.message +
           (why && why !== "STOP" ? ` (the model stopped early: ${why})` : "") +
-          ` — ${text.length} characters, ${spentOn(res)}, unrepairable`
+          where + `, ${spentOn(res)}, unrepairable`
       ),
       { usd, input, output, cause: err }
     );
