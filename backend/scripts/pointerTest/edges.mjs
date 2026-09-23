@@ -206,35 +206,22 @@ for (const c of LOAD_CASES) {
  * something to wait for. A control that answers at once must not hold the
  * camera, or every shot in a demo becomes the maximum.
  */
-/**
- * The beat itself, asked for rather than written down twice: with nothing to
- * measure there is nothing to wait for, so what comes back IS the minimum.
- * Asserting it separately means a change to the number is noticed here rather
- * than discovered in an export.
- */
-const BEAT = settleAfter(null, CLICK);
 console.log("");
-ok("the minimum beat is the one events.js holds for", Math.abs(BEAT - 0.41) < 1e-6, BEAT.toFixed(2) + "s");
-/**
- * An instant control settles at once, so what it gets is its own change ending
- * plus the quiet run that proves it ended — about half a second, near the floor
- * rather than on it. The point is that it is nowhere near the ceiling: a demo
- * where every shot ran to `max` would be unwatchable.
- */
 ok(
-  "an instant control gets a short hold, nothing like the maximum",
-  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK) < BEAT + 0.2,
-  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK).toFixed(2) + "s against a ceiling of 2.60s"
+  "an instant control still gets only the minimum beat",
+  Math.abs(settleAfter(series([[1.0, 1.25, 0.18]]), CLICK) - 0.55) < 1e-6,
+  settleAfter(series([[1.0, 1.25, 0.18]]), CLICK).toFixed(2) + "s"
 );
 ok(
-  "a press that changed nothing at all gets it too",
-  Math.abs(settleAfter(series([]), CLICK) - BEAT) < 1e-6
+  "a press that changed nothing at all gets the minimum beat",
+  Math.abs(settleAfter(series([]), CLICK) - 0.55) < 1e-6
 );
 ok(
   "a screen that never settles is still let go of",
   settleAfter(series([[1.0, 9.0, 0.2]]), CLICK) <= 2.6,
   settleAfter(series([[1.0, 9.0, 0.2]]), CLICK).toFixed(2) + "s"
 );
+ok("no measurement at all falls back to the beat", settleAfter(null, CLICK) === 0.55);
 
 /* ════════════════════════════════════════════════════════════════════════════
    Three: and the press nobody made, at the moment the data arrived

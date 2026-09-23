@@ -61,7 +61,7 @@ import path from "path";
 import fsp from "fs/promises";
 import { extractFrameAt } from "../media/ffmpeg.js";
 import { newSpend, arbitratePress, auditChange } from "./vision.js";
-import { newId, clampRect, RAMP_IN, RAMP_OUT } from "./timeline.js";
+import { newId, clampRect } from "./timeline.js";
 import { containingBox, levelForBox, CLICKABLE_SHAPES } from "./events.js";
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -1127,38 +1127,9 @@ function summarise(findings) {
    Part four: findings, as things the creator can press a button on
    ──────────────────────────────────────────────────────────────────────────── */
 
-/**
- * How long a proposed zoom runs, either side of the moment.
- *
- * ── THIS IS NOT THE SAME BEAT THE ANALYSIS USES, AND IT SHOULD BE ────────────
- * events.js SETTLE/HOLD say 0.30 and 0.41 for the identical question, so a
- * press the pixel pipeline catches gets a shorter close-up than the same press
- * recovered from the frames. Both carry the same sentence about "the beat a
- * control that answers instantly deserves" and disagree about the number. In an
- * export where both paths fire, the pacing changes for no visible reason.
- *
- * ── AND IT HAS NOW BEEN MADE ────────────────────────────────────────────────
- * The decision arrived the way these do: the creator watched an export in which
- * both paths had fired and said the camera was "staying a little bit longer
- * until camera goes back". The long ones were the arbiter's — the presses the
- * pixel pipeline had missed and this pass recovered — and there was no reason a
- * viewer could have named for why those two shots were paced differently from
- * the rest.
- *
- * `HOLD` is therefore the same beat events.js uses. It remains a FLOOR: where
- * the arbiter has read the sequence and can say when the result actually
- * appeared, `settled_by + RESULT_BEAT` is longer and wins, which is the whole
- * advantage this pass has over the pixel one.
- *
- * `LEAD` stays longer than events.js SETTLE, and that difference is real rather
- * than leftover: the analysis knows the moment of a press to within a frame or
- * two of the pixel pipeline, while this one infers it from frames sampled
- * seconds apart. The extra tenth and a half is the cost of that uncertainty,
- * and it is spent BEFORE the press, where an early camera costs nothing and a
- * late one misses the thing it was sent to show.
- */
+/** How long a proposed zoom runs, either side of the moment. */
 const LEAD = 0.45;
-const HOLD = 0.41;
+const HOLD = 1.5;
 /** How long to stay after a slow result finally appears, so it can be read. */
 const RESULT_BEAT = 0.9;
 
@@ -1208,27 +1179,6 @@ export function toSuggestions(findings, { duration = 0 } = {}) {
           bbox: [frame.x, frame.y, frame.w, frame.h],
           level,
           text: f.label || "",
-          /**
-           * ── A RECOVERED PRESS IS STILL A PRESS ────────────────────────────
-           * Without this the zoom is built with `easing: "smooth"` and no
-           * ramps, so rampsOf falls back to RAMP.smooth — 0.55s in AND 0.55s
-           * out. A press the analysis found gets 0.24 in and 0.30 out on the
-           * punch curve. So the same click, caught by a different pass, came
-           * out with a move more than twice as long at both ends, and the
-           * creator watching an export where both paths fired saw the pacing
-           * change for no reason they could point at:
-           *
-           *   "once a click is happened and zoom is closing in and it is
-           *    staying a little bit longer until camera goes back"
-           *
-           * Those were the arbiter's zooms. A missed_moment keeps the gentler
-           * curve, because it is a reveal rather than a press and a reveal is
-           * the one thing `smooth` was the right answer for.
-           */
-          easing: f.kind === "missed_press" ? "punch" : "smooth",
-          ramp_in: f.kind === "missed_press" ? RAMP_IN : null,
-          ramp_out: RAMP_OUT,
-          ease_out: "smooth",
         },
       });
       continue;
