@@ -2053,13 +2053,30 @@ export async function measureStay(video, e, { located = [], screen = null, W, H,
   const hh = Math.round(STAY_HALF_H * scale);
   const L = (located || []).filter((p) => p.located && !p.held);
   const px = (p) => ({ t: p.t, x: p.x * W, y: p.y * H });
+  /**
+   * ── THE PICTURE ON SCREEN AT A MOMENT, NOT THE NEXT ONE RECORDED ──────────
+   * This read a tenth of a second starting at `t` and took its first frame.
+   * A browser's recorder writes a frame only when something on screen
+   * changes, so on a still screen that tenth of a second holds nothing: on
+   * claude.ai the creator pressed a chat in the sidebar, moved off it and
+   * waited for the chat to load, the recording has no frame at all from
+   * 10.22s to 10.90s, and the picture wanted at 10.42s did not exist — the
+   * press was left "nothing came of it" and the camera went to where the hand
+   * happened to be waiting. What was on screen at `t` is the LAST frame
+   * written at or before it, so that is what is read: a short way back, then
+   * further for a screen that sat still for longer.
+   */
   const frameAt = async (t) => {
-    let got = null;
-    await ffmpegToFrames(video, {
-      width: W, height: H, fps: 30, pixelFormat: "gray", start: Math.max(0, t), duration: 0.1,
-      onFrame: (f) => { if (!got) got = Buffer.from(f); },
-    });
-    return got;
+    for (const back of [0.5, 5]) {
+      const from = Math.max(0, t - back);
+      let got = null;
+      await ffmpegToFrames(video, {
+        width: W, height: H, fps: 30, pixelFormat: "gray", start: from, duration: t - from + 0.04,
+        onFrame: (f) => { got = Buffer.from(f); },
+      }).catch(() => {});
+      if (got) return got;
+    }
+    return null;
   };
 
   const x = num(e.x) * W;
@@ -2092,106 +2109,132 @@ export async function measureStay(video, e, { located = [], screen = null, W, H,
    */
   const clearAt = (t) => !all.some((p) => Math.abs(p.t - t) <= 0.05 && inBox(p));
   const end = duration ? duration - 0.05 : Infinity;
-  let before = null;
-  for (let q = from - STAY_BEFORE; q >= Math.max(0, from - STAY_SEARCH); q -= 1 / 30) if (clearAt(q)) { before = q; break; }
-  let after = null;
-  for (let q = to + STAY_AFTER; q <= Math.min(end, to + STAY_SEARCH); q += 1 / 30) if (clearAt(q)) { after = q; break; }
-  const dwell = { before: before ?? from - STAY_BEFORE, after: after ?? to + STAY_AFTER, arrived: from, left: to };
-  if (before == null || after == null) {
-    const why = from - STAY_BEFORE < 0 || to + STAY_AFTER > end ? "too near an end" : "pointer in the box";
-    return { share: null, reason: why, ...dwell };
-  }
-  let playing = false;
-  for (let q = before; q <= after + 1e-6 && !playing; q += 0.25) playing = inMedia(screen, q, x / W, y / H);
-  if (playing) return { share: null, reason: "moving picture", ...dwell };
-
-  const a = await frameAt(before);
-  const b = await frameAt(after);
-  if (!a || !b) return { share: null, reason: "no frame", ...dwell };
-  /**
-   * ── LINED UP FIRST, BECAUSE PEOPLE SCROLL THE MOMENT THEY ARE DONE ──────
-   * On cap.so the creator left "Lifetime" and scrolled within half a second;
-   * refusing to compare across a scroll refused the one press this exists
-   * for. So the page's own movement is taken out first: the vertical shift
-   * that best lines up the SURROUNDINGS of the spot, a box several times the
-   * control's size, is found, and the control is compared at that shift. A
-   * scroll leaves the surroundings matching and the control matching; a
-   * press leaves the surroundings matching and the control different. When
-   * the surroundings cannot be lined up at all — the page moved the control
-   * off screen, or everything changed — nothing is said.
-   */
+  // The surroundings the two pictures are lined up on (see below).
   const cx0 = Math.max(0, Math.round(x - hw * 2.5));
   const cx1 = Math.min(W, Math.round(x + hw * 2.5));
   const cy0 = Math.max(0, Math.round(y - hh * 2.5));
   const cy1 = Math.min(H, Math.round(y + hh * 3.5));
-  // The surroundings are judged WITHOUT the control's own box: that is the
-  // part a press is expected to change.
-  const inner = (xx, yy) => xx >= box.x0 && xx < box.x1 && yy >= box.y0 && yy < box.y1;
-  const mismatch = (x0, x1, y0, y1, s, step, skipInner = false) => {
-    let bad = 0;
-    let n = 0;
-    for (let yy = y0; yy < y1; yy += step) {
-      const yb = yy + s;
-      if (yb < 0 || yb >= H) continue;
-      for (let xx = x0; xx < x1; xx += step) {
-        if (skipInner && inner(xx, yy)) continue;
-        n++;
-        if (Math.abs(a[yy * W + xx] - b[yb * W + xx]) > STAY_DIFF) bad++;
+  /**
+   * ── AND CLEAR OF THE SURROUNDINGS TOO, WHERE THAT CAN BE HAD ─────────────
+   * Clear of the control is not clear of its neighbours. On claude.ai the
+   * creator slid down a sidebar list onto a chat and pressed it; the picture
+   * before was taken with the pointer one row up, that row lit by its hover,
+   * and the surroundings the two pictures are lined up on no longer matched —
+   * "could not line the pictures up", and the press was left unconfirmed. So
+   * a pair of moments with the pointer clear of the whole surroundings is
+   * tried first, and the pair clear of the control alone after it.
+   */
+  const clearWide = (t) => !all.some((p) => Math.abs(p.t - t) <= 0.05 &&
+    p.x >= cx0 - 12 && p.x <= cx1 + 12 && p.y >= cy0 - 12 && p.y <= cy1 + 24);
+  const pick = (clear) => {
+    let b = null;
+    for (let q = from - STAY_BEFORE; q >= Math.max(0, from - STAY_SEARCH); q -= 1 / 30) if (clear(q)) { b = q; break; }
+    let a = null;
+    for (let q = to + STAY_AFTER; q <= Math.min(end, to + STAY_SEARCH); q += 1 / 30) if (clear(q)) { a = q; break; }
+    return { before: b, after: a };
+  };
+  const tight = pick(clearAt);
+  if (tight.before == null || tight.after == null) {
+    const why = from - STAY_BEFORE < 0 || to + STAY_AFTER > end ? "too near an end" : "pointer in the box";
+    return { share: null, reason: why, before: tight.before ?? from - STAY_BEFORE, after: tight.after ?? to + STAY_AFTER, arrived: from, left: to };
+  }
+  const wide = pick(clearWide);
+  if (wide.before != null && wide.after != null && (wide.before !== tight.before || wide.after !== tight.after)) {
+    const got = await compareAt(wide.before, wide.after);
+    if (got.share != null) return got;
+  }
+  return compareAt(tight.before, tight.after);
+
+  async function compareAt(before, after) {
+    const dwell = { before, after, arrived: from, left: to };
+    let playing = false;
+    for (let q = before; q <= after + 1e-6 && !playing; q += 0.25) playing = inMedia(screen, q, x / W, y / H);
+    if (playing) return { share: null, reason: "moving picture", ...dwell };
+
+    const a = await frameAt(before);
+    const b = await frameAt(after);
+    if (!a || !b) return { share: null, reason: "no frame", ...dwell };
+    /**
+     * ── LINED UP FIRST, BECAUSE PEOPLE SCROLL THE MOMENT THEY ARE DONE ──────
+     * On cap.so the creator left "Lifetime" and scrolled within half a second;
+     * refusing to compare across a scroll refused the one press this exists
+     * for. So the page's own movement is taken out first: the vertical shift
+     * that best lines up the SURROUNDINGS of the spot, a box several times the
+     * control's size, is found, and the control is compared at that shift. A
+     * scroll leaves the surroundings matching and the control matching; a
+     * press leaves the surroundings matching and the control different. When
+     * the surroundings cannot be lined up at all — the page moved the control
+     * off screen, or everything changed — nothing is said.
+     */
+    // The surroundings are judged WITHOUT the control's own box: that is the
+    // part a press is expected to change.
+    const inner = (xx, yy) => xx >= box.x0 && xx < box.x1 && yy >= box.y0 && yy < box.y1;
+    const mismatch = (x0, x1, y0, y1, s, step, skipInner = false) => {
+      let bad = 0;
+      let n = 0;
+      for (let yy = y0; yy < y1; yy += step) {
+        const yb = yy + s;
+        if (yb < 0 || yb >= H) continue;
+        for (let xx = x0; xx < x1; xx += step) {
+          if (skipInner && inner(xx, yy)) continue;
+          n++;
+          if (Math.abs(a[yy * W + xx] - b[yb * W + xx]) > STAY_DIFF) bad++;
+        }
+      }
+      return n > 50 ? bad / n : 1;
+    };
+    /**
+     * ── ONLY THE SHIFTS THE PAGE COULD HAVE MADE ──────────────────────────────
+     * Searching every shift within half a screen lined a white pricing card up
+     * with a white stretch 515px away — the page had not moved at all — and
+     * then called the whole control "changed". Right answer that time, for the
+     * wrong reason, and on a hover over a white page the same accident is a
+     * false zoom. The video's own scroll measurement says how far the page went
+     * between the two pictures (readScreen, `dy` in frame heights, content
+     * moving down positive, which is the sign `s` uses): when it did not move,
+     * only the pictures as they are are compared, and when it did, only shifts
+     * the same way and of about that size — it reads short, so up to twice and
+     * a half — plus none at all, for a control that is fixed while the page
+     * scrolls.
+     */
+    const moved = (screen?.scroll || []).filter((q) => q.t > before && q.t <= after).reduce((acc, q) => acc + num(q.dy), 0) * H;
+    let best = { s: 0, m: mismatch(cx0, cx1, cy0, cy1, 0, 2, true) };
+    if (Math.abs(moved) >= STAY_STILL_PX) {
+      const reach = Math.round(Math.min(H * STAY_REACH, Math.abs(moved) * 2.5 + 40));
+      const least = Math.round(Math.abs(moved) * 0.4);
+      const dir = Math.sign(moved);
+      for (let k = least; k <= reach; k += 2) {
+        const s = dir * k;
+        if (s === 0) continue;
+        const m = mismatch(cx0, cx1, cy0, cy1, s, 3, true);
+        if (m < best.m - 0.01) best = { s, m };
       }
     }
-    return n > 50 ? bad / n : 1;
-  };
-  /**
-   * ── ONLY THE SHIFTS THE PAGE COULD HAVE MADE ──────────────────────────────
-   * Searching every shift within half a screen lined a white pricing card up
-   * with a white stretch 515px away — the page had not moved at all — and
-   * then called the whole control "changed". Right answer that time, for the
-   * wrong reason, and on a hover over a white page the same accident is a
-   * false zoom. The video's own scroll measurement says how far the page went
-   * between the two pictures (readScreen, `dy` in frame heights, content
-   * moving down positive, which is the sign `s` uses): when it did not move,
-   * only the pictures as they are are compared, and when it did, only shifts
-   * the same way and of about that size — it reads short, so up to twice and
-   * a half — plus none at all, for a control that is fixed while the page
-   * scrolls.
-   */
-  const moved = (screen?.scroll || []).filter((q) => q.t > before && q.t <= after).reduce((acc, q) => acc + num(q.dy), 0) * H;
-  let best = { s: 0, m: mismatch(cx0, cx1, cy0, cy1, 0, 2, true) };
-  if (Math.abs(moved) >= STAY_STILL_PX) {
-    const reach = Math.round(Math.min(H * STAY_REACH, Math.abs(moved) * 2.5 + 40));
-    const least = Math.round(Math.abs(moved) * 0.4);
-    const dir = Math.sign(moved);
-    for (let k = least; k <= reach; k += 2) {
-      const s = dir * k;
-      if (s === 0) continue;
-      const m = mismatch(cx0, cx1, cy0, cy1, s, 3, true);
-      if (m < best.m - 0.01) best = { s, m };
+    // Refine around the winner at full density.
+    for (let s = best.s - 2; s <= best.s + 2; s++) {
+      const m = mismatch(cx0, cx1, cy0, cy1, s, 2, true);
+      if (m < best.m) best = { s, m };
     }
+    /**
+     * Lined up means the winning shift fits clearly better than its
+     * neighbours, not that everything around matches: a press on a toggle
+     * rewrites the price and the line under it as well. A page scrolled so
+     * far the control left the picture has no clear winner, and is not
+     * compared.
+     */
+    const off = Math.min(mismatch(cx0, cx1, cy0, cy1, best.s + 24, 2, true), mismatch(cx0, cx1, cy0, cy1, best.s - 24, 2, true));
+    const lined = best.m <= STAY_ALIGN || (best.m <= STAY_ALIGN_MAX && off >= best.m * STAY_ALIGN_CLEAR);
+    if (!lined) {
+      return { share: null, reason: "could not line the pictures up (" + Math.round(best.m * 100) + "% off, " + Math.round(off * 100) + "% beside it)", ...dwell };
+    }
+    if (near(after).some((p) => inBox(p, best.s))) return { share: null, reason: "pointer in the box afterwards", ...dwell };
+    const share = mismatch(
+      Math.max(0, Math.round(box.x0)), Math.min(W, Math.round(box.x1)),
+      Math.max(0, Math.round(box.y0)), Math.min(H, Math.round(box.y1)),
+      best.s, 1
+    );
+    return { share, reason: "", shift: best.s, ...dwell };
   }
-  // Refine around the winner at full density.
-  for (let s = best.s - 2; s <= best.s + 2; s++) {
-    const m = mismatch(cx0, cx1, cy0, cy1, s, 2, true);
-    if (m < best.m) best = { s, m };
-  }
-  /**
-   * Lined up means the winning shift fits clearly better than its
-   * neighbours, not that everything around matches: a press on a toggle
-   * rewrites the price and the line under it as well. A page scrolled so
-   * far the control left the picture has no clear winner, and is not
-   * compared.
-   */
-  const off = Math.min(mismatch(cx0, cx1, cy0, cy1, best.s + 24, 2, true), mismatch(cx0, cx1, cy0, cy1, best.s - 24, 2, true));
-  const lined = best.m <= STAY_ALIGN || (best.m <= STAY_ALIGN_MAX && off >= best.m * STAY_ALIGN_CLEAR);
-  if (!lined) {
-    return { share: null, reason: "could not line the pictures up (" + Math.round(best.m * 100) + "% off, " + Math.round(off * 100) + "% beside it)", ...dwell };
-  }
-  if (near(after).some((p) => inBox(p, best.s))) return { share: null, reason: "pointer in the box afterwards", ...dwell };
-  const share = mismatch(
-    Math.max(0, Math.round(box.x0)), Math.min(W, Math.round(box.x1)),
-    Math.max(0, Math.round(box.y0)), Math.min(H, Math.round(box.y1)),
-    best.s, 1
-  );
-  return { share, reason: "", shift: best.s, ...dwell };
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

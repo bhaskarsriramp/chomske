@@ -561,6 +561,58 @@ other within 0.2 s) now counts as a scroll only if the video's own measurement
 (`readScreen`) also saw the page move at that moment; with no video reading the
 old rule stands.
 
+**Fixed 2026-09-25 — three more, from a fifth cap.so recording ("Cap-demo (3)")**
+(production caught Lifetime and missed Pricing; the replay missed both):
+
+- *The video's scroll reading can be fooled too.* It is the median of what each
+  region of the frame reports (`sync.js readScreen`), and a page swapped for
+  another still yields a median: the Pricing swap read as a shift there as well,
+  so the rule above threw it away again. Each reading now carries `agree`, the
+  share of regions moving with the median. Measured on every labelled recording:
+  lone frames that were page swaps 5–31%, lone frames that were real scroll steps
+  58–97%. `videoScrolled` needs ≥ 50% (`SCROLL_AGREE`).
+- *A rest does not run through a hole the pointer came out of elsewhere.* Chrome
+  stops drawing an idle pointer; the hand rested on "Lifetime" from 14.0 s, went
+  undrawn at 16.6 s and was next seen at 20.1 s a little away. Speed across a
+  hole is distance over the whole hole, so `dwells` read it as still throughout,
+  made one rest 14.0–20.1 s placed where the pointer reappeared, and gave its one
+  press to a change at 20.5 s instead of the switch flipping under the hand at
+  14.8 s. A still stretch now ends at a hole ≥ `GAP_REST` after which the pointer
+  is > `GAP_MOVED` (2% of the frame) away; the hole is its own rest already.
+- *A navigation's press is no later than the hand was last seen on the thing.*
+  Surfaced by the first fix: on cursorful.com a real page change that used to be
+  discarded is now minted, and its press, placed 0.12 s before the change,
+  landed at 30.29 s — 0.06 s after the hand was last seen on "Editor" — so the
+  gate read a pointer that never settled and refused it. The press moves back to
+  that last sighting when it is within `NAV_SEEN_BACK` (0.35 s).
+
+**Fixed 2026-09-25 — found blind, on a claude.ai recording nobody had reported
+yet.** The creator pressed a chat in the sidebar, moved into the empty middle of
+the page and waited; the chat arrived a second later, was credited to the later
+rest, and the camera zoomed on nothing while the real press went unconfirmed.
+Two faults in `measureStay`, neither specific to that site:
+
+- *The picture at a moment is the last frame written, not the next one.* A
+  browser's recorder writes frames only when something changes; this recording
+  has none from 10.22 s to 10.90 s. The check read a tenth of a second from the
+  moment it wanted, found nothing, and gave up ("no frame"). It now reads back
+  from the moment (0.5 s, then 5 s) and keeps the last frame — what was on screen.
+- *Clear of the surroundings, not only of the control.* The "before" picture had
+  the pointer on the row above, lit by its hover, inside the surroundings the two
+  pictures are lined up on. A pair of moments with the pointer clear of the whole
+  surroundings is now tried first, then the old pair.
+
+With the press confirmed (49% of the row stayed changed), `ownConsequence` gives
+it the page change and refuses the zoom on empty space as still-arriving.
+Projects and Settings in the same recording are still refused that way when the
+model has not read the screen (each came 1.9–2.5 s after the press before it,
+after a quiet screen) — in production the model names both controls and they
+zoom. A pixel-only rule cannot tell them from a hand resting while data loads.
+
+`STUDIO_TRACE_NAV=1` prints, for every large screen change, which check kept it
+from being a navigation (or that it minted one), and every rest with the change
+the press search found beside it.
+
 **Measured the same day — the arbiter is not the answer to either.** Run on this
 recording (`scripts/pointerTest/arbiter.mjs`), it called three auto-rotating tab
 changes on the home page presses and missed both real ones. From a few stills it
@@ -1229,6 +1281,7 @@ STUDIO_FRAME_EVERY=2            # seconds between UI_ANALYZER frames
 STUDIO_VISION_CONCURRENCY=4     # frames in flight (memory, not rate limit)
 STUDIO_LOCATE_BUDGET_MS=600000  # wall-clock ceiling on the locator
 GEMINI_RPM / GEMINI_CONCURRENCY # the real rate limits, process-wide
+STUDIO_TRACE_STAY=1  STUDIO_TRACE_NAV=1   # debugging only: why a press was or was not found, §7.2
 ```
 
 ---

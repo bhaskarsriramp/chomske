@@ -496,6 +496,19 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
         seen.sort((a, b) => a - b);
         dy = seen[seen.length >> 1];
       }
+      /**
+       * How many of the regions that could be read moved WITH the frame. A
+       * page scrolling carries every region the same distance; a page
+       * replaced by another has regions matching wherever chance puts them,
+       * and the median of those is a number with nothing behind it. On
+       * cap.so a press on "Pricing" swapped the page in one frame and this
+       * pass reported a shift of a quarter of the screen for it.
+       */
+      let agree = null;
+      if (dy !== 0 && seen.length) {
+        const tol = Math.max(SCROLL_STILL, Math.abs(dy) * 0.15);
+        agree = seen.filter((d) => Math.abs(d - dy) <= tol).length / seen.length;
+      }
       if (Math.abs(dy) >= SCROLL_MOVED) {
         offset += dy;
         for (let c = 0; c < shifts.length; c++) {
@@ -512,6 +525,7 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
         // at 480 wide. Positive means the content moved DOWN the screen.
         dy: round4(dy / H),
         offset: round4(offset / H),
+        ...(agree != null ? { agree: round3(agree), regions: seen.length } : {}),
       });
       prevProf = prof;
 

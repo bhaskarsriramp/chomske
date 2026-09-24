@@ -1,0 +1,24 @@
+{
+  "about": "claude.ai: close the usage dialog, Projects, a chat in the sidebar (slow to load), scroll the chat, account menu, Settings, Billing, Capabilities, close. Recorded 2026-09-25 right after 'Cap-demo (3)'; checked blind before anybody reported it. The first replay zoomed on empty space for the chat and missed the chat itself.",
+  "recording": "cap-demo4-2026-09-25.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab57271b6aa00db40c542f5/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "The chat: the hand rests on 'X algorithm changes and founder…' from 9.1s; the recording has no frames from 9.58s to 10.07s and the row is first drawn selected at 10.07s, so the press is somewhere in 9.58-10.07 — labelled 9.8. The creator then moved into the empty middle of the Projects page and waited; the chat arrived at 10.9s. The page change used to be credited to that later rest (a zoom on nothing at 10.80s). measureStay could not read its 'after' picture (no frame at 10.42s — the capture writes frames only when something changes) and, once it could, lined its pictures up on a row lit by hover; both fixed in locate.js, and the confirmed press now owns the page change.",
+    "Projects and Settings are KNOWN without the model's screen reading: each lands 2.5s and 1.9s after the press before it, on a screen that had gone quiet, and ownConsequence gives the earlier press every change for 2.6s. With STUDIO_VISION_ON_ANALYSE=on (production) the controls are named and both zoom (replayed 2026-09-25). A pixel-only rule cannot tell them from a hand resting while data loads (edges.mjs 'the press nobody made').",
+    "13.5-14.8s is the scrollbar being dragged at the right edge — no press."
+  ],
+  "pointer_drawn_from": 0,
+  "clicks": [
+    { "label": "close the usage dialog", "t": 4.1, "x": 1560, "y": 56 },
+    { "label": "Projects", "t": 6.65, "x": 190, "y": 135, "known": "refused as still-arriving without the model's screen reading; production names the control (see notes)" },
+    { "label": "a chat in the sidebar", "t": 9.8, "x": 122, "y": 675 },
+    { "label": "account menu", "t": 15.8, "x": 162, "y": 978 },
+    { "label": "Settings", "t": 17.7, "x": 174, "y": 637, "known": "refused as still-arriving without the model's screen reading; production names the control (see notes)" },
+    { "label": "Billing", "t": 19.8, "x": 448, "y": 284 },
+    { "label": "Capabilities", "t": 26.75, "x": 432, "y": 326 },
+    { "label": "close settings", "t": 31.6, "x": 1558, "y": 53 }
+  ],
+  "strangers": [],
+  "stranger_budget_s": 0
+}

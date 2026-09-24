@@ -316,11 +316,25 @@ function lonelyShift(mot, m) {
  * Whether the video's own measurement saw the page move at this moment — two
  * or more of its rows, within a frame or so. With no measurement at all, yes:
  * the caller then keeps the answer it had before this existed.
+ *
+ * ── MOVED TOGETHER, NOT JUST MOVED ─────────────────────────────────────────
+ * That measurement is the median of what each region of the frame reports,
+ * and a page replaced by another still hands back a median — regions of the
+ * new page match regions of the old wherever chance puts them. On cap.so a
+ * press on "Pricing" swapped the page at 10.85s and the video reported a
+ * shift for it too, so the fix above still threw the page change away. What
+ * a scroll has is agreement: across every labelled recording, the lone
+ * frames that were page swaps had 5-31% of their regions moving with the
+ * median, and the lone frames that were real scroll steps 58-97%. A reading
+ * without the agreement on it (an older one) counts as it always did.
  */
+const SCROLL_AGREE = 0.5;
+
 function videoScrolled(screen, t) {
   const list = Array.isArray(screen?.scroll) ? screen.scroll : [];
   if (!list.length) return true;
-  return list.some((q) => Math.abs(num(q.t) - t) <= 0.12 && Math.abs(num(q.dy)) >= 2 / 270);
+  return list.some((q) => Math.abs(num(q.t) - t) <= 0.12 && Math.abs(num(q.dy)) >= 2 / 270 &&
+    (q.agree == null || num(q.agree) >= SCROLL_AGREE));
 }
 
 function scrolledAfter(mot, t) {
@@ -442,6 +456,24 @@ export function dwells(samples, v = speeds(samples)) {
 
   let open = null;
   for (let i = 0; i < samples.length; i++) {
+    /**
+     * ── A HOLE THE POINTER CAME OUT OF SOMEWHERE ELSE ENDS THE REST ─────────
+     * Speed across a hole is distance over the whole hole, so a pointer that
+     * rested, went unseen for seconds and then turned up a few centimetres
+     * away reads as having crept there — still, all along — and the rest ran
+     * on through the hole and took its place from the far side. On cap.so the
+     * creator's hand rested on "Lifetime" from 14.0s, Chrome stopped drawing
+     * the idle pointer at 16.6s, and it was next seen at 20.1s a little up
+     * and to the right: one rest, 14.0-20.1s, placed where it was found
+     * again, and its one press went to a change at 20.5s instead of the
+     * switch flipping under the hand at 14.8s. The hole is its own rest
+     * already (above), at the place the pointer was last seen.
+     */
+    if (open && i > 0 && samples[i].t - samples[i - 1].t >= GAP_REST &&
+        Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y) > GAP_MOVED) {
+      if ((open.end ?? open.start) - open.start >= RULES.dwellMs / 1000) out.push({ ...open, end: open.end ?? open.start });
+      open = null;
+    }
     if (v[i] <= RULES.stillSpeed) {
       if (!open) open = { start: samples[i].t, x: samples[i].x, y: samples[i].y, shape: samples[i].shape, n: 1 };
       else {
@@ -537,6 +569,8 @@ export function restMoments(samples, { limit = 400 } = {}) {
  * nothing. A quarter of a second of silence means the pointer stopped.
  */
 const GAP_REST = 0.25;
+/** A pointer found again further than this from where it went unseen moved in the meantime (~38px at 1920). */
+const GAP_MOVED = 0.02;
 
 /* ────────────────────────────────────────────────────────────────────────────
    Inference
@@ -666,7 +700,13 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
      * page replaced by another does not. With no video reading, the old answer
      * stands.
      */
-    if (Math.abs(num(m.dy, 0)) >= SCROLL_SHIFT && !(lonelyShift(mot, m) && !videoScrolled(screen, m.t))) continue;
+    const traceNav = process.env.STUDIO_TRACE_NAV && m.energy >= 0.05
+      ? (why) => console.log("[studio] trace: change at " + num(m.t).toFixed(2) + "s (energy " + num(m.energy).toFixed(3) + ", dy " + num(m.dy, 0).toFixed(3) + ") " + why)
+      : () => {};
+    if (Math.abs(num(m.dy, 0)) >= SCROLL_SHIFT && !(lonelyShift(mot, m) && !videoScrolled(screen, m.t))) {
+      traceNav("read as a scroll (lonely " + lonelyShift(mot, m) + ", video scrolled " + videoScrolled(screen, m.t) + ")");
+      continue;
+    }
     /**
      * ── AND NOT JUST THIS FRAME: THE STRETCH AROUND IT ─────────────────────
      * The check above reads one frame, and the first frame of a scroll often
@@ -681,7 +721,7 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
      * disagree with each other — its layout settling — and a real click on
      * "API Keys" measured seven of them with a coherence of 0.64.
      */
-    if (scrollingAround(mot, m.t)) continue;
+    if (scrollingAround(mot, m.t)) { traceNav("inside a run of scrolling"); continue; }
     /**
      * ── AND THE TEST THAT DOES NOT ASK THE TRACKER WHICH WAY IT WENT ───────
      * Every scroll veto above this line is built on `dy`, and `dy` has a
@@ -708,13 +748,14 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
      * that changed the screen had 4% of the surrounding second also changing,
      * and the scroll had 40-46%. That is not a threshold anyone has to tune.
      */
-    if (sustained(mot, m.t, m.energy)) continue;
-    if (!screenAgrees(screen, m.t, m)) continue;
+    if (sustained(mot, m.t, m.energy)) { traceNav("part of a sustained change"); continue; }
+    if (!screenAgrees(screen, m.t, m)) { traceNav("the video did not see it"); continue; }
     if (m.t - lastNav < RULES.navGap) {
       lastNav = m.t;
       continue;
     }
     lastNav = m.t;
+    traceNav("minted a navigation");
     events.push(event("nav", m.t, m.x + m.w / 2, m.y + m.h / 2, { confidence: clamp(0.5 + m.energy * 3, 0, 1) }));
     // `whole` travels with it: a frame-filling change contains the pointer
     // wherever the pointer is, and a pane-sized one has to be shown to.
@@ -859,7 +900,21 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
     if (earlier) { claim(nav.t); continue; }
 
     // The press is just before the change it caused, and inside the dwell.
-    const at = clamp(nav.t - 0.12, rest.start, Math.max(rest.start, rest.end));
+    let at = clamp(nav.t - 0.12, rest.start, Math.max(rest.start, rest.end));
+    /**
+     * ── AND NO LATER THAN THE POINTER WAS LAST SEEN THERE ─────────────────
+     * A tenth of a second before the change is a guess at how long the page
+     * took to answer, and it can land after the hand has already left: on
+     * cursorful.com the creator pressed "Editor" with the hand last seen on
+     * it at 30.23s, the page changed at 30.41s, and the press placed at
+     * 30.29s was read by the gate as a pointer that never settled — the
+     * sighting it needed to call the hand held was 0.06s before it. The
+     * press cannot have come after the pointer left the thing it pressed, so
+     * where it was last seen on it bounds when. Only a short way back: a
+     * pointer unseen for longer than that is a guess either way, and says so.
+     */
+    const lastSeen = lastSeenAt(located, rest, at);
+    if (lastSeen != null && at - lastSeen > 0 && at - lastSeen <= NAV_SEEN_BACK) at = Math.max(rest.start, lastSeen);
     if (events.some((e) => e.type === "click" && Math.abs(e.t - at) < 0.25)) continue;
 
     // A page that changed under a resting pointer is strong evidence on its
@@ -904,6 +959,11 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
       const score = m.energy / (1 + near * 6);
       if (!best || score > best.score) best = { m, near, score };
     }
+    if (process.env.STUDIO_TRACE_NAV) {
+      console.log("[studio] trace: rest " + num(rest.start).toFixed(2) + "-" + num(rest.end).toFixed(2) + "s at " +
+        num(rest.x).toFixed(3) + "," + num(rest.y).toFixed(3) + " " + (rest.shape || "") +
+        (best ? " -> change at " + best.m.t.toFixed(2) + "s energy " + best.m.energy : " -> no change beside it"));
+    }
     if (!best) continue;
 
     // ── Confidence ────────────────────────────────────────────────────────
@@ -943,7 +1003,10 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
     const spot = restAt(pts, rest, at);
 
     // One press, however many passes found it.
-    if (events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - at) < 0.4 && Math.hypot(e.x - spot.x, e.y - spot.y) < 0.05)) continue;
+    if (events.some((e) => (e.type === "click" || e.type === "dblclick") && Math.abs(e.t - at) < 0.4 && Math.hypot(e.x - spot.x, e.y - spot.y) < 0.05)) {
+      if (process.env.STUDIO_TRACE_NAV) console.log("[studio] trace:   already a press at " + at.toFixed(2) + "s");
+      continue;
+    }
 
     /**
      * Did anything come of it? A press is followed by a change bigger than the
@@ -1439,6 +1502,24 @@ function restAt(pts, rest, t) {
   // the dwell already carries the last place the pointer was seen before it.
   // Nothing here was measured at this moment, so nothing about it is fresh.
   return { x: rest.x, y: rest.y, age: Infinity };
+}
+
+/** How far back from a page change its press may be moved to find the pointer still on it. */
+const NAV_SEEN_BACK = 0.35;
+
+/**
+ * When the located pointer was last seen at a rest's spot, at or before `t`
+ * (a frame's grace after). Null when it was not seen there at all.
+ */
+function lastSeenAt(located, rest, t) {
+  let last = null;
+  for (const p of located || []) {
+    const pt = num(p.t);
+    if (pt < num(rest.start) - 0.05) continue;
+    if (pt > t + 0.02) break;
+    if (Math.hypot(num(p.x, 0.5) - num(rest.x), num(p.y, 0.5) - num(rest.y)) <= SHAPE_SAME) last = pt;
+  }
+  return last;
 }
 
 /** How far a changed region is from where the pointer was resting. 0 when over it. */

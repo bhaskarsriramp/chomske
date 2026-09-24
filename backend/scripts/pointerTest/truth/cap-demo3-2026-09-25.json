@@ -1,0 +1,21 @@
+{
+  "about": "cap.so a fifth time: the hero with the laptop mock-up, the feature sections, Pricing in the sticky nav bar, then Lifetime. Recorded 2026-09-25 as 'Cap-demo (3)': production zoomed on Lifetime and missed Pricing; the replay then missed both.",
+  "recording": "cap-demo3-2026-09-25.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab56d44b6aa00db40c541f7/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "Pricing: the hand is on the link from 10.3s and the pricing page arrives at 10.9s, so the click is ~10.8s. The tracker logged the swap as a one-frame dy of -0.249, and the video's own scroll reading ALSO reported a shift for it (median of its regions) — with only 31% of the regions agreeing. events.js videoScrolled now asks for agreement.",
+    "Lifetime: the hand rests on the switch from 14.0s and it flips at ~14.8s. Chrome stopped drawing the idle pointer at 16.6s and it reappeared at 20.1s a little away; dwells() ran one rest from 14.0 to 20.1 placed where it reappeared, and its one press went to 20.5s. A hole the pointer comes out of somewhere else now ends the rest.",
+    "stranger_budget_s / stranger_budget_pixel_s are RATCHETS measured on 2026-09-25. Lower them when they improve; never raise them."
+  ],
+  "pointer_drawn_from": 0,
+  "clicks": [
+    { "label": "Pricing", "t": 10.8, "x": 1145, "y": 70 },
+    { "label": "Lifetime", "t": 14.75, "x": 547, "y": 437 }
+  ],
+  "strangers": [
+    { "label": "the cursor inside the laptop mock-up's Cap app", "from": 0.0, "to": 6.0, "box": [300, 60, 1620, 900] }
+  ],
+  "stranger_budget_s": 99,
+  "stranger_budget_pixel_s": 99
+}
