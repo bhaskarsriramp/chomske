@@ -137,6 +137,20 @@ for (const f of files) {
     if (!earned) line(false, `zoom ${z.start.toFixed(2)}-${z.end.toFixed(2)}s covers no press the creator made`);
   }
 
+  /**
+   * Our pointer present from where the creator's is. A file that says
+   * `pointer_drawn_from` is saying the creator's pointer is in the picture
+   * from that moment, so ours must be too: before the drawn path starts the
+   * export shows nothing of ours, and the creator's own small arrow is what
+   * the viewer sees. On cap.so ours began at 2.47s while theirs sat on the
+   * hero from the first frame.
+   */
+  if (truth.pointer_drawn_from != null) {
+    const first = (tl.track || [])[0];
+    const from = first ? first.t : Infinity;
+    line(from <= truth.pointer_drawn_from + 0.1, `our pointer drawn from ${Number.isFinite(from) ? from.toFixed(2) + "s" : "never"} (the creator's is in the picture from ${truth.pointer_drawn_from}s)`);
+  }
+
   /* Our pointer on somebody else's. */
   const track = tl.track || [];
   let onStranger = 0;

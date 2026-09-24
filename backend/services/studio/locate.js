@@ -1889,6 +1889,44 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    * move, and where it is first found is where it was sitting all along. If it
    * did move, there are sightings, and this does not apply.
    */
+  /**
+   * ── AND WHEN SOMETHING ELSE MOVED, THE PIXELS ARE ASKED INSTEAD ───────────
+   * "Nothing moved" is the browser tracker's word, and on cap.so something
+   * always had: the hero's "Instant / Studio / Screenshot" chips rotate on
+   * their own. The creator's pointer sat right beside them from the first
+   * frame, the chips made the spot a moving picture, and re-acquisition —
+   * which will not pick a pointer up out of one, for fear of a demo's cursor —
+   * did not find it until 2.47s. Nothing was drawn before that, and the
+   * export opened on the creator's own small Windows arrow.
+   *
+   * The first sighting says what the pointer looks like and where it is. So
+   * the frames before it are read again at exactly that place, with this
+   * recording's own templates, walking back from the sighting for as long as
+   * the pointer is still there. A pointer that was there all along is found
+   * all along; one that arrived just before is found from where it arrived.
+   */
+  if (track.length && track[0].t > 0.1) {
+    const first = track[0];
+    const fx = first.x * W;
+    const fy = first.y * H;
+    const scores = [];
+    await ffmpegToFrames(video, {
+      width: W, height: H, fps, pixelFormat: "gray", start: 0, duration: first.t,
+      onFrame: (frame, i) => {
+        if (i / fps >= first.t - 1e-6) return;
+        const r = search(frame, W, H, tpls, fx - 3, fy - 3, fx + 3, fy + 3);
+        scores[i] = r ? r.score : 0;
+      },
+    }).catch(() => {});
+    let k = scores.length - 1;
+    while (k >= 0 && num(scores[k]) >= FLICK) k--;
+    const back = [];
+    for (let i = k + 1; i < scores.length; i++) back.push({ ...first, t: round3(i / fps), score: round3(scores[i]), located: true, held: false });
+    if (back.length) {
+      console.log("[studio] the pointer was already at its first sighting from " + back[0].t.toFixed(2) + "s (found at " + first.t.toFixed(2) + "s); drawn from there");
+      track.unshift(...back);
+    }
+  }
   if (track.length && track[0].t > 0.05) {
     const stirred = hints.some((h) => num(h.t) < track[0].t - 0.1);
     if (!stirred) track.unshift({ ...track[0], t: 0, held: true });

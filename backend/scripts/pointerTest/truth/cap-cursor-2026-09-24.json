@@ -1,0 +1,21 @@
+{
+  "about": "cap.so a third time: the pointer parked beside the hero's auto-rotating Instant/Studio/Screenshot chips from the first frame, the home page scrolled, Pricing in the nav bar, then Lifetime. Recorded 2026-09-24 as 'Cap-demo (1)': both clicks zoomed, but the export opened on the creator's own small Windows arrow — our pointer was not drawn until 2.47s.",
+  "recording": "cap-cursor-2026-09-24.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab552b154ed5b06c15668aa/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "The creator's pointer sits at (713,291) from 0s. The chips beside it rotate on their own, so the spot reads as a moving picture and re-acquisition would not pick the pointer up there; the browser tracker saw the chips move, so the 'already there' rule did not fire either. locate.js now reads the frames before the first sighting at that exact place and walks back while the pointer is still there.",
+    "Pricing ~12.9s (hand on the nav link), Lifetime ~16.8s (the switch flips between 16s and 17s).",
+    "stranger_budget_s / stranger_budget_pixel_s are RATCHETS measured on 2026-09-24. Lower them when they improve; never raise them."
+  ],
+  "pointer_drawn_from": 0,
+  "clicks": [
+    { "label": "Pricing", "t": 12.9, "x": 954, "y": 46 },
+    { "label": "Lifetime", "t": 16.8, "x": 582, "y": 460 }
+  ],
+  "strangers": [
+    { "label": "the cursor inside the laptop mock-up's Cap app", "from": 2.9, "to": 8.5, "box": [300, 60, 1620, 900] }
+  ],
+  "stranger_budget_s": 99,
+  "stranger_budget_pixel_s": 99
+}

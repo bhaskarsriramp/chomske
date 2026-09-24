@@ -292,6 +292,17 @@ thumbnail at 4.9 s was "returning", proven, never asked about, and drawn for
 2.5 s. A proven run now marks the creator's place only after `PROVEN_SEEN` (3)
 sightings, and the model's reference is taken from the longest proven run.
 
+**A pointer that was there from the first frame is drawn from the first frame.**
+On a third cap.so recording the creator's pointer sat beside the hero's
+auto-rotating chips from 0 s; the chips made the spot a moving picture, which
+re-acquisition will not pick a pointer out of, and the browser tracker had seen
+them move, so the old "nothing moved before the first sighting" rule did not
+fire. Our pointer began at 2.47 s and the export opened on the creator's own
+small arrow. Now the frames before the first sighting are read again at exactly
+that place with the recording's own templates, walking back while the pointer
+is still there (score ≥ FLICK). Truth files can require it:
+`"pointer_drawn_from": 0` fails the recording if our drawn path starts later.
+
 ### 3.3 `playingRegions` — the embedded-video veto
 
 **This solved a real reported bug.** A creator recorded a competitor's home page
