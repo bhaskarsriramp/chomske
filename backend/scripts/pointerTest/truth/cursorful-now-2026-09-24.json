@@ -11,15 +11,65 @@
     "stranger_budget_s (with the model) and stranger_budget_pixel_s (STUDIO_POINTER_VISION=off) are RATCHETS, not targets, measured on 2026-09-24. Without the model the drawn path follows the demo's pointer while the creator's is hidden (never zoomed on); with it, those stretches are judged somebody else's and our pointer holds where the creator's was. Lower them when they improve; never raise them."
   ],
   "clicks": [
-    { "label": "Pricing", "t": 24.2, "x": 927, "y": 40 },
-    { "label": "Editor", "t": 31.15, "x": 1205, "y": 45 }
+    {
+      "label": "Pricing",
+      "t": 24.2,
+      "x": 927,
+      "y": 40
+    },
+    {
+      "label": "Editor",
+      "t": 31.15,
+      "x": 1205,
+      "y": 45
+    }
   ],
   "strangers": [
-    { "label": "the YouTube demo at the foot of the hero", "from": 0, "to": 2.8, "box": [180, 700, 1740, 1020] },
-    { "label": "the YouTube demo filling the view, creator's pointer hidden", "from": 2.8, "to": 15.8, "box": [450, 90, 1740, 1020] },
-    { "label": "the feature-section demos, creator's pointer hidden", "from": 15.8, "to": 21.0, "box": [320, 60, 1920, 1020] },
-    { "label": "the YouTube demo again on the way back up", "from": 21.0, "to": 23.0, "box": [450, 90, 1740, 1020] }
+    {
+      "label": "the YouTube demo at the foot of the hero",
+      "from": 0,
+      "to": 2.8,
+      "box": [
+        180,
+        700,
+        1740,
+        1020
+      ]
+    },
+    {
+      "label": "the YouTube demo filling the view, creator's pointer hidden",
+      "from": 2.8,
+      "to": 15.8,
+      "box": [
+        450,
+        90,
+        1740,
+        1020
+      ]
+    },
+    {
+      "label": "the feature-section demos, creator's pointer hidden",
+      "from": 15.8,
+      "to": 21,
+      "box": [
+        320,
+        60,
+        1920,
+        1020
+      ]
+    },
+    {
+      "label": "the YouTube demo again on the way back up",
+      "from": 21,
+      "to": 23,
+      "box": [
+        450,
+        90,
+        1740,
+        1020
+      ]
+    }
   ],
-  "stranger_budget_s": 99,
-  "stranger_budget_pixel_s": 99
+  "stranger_budget_s": 0.1,
+  "stranger_budget_pixel_s": 4.4
 }

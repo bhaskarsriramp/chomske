@@ -46,10 +46,11 @@ import {
   newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration, identifyPointer, judgeRuns,
 } from "./vision.js";
 import { providerReady } from "../ai/provider.js";
+import { judgePresses, PRESS_JUDGE_MODE } from "./judge.js";
 import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed, restMoments } from "./events.js";
 import { changeMoments, auditEdit, applyPatches } from "./audit.js";
 import { alignCapture, settleAfter, playingRegions } from "./sync.js";
-import { locatePointer, mergeLocated, stepPath, snapToLocated, withoutStrangers } from "./locate.js";
+import { locatePointer, mergeLocated, stepPath, snapToLocated, withoutStrangers, stayedChanged } from "./locate.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
@@ -379,6 +380,20 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // on the control and not a few pixels beside it.
   events = snapToLocated(events, located.track);
 
+  // A small control — a toggle, a tab, a checkbox — that stayed changed after
+  // the pointer left was pressed, however little of the screen it changed.
+  // See locate.js stayedChanged.
+  events = await stayedChanged(video, events, {
+    located: located.track,
+    screen: aligned.screen,
+    W: source?.width || 1920,
+    H: source?.height || 1080,
+    duration,
+  }).catch((err) => {
+    console.error("[studio] the stayed-changed check failed:", err);
+    return events;
+  });
+
   // The pointer log goes in with the frames: a blur is released when the screen
   // changes under it, not when the model happens to miss a sample. See
   // vision.js joinRegions.
@@ -445,6 +460,27 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     console.log("[studio] press at " + n.t.toFixed(2) + "s " + (n.zoomable ? "moves the camera" : "does not move the camera") + " — " + n.why);
   }
   events = graded;
+
+  /**
+   * The model's verdict on every press, given everything measured above. Off
+   * unless STUDIO_PRESS_JUDGE says otherwise; see judge.js.
+   */
+  if (PRESS_JUDGE_MODE !== "off" && providerReady()) {
+    events = await judgePresses(events, {
+      video,
+      workDir,
+      located: located.track,
+      flashes: located.flashes,
+      screen: aligned.screen,
+      W: source?.width || 1920,
+      H: source?.height || 1080,
+      duration,
+      spend,
+    }).catch((err) => {
+      console.error("[studio] the press judge failed:", err);
+      return events;
+    });
+  }
 
   if (VISION_ON_ANALYSE) onProgress(0.46, "Working out the steps");
 

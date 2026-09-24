@@ -5,17 +5,58 @@
   "env": "windows:1920x1080",
   "notes": [
     "No embedded video and little scrolling: the kind of recording that already worked, kept here so a fix for landing pages cannot quietly break it.",
-    "Projects (~7.9s) was zoomed in the production export but is refused as 'the page was scrolling' by the replay, with the pre-2026-09-24 code and after it alike: the replayed browser tracker reports a scroll the real one did not. It stays labelled because it is a real press."
+    "Projects (~7.9s) was zoomed in the production export but is refused as 'the page was scrolling' by the replay, with the pre-2026-09-24 code and after it alike: the replayed browser tracker reports a scroll the real one did not. It stays labelled because it is a real press.",
+    "2026-09-24: Projects at 7.95s passes since events.js scrolledAfter stopped reading a one-frame page change as a scroll; its known-failing label was removed."
   ],
   "clicks": [
-    { "label": "close the usage dialog", "t": 3.99, "x": 1564, "y": 63 },
-    { "label": "Projects", "t": 7.95, "x": 164, "y": 130, "known": "refused as 'the page was scrolling' by the replay, before and after the 2026-09-24 fix alike; production zoomed it. The replayed browser tracker reports a scroll the real one did not." },
-    { "label": "a chat in the sidebar", "t": 12.9, "x": 158, "y": 596 },
-    { "label": "account menu", "t": 18.49, "x": 158, "y": 982 },
-    { "label": "Settings", "t": 21.24, "x": 200, "y": 685 },
-    { "label": "Billing", "t": 24.65, "x": 440, "y": 285 },
-    { "label": "Usage", "t": 28.69, "x": 488, "y": 332 },
-    { "label": "close settings", "t": 33.28, "x": 1572, "y": 57 }
+    {
+      "label": "close the usage dialog",
+      "t": 3.99,
+      "x": 1564,
+      "y": 63
+    },
+    {
+      "label": "Projects",
+      "t": 7.95,
+      "x": 164,
+      "y": 130
+    },
+    {
+      "label": "a chat in the sidebar",
+      "t": 12.9,
+      "x": 158,
+      "y": 596
+    },
+    {
+      "label": "account menu",
+      "t": 18.49,
+      "x": 158,
+      "y": 982
+    },
+    {
+      "label": "Settings",
+      "t": 21.24,
+      "x": 200,
+      "y": 685
+    },
+    {
+      "label": "Billing",
+      "t": 24.65,
+      "x": 440,
+      "y": 285
+    },
+    {
+      "label": "Usage",
+      "t": 28.69,
+      "x": 488,
+      "y": 332
+    },
+    {
+      "label": "close settings",
+      "t": 33.28,
+      "x": 1572,
+      "y": 57
+    }
   ],
   "strangers": [],
   "stranger_budget_s": 0

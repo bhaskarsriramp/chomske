@@ -314,16 +314,20 @@ export async function extractFrames(src, destDir, { every = 2, start = 0, durati
  *
  * `mark` draws a box on it first, in the source's own pixels — for asking a
  * model about ONE thing in a busy frame without describing where it is.
+ * `crop` cuts a region out (also in source pixels) for a close-up.
  */
-export function extractFrameAt(src, dest, at, { longEdge = 1280, mark = null } = {}) {
+export function extractFrameAt(src, dest, at, { longEdge = 1280, mark = null, crop = null } = {}) {
   const box = mark
     ? `drawbox=x=${Math.round(mark.x)}:y=${Math.round(mark.y)}:w=${Math.round(mark.w)}:h=${Math.round(mark.h)}:color=magenta:t=${mark.t || 5},`
+    : "";
+  const cut = crop
+    ? `crop=${Math.round(crop.w)}:${Math.round(crop.h)}:${Math.max(0, Math.round(crop.x))}:${Math.max(0, Math.round(crop.y))},`
     : "";
   return ffmpeg([
     "-ss", String(Math.max(0, at)),
     "-i", src,
     "-frames:v", "1",
-    "-vf", `${box}scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))'`,
+    "-vf", `${box}${cut}scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))'`,
     "-q:v", "3",
     dest,
   ]);

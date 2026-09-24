@@ -7,7 +7,8 @@
     "The creator's pointer rests at the left margin (68,500) while they scroll, outside the demo.",
     "The demo's own hand clicks the earth thumbnail at ~3.9s (823,460): flash, a big consequence, a hand. The first version of the 2026-09-24 fix zoomed on it; the 'in-picture' refusal in events.js exists because of it.",
     "Pricing at (942,36) ~17.93s, Editor at (1200,37) ~25.97s.",
-    "stranger_budget_s is a RATCHET, not a target: 4.27s measured on 2026-09-24, all of it while the creator's pointer was hidden by keyboard scrolling and the page stood still — the demo's hand followed, never zoomed on. Lower it when it improves; never raise it."
+    "stranger_budget_s is a RATCHET, not a target: 4.27s measured on 2026-09-24, all of it while the creator's pointer was hidden by keyboard scrolling and the page stood still — the demo's hand followed, never zoomed on. Lower it when it improves; never raise it.",
+    "2026-09-24 (later): with the model, the demo hand stretches (2.37-5.73s, 11.90-12.60s) are judged somebody else's and not drawn: 0.00s. The pixel-only fallback still measures 4.27s, held to stranger_budget_pixel_s."
   ],
   "clicks": [
     {
@@ -36,5 +37,6 @@
       ]
     }
   ],
-  "stranger_budget_s": 4.4
+  "stranger_budget_s": 0.1,
+  "stranger_budget_pixel_s": 4.4
 }

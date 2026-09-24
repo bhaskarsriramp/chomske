@@ -41,7 +41,7 @@ import { extractFrameAt } from "../media/ffmpeg.js";
 import {
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
-  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS,
+  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS, PRESS_JUDGE,
   frameIndex, eventLog, elementLog,
 } from "./prompts.js";
 import { newId, clampRect } from "./timeline.js";
@@ -960,6 +960,42 @@ export async function judgeRuns({ video, dir, reference, runs, heightPx, spend =
     out[i] = { kind: KINDS.has(v?.kind) ? v.kind : "unsure", confidence: clamp(num(v?.confidence, 0.5), 0, 1), why: str(v?.why, 160) };
   }
   return out;
+}
+
+/**
+ * Was this a click — asked with the measured facts, not from stills alone.
+ * See prompts.js PRESS_JUDGE and judge.js.
+ *
+ * @param {object} o
+ * @param {Array<{file: string, label: string}>} o.images  in the order described
+ * @param {string} o.facts   the measurement, as the lines the prompt refers to
+ * @returns {Promise<{clicked, confidence, target, evidence}|null>}
+ */
+export async function judgePress({ images, facts, spend = newSpend(), label = "judgePress", thinkingBudget = 0 }) {
+  const parts = [{ text: PRESS_JUDGE + "\n\nFACTS\n" + facts + "\n\nIMAGES — the magenta rectangle marks the same place in every one:" }];
+  for (let i = 0; i < images.length; i++) {
+    parts.push({ text: `Image ${i + 1}: ${images[i].label}` });
+    parts.push(await imagePart(images[i].file));
+  }
+  let json = null;
+  try {
+    const res = await generateJson({ model: VISION_MODEL, parts, maxOutputTokens: 4096, thinkingBudget });
+    spend.usd += res.usd;
+    spend.calls += 1;
+    json = res.json;
+  } catch (err) {
+    spend.usd += num(err?.usd);
+    spend.failed += 1;
+    console.warn(`[studio] ${label} failed: ${err?.message}`);
+    return null;
+  }
+  const clicked = ["yes", "no", "unsure"].includes(json?.clicked) ? json.clicked : "unsure";
+  return {
+    clicked,
+    confidence: clamp(num(json?.confidence, 0.5), 0, 1),
+    target: str(json?.target, 60),
+    evidence: str(json?.evidence, 240),
+  };
 }
 
 /**

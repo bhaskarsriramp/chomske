@@ -979,7 +979,10 @@ function pictureNear(screen, t, x, y) {
  */
 function pictureAround(screen, t, x, y) {
   if (!screen?.media?.length) return false;
-  for (let q = t - PICTURE_NEAR; q <= t + 0.25 + 1e-6; q += 0.25) {
+  // At the very start there is no "before" to look at, so the opening second
+  // and a half is the evidence instead.
+  const to = Math.max(t + 0.25, PICTURE_NEAR);
+  for (let q = t - PICTURE_NEAR; q <= to + 1e-6; q += 0.25) {
     if (inMedia(screen, q, x, y)) return true;
   }
   return false;
@@ -1845,9 +1848,22 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
            */
           const first = !provenEnd && !pictureAround(screen, t, hit.x / W, hit.y / H);
           const returning = provenEnd && Math.hypot(hit.x - provenEnd.x, hit.y - provenEnd.y) <= PROVEN_NEAR;
-          run = { proven: !!(first || returning || nearEdge(hit.x, hit.y)) };
+          run = { proven: !!(first || returning || nearEdge(hit.x, hit.y)), seen: 0 };
         }
-        if (run.proven) provenEnd = { x: hit.x, y: hit.y, t };
+        run.seen++;
+        /**
+         * ── A GLIMPSE DOES NOT SAY WHERE THE CREATOR'S POINTER IS ──────────────
+         * "Returning" is judged against where the last proven run was, so that
+         * place has to be the creator's. On a recording of cursorful.com the
+         * very first frame matched the demo's cursor for one frame — "first",
+         * so proven — and it became that place: the creator's own run a frame
+         * later, 192 pixels off, was "from nowhere", and the demo's cursor
+         * coming back to the same thumbnail at 4.9s was "returning" and proven.
+         * Our pointer rode it for 2.5 seconds, never asked about. A run has to
+         * have been followed for a few frames before it can stand for where
+         * the creator's pointer is.
+         */
+        if (run.proven && run.seen >= PROVEN_SEEN) provenEnd = { x: hit.x, y: hit.y, t };
         prevHit = { t, x: round4(hit.x / W), y: round4(hit.y / H), shape: hit.t.shape, score: round3(hit.score), located: true, proven: run.proven };
         track.push(prevHit);
         rings.push({ t, x: hit.x, y: hit.y, mean: ringMean(frame, W, H, hit.x, hit.y, ringOuter, ringHole) });
@@ -1896,6 +1912,206 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   }
 
   return { track, flashes, design: cal.dark ? "dark" : "light", heightPx: cal.heightPx, fit: cal.fit, found: track.length, frames };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   A small control that stayed changed
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/** Half the box compared around a press, in pixels of a 1920-wide picture. */
+const STAY_HALF_W = 80;
+const STAY_HALF_H = 40;
+/**
+ * A pixel counts as changed past this many grey levels. Pastel UI changes are
+ * small in grey: a light-green pill over white is 14 levels (255 against 241)
+ * on cap.so, where encoder noise on unchanged content measured 0% even at 4.
+ */
+const STAY_DIFF = 10;
+/** Share of the box that must have changed. A toggle's pill is a third of it. */
+const STAY_SHARE = 0.08;
+/** How far a sighting may be from the press and still be the same dwell. */
+const STAY_NEAR = 14;
+/** Seconds before arrival and after departure the two pictures are taken. */
+const STAY_BEFORE = 0.3;
+const STAY_AFTER = 0.35;
+/** Furthest the page may have scrolled between the two, as a share of the height. */
+const STAY_REACH = 0.5;
+/** Most of the surroundings that may still differ once lined up. */
+const STAY_ALIGN = 0.12;
+/** ...or up to this much, when the fit is clearly better than one 24px off. */
+const STAY_ALIGN_MAX = 0.3;
+const STAY_ALIGN_CLEAR = 2.5;
+
+/**
+ * Presses nothing measurable came of, re-asked with the one question that
+ * separates a click on a small control from a hover over it: is it still
+ * different after the pointer has LEFT?
+ *
+ * ── WHY THE CONSEQUENCE TEST CANNOT SEE THESE ───────────────────────────────
+ * events.js grewAfter asks for a change bigger than the press's own flicker —
+ * a menu, a panel, a page — because a hover's highlight is small, and small
+ * had to mean "hover". But toggles, tabs, checkboxes, radio buttons and
+ * segmented switches are small too, and they are a large share of what people
+ * press in a demo. On cap.so the creator held a hand on "Lifetime" and pressed
+ * it; the switch slid over and the price counted from $29 to $58, all inside
+ * one card, and the press was refused: "nothing came of it".
+ *
+ * Size cannot tell those apart. Persistence can. A hover's highlight exists
+ * because the pointer is there and goes when it goes; the state a press
+ * leaves stays. So the patch around the press is compared as it was just
+ * BEFORE the pointer arrived and just AFTER it left — the pointer is in
+ * neither picture — and a control that changed and stayed changed was
+ * pressed.
+ *
+ * It is not asked where the comparison would mean nothing: when the page
+ * scrolled in between (the patch shows different content), when a moving
+ * picture was playing at the spot (it changes by itself), or when the pointer
+ * never left.
+ *
+ * @returns {Promise<Array>} the events, with `corroborated` set on those whose
+ *          control stayed changed
+ */
+export async function stayedChanged(video, events, { located = [], screen = null, W, H, duration = 0 } = {}) {
+  const asked = (events || []).filter((e) => (e.type === "click" || e.type === "dblclick") && e.corroborated === false);
+  if (!asked.length || !located?.length) return events;
+  const out = [];
+  for (const e of events) {
+    if (!asked.includes(e)) { out.push(e); continue; }
+    const m = await measureStay(video, e, { located, screen, W, H, duration });
+    if (m.share != null && m.share >= STAY_SHARE) {
+      console.log(
+        "[studio] press at " + num(e.t).toFixed(2) + "s: the control under the pointer changed and stayed changed after it left (" +
+          Math.round(m.share * 100) + "% of it, " + m.before.toFixed(2) + "s against " + m.after.toFixed(2) + "s" +
+          (m.shift ? ", the page having moved " + m.shift + "px" : "") + ")"
+      );
+      out.push({ ...e, corroborated: true, stayed: round3(m.share) });
+    } else {
+      if (process.env.STUDIO_TRACE_STAY) {
+        console.log("[stay] " + num(e.t).toFixed(2) + "s skipped: " + (m.share != null ? "only " + Math.round(m.share * 100) + "% changed" : m.reason) +
+          (m.before != null ? " (" + m.before.toFixed(2) + "-" + m.after.toFixed(2) + "s)" : ""));
+      }
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+/**
+ * The comparison stayedChanged makes, for one press: how much of the control's
+ * box differs between just before the pointer arrived and just after it left,
+ * with the page's own movement taken out. `share` is null when it could not
+ * be measured, and `reason` says why. The dwell is returned as well — when
+ * the pointer arrived and left — because it is the other half of the story.
+ *
+ * @returns {Promise<{ share: number|null, reason: string, before?: number, after?: number, shift?: number, arrived?: number, left?: number }>}
+ */
+export async function measureStay(video, e, { located = [], screen = null, W, H, duration = 0 } = {}) {
+  const scale = W / 1920;
+  const hw = Math.round(STAY_HALF_W * scale);
+  const hh = Math.round(STAY_HALF_H * scale);
+  const L = (located || []).filter((p) => p.located && !p.held);
+  const px = (p) => ({ t: p.t, x: p.x * W, y: p.y * H });
+  const frameAt = async (t) => {
+    let got = null;
+    await ffmpegToFrames(video, {
+      width: W, height: H, fps: 30, pixelFormat: "gray", start: Math.max(0, t), duration: 0.1,
+      onFrame: (f) => { if (!got) got = Buffer.from(f); },
+    });
+    return got;
+  };
+
+  const x = num(e.x) * W;
+  const y = num(e.y) * H;
+  // The dwell this press was made in: sightings at this spot, unbroken.
+  const here = L.map(px).filter((p) => Math.hypot(p.x - x, p.y - y) <= STAY_NEAR * scale + 2);
+  const at = here.reduce((b, p) => (!b || Math.abs(p.t - e.t) < Math.abs(b.t - e.t) ? p : b), null);
+  if (!at || Math.abs(at.t - num(e.t)) > 0.3) return { share: null, reason: "no sighting at the press" };
+  let from = at.t;
+  let to = at.t;
+  for (const p of [...here].sort((a, b) => b.t - a.t)) if (p.t < from && from - p.t <= 0.25) from = p.t;
+  for (const p of [...here].sort((a, b) => a.t - b.t)) if (p.t > to && p.t - to <= 0.25) to = p.t;
+  const before = from - STAY_BEFORE;
+  const after = to + STAY_AFTER;
+  const dwell = { before, after, arrived: from, left: to };
+  if (before < 0 || (duration && after > duration - 0.05)) return { share: null, reason: "too near an end", ...dwell };
+
+  // Where the pointer is in the BEFORE picture: it must be out of the box.
+  const box = { x0: x - hw, x1: x + hw, y0: y - hh * 0.5, y1: y + hh * 1.5 };
+  const inBox = (p, s = 0) =>
+    p.x >= box.x0 - 12 && p.x <= box.x1 + 12 && p.y >= box.y0 + s - 12 && p.y <= box.y1 + s + 24;
+  const near = (t) => L.map(px).filter((p) => Math.abs(p.t - t) <= 0.08);
+  if (near(before).some((p) => inBox(p))) return { share: null, reason: "pointer in the box", ...dwell };
+  let playing = false;
+  for (let q = before; q <= after + 1e-6 && !playing; q += 0.25) playing = inMedia(screen, q, x / W, y / H);
+  if (playing) return { share: null, reason: "moving picture", ...dwell };
+
+  const a = await frameAt(before);
+  const b = await frameAt(after);
+  if (!a || !b) return { share: null, reason: "no frame", ...dwell };
+  /**
+   * ── LINED UP FIRST, BECAUSE PEOPLE SCROLL THE MOMENT THEY ARE DONE ──────
+   * On cap.so the creator left "Lifetime" and scrolled within half a second;
+   * refusing to compare across a scroll refused the one press this exists
+   * for. So the page's own movement is taken out first: the vertical shift
+   * that best lines up the SURROUNDINGS of the spot, a box several times the
+   * control's size, is found, and the control is compared at that shift. A
+   * scroll leaves the surroundings matching and the control matching; a
+   * press leaves the surroundings matching and the control different. When
+   * the surroundings cannot be lined up at all — the page moved the control
+   * off screen, or everything changed — nothing is said.
+   */
+  const cx0 = Math.max(0, Math.round(x - hw * 2.5));
+  const cx1 = Math.min(W, Math.round(x + hw * 2.5));
+  const cy0 = Math.max(0, Math.round(y - hh * 2.5));
+  const cy1 = Math.min(H, Math.round(y + hh * 3.5));
+  // The surroundings are judged WITHOUT the control's own box: that is the
+  // part a press is expected to change.
+  const inner = (xx, yy) => xx >= box.x0 && xx < box.x1 && yy >= box.y0 && yy < box.y1;
+  const mismatch = (x0, x1, y0, y1, s, step, skipInner = false) => {
+    let bad = 0;
+    let n = 0;
+    for (let yy = y0; yy < y1; yy += step) {
+      const yb = yy + s;
+      if (yb < 0 || yb >= H) continue;
+      for (let xx = x0; xx < x1; xx += step) {
+        if (skipInner && inner(xx, yy)) continue;
+        n++;
+        if (Math.abs(a[yy * W + xx] - b[yb * W + xx]) > STAY_DIFF) bad++;
+      }
+    }
+    return n > 50 ? bad / n : 1;
+  };
+  const reach = Math.round(H * STAY_REACH);
+  let best = { s: 0, m: mismatch(cx0, cx1, cy0, cy1, 0, 2, true) };
+  for (let s = -reach; s <= reach; s += 2) {
+    if (s === 0) continue;
+    const m = mismatch(cx0, cx1, cy0, cy1, s, 3, true);
+    if (m < best.m - 0.01) best = { s, m };
+  }
+  // Refine around the winner at full density.
+  for (let s = best.s - 2; s <= best.s + 2; s++) {
+    const m = mismatch(cx0, cx1, cy0, cy1, s, 2, true);
+    if (m < best.m) best = { s, m };
+  }
+  /**
+   * Lined up means the winning shift fits clearly better than its
+   * neighbours, not that everything around matches: a press on a toggle
+   * rewrites the price and the line under it as well. A page scrolled so
+   * far the control left the picture has no clear winner, and is not
+   * compared.
+   */
+  const off = Math.min(mismatch(cx0, cx1, cy0, cy1, best.s + 24, 2, true), mismatch(cx0, cx1, cy0, cy1, best.s - 24, 2, true));
+  const lined = best.m <= STAY_ALIGN || (best.m <= STAY_ALIGN_MAX && off >= best.m * STAY_ALIGN_CLEAR);
+  if (!lined) {
+    return { share: null, reason: "could not line the pictures up (" + Math.round(best.m * 100) + "% off, " + Math.round(off * 100) + "% beside it)", ...dwell };
+  }
+  if (near(after).some((p) => inBox(p, best.s))) return { share: null, reason: "pointer in the box afterwards", ...dwell };
+  const share = mismatch(
+    Math.max(0, Math.round(box.x0)), Math.min(W, Math.round(box.x1)),
+    Math.max(0, Math.round(box.y0)), Math.min(H, Math.round(box.y1)),
+    best.s, 1
+  );
+  return { share, reason: "", shift: best.s, ...dwell };
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -2231,7 +2447,11 @@ export async function withoutStrangers(track, { W, H, judge = null } = {}) {
   const same = { track, dropped: [] };
   if (!judge || !track?.length) return same;
   const runs = pointerRuns(track, W, H);
-  const proven = track.filter((p) => p.proven && p.located && !p.held);
+  // The reference comes from the LONGEST proven run, never the best single
+  // frame: a one-frame glimpse can be proven by being first, and it was, once,
+  // the demo's cursor.
+  const provenRuns = runs.filter((r) => r.proven).sort((a, b) => b.samples.length - a.samples.length);
+  const proven = (provenRuns[0]?.samples || []).filter((p) => p.proven && p.located && !p.held);
   if (!proven.length) return same;
   const ref = proven.reduce((a, b) => (num(b.score) > num(a.score) ? b : a));
   const suspects = runs
@@ -2389,6 +2609,8 @@ const RIDE_SLACK = 64;
 const RIDE_BASE = 0.25;
 /** How near where the creator's pointer was last seen a new run must begin to be theirs. */
 const PROVEN_NEAR = 150;
+/** Sightings a proven run needs before it marks where the creator's pointer is. */
+const PROVEN_SEEN = 3;
 /** Seconds after which an old sighting of riding no longer counts toward letting go. */
 const RIDE_FORGET = 1.0;
 

@@ -489,9 +489,11 @@ The first image, labelled R, marks with a MAGENTA RECTANGLE what is believed to 
 
 Every other image is labelled with a group number and marks, with the same kind of rectangle, a mouse pointer at another moment of the recording. For each group decide whether its pointer is:
 
-"own" — the computer's own pointer, the same one as in R. The operating system draws it on top of the page, at the page's scale. It may be a different SHAPE from R — an arrow becomes a hand over a link, or a text caret over a field — but it keeps R's colours and size, and it sits over the page being recorded.
+"own" — the computer's own pointer. The operating system draws it on top of the page being recorded: over that page's navigation bar, headings, buttons, forms or empty background. It may be a different shape from R — an arrow becomes a hand over a link, or a text caret over a field.
 
-"content" — a pointer that is part of what the page is SHOWING: inside an embedded video, an animated product demo, a GIF or a screenshot of another screen. It belongs to whoever recorded that. Tell it by what surrounds it — another browser window or app drawn inside the page, a video player, a card floating over a marketing layout — and by its size and colours, which follow that inner picture rather than R.
+"content" — a pointer that is part of what the page is SHOWING: inside an embedded video, an animated product demo, a GIF or a screenshot of another screen. It belongs to whoever recorded that.
+
+DECIDE BY WHAT SURROUNDS THE POINTER, NEVER BY WHAT IT LOOKS LIKE. Demos are recorded on the same kinds of computer, so a pointer inside one very often has exactly the same colours, shape and size as R — that is no evidence at all. What makes it "content" is the picture around it: another browser window or app drawn INSIDE the page (with its own tab strip, address bar or window buttons), a video player, a rounded card with a coloured backdrop framing a screen, a device bezel — usually with the recorded page's own navigation bar or margins visible outside it. A pointer inside such an inner picture is "content" even when it looks identical to R.
 
 Judge each group on its own: any number of them may be "own" and any number "content". Use "none" when a group's rectangle holds no mouse pointer, and "unsure" when you cannot tell.
 
@@ -503,6 +505,50 @@ Schema:
   "groups": [
     { "group": 1, "kind": "own|content|none|unsure", "confidence": 0.0, "why": "at most 20 words" }
   ]
+}`;
+
+/**
+ * The press question, asked WITH everything the pixels measured.
+ *
+ * PRESS_ARBITER asks it from a strip of stills alone, and on cap.so that
+ * called three auto-rotating tab changes presses and missed both real ones:
+ * a still shows that a tab LOOKS selected, not whether the person or the page
+ * did it, and it cannot show whether the pointer moved between two of them.
+ * The locator reads every frame and knows those things — when the pointer
+ * arrived, how long it was still, what shape it was, whether the page scrolled,
+ * what changed and when, and whether the spot was still different after the
+ * pointer left. This hands all of it over, and asks the model for the one part
+ * a measurement cannot do: what the change MEANS. See judge.js.
+ */
+export const PRESS_JUDGE = `You are judging ONE candidate moment in a screen recording of a web browser, made by a person recording a product demo.
+
+We measured the whole recording frame by frame, thirty frames a second. The FACTS below come from that measurement and are reliable for timing, position and movement. You are shown only a few still images, so where the stills cannot show something — whether the pointer moved between two of them, exactly when something changed — trust the facts.
+
+Decide whether the person CLICKED (pressed the mouse button on) the thing at the marked spot during this moment.
+
+A click is the person activating the control under their pointer: a button, a link, a navigation item, a tab, a toggle or switch, a checkbox or radio button, a menu item, a field. Its result can be big — a new page, a dialog, a menu opening — or small — a switch sliding over, a tab becoming selected, a box getting ticked, a number or price changing.
+
+NOT a click:
+- A hover: a highlight, underline, shadow or tooltip that appears while the pointer is over something and goes away when it leaves.
+- The page changing by itself: carousels, auto-rotating tabs or slides, videos, animations, content loading or streaming in. If the same kind of change happens without the pointer resting there, or keeps repeating, it is the page, not the person.
+- Scrolling: the same content moving up or down.
+- Anything inside an embedded video or a picture of another screen shown on the page.
+- The pointer passing over something without stopping.
+
+How to decide:
+- The strongest sign: something at or right beside the marked spot changed WHILE the pointer was resting there — not at the moment it arrived, which is what a hover does — and was still changed after the pointer left. The facts say whether the spot was different after the pointer left than before it arrived, and the two close-ups show it.
+- A new page or view appearing while the pointer rests on a link or button is a click.
+- A hand pointer means the thing COULD be clicked. It does not show that it WAS.
+- If you cannot tell, say "unsure" rather than guess.
+
+${JSON_ONLY}
+
+Schema:
+{
+  "clicked": "yes|no|unsure",
+  "confidence": 0.0,
+  "target": "what was clicked, under 6 words, or empty",
+  "evidence": "one sentence: what you saw that decided it"
 }`;
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -601,6 +647,6 @@ export default {
   ANALYSIS_LONG_EDGE,
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
-  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS,
+  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS, PRESS_JUDGE,
   frameIndex, eventLog, elementLog,
 };

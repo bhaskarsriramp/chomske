@@ -281,7 +281,16 @@ compared everything against. Now, until something is proven, a run counts as
 "first" only if no moving picture played where it began (from 1.5 s before to
 0.25 s after, backward-looking like `madeInPicture`). The demo's hand stays
 unproven, the in-picture rule refuses its click, and the creator's first run
-clear of any picture is the proven one.
+clear of any picture is the proven one. At the very start, where there is no
+"before", the opening 1.5 s is the evidence.
+
+**A glimpse is not a place.** "Returning" is judged against where the last
+proven run was. On `cursorful-2026-09-24` frame 0 matched the demo's cursor for
+one frame — first, so proven — and became that place: the creator's own run a
+frame later was "from nowhere", and the demo's cursor coming back to the same
+thumbnail at 4.9 s was "returning", proven, never asked about, and drawn for
+2.5 s. A proven run now marks the creator's place only after `PROVEN_SEEN` (3)
+sightings, and the model's reference is taken from the longest proven run.
 
 ### 3.3 `playingRegions` — the embedded-video veto
 
@@ -499,6 +508,34 @@ pointer is **unproven** AND a moving picture was playing at that spot
 (`sync.js inMedia`) at least twice in the 3 s before. Measured: the demo's click
 meets both; none of 13 real presses across four recordings had a picture at its
 spot beforehand. It is in `HEURISTIC_REFUSAL`, so the arbiter can overturn it.
+
+**Added 2026-09-24 — a small control that stayed changed (`locate.js
+stayedChanged`).** Veto 1 asks for a change bigger than the press's own flicker —
+a menu, a panel, a page — because a hover's highlight is small. But toggles,
+tabs, checkboxes and segmented switches are small too. On cap.so the creator
+pressed "Lifetime": the switch's pastel pill moved and the price went $29 → $58,
+all inside one card, and the press was vetoed. Size cannot separate that from a
+hover; **persistence** can. A hover's highlight goes when the pointer goes; a
+press's state stays. So, for every press veto 1 would refuse, the patch around
+it is compared just **before the pointer arrived** and just **after it left**
+(the pointer in neither picture), after lining the two up on the surroundings so
+a scroll straight afterwards is taken out. ≥ 8% of the control's box changed by
+more than 10 grey levels (encoder noise on unchanged content: 0%) ⇒ corroborated.
+Not asked when a moving picture played at the spot, when the pointer never left,
+or when the surroundings cannot be lined up (the control scrolled away).
+`STUDIO_TRACE_STAY=1` prints why each one was or was not.
+
+**Fixed 2026-09-24 — a page replaced in one frame is not a scroll.** On the same
+recording the click on "Pricing" (a hand held on the link) replaced the page in
+one frame; the tracker logged that frame as a quarter-screen shift and the press
+was refused as "the page was scrolling". A scroll plays out over frames, so
+`events.js scrolledAfter` now needs at least two samples of shift.
+
+**Measured the same day — the arbiter is not the answer to either.** Run on this
+recording (`scripts/pointerTest/arbiter.mjs`), it called three auto-rotating tab
+changes on the home page presses and missed both real ones. From a few stills it
+can see that a tab now looks selected, not whether the person or the page did
+it. `STUDIO_AUTO_PRESS_ZOOMS` stays off.
 
 ### 7.3 The weighted sum
 
@@ -1047,6 +1084,7 @@ RIDE_BASE          0.25 s   the earlier frame the ride test compares with (and t
 RIDE_OWN / SLACK   40 px / ≤40% of the move   a demo cursor's own drift while the page carries it
 RIDE_EXPLAINED     0.35     most of the changed pixels one shift may leave unexplained
 PROVEN_NEAR        150 px   a new run this near where the creator's pointer was last seen is theirs
+PROVEN_SEEN        3        sightings before a proven run marks where the creator's pointer is
 BLEND_TOL          3        grey levels of slack for sub-row scroll blends in readMedia
 PICTURE_BEFORE     3 s      in-picture: how far back a playing picture at the press spot counts
 RIVAL_FIT          0.78     a calibration candidate fitting this well, and the clear match once, is a pointer
@@ -1150,6 +1188,8 @@ backend/scripts/pointerTest/
   sticky.mjs    a fixed nav bar over a scrolling page             ← the 5-of-10 refusals
   scrolled.mjs  a page scrolled end to end, a demo's cursor riding along,
                 a press on a see-through fixed bar               ← 2026-09-24 (old code: 0 of 62)
+  arbiter.mjs   what the review stage's arbiter WOULD add on one recording —
+                run it before ever turning STUDIO_AUTO_PRESS_ZOOMS on
   strangers.mjs what the drawn path does with a stretch the model calls
                 somebody else's — held at the creator's last place, not
                 switched halfway; untouched without an answer   ← §3.2.2

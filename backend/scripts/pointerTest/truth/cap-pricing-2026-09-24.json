@@ -1,0 +1,42 @@
+{
+  "about": "cap.so: scrolled the home page (a laptop mock-up with the Cap app and its own cursor in it, auto-rotating mode tabs), back to the top, Pricing in the nav bar, then the Lifetime switch on the Desktop License card. Recorded 2026-09-24 as 'Cap-demo'; production zoomed neither.",
+  "recording": "cap-pricing-2026-09-24.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab523c8c90ac14084007750/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "The creator's pointer is a white Windows arrow, light:18; calibration gets it right.",
+    "Pricing: hand on the link from 20.4s, the new page arrives in ONE frame at ~21.1s. The tracker logged that frame as a quarter-screen 'shift' and the press was refused as 'the page was scrolling'. events.js scrolledAfter now needs two samples of shift before calling it a scroll.",
+    "Lifetime: hand on the switch from 26.6s, it flips at ~27.85s ($29 -> $58), the pointer leaves ~29.0s and the page scrolls at once. The change is a pastel pill and a line of text — 'nothing came of it' by the size test. locate.js stayedChanged compares the spot before the pointer arrived with after it left (35% changed).",
+    "The review stage's arbiter, run on this recording, called three auto-rotating tab changes presses and missed both real ones: keep STUDIO_AUTO_PRESS_ZOOMS=0.",
+    "stranger_budget_s / stranger_budget_pixel_s are RATCHETS measured on 2026-09-24. Lower them when they improve; never raise them."
+  ],
+  "clicks": [
+    {
+      "label": "Pricing",
+      "t": 21,
+      "x": 960,
+      "y": 44
+    },
+    {
+      "label": "Lifetime",
+      "t": 27.85,
+      "x": 574,
+      "y": 483
+    }
+  ],
+  "strangers": [
+    {
+      "label": "the cursor inside the laptop mock-up's Cap app",
+      "from": 4.5,
+      "to": 9.8,
+      "box": [
+        300,
+        60,
+        1620,
+        900
+      ]
+    }
+  ],
+  "stranger_budget_s": 0.2,
+  "stranger_budget_pixel_s": 0.2
+}

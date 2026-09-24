@@ -309,13 +309,25 @@ const SCROLL_SUM = 0.05;
  */
 function scrolledAfter(mot, t) {
   let sum = 0;
+  let steps = 0;
   for (const m of mot) {
     if (m.t < t) continue;
     if (m.t > t + CONSEQUENCE) break;
     const dy = Math.abs(num(m.dy, 0));
-    if (dy >= SCROLL_SHIFT) sum += dy;
+    if (dy >= SCROLL_SHIFT) { sum += dy; steps++; }
   }
-  return sum;
+  /**
+   * ── ONE FRAME IS A PAGE BEING REPLACED, NOT A SCROLL ─────────────────────
+   * A scroll plays out over frames: a wheel, a trackpad or a key moves the
+   * page for a tenth of a second at the very least. A new page arrives in ONE
+   * frame, and the tracker, asked how far everything moved, finds some shift
+   * that explains part of it — on cap.so a click on "Pricing" (a hand held on
+   * the link for 0.6s) replaced the page, and the tracker logged one sample of
+   * energy 0.35 "shifted" by a quarter of the screen. That single sample made
+   * it a scroll, and the press was refused as "the page was scrolling".
+   * A shift seen in one sample alone is what the press did, not a scroll.
+   */
+  return steps >= 2 ? sum : 0;
 }
 
 /**

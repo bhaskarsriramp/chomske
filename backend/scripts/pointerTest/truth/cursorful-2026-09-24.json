@@ -8,16 +8,58 @@
     "Pricing: hand at (950,42) from 22.9s, pressed ~23.2s, the page smooth-scrolls to the pricing section under the fixed bar.",
     "Editor: hand at (1210,32) 29.41-29.54s; the capture then emits NO frame until 30.27s, the press is inside that gap, and the next frame is the editor page loading with no pointer drawn.",
     "Every pointer-shaped thing on screen from 2.4s to 22.9s belongs to somebody else: the cursor inside the embedded YouTube demo, the one inside the Shopify demo, and a Cursorful stylised arrow.",
-    "stranger_budget_s is a RATCHET, not a target. On 2026-09-24 after the fix it measured 3.07s, every second of it while the page stood still (the YouTube demo's cursor 3.8-7.0s, the Shopify one 14.0-14.5s before the page moved again). A cursor in a demo on a still page, with the creator's own hidden, cannot be told from theirs by pixels; it needs the vision pass's 'picture of a screen' regions. Before the fix: pointer located in 21% of frames, both presses lost. Lower this when it improves; never raise it."
+    "stranger_budget_s is a RATCHET, not a target. On 2026-09-24 after the fix it measured 3.07s, every second of it while the page stood still (the YouTube demo's cursor 3.8-7.0s, the Shopify one 14.0-14.5s before the page moved again). A cursor in a demo on a still page, with the creator's own hidden, cannot be told from theirs by pixels; it needs the vision pass's 'picture of a screen' regions. Before the fix: pointer located in 21% of frames, both presses lost. Lower this when it improves; never raise it.",
+    "2026-09-24 (later): with the model, 2.50s — all of it our pointer HELD where the creator's hidden pointer really was (558,468), which after the scroll lies over the demo player inside this file's wide box; it no longer follows the demo's cursor. Pixel-only: 3.07s."
   ],
   "clicks": [
-    { "label": "Pricing", "t": 23.2, "x": 950, "y": 45 },
-    { "label": "Editor", "t": 30.2, "x": 1210, "y": 35 }
+    {
+      "label": "Pricing",
+      "t": 23.2,
+      "x": 950,
+      "y": 45
+    },
+    {
+      "label": "Editor",
+      "t": 30.2,
+      "x": 1210,
+      "y": 35
+    }
   ],
   "strangers": [
-    { "label": "cursor inside the embedded YouTube demo", "from": 2.6, "to": 13.2, "box": [180, 0, 1720, 1020] },
-    { "label": "cursor inside the embedded Shopify demo", "from": 13.2, "to": 17.8, "box": [0, 0, 800, 1020] },
-    { "label": "arrow inside the dark video beside the pricing scroll", "from": 23.25, "to": 24.2, "box": [700, 450, 1150, 1020] }
+    {
+      "label": "cursor inside the embedded YouTube demo",
+      "from": 2.6,
+      "to": 13.2,
+      "box": [
+        180,
+        0,
+        1720,
+        1020
+      ]
+    },
+    {
+      "label": "cursor inside the embedded Shopify demo",
+      "from": 13.2,
+      "to": 17.8,
+      "box": [
+        0,
+        0,
+        800,
+        1020
+      ]
+    },
+    {
+      "label": "arrow inside the dark video beside the pricing scroll",
+      "from": 23.25,
+      "to": 24.2,
+      "box": [
+        700,
+        450,
+        1150,
+        1020
+      ]
+    }
   ],
-  "stranger_budget_s": 3.2
+  "stranger_budget_s": 2.6,
+  "stranger_budget_pixel_s": 3.2
 }
