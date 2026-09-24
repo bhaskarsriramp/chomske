@@ -13,7 +13,17 @@ export — on any page, not just the one demo these were written against.
     node scripts/pointerTest/profile.mjs      # ...and what the server does with it
     node scripts/pointerTest/camera.mjs       # do the preview and the export agree?
     node scripts/pointerTest/sticky.mjs       # a fixed nav bar, and a page that scrolls under it
+    node scripts/pointerTest/scrolled.mjs     # a page scrolled end to end, a demo's cursor riding along
     node scripts/pointerTest/real.mjs         # actual recordings, in fixtures/
+    node scripts/pointerTest/truth.mjs        # actual recordings, SCORED against what really happened
+    node scripts/pointerTest/replay.mjs <file.mp4>   # one recording through the whole analysis, printed
+
+**Before any change to `locate.js`, `sync.js` or `events.js` ships, run all of
+them — and `truth.mjs` above all.** On 2026-09-23 a fix made one recording of
+cursorful.com come out right and every synthetic test here passed; the next
+morning a recording of the same page, scrolled a little more, lost both of its
+presses and had our pointer drawn on a stranger's cursor. Every synthetic test
+still passed. Only a real recording with its answer written down catches that.
 
 They build their own test recordings, so they need no fixtures: a page is drawn
 (deliberately hostile — hundreds of text-like strokes, boxes, circles and sixty
@@ -100,6 +110,37 @@ be fixed, and then judges the same press twice — with and without that knowled
 — to show the refusal flipping. It also checks the other half: that a control
 read on one frame and pressed two seconds later, after the page has moved most
 of a frame height, is still found.
+
+`scrolled.mjs` is the 2026-09-24 production bug. The creator scrolled a whole
+landing page with the keyboard — Windows hides the pointer while they do — past
+embedded product demos with somebody else's cursor in them, then put the
+pointer on "Pricing" in a see-through fixed bar and pressed, and the anchor
+link jumped the page under it. The re-acquisition veto had been built from how
+often each place on the SCREEN changed over the whole recording, and a scrolled
+page changes everywhere: the bar was "video", the pointer could never be found
+again where it was pressed, and a demo that scrolls up the screen was in no
+place long enough to be "video", so the stranger's cursor inside it was taken
+instead. On the code before the fix this clip finds the pointer on Pricing in
+0 of 62 frames. What replaced the veto asks about the moment and the place —
+was a picture PLAYING there with the scroll taken out (`sync.js readMedia`),
+and did this match just move WITH the page (`locate.js ridesWithPage`), which
+the real pointer, drawn in screen coordinates, never does.
+
+`truth.mjs` scores real recordings against a written answer: the presses the
+creator really made, and where the cursors that are not theirs are on screen.
+Every labelled press must move the camera, no other zoom may appear, and our
+pointer may sit on a stranger's for no longer than the file's budget. The
+answers live in `truth/` and are committed — timestamps and coordinates only.
+The footage lives in `fixtures/` and is not; each truth file says where to
+fetch it. When a creator reports a recording, label it and add it here: that is
+the only kind of test that has ever caught the bug nobody thought of.
+
+`replay.mjs` is how a recording is labelled and diagnosed. It runs the whole
+first analysis on one file — with the browser's tracker replayed over the video
+by the real `tracker.worker.js`, because that report lives in the database and
+not in the file — and prints every press with the gate's reason. The replay is
+close to production, not identical: the browser saw the screen before the
+encoder did, and on one recording it reports a scroll the real tracker did not.
 
 `real.mjs` is the one that catches what nobody thought of. The drawn pages
 above can only contain the difficulties we imagined; every real failure so far

@@ -203,6 +203,37 @@ const PLAYING_CELLS = 24;
  */
 const PLAYING_MAX_COVER = 0.35;
 
+/**
+ * How many connected cells, AT ONE MOMENT, make a moving picture rather than a
+ * spinner, a caret or a hover. The same size bar as PLAYING_CELLS, asked of a
+ * single moment instead of the whole recording. See readMedia().
+ */
+const MEDIA_CELLS = 24;
+
+/**
+ * Grey levels of slack when a pixel is matched as a BLEND of two neighbouring
+ * rows of the previous frame (see unscrolledGrid). Tighter than DIFF: between
+ * two rows is already a range, and slack on top of a range explains away the
+ * slow change of a playing video along with the scroll.
+ *
+ * Measured on a recording of cursorful.com, 18 positions where the real pointer
+ * or a stranger's cursor inside an embedded video was checked by hand:
+ *
+ *   exact rows only   the creator's hand on a fixed nav bar was called video
+ *                     while the page scrolled under it, and a slowly scrolled
+ *                     pricing page lit up 149 cells of "video"
+ *   3                 none of the creator's positions called video, the page
+ *                     being read called nothing, the two demos that change
+ *                     fastest still caught
+ *   8                 the demos stop being caught at all
+ *
+ * The veto this feeds may never land on the real pointer — that is how the
+ * recording above lost both of its presses — so it is set where it misses some
+ * slow videos rather than where it catches them all. The locator's own test of
+ * whether a match moved WITH the page covers the rest. See locate.js.
+ */
+const BLEND_TOL = 3;
+
 /** The widest disagreement between the two clocks worth searching for. */
 const MAX_OFFSET = 3;
 /** Correlation the best shift must reach before it is believed. */
@@ -338,6 +369,11 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
   const energy = [];
   const sizes = [];
   const grids = [];
+  /**
+   * The same grids with the page's own scrolling taken out. See readMedia():
+   * `grids` answers "what changed", this answers "what changed by itself".
+   */
+  const still = [];
   let parked = null;
   let prev = null;
 
@@ -370,6 +406,7 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
         prev = Buffer.from(buf);
         energy.push(0);
         grids.push(new Uint8Array(gw * gh));
+        still.push(new Uint8Array(gw * gh));
         scroll.push({ t: 0, dy: 0, offset: 0 });
         prevProf = scrollProfiles(buf, W, H);
         return;
@@ -468,6 +505,7 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
           else if (Math.abs(d - dy) <= Math.max(SCROLL_STILL, Math.abs(dy) * 0.3)) rode[c]++;
         }
       }
+      still.push(changed > 0 ? unscrolledGrid(mask, buf, prev, W, H, dy, gw, gh, changed) : grid);
       scroll.push({
         t: round3((energy.length - 1) / fps),
         // In frame heights, so nothing downstream has to know this pass reads
@@ -504,6 +542,13 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
     parked,
     grid: { w: gw, h: gh },
     busy: read.busy,
+    /**
+     * Where a moving picture was playing, moment by moment, with scrolling
+     * taken out. Unlike `busy` this does not light up under a page that is
+     * merely being scrolled, and unlike playingRegions() it follows a video
+     * that scrolls up the screen with the page. See readMedia() and inMedia().
+     */
+    media: readMedia(still, gw, gh, fps),
     motion: read.motion,
     /**
      * ── THE VIEWPORT, RECONSTRUCTED ──────────────────────────────────────────
@@ -906,6 +951,256 @@ export function inBusy(screen, t, x, y) {
 }
 
 /**
+ * One frame's changed cells, counting only the change that the page's own
+ * scrolling does NOT explain.
+ *
+ * ── WHY "CHANGED" IS THE WRONG QUESTION FOR FINDING A VIDEO ─────────────────
+ * Everything that measures a video on the page — `busy`, playingRegions() —
+ * asks how often a place on the SCREEN changed. A page being scrolled changes
+ * every place on the screen on every frame of the scroll, so to that question a
+ * scroll is indistinguishable from a video filling the window. On a recording
+ * of cursorful.com that scrolled for most of its length, 363 of 840 cells came
+ * out as "moving pictures" — the navigation bar, the hero, the buttons — and the
+ * locator, forbidden to re-acquire the pointer in any of them, found it in 21%
+ * of frames and missed both presses on the navigation bar.
+ *
+ * A scroll is not change, it is TRANSLATION: every changed pixel of the page is
+ * the pixel from `dy` rows away in the frame before. A fixed bar did not move
+ * at all, so it matches at zero. What matches at neither is content changing
+ * by itself — a video playing, an animation, a panel repainting — and that is
+ * the only thing counted here.
+ *
+ * A row either side of `dy` is also accepted: the shift is measured to the
+ * row on a smooth scroll that does not move by whole rows. Rows scrolled INTO
+ * view have nothing in the previous frame to be compared with and are new
+ * page, not a moving picture, so they are not counted either.
+ *
+ * ── AND A SLOW SCROLL IS STILL A SCROLL ──────────────────────────────────────
+ * `dy` is only believed from SCROLL_MOVED rows up, and a page drifting up at
+ * sixty pixels a second moves a row or two per sample at this size. That was
+ * enough to paint both pricing cards of a page being read as "video" for a
+ * second and a half. So the two rows either side of zero are always tried as
+ * well: nothing a video does is a clean vertical slide of a row or two, and
+ * everything a slow scroll does is.
+ */
+function unscrolledGrid(mask, buf, prev, W, H, dy, gw, gh, changed = 0) {
+  const counts = new Uint16Array(gw * gh);
+  const cw = W / gw;
+  const ch = H / gh;
+  const shifts = [0, -1, 1, -2, 2];
+  if (Math.abs(dy) > 2) shifts.push(dy - 1, dy, dy + 1);
+  /**
+   * ── AND A FAST SCROLL IS STILL A SCROLL ────────────────────────────────────
+   * `dy` is searched over a quarter of the frame, which is a hard wheel flick.
+   * An anchor link is not a flick: pressing "Pricing" in a navigation bar
+   * smooth-scrolls four thousand pixels in about a second, seventy rows a
+   * sample at this size, and `dy` comes back empty. Unexplained, the whole
+   * page reads as a moving picture for as long as the jump lasts and a
+   * little either side — which is precisely when the pointer is sitting on
+   * the link that caused it. So when much of the frame changed, the frame's
+   * own travel is also searched over most of its height, from row profiles.
+   */
+  if (changed > mask.length * 0.02) {
+    const wide = wideShift(buf, prev, W, H);
+    if (wide && Math.abs(wide - dy) > 1) shifts.push(wide - 1, wide, wide + 1);
+  }
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
+    const y = (i / W) | 0;
+    const x = i - y * W;
+    let explained = false;
+    let revealed = true;
+    const v = buf[i];
+    for (let k = 0; k < shifts.length && !explained; k++) {
+      const py = y + shifts[k];
+      if (py < 0 || py >= H) continue;
+      if (k >= 5) revealed = false;
+      /**
+       * A scroll rarely moves by whole rows, and a row that moved one and a
+       * third is a blend of the two rows it fell between — which matches
+       * neither, by as much as a quarter of an edge's contrast. So a pixel is
+       * explained when it lies between two neighbouring rows of the previous
+       * frame, not only when it equals one of them.
+       */
+      const a = prev[py * W + x];
+      const b = py + 1 < H ? prev[(py + 1) * W + x] : a;
+      const lo = (a < b ? a : b) - BLEND_TOL;
+      const hi = (a > b ? a : b) + BLEND_TOL;
+      if (v >= lo && v <= hi) explained = true;
+    }
+    // Rows the scroll brought into view: only a real scroll reveals anything.
+    if (shifts.length === 5) revealed = false;
+    if (explained || revealed) continue;
+    counts[Math.min(gh - 1, (y / ch) | 0) * gw + Math.min(gw - 1, (x / cw) | 0)]++;
+  }
+  const grid = new Uint8Array(gw * gh);
+  for (let c = 0; c < grid.length; c++) grid[c] = counts[c] >= CELL_MIN ? 1 : 0;
+  return grid;
+}
+
+/**
+ * How far the whole frame travelled vertically, searched over most of its
+ * height: `cur(y) ≈ prev(y + s)`. Null when no shift is clearly better than
+ * none. Row profiles, every second column, so a frame costs a few hundred
+ * thousand additions however far it went.
+ */
+function wideShift(cur, prev, W, H) {
+  const prof = (buf) => {
+    const p = new Float32Array(H);
+    for (let y = 0; y < H; y++) {
+      let s = 0;
+      const a = y * W;
+      for (let x = 0; x < W; x += 2) s += buf[a + x];
+      p[y] = s;
+    }
+    return p;
+  };
+  const c = prof(cur);
+  const p = prof(prev);
+  const range = Math.round(H * 0.7);
+  const errAt = (s) => {
+    let err = 0;
+    let n = 0;
+    for (let y = 0; y < H; y++) {
+      const q = y + s;
+      if (q < 0 || q >= H) continue;
+      const d = c[y] - p[q];
+      err += d * d;
+      n++;
+    }
+    return n >= H * 0.25 ? err / n : Infinity;
+  };
+  const still = errAt(0);
+  let best = 0;
+  let bestErr = still;
+  for (let s = -range; s <= range; s++) {
+    if (!s) continue;
+    const e = errAt(s);
+    if (e < bestErr) { bestErr = e; best = s; }
+  }
+  return best && bestErr < still * 0.5 ? best : null;
+}
+
+/**
+ * Where a moving picture was playing, moment by moment.
+ *
+ * ── WHAT THE WHOLE-RECORDING MEASUREMENT CANNOT DO ───────────────────────────
+ * playingRegions() totals a cell's busy time and calls the big blobs video. It
+ * used to count a scroll as playing, too — a page scrolled for most of the
+ * recording came out "mostly video" — and that is now fixed there, by only
+ * counting the time the page stood still. What it can never do is follow a
+ * video that SCROLLS: that video spends a few seconds in each place on the
+ * screen and never a third of the recording in any one, so the stranger's
+ * cursor inside it was accepted, riding up the screen with the page.
+ *
+ * This asks the question at each MOMENT instead, of the scroll-compensated
+ * grids: a cell is playing while it keeps changing by itself — the same
+ * window and share as readGrids() uses for an animation — and only as part of
+ * a patch big enough to be a picture rather than a spinner. The answer moves
+ * with the video, and it is empty under a page that is only being scrolled.
+ *
+ * @returns {Array<{c:number,start:number,end:number}>} spans, as `busy` has
+ */
+function readMedia(grids, gw, gh, fps) {
+  const cells = gw * gh;
+  const n = grids.length;
+  const half = Math.max(2, Math.round((BUSY_WINDOW * fps) / 2));
+  const flags = grids.map(() => new Uint8Array(cells));
+  for (let c = 0; c < cells; c++) {
+    let sum = 0;
+    for (let i = 0; i < Math.min(n, half + 1); i++) sum += grids[i][c];
+    for (let i = 0; i < n; i++) {
+      if (i > 0) {
+        const add = i + half;
+        const drop = i - half - 1;
+        if (add < n) sum += grids[add][c];
+        if (drop >= 0) sum -= grids[drop][c];
+      }
+      const lo = Math.max(0, i - half);
+      const hi = Math.min(n - 1, i + half);
+      if (sum / (hi - lo + 1) >= BUSY_SHARE) flags[i][c] = 1;
+    }
+  }
+
+  // Per moment, only the patches big enough to be a picture survive.
+  for (let i = 0; i < n; i++) {
+    const f = flags[i];
+    const keep = new Uint8Array(cells);
+    const seen = new Uint8Array(cells);
+    for (let start = 0; start < cells; start++) {
+      if (!f[start] || seen[start]) continue;
+      const blob = [];
+      const queue = [start];
+      seen[start] = 1;
+      while (queue.length) {
+        const c = queue.pop();
+        blob.push(c);
+        const y = (c / gw) | 0;
+        const x = c - y * gw;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+          const k = ny * gw + nx;
+          if (!f[k] || seen[k]) continue;
+          seen[k] = 1;
+          queue.push(k);
+        }
+      }
+      if (blob.length >= MEDIA_CELLS) for (const c of blob) keep[c] = 1;
+    }
+    flags[i] = keep;
+  }
+
+  const spans = [];
+  for (let c = 0; c < cells; c++) {
+    let openFrom = -1;
+    for (let i = 0; i <= n; i++) {
+      const hot = i < n && flags[i][c] === 1;
+      if (hot && openFrom < 0) openFrom = i;
+      else if (!hot && openFrom >= 0) {
+        spans.push({ c, start: round3(openFrom / fps), end: round3((i - 1) / fps) });
+        openFrom = -1;
+      }
+    }
+  }
+  return spans;
+}
+
+/**
+ * Was a moving picture playing at this point at this moment?
+ *
+ * Padded by a cell, the same slack inBusy() uses: the grid is coarse and a
+ * picture's edge rarely lands on a cell boundary. That margin is only safe
+ * because a scroll is taken out of the measurement at every speed — before
+ * wideShift(), an anchor link's jump was not, the rows under a fixed bar lit
+ * up for the length of the jump, and one cell of margin put the bar itself,
+ * with the pointer on it, inside the veto. Measured on two recordings of
+ * cursorful.com, seventeen places the creator's pointer really was: none of
+ * them vetoed, with the margin or without; the margin catches two to three
+ * times as many of the places a stranger's cursor was.
+ *
+ * Empty for every recording analysed before `media` existed, which is the
+ * right fallback: it says "nothing known to be playing here" and vetoes
+ * nothing.
+ */
+export function inMedia(screen, t, x, y) {
+  if (!screen?.media?.length || !screen.grid) return false;
+  const gw = screen.grid.w;
+  const gh = screen.grid.h;
+  const slack = 0.5 / Math.max(1, num(screen.fps) || READ_FPS);
+  const cx = Math.min(gw - 1, Math.max(0, Math.floor(num(x) * gw)));
+  const cy = Math.min(gh - 1, Math.max(0, Math.floor(num(y) * gh)));
+  for (const s of screen.media) {
+    if (t < s.start - slack || t > s.end + slack) continue;
+    const sy = (s.c / gw) | 0;
+    const sx = s.c - sy * gw;
+    if (Math.abs(sx - cx) <= BUSY_PAD && Math.abs(sy - cy) <= BUSY_PAD) return true;
+  }
+  return false;
+}
+
+/**
  * How much of the recording each cell of the grid spent animating, and which
  * cells were animating for most of it.
  *
@@ -971,13 +1266,38 @@ export function playingRegions(screen, { duration = 0, share = PLAYING_SHARE, le
   const out = new Set();
   if (!screen?.busy?.length || !screen.grid || !(duration > 0)) return out;
 
+  /**
+   * ── ONLY WHILE THE PAGE STOOD STILL ────────────────────────────────────────
+   * `busy` counts a page being scrolled as change in every cell it crosses. On
+   * a recording that scrolls a lot that paints the page's fixed bar and half
+   * its layout as "video": past the valve the answer is thrown away, which is
+   * survivable, but UNDER it — a drawn test page of ordinary paragraphs,
+   * scrolled, came to 274 of 840 cells — it is believed, calibration refuses
+   * every place the real pointer went, and the recording comes back with no
+   * pointer at all; and a press on the bar is explained away as "a video
+   * playing" (explainMotion).
+   *
+   * A video plays whether or not the page moves, so nothing is lost by only
+   * counting the time the page stood still, and measuring the share against
+   * that time. The scroll-compensated `media` was tried as the source instead
+   * and is the wrong tool for this: a video whose picture drifts — a gradient,
+   * a slow pan — IS a vertical translation pixel for pixel, and is explained
+   * away with the scroll. Whether the page moved is a question about the whole
+   * frame (`scroll`), and it is asked here of the whole frame.
+   */
+  const moving = scrollingSpans(screen);
+  const stillTime = Math.max(0.001, duration - moving.reduce((a, [s, e]) => a + (e - s), 0));
   const total = new Map();
   for (const s of screen.busy) {
-    const secs = Math.max(0, num(s.end) - num(s.start));
-    total.set(s.c, (total.get(s.c) || 0) + secs);
+    let secs = Math.max(0, num(s.end) - num(s.start));
+    for (const [a, b] of moving) secs -= Math.max(0, Math.min(num(s.end), b) - Math.max(num(s.start), a));
+    if (secs > 0) total.set(s.c, (total.get(s.c) || 0) + secs);
   }
   const hot = new Set();
-  for (const [c, secs] of total) if (secs / duration >= share) hot.add(c);
+  // Against the still time, but never less than a third of the whole: a page
+  // that stood still for two seconds of thirty says little about what plays.
+  const base = Math.max(stillTime, duration / 3);
+  for (const [c, secs] of total) if (secs / base >= share) hot.add(c);
   if (!hot.size) return out;
 
   /**
@@ -1027,6 +1347,31 @@ export function playingRegions(screen, { duration = 0, share = PLAYING_SHARE, le
     return new Set();
   }
   return out;
+}
+
+/**
+ * When the page itself was moving, as [start, end] spans in seconds.
+ *
+ * A row a sample is a scroll at this size — a slow drift of sixty pixels a
+ * second is exactly that — so anything from a row up counts. Each moving
+ * sample is widened by half the busy window either side, because a busy span
+ * is judged over that window and smears a scroll across it.
+ */
+function scrollingSpans(screen) {
+  const list = Array.isArray(screen?.scroll) ? screen.scroll : [];
+  const rows = screen?.grid ? READ_EDGE * (screen.grid.h / screen.grid.w) : 270;
+  const oneRow = 1 / Math.max(1, rows);
+  const pad = BUSY_WINDOW / 2;
+  const spans = [];
+  for (const p of list) {
+    if (Math.abs(num(p.dy)) < oneRow) continue;
+    const a = num(p.t) - pad;
+    const b = num(p.t) + pad;
+    const last = spans[spans.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else spans.push([a, b]);
+  }
+  return spans;
 }
 
 /**
@@ -1889,7 +2234,20 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
    */
   const quiet = dropRepaints(opened, shiftTimes(motion, offset, { duration }));
   const still = dropOrbits(quiet, { sourceWidth, sourceHeight });
-  const seen = dropLoners(still.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y))));
+  /**
+   * ── AND NOTHING SEEN INSIDE A VIDEO THAT IS PLAYING ──────────────────────
+   * The tracker finds the pointer as "the small thing that moved", and inside
+   * an embedded product demo the small thing that moved is the demo's own
+   * cursor. These samples fill the drawn path wherever the locator has no
+   * sighting, so on a landing page with a demo on it our pointer was painted
+   * onto the stranger's, hand and all, for as long as ours was out of sight.
+   * inBusy() did not catch it: a demo of a mostly still screen repaints too
+   * little to count as an animation in any one cell. inMedia() asks whether a
+   * moving PICTURE covers the place, with scrolling taken out. See sync.js
+   * readMedia().
+   */
+  const unplayed = still.filter((s2) => !inBusy(screen, num(s2.t), num(s2.x), num(s2.y)) && !inMedia(screen, num(s2.t), num(s2.x), num(s2.y)));
+  const seen = dropLoners(unplayed);
   const clean = dropFliers(seen, { sourceWidth, sourceHeight });
 
   return {
@@ -1911,4 +2269,4 @@ export async function alignCapture({ video, capture = {}, duration = 0, sourceWi
   };
 }
 
-export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, busyShare, settleAfter, dropRepaints, dropOrbits, dropFliers, alignCapture };
+export default { readScreen, clockOffset, shiftTimes, fillOpening, inBusy, inMedia, busyShare, settleAfter, dropRepaints, dropOrbits, dropFliers, alignCapture };

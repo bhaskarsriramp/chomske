@@ -42,7 +42,7 @@
  */
 import { createCanvas } from "@napi-rs/canvas";
 import { ffmpegToFrames } from "../media/ffmpeg.js";
-import { playingRegions, inPlaying } from "./sync.js";
+import { playingRegions, inPlaying, inMedia } from "./sync.js";
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -625,13 +625,28 @@ function topTwo(frame, W, H, t, reject = null) {
       }
     }
     if (!best) continue;
-    if (reject && reject(best.x, best.y)) continue;
-    const near = found.find((c) => Math.abs(c.x - best.x) <= sep && Math.abs(c.y - best.y) <= sep);
-    if (near) { if (best.score > near.score) Object.assign(near, best); }
-    else found.push(best);
+    found.push(best);
   }
   found.sort((p, q) => q.score - p.score);
-  return { best: found[0] || null, second: found[1] || null };
+  /**
+   * ── BEST FIRST, AND `reject` ONLY ASKED OF WHAT COULD WIN ─────────────────
+   * Only two answers leave here, so only the strongest places need asking
+   * whether they are excluded. `reject` can be expensive — the locator's asks
+   * whether a match moved with the page, which reads two frames — and asking
+   * it of every candidate on a page with sixty arrow glyphs made the synthetic
+   * suite take minutes a frame. Taken strongest first, a place within `sep` of
+   * one already kept or already refused is the same place seen again.
+   */
+  const kept = [];
+  const refused = [];
+  const same = (a, b) => Math.abs(a.x - b.x) <= sep && Math.abs(a.y - b.y) <= sep;
+  for (const c of found) {
+    if (kept.some((k) => same(k, c)) || refused.some((r) => same(r, c))) continue;
+    if (reject && reject(c.x, c.y, c.score)) { refused.push(c); continue; }
+    kept.push(c);
+    if (kept.length === 2) break;
+  }
+  return { best: kept[0] || null, second: kept[1] || null };
 }
 
 /**
@@ -682,7 +697,6 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
    * and the caller retries without it if nothing survives.
    */
   const region = playing?.size ? playing : moving?.size ? moving : null;
-  const veto = region ? (x, y) => inPlaying(region, screen, x / W, y / H) : null;
   const want = new Set();
   const total = Math.max(1, Math.floor(duration * fps));
   for (let k = 0; k < CAL_FRAMES; k++) want.add(Math.floor(((k + 0.5) / CAL_FRAMES) * total));
@@ -719,11 +733,44 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
    * Anything cheaper than this has to come from asking FEWER QUESTIONS — fewer
    * candidates or fewer frames — not from asking them of less data.
    */
+  /**
+   * ── AND THE SAME QUESTIONS THE TRACKING LOOP ASKS ─────────────────────────
+   * A template is voted for by the best match on each sampled frame, and a
+   * stranger's cursor in a demo on the page is a perfectly good match: on a
+   * recording of cursorful.com the demo's own black arrow fitted at 0.853 in
+   * five sampled frames against the creator's white one at 0.840 in eight, and
+   * best fit chose black — after which the creator's pointer was found in a
+   * fifth of the frames. The whole-recording map could not help: that demo
+   * scrolls with the page and is in no one place for long.
+   *
+   * So each sampled frame is judged as the tracking loop judges a match it has
+   * no continuity for (isContent): a picture playing there at that moment, or
+   * a glyph that moved WITH the page. That needs the frames before it — the one
+   * just before and one a quarter of a second back — so a few recent distinct
+   * frames are kept as the recording is read.
+   */
+  const recent = [];
+  const back = Math.max(2, Math.round(RIDE_BASE * fps) + 1);
   await ffmpegToFrames(video, {
     width: W, height: H, fps, pixelFormat: "gray",
     duration,
     onFrame: (frame, i) => {
-      if (!want.has(i)) return;
+      const tNow = i / fps;
+      const wanted = want.has(i);
+      const bases = [];
+      if (wanted && recent.length) {
+        bases.push(recent[recent.length - 1]);
+        const old = recent.find((r) => r.t <= tNow - RIDE_BASE) || recent[0];
+        if (old !== bases[0]) bases.push(old);
+      }
+      // Kept whether or not this frame is sampled, since a sampled frame needs
+      // the ones before it. A repeat of the last frame is not a new one.
+      const kept = recent[recent.length - 1];
+      if (!kept || !sameFrame(kept.frame, frame)) {
+        recent.push({ t: tNow, frame: Buffer.from(frame) });
+        if (recent.length > back) recent.shift();
+      }
+      if (!wanted) return;
       for (const t of all) {
         /**
          * ── A POINTER INSIDE A PLAYING VIDEO IS SOMEBODY ELSE'S POINTER ──────
@@ -732,6 +779,9 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
          * afterwards, or it still counts as the runner-up and suppresses the
          * real pointer through the uniqueness test. See sync.js playingRegions.
          */
+        const veto = (x, y, score) =>
+          (region && inPlaying(region, screen, x / W, y / H)) ||
+          (score >= FLICK && isContent(frame, bases, W, H, t, x, y, tNow, screen, score, [t], null));
         const { best, second } = topTwo(frame, W, H, t, veto);
         if (!best || best.score < FOUND) continue;
         const margin = best.score - (second ? second.score : 0.45);
@@ -1175,8 +1225,32 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    * exactly where a video's cursor gets taken for the real one — and where it
    * silently cancels the real one out as runner-up.
    */
-  const guard = playing.size ? playing : moving?.size ? moving : null;
-  const veto = guard ? (x, y) => inPlaying(guard, screen, x / W, y / H) : null;
+  /**
+   * ── AND THAT MEASUREMENT CANNOT BE THE VETO HERE ──────────────────────────
+   * The paragraphs above describe the last fix to this loop, and it broke the
+   * very next recording of the same page. `moving` is how often each place on
+   * the SCREEN changed over the whole recording, and a page being scrolled
+   * changes every place on the screen. The creator scrolled cursorful.com for
+   * most of a 35 second recording, 363 of 840 cells came out as "video" — the
+   * navigation bar, the hero, the buttons — and a pointer lost for a moment
+   * could never be found again anywhere the creator actually clicked. Located
+   * in 21% of frames; the presses on Pricing and Editor filed at a stale
+   * position and refused. The valve on PLAYING_MAX_COVER was written after
+   * exactly this failure once before ("98% of frames to none"), and using the
+   * measurement uncapped walked straight back into it.
+   *
+   * It also did not do the job it was brought in for. A demo video that
+   * scrolls up the screen with the page spends a few seconds in each place,
+   * never a third of the recording in any, so the stranger's cursor inside it
+   * was outside the veto and was taken for the pointer anyway.
+   *
+   * So re-acquisition asks three things now (isContent): is this a place that
+   * animated for most of the time the page stood STILL — playingRegions no
+   * longer counts scrolling, and only the capped answer is used; was a moving
+   * picture playing here at this moment with the scroll taken out; and did
+   * this match just move with the page, which the real pointer never does.
+   */
+  const hintVeto = (h) => inMedia(screen, h.t, h.x, h.y) || (playing.size > 0 && inPlaying(playing, screen, h.x, h.y));
 
   /**
    * ── A HINT FROM INSIDE A PLAYING VIDEO IS THE VIDEO ──────────────────────
@@ -1204,8 +1278,49 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     let best = null;
     for (const h of hints) { const d = Math.abs(h.t - t); if (d <= 0.25 && (!best || d < best.d)) best = { d, h }; }
     if (!best) return null;
-    if (veto && veto(best.h.x * W, best.h.y * H)) return null;
+    if (hintVeto(best.h)) return null;
     return best.h;
+  };
+  /**
+   * How many times lately a FOLLOWED match has been seen moving with the page,
+   * and when last. Two, with nothing in between showing it stay put, and it
+   * is let go. See the note in step 1.
+   */
+  let riding = 0;
+  let ridingAt = -Infinity;
+  /** Recent distinct frames, for ridesWithPage's quarter-second look back. */
+  const history = [];
+  /**
+   * ── WHOSE POINTER: WHERE THIS RUN OF SIGHTINGS CAME FROM ───────────────────
+   * Every sighting belongs to a run — the pointer followed frame to frame —
+   * and a run is PROVEN to be the creator's when it began where theirs was
+   * last seen, or came in from the edge of the picture, or was seen staying
+   * put while the page moved under it (ridesWithPage STAYED), or is the first
+   * run of the recording. Anything else appeared from nowhere, and a pointer
+   * that appears from nowhere on a page with a demo playing on it is as likely
+   * somebody else's: on a recording of cursorful.com the creator's pointer was
+   * hidden by keyboard scrolling, and 0.3s later the demo's own hand — 800
+   * pixels away, the page standing still — was picked up and followed to its
+   * click. Nothing about how it looked, or where it went on a still page, said
+   * otherwise. Where it CAME FROM does.
+   *
+   * Unproven is not refused here: the creator's own pointer reappears far
+   * from where it vanished whenever they move the mouse while it is hidden,
+   * and it must still be followed and drawn. The flag rides on each sighting
+   * and is one of two conditions confirmClicks() needs before it refuses a
+   * press as part of a picture (events.js "in-picture").
+   */
+  let run = null;
+  /** Where the last PROVEN run was last seen. */
+  let provenEnd = null;
+  const edge = Math.max(24, (cal.heightPx || 18) * 2);
+  const nearEdge = (x, y) => x < edge || y < edge || x > W - edge || y > H - edge;
+  /** Every tracking template of a match's shape: what ridesWithPage looks for it with. */
+  const families = new Map();
+  const familyOf = (tp) => {
+    if (!families.has(tp.shape)) families.set(tp.shape, [...tpls, ...extra].filter((q) => q.shape === tp.shape));
+    const f = families.get(tp.shape);
+    return f.length ? f : [tp];
   };
 
   const track = [];
@@ -1313,6 +1428,17 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
       }
       prevFrame = Buffer.from(frame);
       prevHit = null;
+      /**
+       * The picture "moved with the page" is measured against: the newest
+       * DIFFERENT frame at least RIDE_BASE old. Frames are kept by reference —
+       * prevFrame is a fresh copy every time and never written to — and only
+       * as far back as that needs.
+       */
+      history.push({ t, frame: prevFrame });
+      while (history.length > 2 && history[1].t <= t - RIDE_BASE) history.shift();
+      // The frame just before, for a fast scroll, and the newest one at least
+      // RIDE_BASE old, for a slow one. See rideVerdict().
+      const bases = history.length > 1 ? [history[history.length - 2], history[0]] : [];
 
       let hit = null;
 
@@ -1328,12 +1454,42 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
           const r = search(frame, W, H, tpls, last.x - NEAR, last.y - NEAR, last.x + NEAR, last.y + NEAR);
           if (r && (!hit || r.score > hit.score)) hit = r;
         }
+        /**
+         * ── CONTINUITY IS EVIDENCE OF ONE THING, NOT OF WHOSE IT IS ──────────
+         * Following a match frame to frame proves it is the same match. It
+         * does not prove it is the pointer: a cursor inside a demo on the page,
+         * once taken, was followed for as long as it stayed on screen, riding
+         * up with the scroll. The real pointer stays put while the page moves
+         * under it, so two frames running of moving WITH the page is the end
+         * of following — whatever this was, it was part of the page.
+         */
+        if (hit && hit.score >= FOUND) {
+          const r = rideVerdict(frame, bases, W, H, hit.t, hit.x, hit.y, hit.score, familyOf(hit.t));
+          // A frame that cannot tell is not a reprieve; only seeing it stay
+          // put while the page moved is.
+          if (t - ridingAt > RIDE_FORGET) riding = 0;
+          if (r === RODE) { riding++; ridingAt = t; }
+          else if (r === STAYED) {
+            riding = 0;
+            // Staying put while the page moved is the one thing only the real
+            // pointer does: this run is the creator's.
+            if (run) run.proven = true;
+          }
+          if (riding >= 2) {
+            hit = null;
+            last = null;
+            riding = 0;
+          }
+        }
       }
       // 2. Where the difference tracker saw something move.
       if (!hit || hit.score < FOUND) {
         const h = hintAt(t);
         if (h) {
-          const r = search(frame, W, H, tpls, h.x * W - NEAR, h.y * H - NEAR, h.x * W + NEAR, h.y * H + NEAR);
+          let r = search(frame, W, H, tpls, h.x * W - NEAR, h.y * H - NEAR, h.x * W + NEAR, h.y * H + NEAR);
+          // No uniqueness test is asked of a match beside a hint, so it is at
+          // least asked whether it belongs to the page.
+          if (r && r.score >= FLICK && isContent(frame, bases, W, H, r.t, r.x, r.y, t, screen, r.score, familyOf(r.t), playing)) r = null;
           if (r && (!hit || r.score > hit.score)) hit = r;
         }
       }
@@ -1380,8 +1536,16 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
          */
         const fresh = recent && lostFor <= 2;
         const bar = fresh ? FLICK : FOUND;
+        /**
+         * Excluded as a CANDIDATE, not refused afterwards, for the reason
+         * topTwo gives: a stranger's cursor left in as runner-up collapses the
+         * gap and the real pointer is thrown out with it. Only matches strong
+         * enough to matter are asked — the test reads two frames, and a
+         * candidate under FLICK cannot win or close the gap on one over FOUND.
+         */
         for (const tp of wide) {
-          const { best, second } = topTwo(frame, W, H, tp, veto);
+          const reject = (x, y, score) => score >= FLICK && isContent(frame, bases, W, H, tp, x, y, t, screen, score, familyOf(tp), playing);
+          const { best, second } = topTwo(frame, W, H, tp, reject);
           if (!best || best.score < bar) continue;
           // A sure match is taken wherever it is; the extra conditions are only
           // for a soft one, which has to earn its place by being where a flick
@@ -1405,9 +1569,17 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
         if (r) hit = { ...r, soft: r.score < FOUND };
       }
 
-      if (onDebug) onDebug({ t, hit: hit ? { x: hit.x, y: hit.y, score: hit.score, soft: !!hit.soft } : null, last, lostFor, recent });
+      if (onDebug) onDebug({ t, hit: hit ? { x: hit.x, y: hit.y, score: hit.score, soft: !!hit.soft } : null, last, lostFor, recent, riding });
       if (hit && (hit.score >= FOUND || hit.soft)) {
-        prevHit = { t, x: round4(hit.x / W), y: round4(hit.y / H), shape: hit.t.shape, score: round3(hit.score), located: true };
+        // A new run when there was nothing to continue from, or the match is
+        // nowhere near where the last one was.
+        if (!run || !last || Math.hypot(hit.x - last.x, hit.y - last.y) > NEAR * 2) {
+          const first = !provenEnd && !track.length;
+          const returning = provenEnd && Math.hypot(hit.x - provenEnd.x, hit.y - provenEnd.y) <= PROVEN_NEAR;
+          run = { proven: !!(first || returning || nearEdge(hit.x, hit.y)) };
+        }
+        if (run.proven) provenEnd = { x: hit.x, y: hit.y, t };
+        prevHit = { t, x: round4(hit.x / W), y: round4(hit.y / H), shape: hit.t.shape, score: round3(hit.score), located: true, proven: run.proven };
         track.push(prevHit);
         rings.push({ t, x: hit.x, y: hit.y, mean: ringMean(frame, W, H, hit.x, hit.y, ringOuter, ringHole) });
         last = last ? { x: hit.x, y: hit.y, vx: hit.x - last.x, vy: hit.y - last.y } : { x: hit.x, y: hit.y };
@@ -1767,6 +1939,289 @@ export function snapToLocated(events, located, { within = 0.12, reach = SNAP_REA
   });
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+   Is this match part of the page?
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Per-pixel difference that counts as changed, at full resolution. The same
+ * number the browser tracker and sync.js use.
+ */
+const RIDE_DIFF = 18;
+/** Share of the surroundings that must change before they are said to have moved. */
+const RIDE_MOVED = 0.08;
+/** ...and the most of that change a vertical shift may leave unexplained and still be the move. */
+const RIDE_EXPLAINED = 0.35;
+/** The furthest a page may travel between the two frames compared, as a share of the height. */
+const RIDE_RANGE = 0.4;
+/** Pixels a glyph must have moved for its move to say anything. */
+const RIDE_MIN = 6;
+/** Pixels sideways a cursor in a demo may drift by itself while the page carries it. */
+const RIDE_OWN = 40;
+/**
+ * The most, vertically, a cursor may have moved by itself and still be said to
+ * ride — and never more than 40% of the move itself, so that "came with the
+ * page" and "stayed put" can never both be within reach of one match.
+ */
+const RIDE_SLACK = 64;
+/** How far back the frame the ride test compares against is taken. */
+const RIDE_BASE = 0.25;
+/** How near where the creator's pointer was last seen a new run must begin to be theirs. */
+const PROVEN_NEAR = 150;
+/** Seconds after which an old sighting of riding no longer counts toward letting go. */
+const RIDE_FORGET = 1.0;
+
+/**
+ * The surroundings of a point, compared between two frames. The glyph's own box
+ * is left out, so the answers are always about the page and never the pointer.
+ *
+ *   still        what share of the surroundings changed at all
+ *   residual(s)  of the pixels that changed, what share a vertical shift of
+ *                `s` does NOT explain — `cur(x, y)` against `prev(x, y + s)`
+ *
+ * ── ONLY THE PIXELS THAT CHANGED ARE ASKED TO BE EXPLAINED ──────────────────
+ * The first version asked a shift to explain the WHOLE patch, and a patch that
+ * is part fixed bar and part page scrolling under it can never be explained by
+ * one shift: the bar fits zero and the page fits `s`. A stranger's cursor
+ * sliding up under a translucent navigation bar was followed for six frames
+ * that way. A fixed part did not change, so it has nothing to explain; the
+ * question is only whether what moved, moved together.
+ */
+function surroundings(cur, prev, W, H, x, y, h) {
+  const x0 = clamp(Math.round(x - 3 * h), 0, W - 1);
+  const x1 = clamp(Math.round(x + 3 * h), 0, W - 1);
+  const y0 = clamp(Math.round(y - 2 * h), 0, H - 1);
+  const y1 = clamp(Math.round(y + 3.5 * h), 0, H - 1);
+  const gx0 = x - h, gx1 = x + h, gy0 = y - 0.4 * h, gy1 = y + 1.7 * h;
+  const changed = [];
+  let n = 0;
+  for (let py = y0; py <= y1; py += 2) {
+    const a = py * W;
+    for (let px = x0; px <= x1; px += 2) {
+      if (px >= gx0 && px <= gx1 && py >= gy0 && py <= gy1) continue;
+      n++;
+      const d = cur[a + px] - prev[a + px];
+      if (d > RIDE_DIFF || d < -RIDE_DIFF) changed.push(py, px);
+    }
+  }
+  const still = n >= 12 ? changed.length / 2 / n : 0;
+  /**
+   * ── AND NOT WHERE THE GLYPH ITSELF WAS ─────────────────────────────────────
+   * A pointer that moves leaves a hole where it was, and on a plain background
+   * the hole is "explained" by ANY shift — background matches background. Left
+   * in, a real pointer moving up beside a playing video was judged to have
+   * ridden the page by its own move, and was dropped (content.mjs caught it).
+   * So the place the glyph was in the earlier frame is left out as well, and
+   * only what is left — the page — is asked to have moved.
+   */
+  const residual = (s, step = 1, hole = null) => {
+    let m = 0;
+    let left = 0;
+    for (let i = 0; i < changed.length; i += 2 * step) {
+      const py = changed[i];
+      const px = changed[i + 1];
+      if (hole && px >= hole.x0 && px <= hole.x1 && py >= hole.y0 && py <= hole.y1) continue;
+      const qy = py + s;
+      if (qy < 0 || qy >= H) continue;
+      m++;
+      const d = cur[py * W + px] - prev[qy * W + px];
+      if (d > RIDE_DIFF || d < -RIDE_DIFF) left++;
+    }
+    return m >= Math.max(8, 12 / step) ? left / m : 1;
+  };
+  /** How much of the surroundings changed once the glyph's old place is left out too. */
+  const movedBesides = (hole) => {
+    let k = 0;
+    for (let i = 0; i < changed.length; i += 2) {
+      const py = changed[i];
+      const px = changed[i + 1];
+      if (px >= hole.x0 && px <= hole.x1 && py >= hole.y0 && py <= hole.y1) continue;
+      k++;
+    }
+    return n >= 12 ? k / n : 0;
+  };
+  return { still, residual, movedBesides };
+}
+
+/**
+ * Every place in a band of the earlier frame where this glyph fits well enough
+ * to be the same one: a coarse pass with the test that tolerates a pixel of
+ * error, each hit settled to the exact pixel, neighbours merged.
+ */
+function glyphsInBand(frame, W, H, family, bx0, bx1, by0, by1, bar) {
+  const out = [];
+  const sep = Math.max(12, (family[0].heightPx || 18) * 1.2);
+  for (let y = Math.max(0, by0); y <= Math.min(H - 1, by1); y += COARSE_STEP) {
+    for (let x = Math.max(0, bx0); x <= Math.min(W - 1, bx1); x += COARSE_STEP) {
+      let best = null;
+      for (const t of family) {
+        if (!coarseAt(frame, W, H, t, x, y)) continue;
+        for (let yy = y - 2; yy <= y + 2; yy++) {
+          for (let xx = x - 2; xx <= x + 2; xx++) {
+            const v = scoreAt(frame, W, H, t, xx, yy);
+            if (v >= bar && (!best || v > best.score)) best = { x: xx, y: yy, score: v };
+          }
+        }
+      }
+      if (!best) continue;
+      const near = out.find((c) => Math.abs(c.x - best.x) <= sep && Math.abs(c.y - best.y) <= sep);
+      if (near) { if (best.score > near.score) Object.assign(near, best); }
+      else out.push(best);
+    }
+  }
+  return out;
+}
+
+/** Set by the test hook below to read ridesWithPage's working; null otherwise. */
+let debugRide = null;
+
+/**
+ * Did this pointer-shaped match move WITH the page between two frames?
+ *
+ * ── THE ONE THING THE REAL POINTER NEVER DOES ───────────────────────────────
+ * The operating system draws the pointer on top of the screen, in SCREEN
+ * coordinates. When the page scrolls, the pointer stays where the hand left it
+ * and the page slides underneath. Everything that belongs to the page slides
+ * with it: text, an arrow printed as an icon, and — the case this is for — a
+ * cursor inside a product demo playing on the page.
+ *
+ * On a recording of cursorful.com the locator took exactly that for the
+ * pointer: a stranger's arrow inside an embedded Shopify demo, found at the
+ * same x for three and a half seconds while its y fell from 918 to 18 — the
+ * page being scrolled. Our pointer was drawn on it. Nothing about how it LOOKS
+ * separates it from the creator's; it is a Windows arrow at almost the same
+ * size. Where it GOES does, and it is measurable in two frames.
+ *
+ * ── THE GLYPH IS ASKED FIRST, NOT THE PAGE ──────────────────────────────────
+ * The first version measured how far the page had moved and then looked for
+ * the glyph where the page came from. Both ways of measuring the page failed
+ * on the frames that mattered: a match of the rows around the point is fooled
+ * by text that repeats, and readScreen's measurement of the whole page —
+ * taken at twelve frames a second on a 480-wide copy — read a fast scroll at
+ * half its real speed. A wrong distance is a glyph looked for in the wrong
+ * place, and a stranger's cursor followed across the screen.
+ *
+ * So the question is turned round. Where was THIS glyph in the earlier frame?
+ * If it moved, did the page around it move the same way? That tests the one
+ * hypothesis that matters, at full resolution, and needs no measurement of
+ * the page at all:
+ *
+ *   it moved, and the page around it moved the same way     RODE — content
+ *   it is where it was, and the page around it moved         STAYED — the pointer
+ *   anything else                                           nothing can be said
+ *
+ * A cursor in a demo drifts by itself while the page carries it, so "the same
+ * way" allows for its own movement: up to RIDE_OWN sideways, and vertically
+ * no more than 40% of the move, so that riding and staying are never both
+ * within reach. And only a glyph that fits nearly as well as the match itself
+ * counts as the same glyph — text fits the templates at 0.74 to 0.77, and a
+ * letter scrolling up under the resting pointer must not be mistaken for it.
+ *
+ * ── A QUARTER OF A SECOND BACK, AND ONE FRAME BACK ──────────────────────────
+ * A page easing out of a scroll moves a pixel or two between frames, too little
+ * to tell anything by; a quarter of a second of the same drift is plenty. An
+ * anchor link jumps thousands of pixels a second, past any search in a quarter
+ * of a second; the frame just before is near enough. The caller asks both
+ * (rideVerdict), and either one seeing it ride is enough.
+ *
+ * @returns {number} RODE (1) | STAYED (-1) | 0
+ */
+const RODE = 1;
+const STAYED = -1;
+function ridesWithPage(cur, prev, W, H, t, x, y, score = FOUND, family = null) {
+  if (!prev) return 0;
+  const h = Math.max(12, t.heightPx || 18);
+  const { still, residual, movedBesides } = surroundings(cur, prev, W, H, x, y, h);
+  if (debugRide) debugRide.still = round3(still);
+  if (still < RIDE_MOVED) return 0;
+
+  const range = Math.round(H * RIDE_RANGE);
+  const bar = Math.max(FOUND, Math.min(score - 0.06, 0.8));
+  /**
+   * Searched with every size of the same shape, not only the one that matched
+   * now: an encoded pointer comes out a pixel taller or shorter from frame to
+   * frame, and the same glyph that fits one size at 0.865 here fitted the next
+   * size up at 0.868 a frame earlier and the first at under 0.8.
+   */
+  const seen = glyphsInBand(prev, W, H, family?.length ? family : [t], x - RIDE_OWN, x + RIDE_OWN, y - range, y + range, bar);
+  let stayed = false;
+  for (const g of seen) {
+    const s = g.y - y;
+    if (Math.abs(s) <= 2 && Math.abs(g.x - x) <= 2) { stayed = true; continue; }
+    if (Math.abs(s) < RIDE_MIN) continue;
+    const hole = { x0: g.x - h, x1: g.x + h, y0: g.y - 0.4 * h, y1: g.y + 1.7 * h };
+    if (movedBesides(hole) < RIDE_MOVED) continue;
+    // The page around it, taken from where the glyph came from, give or take
+    // the glyph's own drift.
+    const slack = Math.max(2, Math.min(RIDE_SLACK, Math.floor(Math.abs(s) * 0.4)));
+    let best = Infinity;
+    let at = s;
+    for (let k = s - slack; k <= s + slack; k += 2) {
+      const f = residual(k, 3, hole);
+      if (f < best) { best = f; at = k; }
+    }
+    for (let k = at - 2; k <= at + 2; k++) best = Math.min(best, residual(k, 1, hole));
+    const rode = best <= RIDE_EXPLAINED;
+    if (debugRide) (debugRide.tests = debugRide.tests || []).push({ glyph: g.x + "," + g.y, score: round3(g.score), s, slack, explained: round3(best), rode });
+    if (rode) return RODE;
+  }
+  if (!stayed) return 0;
+  /**
+   * Still where it was — but a glyph that sits still while the page around it
+   * changes is only the POINTER if what changed was the page moving. Inside a
+   * video that plays around it, a stranger's cursor sits still too. So the
+   * surroundings have to be explained by some shift of the page.
+   */
+  for (let k = -range; k <= range; k += 2) {
+    if (Math.abs(k) < RIDE_MIN) continue;
+    if (residual(k, 3) <= RIDE_EXPLAINED) return STAYED;
+  }
+  return 0;
+}
+
+/**
+ * Is this match somebody else's pointer, or part of the page?
+ *
+ * The test for a sighting with no continuity behind it: re-acquiring a lost
+ * pointer, or a match near one of the browser tracker's hints. A pointer that
+ * is already being FOLLOWED is never asked this — a creator moving their own
+ * pointer onto a playing video to press pause is ordinary — except for the
+ * ride test, which the loop applies to a followed pointer separately.
+ *
+ *   playing        a region that animated for most of the time the page stood
+ *                  still (sync.js playingRegions) — a video in a fixed place.
+ *                  Only when that measurement is believable at all: past its
+ *                  valve it reports nothing, and the uncapped version is NOT
+ *                  used here — that is what took the pointer off a whole page
+ *   inMedia        a moving picture playing there at that moment, with the
+ *                  page's own scrolling taken out (sync.js readMedia) — a video
+ *                  that scrolls with the page
+ *   ridesWithPage  it moved with the page
+ */
+function isContent(frame, bases, W, H, tpl, x, y, t, screen, score, family = null, playing = null) {
+  if (playing?.size && inPlaying(playing, screen, x / W, y / H)) return true;
+  if (inMedia(screen, t, x / W, y / H)) return true;
+  return rideVerdict(frame, bases, W, H, tpl, x, y, score, family) === RODE;
+}
+
+/**
+ * ridesWithPage against the frame just before and the one a quarter of a
+ * second back — see "a quarter of a second back, and one frame back" above.
+ * Either one seeing it ride is enough: that is positive evidence, and a
+ * pointer that stayed where it was cannot produce it.
+ */
+function rideVerdict(frame, bases, W, H, tpl, x, y, score, family = null) {
+  let verdict = 0;
+  for (let i = 0; i < bases.length; i++) {
+    const b = bases[i];
+    if (!b || (i > 0 && b.frame === bases[i - 1].frame)) continue;
+    const r = ridesWithPage(frame, b.frame, W, H, tpl, x, y, score, family);
+    if (r === RODE) return RODE;
+    if (r === STAYED) verdict = STAYED;
+  }
+  return verdict;
+}
+
 /** Two frames are the same picture: a sparse sample of pixels, all identical. */
 function sameFrame(a, b) {
   if (a.length !== b.length) return false;
@@ -1777,6 +2232,22 @@ function sameFrame(a, b) {
 }
 
 /** For tests. */
-export const _debug = { coarse: coarseAt, make: (name, hp, dark, W) => bounds(prepare(buildTemplate(name, hp, { dark }), W)), score: scoreAt };
+export const _debug = {
+  coarse: coarseAt,
+  make: (name, hp, dark, W) => bounds(prepare(buildTemplate(name, hp, { dark }), W)),
+  /** A hand drawn for a pointer SET of `setPx`, as the tracking loop builds them. */
+  makeHand: (name, hp, dark, setPx, W) => bounds(prepare(buildTemplate(name, hp, { dark, setPx }), W)),
+  score: scoreAt,
+  topTwo,
+  search,
+  /** ridesWithPage with its working: how far the page moved and where the glyph was. */
+  ride: (cur, prev, W, H, t, x, y, score = FOUND, family = null) => {
+    debugRide = {};
+    const rides = ["stayed", "none", "rode"][ridesWithPage(cur, prev, W, H, t, x, y, score, family) + 1];
+    const out = { rides, ...debugRide };
+    debugRide = null;
+    return out;
+  },
+};
 
 export default { locatePointer, mergeLocated, stepPath, snapToLocated, flashesFrom };

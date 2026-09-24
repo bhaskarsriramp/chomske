@@ -1,0 +1,15 @@
+{
+  "about": "cursorful.com scrolled down past the embedded demos and back up, then Pricing pressed in the fixed nav bar. Exported 2026-09-23 with no zoom on Pricing and a zoom mid-scroll.",
+  "recording": "cursorful-scroll-2026-09-23.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab3dc586aa3dfeef3c14291/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "Pricing is hovered from 21.4s, the hand is drawn on it at (938,45) from 21.6s, pressed ~22.05s; the anchor link then smooth-scrolls ~4000px to the pricing section by ~23.3s.",
+    "The hand on this recording fits the drawn hand template at only 0.73-0.78 (it overlaps the text), against 0.88 on 2026-09-24's recording of the same page."
+  ],
+  "clicks": [
+    { "label": "Pricing", "t": 22.05, "x": 938, "y": 45 }
+  ],
+  "strangers": [],
+  "stranger_budget_s": 0
+}

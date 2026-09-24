@@ -231,6 +231,32 @@ took the locator from 98% found to 0%.
 > The lesson recorded in the code: *"The lesson is not a better threshold. It is
 > that this measurement has a range outside which it is meaningless."*
 
+**Revised 2026-09-24 — the veto counted scrolling as video.** `playingRegions`
+totalled how often each place on the *screen* changed, and a page being scrolled
+changes every place on the screen. A fix on 2026-09-23 used that map *uncapped*
+as the tracking loop's re-acquisition veto; the next recording of cursorful.com
+scrolled for most of its length, 363 of 840 cells came out as "video" (the nav
+bar among them), the pointer was located in 21% of frames, and both presses on
+the nav bar — Pricing and Editor — were lost, while a demo's cursor that scrolled
+up the screen (never in one place long enough to be "video") was followed and
+had our cursor drawn on it. A realistic synthetic page came out at 274 cells —
+*under* the valve — and there calibration vetoed every place the real pointer
+went and the whole recording got **no pointer at all**.
+
+What replaced it:
+
+| | |
+|---|---|
+| `sync.js playingRegions` | still totals `busy`, but **only the time the page stood still** (samples where the page moved at least a row, widened by half the busy window, are left out) and against that time. A video plays whether or not the page moves; a scroll no longer counts as one. Calibration, `explainMotion` and re-acquisition all read it — capped by the valve; the uncapped version is used for calibration only. |
+| `sync.js readMedia` / `inMedia` | "moving picture" measured **per moment** on grids with the page's own scroll taken out (each changed pixel is tested against the previous frame shifted by 0, ±1–2 rows, the measured scroll, and a wide-range shift for anchor jumps; sub-row blends allowed with 3 grey levels of slack). Catches a video that scrolls up the screen with the page. Deliberately conservative: it may miss a slowly changing video, and must never land on the real pointer (0 of 17 hand-checked real positions on two recordings). |
+| `locate.js ridesWithPage` | the test for a re-acquired match (and, twice within a second, for a followed one): **did this glyph move with the page?** Find where the same glyph (any size of its shape) was in the frame before and a quarter-second before; if it moved, and the pixels around it that changed — outside its old and new place — moved the same way (allowing its own drift, ≤40% of the move), it is content. The OS pointer is drawn in screen coordinates and never rides the scroll. |
+| `alignCapture` | browser-tracker samples inside a playing picture are dropped, so the drawn cursor cannot be dragged onto a demo's cursor while the real one is out of sight. |
+
+Known limit, stated in `scrolled.mjs`: a stranger's cursor inside a demo on a
+page that is **standing still**, while the creator's own pointer is hidden, is
+indistinguishable from pixels alone. That needs the vision pass's "picture of a
+screen" regions (`mediaUnder`).
+
 ### 3.4 `flashesFrom()` — the only first-hand press signal
 
 Every other signal in this product infers a click from its **consequence** —
@@ -382,6 +408,19 @@ The second exists because a press inside a picture of another screen is not
 *weak* evidence — it is *positive evidence that nobody here pressed anything*.
 The pixel pipeline cannot reach this conclusion; only the model knows the region
 is a video.
+
+**Added 2026-09-24 — a pixel-only version, `in-picture`.** With vision off by
+default the veto above never runs, and on a recording of cursorful.com the
+embedded demo's own hand "clicked" a thumbnail (flash, consequence, a hand) and
+got a zoom. The region alone cannot settle it, but *where the pointer came from*
+can: `locate.js` marks every sighting `proven` — its run began where the
+creator's pointer was last seen, came in from the edge, was the first of the
+recording, or was seen staying put while the page scrolled under it (the one
+thing only the real pointer does). A press is refused as `in-picture` when its
+pointer is **unproven** AND a moving picture was playing at that spot
+(`sync.js inMedia`) at least twice in the 3 s before. Measured: the demo's click
+meets both; none of 13 real presses across four recordings had a picture at its
+spot beforehand. It is in `HEURISTIC_REFUSAL`, so the arbiter can overturn it.
 
 ### 7.3 The weighted sum
 
@@ -923,6 +962,14 @@ FLASH_MAX            8 frames
 FLASH_FLOOR/SIGMA    3.5 grey levels / 4σ
 FLASH_BACK/FWD       0.45 s / 0.35 s   window for matching a flash to a press
 
+── WHOSE POINTER (2026-09-24) ─────────────────────────────────────────────
+RIDE_BASE          0.25 s   the earlier frame the ride test compares with (and the one just before)
+RIDE_OWN / SLACK   40 px / ≤40% of the move   a demo cursor's own drift while the page carries it
+RIDE_EXPLAINED     0.35     most of the changed pixels one shift may leave unexplained
+PROVEN_NEAR        150 px   a new run this near where the creator's pointer was last seen is theirs
+BLEND_TOL          3        grey levels of slack for sub-row scroll blends in readMedia
+PICTURE_BEFORE     3 s      in-picture: how far back a playing picture at the press spot counts
+
 ── THE GATE ───────────────────────────────────────────────────────────────
 W_CHANGED +0.25  W_FLASH +0.60  W_PRESSED +0.50  W_HAND +0.50
 W_CONTROL +0.50  W_HELD  +0.30  W_AIMED   +0.30
@@ -1014,7 +1061,11 @@ backend/scripts/pointerTest/
   profile.mjs   what the SERVER does with that measurement, incl. the wrong-profile fallback
   camera.mjs    do the preview, the server and ffmpeg agree?      ← found 807px and 487px
   sticky.mjs    a fixed nav bar over a scrolling page             ← the 5-of-10 refusals
+  scrolled.mjs  a page scrolled end to end, a demo's cursor riding along,
+                a press on a see-through fixed bar               ← 2026-09-24 (old code: 0 of 62)
   real.mjs      actual recordings dropped into fixtures/
+  truth.mjs     real recordings SCORED against labelled presses ← run before every deploy
+  replay.mjs    one real recording through the whole analysis, printed
 ```
 
 `clicks.mjs` deliberately needs no Gemini — *the rule has to hold on the day the

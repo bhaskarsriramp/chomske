@@ -44,9 +44,26 @@ const WANT = {
   score: 0.8,
 };
 
+/**
+ * ── A RECORDING WITH ITS ANSWER WRITTEN DOWN IS JUDGED BY THE ANSWER ────────
+ * "Found in 80% of frames" is a stand-in for knowing where the pointer really
+ * was, and a poor one for a recording where it is genuinely hidden for most of
+ * it — the creator scrolling with the keyboard, Windows hiding the pointer.
+ * The recordings labelled in truth/ are scored against what really happened
+ * by truth.mjs, so they are left to it here.
+ */
+const TRUTH = path.join(HERE, "truth");
+const labelled = new Set(
+  fs.existsSync(TRUTH)
+    ? fs.readdirSync(TRUTH).filter((f) => f.endsWith(".json")).map((f) => {
+        try { return JSON.parse(fs.readFileSync(path.join(TRUTH, f), "utf8")).recording; } catch { return null; }
+      })
+    : []
+);
 const files = fs.existsSync(DIR)
-  ? fs.readdirSync(DIR).filter((f) => /\.(mp4|webm|mov|mkv)$/i.test(f))
+  ? fs.readdirSync(DIR).filter((f) => /\.(mp4|webm|mov|mkv)$/i.test(f) && !labelled.has(f))
   : [];
+if (labelled.size) console.log("\n" + labelled.size + " labelled recording(s) in fixtures/ are scored by truth.mjs instead");
 
 if (!files.length) {
   fs.mkdirSync(DIR, { recursive: true });

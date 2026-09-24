@@ -34,7 +34,7 @@
  * one by hand. A missed click costs a zoom; it does not cost the recording.
  */
 import { newId, rampsOf, clampRect, RAMP_IN, RAMP_OUT } from "./timeline.js";
-import { busyShare, isSticky, scrollAt, explainMotion, chromeBand, settleAfter } from "./sync.js";
+import { busyShare, isSticky, scrollAt, explainMotion, chromeBand, settleAfter, inMedia } from "./sync.js";
 
 /**
  * How much of a changed region has to be animating before the change is the
@@ -2599,6 +2599,46 @@ function flashAt(flashes, t) {
 }
 
 /**
+ * Was this press made inside a picture of somebody else's screen, by the
+ * pixels' reckoning? See the "in-picture" refusal in confirmClicks().
+ *
+ * Two things, both required:
+ *
+ *   the pointer is unproven   the run of sightings that made the press did not
+ *                             begin where the creator's pointer was last seen,
+ *                             nor at the edge of the picture, and was never
+ *                             seen staying put while the page moved (locate.js
+ *                             marks each sighting `proven`)
+ *   the spot was a picture    a moving picture was playing right there (sync.js
+ *                             inMedia) at least PICTURE_SAMPLES times in the
+ *                             PICTURE_BEFORE seconds before — stopping short of
+ *                             the press so its own consequence stays out of it
+ *
+ * Measured on two days of real recordings: the demo's click passes both; of
+ * thirteen real presses, none had a picture playing at its spot beforehand.
+ * Either condition alone would be a guess — the creator's pointer reappears
+ * from nowhere whenever they move the mouse while it is hidden, and controls
+ * get pressed a moment after the content around them finished animating in.
+ */
+const PICTURE_BEFORE = 3.0;
+const PICTURE_GAP = 0.25;
+const PICTURE_STEP = 0.125;
+const PICTURE_SAMPLES = 2;
+function madeInPicture(screen, located, t, x, y) {
+  if (!screen?.media?.length || !located?.length) return false;
+  let lo = 0;
+  let hi = located.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (num(located[mid].t) <= t) lo = mid; else hi = mid; }
+  const near = Math.abs(num(located[lo].t) - t) <= Math.abs(num(located[hi].t) - t) ? located[lo] : located[hi];
+  if (!near || Math.abs(num(near.t) - t) > 0.15 || near.proven !== false) return false;
+  let n = 0;
+  for (let q = t - PICTURE_BEFORE; q <= t - PICTURE_GAP + 1e-6; q += PICTURE_STEP) {
+    if (inMedia(screen, q, x, y) && ++n >= PICTURE_SAMPLES) return true;
+  }
+  return false;
+}
+
+/**
  * Decide which clicks get to move the camera.
  *
  * Reads what was measured elsewhere and combines it once, here, so the rule can
@@ -2821,6 +2861,33 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
       const why = "this happened inside " + what + " — a recording of somebody else's screen, not this one";
       onNote({ t: num(e.t), zoomable, why });
       return { ...e, zoomable, basis: "in-media", why, score: 0, in_media: media.type,
+        on_control: on ? true : on === false ? false : null, control: on ? on.label || on.type : "",
+        pointer_shape: os && os.shape ? os.shape : null };
+    }
+    /**
+     * ── AND WHAT THE PIXELS CAN SAY ABOUT THE SAME THING ─────────────────────
+     * The paragraph above says the pixel pipeline cannot reach that conclusion,
+     * and about the region alone it is right. Together with WHERE THE POINTER
+     * CAME FROM it can get most of the way.
+     *
+     * Measured on 2026-09-23's recording of cursorful.com: the creator's
+     * pointer was hidden by keyboard scrolling, the page stopped, and the
+     * embedded YouTube demo's own hand was picked up 800 pixels away. It rested
+     * on a thumbnail and "clicked" it — the demo navigated, the thumbnail lit
+     * up: flash, consequence, a hand — and the camera zoomed onto a stranger's
+     * click. That pointer had appeared from nowhere, and the demo had been a
+     * moving picture at that very spot a second before. See madeInPicture().
+     *
+     * It is a reading of pixels, so the arbiter may overturn it (audit.js
+     * HEURISTIC_REFUSAL) as it does the other refusals of that kind — which is
+     * also the way back for the one real press this can cost: a press on a
+     * video the creator is watching, by a pointer that had just reappeared.
+     */
+    if (madeInPicture(screen, located, num(e.t), num(e.x, 0.5), num(e.y, 0.5))) {
+      zoomable = false;
+      const why = "the pointer appeared from nowhere inside something playing on the page — a video or a demo — so the press was part of that picture, not this screen";
+      onNote({ t: num(e.t), zoomable, why });
+      return { ...e, zoomable, basis: "in-picture", why, score: 0,
         on_control: on ? true : on === false ? false : null, control: on ? on.label || on.type : "",
         pointer_shape: os && os.shape ? os.shape : null };
     }
