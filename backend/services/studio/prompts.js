@@ -56,7 +56,8 @@ Importance:
 Rules:
 - ALWAYS report every region that is a PICTURE OF ANOTHER SCREEN, however unimportant it looks, and never drop one to stay under the limit. That means: an embedded product demo or any video player, a screenshot or mockup of another application, a phone or laptop frame with a user interface inside it, an animated GIF of software being used, a carousel of such images. Use type "video" when it is moving and "image" when it is still, give its FULL outer bounding box, and set importance "low" unless a person is interacting with it.
   This matters more than anything else in this list. Those regions were recorded on somebody else's machine and contain somebody else's mouse pointer, moving and clicking. This tool reads the pointer to decide where to point the camera, and it cannot tell that pointer from the real one. You are the only part of the system that can see the difference between a screen and a picture of a screen, so a region you leave out becomes a zoom onto a click that never happened.
-- Report at most 25 elements besides those. When there are more, keep the high and medium ones and drop the low.
+- Report at most 20 elements besides those, and never more than 24 in all — the answer is cut off at 24. When there are more, keep in this order: pictures of another screen, anything open (a dialog, a menu), the element under or next to the mouse pointer and its neighbours, then high, then medium; drop the low ones and the far end of long lists. A pricing table's feature rows or a page of search results are not each worth an element — report the few near the pointer and the list itself.
+- Keep every label short: the exact visible text of a control, or the first few words of a longer text, never more than about 60 characters.
 - A dialog or modal that is open is ALWAYS high importance, and report its full bounding box as one "modal" element as well as the controls inside it.
 - NEVER report a sidebar, nav, menu, toolbar, tab bar, list or table as a single element INSTEAD of what is inside it. Report every individual item in it separately — each nav_item, tab, list_item, button or link with its own label and its own box. A sidebar reported as one box tells the reader nothing about which item a person was pointing at, and that is the single most important thing this tool needs from you. Report the container as well if it helps, but never on its own.
 - Every item a person could click MUST have its own box, even when the items are stacked in a list and look alike. Six nav items in a sidebar are six elements, not one.
@@ -551,6 +552,32 @@ Schema:
   "evidence": "one sentence: what you saw that decided it"
 }`;
 
+/**
+ * The second witness: the whole recording, watched as video, for every click.
+ * The same words scored 16 of 17 labelled clicks at the right time on Gemini
+ * 2.5 Pro (scripts/pointerTest/videojudge.mjs). Its positions are coarse and
+ * it takes an embedded demo's clicks for the creator's, so nothing reads this
+ * as a decision — see witness.js for what is done with it.
+ */
+export const WITNESS = (duration, fps) => `This is a screen recording of a web browser tab, ${Number(duration).toFixed(1)} seconds long, made by a person recording a product demo of a website. It is sampled at ${fps} frames per second; every timestamp below is in seconds from the start of the recording.
+
+Find every CLICK the person made with THEIR OWN mouse pointer — the recording computer's pointer, drawn on top of the page.
+
+Pages often contain embedded videos, animated product demos or screenshots that show OTHER people's pointers moving and clicking. Those are not the person's clicks: ignore every pointer inside a video, a demo, or a picture of another screen. The person's own pointer may disappear for long stretches — the recording does not draw it while it is idle — and reappear somewhere else.
+
+A click is the person activating something under their pointer: a link, a button, a navigation item, a tab, a toggle or switch, a checkbox, a menu item, a field. The evidence is that the pointer stops on the thing (often shaped as a hand) and the thing responds — a new page, a menu, a dialog, a switch flipping, a tab becoming selected, a value changing — and the response stays.
+
+NOT clicks: hovering (a highlight that goes away when the pointer leaves), scrolling, the page animating by itself (carousels, auto-rotating tabs, videos, content loading), and anything inside an embedded video or demo.
+
+For every click give the time in seconds, to a tenth, when the button was pressed — just before the response appears; the position of the pointer's tip as fractions of the frame's width and height (0 to 1); what was clicked; and how sure you are.
+
+Also say what the person's own pointer looks like, so we know which one you followed.
+
+${JSON_ONLY}
+
+Schema:
+{"pointer": "colour and shape of the person's own pointer", "clicks": [{"t": 0.0, "x": 0.0, "y": 0.0, "target": "under 6 words", "confidence": 0.0}]}`;
+
 /* ────────────────────────────────────────────────────────────────────────────
    9. Quality Reviewer — what to fix
    ──────────────────────────────────────────────────────────────────────────── */
@@ -647,6 +674,6 @@ export default {
   ANALYSIS_LONG_EDGE,
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
-  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS, PRESS_JUDGE,
+  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS, PRESS_JUDGE, WITNESS,
   frameIndex, eventLog, elementLog,
 };

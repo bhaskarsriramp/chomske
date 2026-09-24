@@ -35,6 +35,7 @@ import { transient } from "../edit/transient.js";
 import { analyseRecording, generateCaptions, visionPass, auditPass } from "./analyse.js";
 import { reviewEdit, newSpend } from "./vision.js";
 import { applyPatches } from "./audit.js";
+import { witnessPass, WITNESS_MODE } from "./witness.js";
 import { applySuggestion } from "./suggestions.js";
 import { renderTimeline } from "./render/compose.js";
 import { missingFonts, FONTS_DIR } from "./render/ass.js";
@@ -742,6 +743,29 @@ const review = {
       console.log("[studio] no change list on " + demo._id + "; re-analyse to cross-check the clicks");
     }
 
+    /* ── A second witness to the clicks ──────────────────────────────────── */
+    /**
+     * A model watches the whole recording and lists the clicks it sees; any the
+     * camera did not zoom on, where the creator's own pointer was resting, are
+     * offered as "possible missed click". It never changes the edit itself.
+     * See witness.js. Carried over, like the audit, when the edit has not
+     * changed since it last looked.
+     */
+    let witness = { suggestions: [], summary: demo.analysis?.witness || null };
+    if (!stale) {
+      witness.suggestions = (demo.analysis?.suggestions || []).filter((s) => s.source === "witness");
+    } else if (WITNESS_MODE !== "off" && demo.recording?.mp4_key) {
+      publishProgress(demo, { auditing: true });
+      try {
+        const video = await materialize(demo.recording.mp4_key, workDir, "recording.mp4");
+        witness = await witnessPass({ video, workDir, timeline: demo.timeline, duration });
+        spend.usd += witness.usd || 0;
+        spend.calls += 1;
+      } catch (err) {
+        console.error("[studio] witness failed:", err);
+      }
+    }
+
     /* ── Read back as a piece of editing ─────────────────────────────────── */
     /**
      * ── AND ONLY WHEN THERE IS SOMETHING TO READ ─────────────────────────────
@@ -773,7 +797,7 @@ const review = {
     const fresh = await StudioDemo.findById(job.demo);
     if (!fresh || fresh.purged) return;
 
-    const offers = [...audit.suggestions, ...suggestions].slice(0, 24);
+    const offers = [...audit.suggestions, ...(witness.suggestions || []), ...suggestions].slice(0, 24);
 
     /**
      * ── A SUGGESTION ALREADY TURNED DOWN STAYS TURNED DOWN ───────────────────
@@ -795,6 +819,7 @@ const review = {
       "analysis.suggestions": offers,
       "analysis.resolved": resolved,
       "analysis.findings": audit.findings,
+      "analysis.witness": witness.summary || null,
       "analysis.audited_at": new Date(),
       updated_at: new Date(),
     };

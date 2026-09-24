@@ -525,6 +525,17 @@ Not asked when a moving picture played at the spot, when the pointer never left,
 or when the surroundings cannot be lined up (the control scrolled away).
 `STUDIO_TRACE_STAY=1` prints why each one was or was not.
 
+*Refined the same evening on a second Cap recording ("Cap_demo_just_now"),
+where the creator eased onto "Lifetime" and stayed beside it after pressing:*
+the two pictures were a fixed 0.3 s before and 0.35 s after the dwell, and both
+had the pointer in them, so nothing was compared. They are now the last moment
+before and the first after when the pointer was **clear of the control**
+(searched up to 3 s either side; a moment it was not drawn at all counts as
+clear). That exposed a second flaw — a white card "lined up" 515 px away with a
+page that had not moved, and every pixel then read as changed — so the shifts
+searched are now only those the video's own scroll measurement allows between
+the two pictures (none at all when the page did not move).
+
 **Fixed 2026-09-24 — a page replaced in one frame is not a scroll.** On the same
 recording the click on "Pricing" (a hand held on the link) replaced the page in
 one frame; the tracker logged that frame as a quarter-screen shift and the press
@@ -536,6 +547,33 @@ recording (`scripts/pointerTest/arbiter.mjs`), it called three auto-rotating tab
 changes on the home page presses and missed both real ones. From a few stills it
 can see that a tab now looks selected, not whether the person or the page did
 it. `STUDIO_AUTO_PRESS_ZOOMS` stays off.
+
+**Added 2026-09-24 — a second witness that never decides (`witness.js`).** In
+the review job, Gemini 2.5 Pro watches a light copy of the whole recording
+(10 fps, 1280 wide, no sound) and lists every click it sees. Its timing is good
+(16/17 labelled clicks within 0.8 s) and its positions are not (~200 px off),
+and it takes an embedded demo's clicks for the creator's. So only its timing is
+used, and a click it claims is a question for the creator only when all hold:
+the camera did not zoom there; the creator's own pointer (`timeline.captured`,
+somebody else's taken out) was resting then; the pipeline itself found a
+candidate press at that spot and refused it; that refusal was not "inside a
+picture"; and the model's claimed spot is within 0.3 of the frame's width of
+where the pointer rested. Such a click becomes a "Possible missed click"
+suggestion in the Review panel (badge "Second check"), with the zoom aimed at
+OUR measured pointer position. Zooms the witness did not see are logged, never
+offered. **Shadow by default** (`STUDIO_WITNESS=shadow`, log only): on the seven
+labelled recordings the camera already caught every click, and the first
+version's three offers were all a demo's search-button click. Turn on
+`suggest` when the logs on real recordings show its offers are worth a click.
+Scored with `scripts/pointerTest/witness.mjs`.
+
+**Frame reading is held to a schema (`vision.js UI_SCHEMA`).** One frame's
+UI_ANALYZER reply ran to the full 16384-token allowance in production (44 000
+characters, ~200 elements) — the prompt's "at most 25" pulled against "every
+item in a list". The reply is now constrained by a response schema with
+`maxItems: 24` (40 and 28 are refused by Vertex as too large a grammar; 24 is
+accepted), 8192 tokens of room, and a prompt order for what to keep. A schema
+the service refuses is retried once without it rather than losing the frame.
 
 ### 7.3 The weighted sum
 
@@ -1164,6 +1202,9 @@ LEAD/HOLD/RESULT_BEAT  0.45 s / 1.5 s / 0.9 s
 ```bash
 STUDIO_VISION_ON_ANALYSE=on     # default "off" — see §11.6
 STUDIO_POINTER_VISION=off       # default "on" — whose pointer, §3.2.1/§3.2.2 (a fraction of a cent, only when needed)
+STUDIO_WITNESS=shadow           # default "shadow" — second witness, §7.2; "suggest" offers its missed clicks, "off" skips it
+STUDIO_WITNESS_MODEL=gemini-2.5-pro   STUDIO_WITNESS_FPS=10
+STUDIO_PRESS_JUDGE=off          # default "off" — per-press judge experiment (judge.js); "shadow" records verdicts
 STUDIO_AUTO_PRESS_ZOOMS=1       # default 1 — auto-apply add_zoom at ≥0.8
 STUDIO_FRAME_EVERY=2            # seconds between UI_ANALYZER frames
 STUDIO_VISION_CONCURRENCY=4     # frames in flight (memory, not rate limit)
@@ -1188,6 +1229,7 @@ backend/scripts/pointerTest/
   sticky.mjs    a fixed nav bar over a scrolling page             ← the 5-of-10 refusals
   scrolled.mjs  a page scrolled end to end, a demo's cursor riding along,
                 a press on a see-through fixed bar               ← 2026-09-24 (old code: 0 of 62)
+  witness.mjs   the second witness on every labelled recording: useful offers vs noise
   arbiter.mjs   what the review stage's arbiter WOULD add on one recording —
                 run it before ever turning STUDIO_AUTO_PRESS_ZOOMS on
   strangers.mjs what the drawn path does with a stretch the model calls

@@ -135,14 +135,27 @@ async function imagePart(file) {
  * the other workers through Redis. Two retry loops stacked on top of each other
  * would multiply into attempts nobody asked for, so this one is a single call.
  */
-async function ask({ model = VISION_MODEL, parts, maxOutputTokens = 16384, spend, label }) {
+async function ask({ model = VISION_MODEL, parts, maxOutputTokens = 16384, spend, label, schema = null }) {
   try {
-    const res = await generateJson({ model, parts, maxOutputTokens });
+    const res = await generateJson({ model, parts, maxOutputTokens, schema, label });
     spend.usd += res.usd;
     spend.calls += 1;
     return res.json;
   } catch (err) {
     spend.usd += num(err?.usd);
+    /**
+     * ── A SCHEMA THE SERVICE REFUSES IS NOT A REASON TO LOSE THE FRAME ──────
+     * The limits a schema must fit are the service's, not ours, and they are
+     * not stated anywhere: UI_SCHEMA at maxItems 40 was refused with a bare
+     * "400 invalid argument" on every frame, which would have silently
+     * emptied every reading on the day it shipped. So a refusal with a schema
+     * attached is asked once more without it — the prompt still says what to
+     * return — and said out loud, so the schema gets fixed.
+     */
+    if (schema && /\b400\b|INVALID_ARGUMENT/.test(String(err?.message || ""))) {
+      console.warn(`[studio] ${label}: the response schema was refused (${String(err.message).slice(0, 80)}); asking without it`);
+      return ask({ model, parts, maxOutputTokens, spend, label, schema: null });
+    }
     console.warn(`[studio] ${label} failed: ${err?.message}`);
     spend.failed += 1;
     return null;
@@ -154,6 +167,70 @@ export const newSpend = () => ({ usd: 0, calls: 0, failed: 0 });
 /* ────────────────────────────────────────────────────────────────────────────
    1. What is on each frame
    ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The shape UI_ANALYZER answers in, held to while the model writes.
+ *
+ * ── WHY THE LIMIT IS IN THE SCHEMA AND NOT ONLY IN THE PROMPT ────────────────
+ * The prompt says "at most 25 elements", and also "report every item in a list
+ * separately" and "never drop a picture of another screen". On a page that is
+ * mostly lists — a pricing table's feature rows, a column of search results —
+ * those pull against each other, and in production one frame's reply ran to
+ * the full 16384-token allowance:
+ *
+ *   [ai] a reply would not parse (MAX_TOKENS, 16374 tokens of answer) and it
+ *        was closed off: 44015 characters from 44028
+ *
+ * — two hundred elements, billed, and salvaged only by cutting it off. The
+ * allowance had already been raised once for truncation, which is the wrong
+ * fix when the model is not running short of room but running on. A schema's
+ * maxItems stops the list where it should stop, as it is written; it also
+ * makes the reply valid JSON by construction, which retires the "Expected ','
+ * or ']'" repairs this pass used to need.
+ *
+ * ── AND WHY TWENTY-FOUR ──────────────────────────────────────────────────────
+ * Vertex compiles the schema into the grammar it decodes with, and the grammar
+ * has a size limit that a cap multiplies: this item shape with maxItems 40 —
+ * or 28 — is refused outright ("400 Request contains an invalid argument", on
+ * every frame), and 24 is accepted. Measured on gemini-2.5-flash, 2026-09-24.
+ * The prompt asks for twenty plus the pictures of other screens, in order of
+ * what matters, so the cap trims the tail and not the point. See ask() for
+ * what happens if a limit like this one moves.
+ */
+const UI_MAX_ELEMENTS = 24;
+const UI_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    screen: { type: "STRING" },
+    busy: { type: "BOOLEAN" },
+    app: { type: "STRING" },
+    elements: {
+      type: "ARRAY",
+      maxItems: UI_MAX_ELEMENTS,
+      items: {
+        type: "OBJECT",
+        properties: {
+          type: { type: "STRING" },
+          label: { type: "STRING" },
+          bbox: { type: "ARRAY", items: { type: "NUMBER" }, minItems: 4, maxItems: 4 },
+          importance: { type: "STRING", enum: ["high", "medium", "low"] },
+          state: { type: "STRING", enum: ["normal", "hovered", "pressed", "focused", "selected", "disabled"] },
+          sticky: { type: "BOOLEAN" },
+        },
+        required: ["type", "label", "bbox", "importance"],
+        propertyOrdering: ["type", "label", "bbox", "importance", "state", "sticky"],
+      },
+    },
+  },
+  required: ["screen", "busy", "app", "elements"],
+  propertyOrdering: ["screen", "busy", "app", "elements"],
+};
+/**
+ * Room to answer one frame in: two dozen elements at seventy-odd tokens each,
+ * with four times that to spare. A reply that still runs out of it is a model
+ * repeating itself, and stopping it at 8192 costs half what 16384 did.
+ */
+const UI_MAX_TOKENS = 8192;
 
 /**
  * Every sampled frame, read for its UI.
@@ -177,7 +254,13 @@ export async function readFrames(frames, { spend = newSpend(), onProgress = () =
       : `${UI_ANALYZER}\n\nAnswer for this one frame.` }];
     for (const f of batch) parts.push(await imagePart(f.file));
 
-    const json = await ask({ parts, spend, label: `readFrames batch ${bi + 1}`, maxOutputTokens: 16384 });
+    // The schema describes ONE frame's answer; a batch of several would need
+    // the array form, and FRAMES_PER_READ is 1.
+    const json = await ask({
+      parts, spend, label: `readFrames batch ${bi + 1}`,
+      maxOutputTokens: many ? 16384 : UI_MAX_TOKENS,
+      schema: many ? null : UI_SCHEMA,
+    });
     let answers = Array.isArray(json?.frames) ? json.frames : json ? [json] : [];
 
     /**
@@ -213,8 +296,13 @@ export async function readFrames(frames, { spend = newSpend(), onProgress = () =
            * asking again with less of it makes a second failure more likely,
            * not less. Seen in production as batch 8 failing on a truncated
            * reply and being asked again the same way.
+           *
+           * The same room as the first ask, and the same schema: since the
+           * schema caps the list, running out of room means repetition, and
+           * more of it would buy more repetition.
            */
-          maxOutputTokens: 16384,
+          maxOutputTokens: UI_MAX_TOKENS,
+          schema: UI_SCHEMA,
         }).catch(() => null);
         retried[k] = one && Array.isArray(one.frames) ? one.frames[0] : one;
       }

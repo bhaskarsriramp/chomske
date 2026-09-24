@@ -213,6 +213,10 @@ const AnalysisSchema = new Schema(
      * became offers are in `suggestions` as well; these are the full reading.
      */
     findings: { type: Schema.Types.Mixed, default: null },
+    // The second witness's comparison with the camera's clicks: how many it
+    // agreed with, which it thinks were missed, which it did not see. See
+    // services/studio/witness.js.
+    witness: { type: Schema.Types.Mixed, default: null },
     audited_at: { type: Date, default: null },
     /**
      * The demo's `rev` when the audit last ran.

@@ -1,0 +1,21 @@
+{
+  "about": "cap.so again: scrolled the home page (the laptop mock-up with its own cursor), Pricing in the nav bar, then Lifetime on the Desktop License card — this time easing onto the switch and resting beside it after the press. Recorded 2026-09-24 as 'Cap_demo_just_now'; production found Pricing and missed Lifetime.",
+  "recording": "cap-lifetime-2026-09-24.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab54006e7fbf4230ce190e8/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "Pricing: hand on the link from 17.4s, the new page arrives ~18.1s, so the click is ~18.0s.",
+    "Lifetime: hand on the switch from 22.2s, it turns green at 23.0s, so the click is ~22.95s; the pointer stays on and beside the switch for about a second afterwards.",
+    "Why it was missed: locate.js stayedChanged took its two pictures a fixed 0.3s before the dwell and 0.35s after it, and both had the pointer in them, so the comparison was refused. It now searches the pointer's track for the moments it was clear of the control. The first fix of that also exposed a bad alignment (a white card lined up 515px away with a page that had not moved); shifts are now limited to what the video's own scroll measurement allows.",
+    "stranger_budget_s / stranger_budget_pixel_s are RATCHETS measured on 2026-09-24. Lower them when they improve; never raise them."
+  ],
+  "clicks": [
+    { "label": "Pricing", "t": 18.0, "x": 1144, "y": 60 },
+    { "label": "Lifetime", "t": 22.95, "x": 568, "y": 600 }
+  ],
+  "strangers": [
+    { "label": "the cursor inside the laptop mock-up's Cap app", "from": 4.0, "to": 9.8, "box": [300, 60, 1620, 900] }
+  ],
+  "stranger_budget_s": 99,
+  "stranger_budget_pixel_s": 99
+}

@@ -626,6 +626,9 @@ export async function request({ model, contents, config = {}, onWait = null } = 
  * @param {number}   [o.temperature]
  * @param {number}   [o.thinkingBudget]   0 everywhere in this product; see below
  * @param {boolean}  [o.json]             ask for application/json
+ * @param {object}   [o.schema]           a response schema the model is held to — the
+ *                                        shape, and limits like an array's maxItems,
+ *                                        enforced while it writes rather than hoped for
  * @param {Function} [o.onWait]           (ms, why) — so a pass can say it is waiting
  */
 export function generate({
@@ -635,6 +638,7 @@ export function generate({
   temperature = 0.1,
   thinkingBudget = 0,
   json = true,
+  schema = null,
   onWait = null,
 } = {}) {
   return request({
@@ -643,6 +647,7 @@ export function generate({
     config: {
       temperature,
       ...(json ? { responseMimeType: "application/json" } : {}),
+      ...(json && schema ? { responseSchema: schema } : {}),
       maxOutputTokens,
       // Measured in services/geminiClient.js and again in the editor: thinking
       // bills at the output rate and changes nothing on a mechanical reading
@@ -936,8 +941,10 @@ export async function generateJson(opts) {
       if (!fixed) continue;
       try {
         const json = JSON.parse(fixed);
+        // Named, because "a reply" from somewhere in the product is a warning
+        // nobody can act on: which prompt ran away is the whole diagnosis.
         console.warn(
-          `[ai] a reply would not parse (${why || "no reason given"}, ${spentOn(res)}) and ${what}: ` +
+          `[ai] ${opts.label ? opts.label + ": " : ""}a reply would not parse (${why || "no reason given"}, ${spentOn(res)}) and ${what}: ` +
             `${fixed.length} characters from ${text.length}`
         );
         return { json, usd, input, output };

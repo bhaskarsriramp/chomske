@@ -983,6 +983,8 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
                  * the recording showing something the edit did not account for.
                  */}
                 {s.source === "audit" && <Badge>From the recording</Badge>}
+                {/* A model that watched the whole recording saw a click the camera did not zoom on. See witness.js. */}
+                {s.source === "witness" && <Badge>Second check</Badge>}
                 {s.severity === "high" && <Badge tone="warn">Important</Badge>}
               </div>
               <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.55, color: "var(--ink-mute)" }}>{s.why}</p>

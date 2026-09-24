@@ -1934,8 +1934,12 @@ const STAY_NEAR = 14;
 /** Seconds before arrival and after departure the two pictures are taken. */
 const STAY_BEFORE = 0.3;
 const STAY_AFTER = 0.35;
+/** How far either side of the dwell to look for a moment the pointer was clear of the control. */
+const STAY_SEARCH = 3;
 /** Furthest the page may have scrolled between the two, as a share of the height. */
 const STAY_REACH = 0.5;
+/** Pixels of measured scroll below which the page is taken not to have moved. */
+const STAY_STILL_PX = 8;
 /** Most of the surroundings that may still differ once lined up. */
 const STAY_ALIGN = 0.12;
 /** ...or up to this much, when the fit is clearly better than one 24px off. */
@@ -2030,17 +2034,35 @@ export async function measureStay(video, e, { located = [], screen = null, W, H,
   let to = at.t;
   for (const p of [...here].sort((a, b) => b.t - a.t)) if (p.t < from && from - p.t <= 0.25) from = p.t;
   for (const p of [...here].sort((a, b) => a.t - b.t)) if (p.t > to && p.t - to <= 0.25) to = p.t;
-  const before = from - STAY_BEFORE;
-  const after = to + STAY_AFTER;
-  const dwell = { before, after, arrived: from, left: to };
-  if (before < 0 || (duration && after > duration - 0.05)) return { share: null, reason: "too near an end", ...dwell };
-
-  // Where the pointer is in the BEFORE picture: it must be out of the box.
   const box = { x0: x - hw, x1: x + hw, y0: y - hh * 0.5, y1: y + hh * 1.5 };
   const inBox = (p, s = 0) =>
     p.x >= box.x0 - 12 && p.x <= box.x1 + 12 && p.y >= box.y0 + s - 12 && p.y <= box.y1 + s + 24;
-  const near = (t) => L.map(px).filter((p) => Math.abs(p.t - t) <= 0.08);
-  if (near(before).some((p) => inBox(p))) return { share: null, reason: "pointer in the box", ...dwell };
+  const all = L.map(px);
+  const near = (t) => all.filter((p) => Math.abs(p.t - t) <= 0.08);
+
+  /**
+   * ── THE TWO PICTURES ARE TAKEN WHERE THE POINTER IS CLEAR, NOT AT A FIXED OFFSET
+   * These were a fixed 0.3s before the dwell and 0.35s after it. On a second
+   * recording of cap.so the creator eased onto "Lifetime" and stayed beside it
+   * after pressing, so both pictures still had the pointer inside the box, the
+   * comparison was refused as meaningless, and a press with a hand, a ripple
+   * and a switch that slid across came back "nothing came of it". So the
+   * pointer's own track is searched: the last moment before it settled when it
+   * was clear of the control, and the first after it left — within
+   * STAY_SEARCH seconds. A moment where it was not seen at all counts as clear:
+   * a capture that stopped drawing an idle pointer has nothing in the box.
+   */
+  const clearAt = (t) => !all.some((p) => Math.abs(p.t - t) <= 0.05 && inBox(p));
+  const end = duration ? duration - 0.05 : Infinity;
+  let before = null;
+  for (let q = from - STAY_BEFORE; q >= Math.max(0, from - STAY_SEARCH); q -= 1 / 30) if (clearAt(q)) { before = q; break; }
+  let after = null;
+  for (let q = to + STAY_AFTER; q <= Math.min(end, to + STAY_SEARCH); q += 1 / 30) if (clearAt(q)) { after = q; break; }
+  const dwell = { before: before ?? from - STAY_BEFORE, after: after ?? to + STAY_AFTER, arrived: from, left: to };
+  if (before == null || after == null) {
+    const why = from - STAY_BEFORE < 0 || to + STAY_AFTER > end ? "too near an end" : "pointer in the box";
+    return { share: null, reason: why, ...dwell };
+  }
   let playing = false;
   for (let q = before; q <= after + 1e-6 && !playing; q += 0.25) playing = inMedia(screen, q, x / W, y / H);
   if (playing) return { share: null, reason: "moving picture", ...dwell };
@@ -2081,12 +2103,32 @@ export async function measureStay(video, e, { located = [], screen = null, W, H,
     }
     return n > 50 ? bad / n : 1;
   };
-  const reach = Math.round(H * STAY_REACH);
+  /**
+   * ── ONLY THE SHIFTS THE PAGE COULD HAVE MADE ──────────────────────────────
+   * Searching every shift within half a screen lined a white pricing card up
+   * with a white stretch 515px away — the page had not moved at all — and
+   * then called the whole control "changed". Right answer that time, for the
+   * wrong reason, and on a hover over a white page the same accident is a
+   * false zoom. The video's own scroll measurement says how far the page went
+   * between the two pictures (readScreen, `dy` in frame heights, content
+   * moving down positive, which is the sign `s` uses): when it did not move,
+   * only the pictures as they are are compared, and when it did, only shifts
+   * the same way and of about that size — it reads short, so up to twice and
+   * a half — plus none at all, for a control that is fixed while the page
+   * scrolls.
+   */
+  const moved = (screen?.scroll || []).filter((q) => q.t > before && q.t <= after).reduce((acc, q) => acc + num(q.dy), 0) * H;
   let best = { s: 0, m: mismatch(cx0, cx1, cy0, cy1, 0, 2, true) };
-  for (let s = -reach; s <= reach; s += 2) {
-    if (s === 0) continue;
-    const m = mismatch(cx0, cx1, cy0, cy1, s, 3, true);
-    if (m < best.m - 0.01) best = { s, m };
+  if (Math.abs(moved) >= STAY_STILL_PX) {
+    const reach = Math.round(Math.min(H * STAY_REACH, Math.abs(moved) * 2.5 + 40));
+    const least = Math.round(Math.abs(moved) * 0.4);
+    const dir = Math.sign(moved);
+    for (let k = least; k <= reach; k += 2) {
+      const s = dir * k;
+      if (s === 0) continue;
+      const m = mismatch(cx0, cx1, cy0, cy1, s, 3, true);
+      if (m < best.m - 0.01) best = { s, m };
+    }
   }
   // Refine around the winner at full density.
   for (let s = best.s - 2; s <= best.s + 2; s++) {

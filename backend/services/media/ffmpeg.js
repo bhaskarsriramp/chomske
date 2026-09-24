@@ -226,6 +226,25 @@ export function makeVideoProxy(src, dest, { duration, onProgress } = {}) {
   );
 }
 
+/**
+ * The recording as a model watches it: no sound, as many frames a second as it
+ * will sample, and no larger than it will look at. A three-minute demo comes
+ * out small enough to send inline, which the original often is not.
+ */
+export function makeWatchCopy(src, dest, { fps = 10, longEdge = 1280, duration } = {}) {
+  return ffmpeg(
+    [
+      "-i", src,
+      "-map", "0:v:0", "-an",
+      "-vf", `fps=${fps},scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))',format=yuv420p`,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+      "-movflags", "+faststart",
+      dest,
+    ],
+    { duration }
+  );
+}
+
 /** Music and voice-overs, re-encoded to something every browser plays. */
 export function makeAudioProxy(src, dest, { duration, onProgress } = {}) {
   return ffmpeg(
