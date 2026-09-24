@@ -150,9 +150,16 @@ for (const f of files) {
     const s = (truth.strangers || []).find((q) => p.t >= q.from && p.t <= q.to && x >= q.box[0] && y >= q.box[1] && x <= q.box[2] && y <= q.box[3]);
     if (s) { onStranger += span; if (!where.includes(s.label)) where.push(s.label); }
   }
-  const budget = Number(truth.stranger_budget_s || 0);
+  /**
+   * Without the model, the drawn path cannot tell a demo's pointer from the
+   * creator's (locate.js withoutStrangers asks it), so a pixel-only run —
+   * STUDIO_POINTER_VISION=off — is held to its own ratchet where a file sets
+   * one. The other budget is for the configuration production runs.
+   */
+  const pixelOnly = String(process.env.STUDIO_POINTER_VISION || "").toLowerCase() === "off";
+  const budget = Number((pixelOnly && truth.stranger_budget_pixel_s != null ? truth.stranger_budget_pixel_s : truth.stranger_budget_s) || 0);
   line(onStranger <= budget + 1e-6,
-    `our pointer drawn on a stranger's for ${onStranger.toFixed(2)}s (budget ${budget}s)` + (where.length ? " — " + where.join("; ") : ""));
+    `our pointer drawn on a stranger's for ${onStranger.toFixed(2)}s (budget ${budget}s${pixelOnly ? ", pixels only" : ""})` + (where.length ? " — " + where.join("; ") : ""));
 
   if (!ok) failed++;
 }

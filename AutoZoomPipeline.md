@@ -202,8 +202,86 @@ Two filters separate a pointer from a glyph printed on the page:
   never leaves its spot.
 
 If the browser's measurement is firm (`confidence ≥ 0.6`), the search is
-**narrowed to that design only**. If a narrowed search returns nothing, the full
-search is re-run — this fallback is covered by a regression test.
+**narrowed to that design only** — unless it names a design the platform does
+not draw by default (a dark pointer on Windows, a light one on macOS). The
+browser reads glyphs where its difference tracker saw movement, and on a page
+with a demo playing that is mostly the demo's cursor; a narrowing that
+contradicts the platform is the one that cannot be trusted, so both designs are
+searched instead. If a narrowed search returns nothing, the full search is
+re-run — this fallback is covered by a regression test.
+
+#### 3.2.1 When two pointers both look real — `chooseIdentity()` (2026-09-24)
+
+**Fit cannot tell two real pointers apart.** Ranking by fit is right when the
+alternatives are text (0.74–0.77 against 0.85+). It says nothing when both
+candidates are pointers — the creator's and one inside a demo on the page. On
+"Cursorful_demo_now" (2026-09-24) the demo's black arrow fitted `dark:22` at
+0.848 and the creator's white one `light:18` at 0.845; production read 0.860
+against 0.802 and chose the demo's. The pointer was then found in 271 of 1074
+frames, every press was filed where the demo's cursor was, and Pricing and
+Editor were both refused — no zoom at all. Forced to `light:18`, the same code
+zoomed both. The per-frame content veto could not help: the creator's pointer
+was **not drawn from 2.6 s to 23.9 s** (a tab capture stops drawing an idle
+pointer), and on the sampled frames the demo showed still screens.
+
+A **rival** is a candidate with fit ≥ `RIVAL_FIT` (0.78) that was the clear best
+match (`margin ≥ UNIQUE`) in at least one sampled frame — text never is — and is
+a different pointer (other design, or height ratio > `SAME_POINTER` 1.15). With
+two or more rivals, fit stops deciding:
+
+1. **The model** (`POINTER_IDENTITY`, §12 #10) is shown up to three frames of
+   each rival with the pointer boxed and asked which is the computer's own and
+   which is inside a picture of another screen. Decides when exactly one group
+   is "own" at ≥ 0.6.
+2. **The sightings** — the rival that was the clear match *away from any moving
+   picture within ±1.5 s* at least `CLEAN_LEAD` (2) more times wins.
+3. **Priors** — the browser's firm reading, then the platform default.
+4. **Fit**, as before.
+
+On the recording above: the model answered `dark:22` "content (1.00) — inside a
+browser window that is itself content on the page" and `light:18` "own (1.00)";
+the pixel fallback alone agrees (4 clean sightings against 0).
+
+**When only one pointer qualifies.** A contest needs the creator's pointer in at
+least three of the twelve samples; at 20% visibility that fails more often than
+not, and the demo's cursor then wins unopposed. So on a recording with any
+moving picture, an uncontested winner is shown to the model on its own; if it
+is "content", calibration looks again at 36 frames without it and switches only
+if the model calls the new winner "own". A wrong "content" costs a second look
+and nothing else.
+
+**What calibration cannot do.** A demo's pointer of the SAME design and size as
+the creator's (a white hand beside a white hand) is one identity to calibration
+— the model rightly called such a mixed group "own". That case is settled per
+run of sightings, below.
+
+### 3.2.2 The drawn path, without somebody else's pointer — `withoutStrangers()`
+
+With the right design, the locator still followed the demo's pointer for 4.3 s
+while the creator's was hidden: lost, it searches the whole frame, and the
+demo's cursor is a perfectly good match. Its presses were refused ("in-picture",
+§7.2), but the **drawn** pointer rode the demo's hand — the complaint of
+2026-09-23. Each run of sightings that did not begin where the creator's pointer
+was (unproven, §3 provenance) and lasts ≥ 0.25 s is put to the model
+(`POINTER_RUNS`, §12 #11) beside a sighting known to be the creator's; runs it
+calls "content" at ≥ 0.6 are not drawn — our pointer holds where the creator's
+was last seen until theirs is seen again (the renderer's halfway switch across a
+long gap would otherwise show it on the next place the creator went, seconds
+early). The tracker's own samples inside those runs are dropped too.
+
+It changes **only the drawn path**; presses are placed and gated from the track
+as found, so a wrong verdict can never cost a click. Without the model, nothing
+changes.
+
+**"First" is not proof inside a picture.** The first run of a recording used to
+be the creator's by definition. On a clip that opens with the creator's pointer
+idle (not drawn), the first run is the demo's hand: it was "proven", its click
+on a YouTube thumbnail was zoomed, and it became the reference the run check
+compared everything against. Now, until something is proven, a run counts as
+"first" only if no moving picture played where it began (from 1.5 s before to
+0.25 s after, backward-looking like `madeInPicture`). The demo's hand stays
+unproven, the in-picture rule refuses its click, and the creator's first run
+clear of any picture is the proven one.
 
 ### 3.3 `playingRegions` — the embedded-video veto
 
@@ -931,6 +1009,8 @@ zooms are close together.
 | 7 | **`PRESS_ARBITER`** | vision | **6 frames @1024px + offset legend** | ≤ `budgetFor(duration)` | ✓ (review stage) |
 | 8 | **`CHANGE_AUDITOR`** | vision | 2 frames | within the same budget | ✓ (review stage) |
 | 9 | `QUALITY_REVIEWER` | text | the finished timeline | once | only if steps exist |
+| 10 | **`POINTER_IDENTITY`** | vision | ≤ 3 boxed frames per rival pointer @1280px | once, only when two pointers both fit (§3.2.1) | ✓ (`STUDIO_POINTER_VISION`) |
+| 11 | **`POINTER_RUNS`** | vision | 1 reference + ≤ 2 boxed frames per unproven run, ≤ 8 runs | once per analysis with an unproven run (§3.2.2) | ✓ (`STUDIO_POINTER_VISION`) |
 
 Rate limiting is **process-wide** via `services/ai/provider.js` (`GEMINI_RPM`,
 `GEMINI_CONCURRENCY`, Redis-coordinated), not per-pass. `vision.js` has **no
@@ -969,6 +1049,12 @@ RIDE_EXPLAINED     0.35     most of the changed pixels one shift may leave unexp
 PROVEN_NEAR        150 px   a new run this near where the creator's pointer was last seen is theirs
 BLEND_TOL          3        grey levels of slack for sub-row scroll blends in readMedia
 PICTURE_BEFORE     3 s      in-picture: how far back a playing picture at the press spot counts
+RIVAL_FIT          0.78     a calibration candidate fitting this well, and the clear match once, is a pointer
+SAME_POINTER       1.15     heights within this ratio (same design) are one pointer, not two
+PICTURE_NEAR       1.5 s    a sighting with a moving picture this near, either side, is not "clean"
+CLEAN_LEAD         2        clean sightings one rival needs over another to win without the model
+RUN_GAP / RUN_MIN  0.5 s / 0.25 s   a run of sightings, and the shortest worth asking about
+RUN_SURE           0.6      the model's confidence before our pointer stops following a run
 
 ── THE GATE ───────────────────────────────────────────────────────────────
 W_CHANGED +0.25  W_FLASH +0.60  W_PRESSED +0.50  W_HAND +0.50
@@ -1039,6 +1125,7 @@ LEAD/HOLD/RESULT_BEAT  0.45 s / 1.5 s / 0.9 s
 
 ```bash
 STUDIO_VISION_ON_ANALYSE=on     # default "off" — see §11.6
+STUDIO_POINTER_VISION=off       # default "on" — whose pointer, §3.2.1/§3.2.2 (a fraction of a cent, only when needed)
 STUDIO_AUTO_PRESS_ZOOMS=1       # default 1 — auto-apply add_zoom at ≥0.8
 STUDIO_FRAME_EVERY=2            # seconds between UI_ANALYZER frames
 STUDIO_VISION_CONCURRENCY=4     # frames in flight (memory, not rate limit)
@@ -1063,9 +1150,15 @@ backend/scripts/pointerTest/
   sticky.mjs    a fixed nav bar over a scrolling page             ← the 5-of-10 refusals
   scrolled.mjs  a page scrolled end to end, a demo's cursor riding along,
                 a press on a see-through fixed bar               ← 2026-09-24 (old code: 0 of 62)
+  strangers.mjs what the drawn path does with a stretch the model calls
+                somebody else's — held at the creator's last place, not
+                switched halfway; untouched without an answer   ← §3.2.2
   real.mjs      actual recordings dropped into fixtures/
   truth.mjs     real recordings SCORED against labelled presses ← run before every deploy
+                (with VERTEX_PROJECT set = what production runs; with
+                STUDIO_POINTER_VISION=off = the pixel-only fallback, own budgets)
   replay.mjs    one real recording through the whole analysis, printed
+                (--cursor light:18 forces the design: "would the rest have worked?")
 ```
 
 `clicks.mjs` deliberately needs no Gemini — *the rule has to hold on the day the

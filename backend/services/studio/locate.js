@@ -677,7 +677,7 @@ function topTwo(frame, W, H, t, reject = null) {
  * A hand votes under the arrow height it implies, so both shapes accumulate
  * evidence for the same answer: one design, one size.
  */
-async function calibrate(video, W, H, all, duration, fps, { playing = null, screen = null, moving = null } = {}) {
+async function calibrate(video, W, H, all, duration, fps, { playing = null, screen = null, moving = null, identify = null, prior = null, sampled = CAL_FRAMES } = {}) {
   /**
    * ── A TEMPLATE MUST NOT BE FITTED TO SOMEBODY ELSE'S SCREEN ───────────────
    * `playing` is the measurement everything else uses, and it reports nothing
@@ -699,7 +699,7 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
   const region = playing?.size ? playing : moving?.size ? moving : null;
   const want = new Set();
   const total = Math.max(1, Math.floor(duration * fps));
-  for (let k = 0; k < CAL_FRAMES; k++) want.add(Math.floor(((k + 0.5) / CAL_FRAMES) * total));
+  for (let k = 0; k < sampled; k++) want.add(Math.floor(((k + 0.5) / sampled) * total));
 
   /**
    * ── WHAT ONLY A POINTER DOES: IT MOVES ─────────────────────────────────────
@@ -792,8 +792,9 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
         if (margin >= UNIQUE) cur.unique += 1;
         // The shape that matched is kept with the frame: the size is refined
         // below by re-drawing the winner, and re-drawing an arrow over a frame
-        // a hand won measures nothing.
-        cur.at.push({ frame: Buffer.from(frame), x: best.x, y: best.y, name: t.name, ratio: t.ownPx / t.heightPx });
+        // a hand won measures nothing. The moment is kept so that, when two
+        // pointers both fit, each can be shown where it was (chooseIdentity).
+        cur.at.push({ t: tNow, score: best.score, clear: margin >= UNIQUE, frame: Buffer.from(frame), x: best.x, y: best.y, name: t.name, ratio: t.ownPx / t.heightPx });
         votes.set(key, cur);
       }
     },
@@ -863,7 +864,8 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
     return null;
   }
   console.log("[studio] pointer calibration: " + describe(ranked.slice(0, 3)));
-  const [darkKey, hpKey] = ranked[0][0].split(":");
+  const { row: chosen, contested } = await chooseIdentity(ranked, { identify, prior, screen, W, H });
+  const [darkKey, hpKey] = chosen[0].split(":");
   const dark = darkKey === "dark";
 
   /**
@@ -886,7 +888,7 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
   for (let hp = Number(hpKey) - 3; hp <= Number(hpKey) + 3; hp++) {
     if (hp < 8) continue;
     let v = 0;
-    for (const a of ranked[0][1].at) {
+    for (const a of chosen[1].at) {
       const t = drawn(a.name, hp, a.ratio);
       let m = -1;
       for (let y = a.y - 3; y <= a.y + 3; y++) for (let x = a.x - 3; x <= a.x + 3; x++) m = Math.max(m, scoreAt(a.frame, W, H, t, x, y));
@@ -902,7 +904,201 @@ async function calibrate(video, W, H, all, duration, fps, { playing = null, scre
    * bar a candidate clears to be counted at all, is 0.72 — BELOW the noise —
    * so "something won" has never meant "a pointer was found".
    */
-  return { dark, heightPx: best.hp, votes: ranked[0][1].n, moves: ranked[0][1].moves, fit: round3(ranked[0][1].mean) };
+  return {
+    dark, heightPx: best.hp, votes: chosen[1].n, moves: chosen[1].moves, fit: round3(chosen[1].mean),
+    key: chosen[0],
+    contested,
+    // Where it was seen, for asking about it afterwards: "when only one pointer was seen" in locatePointer.
+    sightings: spreadOut(chosen[1].at, SHOWN).map(({ t, x, y, name }) => ({ t, x, y, shape: name })),
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   When two pointers both look real
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Two template sizes are one pointer, not two, when they share a design and
+ * are within this ratio of each other: the neighbouring sizes calibration
+ * offers all fit the same pointer, a little worse either side of its own.
+ */
+const SAME_POINTER = 1.15;
+/**
+ * The fit at which a candidate is a pointer rather than text: above the band a
+ * template scores on glyphs (0.74-0.77, see the ranking note in calibrate) and
+ * a little under POINTER_FIT, because the creator's own pointer came in at
+ * 0.802 on the recording chooseIdentity exists for.
+ */
+const RIVAL_FIT = 0.78;
+/** The most pointers put to the question at once. */
+const MAX_RIVALS = 3;
+/** Sightings of each shown to the model, spread across the recording. */
+const SHOWN = 3;
+/** Seconds either side of a sighting in which a moving picture there condemns it. */
+const PICTURE_NEAR = 1.5;
+/** How many more clean sightings a pointer needs to win on count alone. */
+const CLEAN_LEAD = 2;
+
+/** The model's verdict on one calibrated pointer, shown on its own. See "when only one pointer was seen" in locatePointer. */
+async function verdictOn(identify, cal) {
+  try {
+    const said = await identify([{ key: cal.key, dark: cal.dark, heightPx: cal.heightPx, sightings: cal.sightings }]);
+    return (said?.verdicts || []).find((v) => v.index === 0) || null;
+  } catch (err) {
+    console.warn("[studio] could not ask whether " + cal.key + " is the creator's pointer: " + err.message);
+    return null;
+  }
+}
+
+/** The design an operating system draws when nobody has changed it. */
+function usualDesign(platform) {
+  const p = String(platform || "").toLowerCase();
+  return p === "windows" ? "light" : p === "macos" ? "dark" : null;
+}
+
+function samePointer(a, b) {
+  const [da, ha] = a.split(":");
+  const [db, hb] = b.split(":");
+  return da === db && Math.max(+ha, +hb) / Math.min(+ha, +hb) <= SAME_POINTER;
+}
+
+/** Whether a moving picture played at this place within PICTURE_NEAR of `t`. */
+function pictureNear(screen, t, x, y) {
+  if (!screen?.media?.length) return false;
+  for (let q = t - PICTURE_NEAR; q <= t + PICTURE_NEAR + 1e-6; q += 0.25) {
+    if (inMedia(screen, q, x, y)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a moving picture was playing at this place as a run began: from a
+ * second and a half before to a quarter after. Backward-looking, like the
+ * press rule it feeds (events.js madeInPicture) — a spinner a press starts is
+ * not a picture the pointer was already inside.
+ */
+function pictureAround(screen, t, x, y) {
+  if (!screen?.media?.length) return false;
+  for (let q = t - PICTURE_NEAR; q <= t + 0.25 + 1e-6; q += 0.25) {
+    if (inMedia(screen, q, x, y)) return true;
+  }
+  return false;
+}
+
+/** The best `k` sightings, preferring ones at least a second and a half apart. */
+function spreadOut(at, k) {
+  const byScore = [...at].sort((a, b) => b.score - a.score);
+  const out = [];
+  for (const a of byScore) if (out.length < k && out.every((o) => Math.abs(o.t - a.t) >= 1.5)) out.push(a);
+  for (const a of byScore) if (out.length < k && !out.includes(a)) out.push(a);
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Which of the candidates that passed calibration is the creator's pointer.
+ *
+ * ── FIT CANNOT TELL TWO REAL POINTERS APART ──────────────────────────────────
+ * Ranking by fit is right when the alternatives are text: a template matching
+ * glyphs scores 0.74-0.77 and the pointer 0.85 and up, and that gap is what
+ * the ranking note in calibrate rests on. It says nothing when BOTH candidates
+ * are pointers — the creator's, and one inside a demo video on the page — and
+ * on a recording of cursorful.com (2026-09-24, "Cursorful_demo_now") that is
+ * what decided it:
+ *
+ *   dark:22   seen 3  mean 0.848   the demo's own black arrow
+ *   light:18  seen 5  mean 0.845   the creator's white one
+ *
+ * Three thousandths. Production read the same recording as 0.860 against
+ * 0.802 and chose the demo's arrow: the pointer was then found in 271 of 1074
+ * frames, every press was filed where the demo's cursor was, and the creator's
+ * clicks on Pricing and Editor were both refused. Forced to light:18, the same
+ * code zoomed both.
+ *
+ * The earlier guard for this — judging each sampled frame the way the tracking
+ * loop judges a match (isContent) — could not help. The creator's pointer was
+ * hidden from 2.6s to 23.9s (a tab capture stops drawing an idle pointer), and
+ * on the sampled frames the demo showed still screens with only its cursor
+ * moving. Nothing in the pixels of one frame says which of two arrows is
+ * somebody else's.
+ *
+ * So when more than one pointer fits like a pointer, fit stops deciding, and
+ * this asks, in order:
+ *
+ *   1. the model, shown a few frames of each with the pointer boxed: which is
+ *      the computer's own, and which is inside a picture of another screen.
+ *      That is a question about what SURROUNDS the pointer — what a vision
+ *      model is for, and what no template can see.
+ *   2. without an answer from it, the sightings: one seen inside a moving
+ *      picture within a second and a half is somebody else's, and a pointer
+ *      that was the clear match away from any, clearly more often, is the
+ *      creator's.
+ *   3. what the browser firmly read while recording, then what the platform
+ *      draws by default — Windows a white arrow, macOS a black one.
+ *   4. only then, fit.
+ */
+async function chooseIdentity(ranked, { identify = null, prior = null, screen = null, W, H } = {}) {
+  /**
+   * ── A RIVAL HAS TO HAVE BEEN THE ONE CLEAR MATCH SOMEWHERE ────────────────
+   * Fit alone lets text in: on a recording of Claude's settings a dark 12px
+   * template scored 0.778 across TWENTY-TWO sampled frames — seen everywhere,
+   * the clear best match in none of them, which is what a template matching
+   * glyphs looks like. Two thousandths more and it would have been a "rival",
+   * and counted on sightings it would have won. A pointer is the one clear
+   * match in at least some frame; a candidate that never was is not a second
+   * pointer, and leaving it out keeps fit deciding, as it did before.
+   */
+  const rivals = [];
+  for (const row of ranked) {
+    if (row[1].mean < RIVAL_FIT) break;
+    if (!row[1].unique) continue;
+    if (rivals.some((r) => samePointer(r[0], row[0]))) continue;
+    rivals.push(row);
+    if (rivals.length === MAX_RIVALS) break;
+  }
+  if (rivals.length < 2) return { row: ranked[0], contested: false };
+
+  const names = rivals.map(([k]) => k);
+  const settle = (row, why) => {
+    console.log("[studio] " + names.length + " pointers fit like pointers (" + names.join(", ") + "); the creator's is " + row[0] + ": " + why);
+    return { row, contested: true };
+  };
+
+  if (identify) {
+    let said = null;
+    try {
+      said = await identify(
+        rivals.map(([key, v]) => ({
+          key,
+          dark: key.startsWith("dark"),
+          heightPx: Number(key.split(":")[1]),
+          sightings: spreadOut(v.at, SHOWN).map(({ t, x, y, name }) => ({ t, x, y, shape: name })),
+        }))
+      );
+    } catch (err) {
+      console.warn("[studio] could not ask which pointer is the creator's: " + err.message);
+    }
+    for (const v of said?.verdicts || []) {
+      if (names[v.index]) console.log("[studio]   the model on " + names[v.index] + ": " + v.kind + " (" + Number(v.confidence).toFixed(2) + ") — " + v.why);
+    }
+    if (Number.isInteger(said?.own) && rivals[said.own]) return settle(rivals[said.own], "the model saw it over the page itself");
+  }
+
+  // Only sightings where it was the one clear match count: see the note on
+  // rivals above for what counting every sighting would let in.
+  const evidence = rivals.map((row) => ({
+    row,
+    clean: row[1].at.filter((a) => a.clear && !pictureNear(screen, a.t, a.x / W, a.y / H)).length,
+  }));
+  const byClean = [...evidence].sort((a, b) => b.clean - a.clean);
+  if (byClean[0].clean - byClean[1].clean >= CLEAN_LEAD) {
+    return settle(byClean[0].row, "the clear match, away from any moving picture, " + byClean[0].clean + " times against " + byClean[1].clean);
+  }
+  for (const [want, what] of [[prior?.browser, "the design the browser read while recording"], [prior?.platform, "the design this platform draws by default"]]) {
+    if (!want) continue;
+    const match = rivals.filter(([k]) => k.startsWith(want + ":"));
+    if (match.length === 1) return settle(match[0], what);
+  }
+  return settle(rivals[0], "nothing else told them apart, so the better fit");
 }
 
 /**
@@ -929,9 +1125,11 @@ const POINTER_FIT = 0.8;
  * @param {object} [o.env]       the recording machine: platform, dpr, screen_w
  * @param {object} [o.cursor]    the pointer read at full size in the browser
  * @param {object} [o.screen]    readScreen(), for the regions that are video
+ * @param {Function} [o.identify] asks which of several pointers is the creator's
+ *                               when more than one fits; see chooseIdentity
  * @returns {Promise<{ track: Array, design: string|null, heightPx: number, found: number, frames: number }>}
  */
-export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], env = null, cursor = null, screen = null, onDebug = null, onProgress = null } = {}) {
+export async function locatePointer(video, { sourceWidth, sourceHeight, duration = 0, fps = 30, cursorPx = 0, hints = [], env = null, cursor = null, screen = null, identify = null, onDebug = null, onProgress = null } = {}) {
   const W = Math.round(sourceWidth);
   const H = Math.round(sourceHeight);
 
@@ -1058,15 +1256,33 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    */
   const measured = cursor?.design === "light" || cursor?.design === "dark" ? cursor.design : "";
   const trusted = !!measured && num(cursor?.confidence) >= BROWSER_TRUST;
-  const designs = trusted ? [measured === "dark"] : [false, true];
+  /**
+   * ── UNLESS IT NAMES A DESIGN THIS MACHINE DOES NOT DRAW ───────────────────
+   * The browser reads glyphs where its difference tracker saw movement, and on
+   * a page with a demo playing that is mostly the DEMO's cursor: on the
+   * recording chooseIdentity was written for it read "dark 15px" on a Windows
+   * machine whose pointer is a white 18px arrow, from the demo's black one.
+   * There its agreement was 0.30, too low to narrow anything; the same reading
+   * at 0.6 would have removed the creator's pointer from the search entirely,
+   * and nothing downstream could have put it back. A narrowing that contradicts
+   * the platform's own default is exactly the one that cannot be trusted, and
+   * the cost of not narrowing is time, not accuracy.
+   */
+  const usual = usualDesign(env?.platform);
+  const narrow = trusted && (!usual || usual === measured);
+  const designs = narrow ? [measured === "dark"] : [false, true];
   if (measured) {
     console.log(
       "[studio] the browser measured this recording's pointer: " + measured + " " +
         (fromBrowser || "?") + "px from " + num(cursor.samples) + " readings " +
         "(agreement " + num(cursor.confidence).toFixed(2) + ", " +
-        (trusted ? "searching that design only" : "not firm enough to narrow the search") + ")"
+        (narrow ? "searching that design only"
+          : trusted ? "but " + env.platform + " draws a " + usual + " pointer by default, so both designs are searched"
+            : "not firm enough to narrow the search") + ")"
     );
   }
+  /** What to prefer between two real pointers when nothing better says. See chooseIdentity. */
+  const prior = { browser: trusted ? measured : null, platform: usual };
   /**
    * The parts of the screen that were animating for most of the recording: a
    * product demo playing on a home page, a looping GIF, a background video.
@@ -1094,7 +1310,7 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
     );
   }
 
-  let cal = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen, moving });
+  let cal = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen, moving, identify, prior });
   /**
    * ── A VETO LEAVES A WORSE ANSWER MORE OFTEN THAN IT LEAVES NONE ──────────
    * The uncapped veto is deliberately crude: on a recording that really is
@@ -1121,7 +1337,7 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
         (cal ? "fitted only " + num(cal.fit).toFixed(3) + " — that is text, not a cursor" : "found nothing") +
         "; searching the whole frame"
     );
-    const open = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen });
+    const open = await calibrate(video, W, H, candidatesFor(designs), duration, fps, { playing, screen, identify, prior });
     if (open && (!cal || num(open.fit) > num(cal.fit))) cal = open;
   }
   /**
@@ -1133,9 +1349,50 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
    */
   if (!cal && designs.length === 1) {
     console.log("[studio] the measured pointer design found nothing; searching both designs");
-    cal = await calibrate(video, W, H, candidatesFor([false, true]), duration, fps, { playing, screen, moving });
+    cal = await calibrate(video, W, H, candidatesFor([false, true]), duration, fps, { playing, screen, moving, identify, prior });
   }
   if (!cal) return { track: [], design: null, heightPx: 0, found: 0, frames: 0 };
+
+  /**
+   * ── AND WHEN ONLY ONE POINTER WAS SEEN, WAS IT THE CREATOR'S ──────────────
+   * chooseIdentity settles a contest, and there is only a contest when the
+   * creator's pointer turned up in at least three of the twelve sampled frames.
+   * A tab capture stops drawing an idle pointer: on the recording that was
+   * written for, the creator's was in the picture 40% of the time and in five
+   * of the twelve samples. At 20% it is in fewer than three more often than
+   * not — and then the demo's cursor is the only candidate, and wins unopposed.
+   *
+   * So on a recording with a moving picture on it — the only kind with
+   * somebody else's pointer in it — the winner is shown to the model on its
+   * own. If it is inside a picture, calibration looks again at three times the
+   * frames without it, and switches only if the model calls what that finds
+   * the computer's own. A wrong "content" here costs a second look and nothing
+   * else.
+   */
+  if (identify && !cal.contested && screen?.media?.length && cal.sightings?.length) {
+    const verdict = await verdictOn(identify, cal);
+    if (verdict) console.log("[studio]   the model on the one pointer found, " + cal.key + ": " + verdict.kind + " (" + verdict.confidence.toFixed(2) + ") — " + verdict.why);
+    if (verdict?.kind === "content" && verdict.confidence >= RUN_SURE) {
+      console.log(
+        "[studio] the only pointer calibration found, " + cal.key + ", is inside a picture on the page (the model: " +
+          verdict.why + "); looking again at " + CAL_FRAMES * 3 + " frames without it"
+      );
+      const others = candidatesFor([false, true]).filter((t) => !samePointer((t.dark ? "dark" : "light") + ":" + t.heightPx, cal.key));
+      const again = others.length
+        ? await calibrate(video, W, H, others, duration, fps, { playing, screen, moving, identify, prior, sampled: CAL_FRAMES * 3 })
+        : null;
+      const second = again ? await verdictOn(identify, again) : null;
+      if (second?.kind === "own" && second.confidence >= RUN_SURE) {
+        console.log("[studio] found " + again.key + " instead, and the model calls it the computer's own: " + second.why);
+        cal = again;
+      } else {
+        console.log(
+          "[studio] nothing better found" + (again ? " (" + again.key + ": " + (second ? second.kind : "no answer") + ")" : "") +
+            "; keeping " + cal.key
+        );
+      }
+    }
+  }
 
   // Tracking uses only this recording's pointer: both shapes, at its size and
   // one step either side for the anti-aliasing a moving pointer picks up.
@@ -1574,7 +1831,19 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
         // A new run when there was nothing to continue from, or the match is
         // nowhere near where the last one was.
         if (!run || !last || Math.hypot(hit.x - last.x, hit.y - last.y) > NEAR * 2) {
-          const first = !provenEnd && !track.length;
+          /**
+           * ── "FIRST" IS NOT PROOF WHEN IT BEGINS INSIDE A PICTURE ───────────
+           * The first run of a recording used to be the creator's by
+           * definition. A recording that opens with the creator's pointer idle
+           * — and a tab capture does not draw an idle pointer — opens with the
+           * demo's cursor as the only one on screen: on a clip of cursorful.com
+           * the demo's hand was the first run, was "proven" for it, and its
+           * click on a YouTube thumbnail was zoomed. So until something is
+           * proven, a run that begins inside a moving picture is not the
+           * creator's by default, and the first one that begins clear of any
+           * is.
+           */
+          const first = !provenEnd && !pictureAround(screen, t, hit.x / W, hit.y / H);
           const returning = provenEnd && Math.hypot(hit.x - provenEnd.x, hit.y - provenEnd.y) <= PROVEN_NEAR;
           run = { proven: !!(first || returning || nearEdge(hit.x, hit.y)) };
         }
@@ -1872,6 +2141,158 @@ export function mergeLocated(located, fallback) {
  * fraction of the frame — about twenty pixels across a 1920 recording.
  */
 const SAME_PLACE = 0.011;
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Somebody else's pointer, followed while the creator's was hidden
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/** Longest pause inside one run of sightings. */
+const RUN_GAP = 0.5;
+/** A run shorter than this is not worth a question. */
+const RUN_MIN = 0.25;
+/** The most runs put to the model at once, longest first. */
+const RUNS_ASKED = 8;
+/** How sure the model must be before our pointer stops following a run. */
+const RUN_SURE = 0.6;
+
+/**
+ * The located track cut where the pointer was picked up afresh: a pause, or a
+ * jump no hand makes between two frames. A run is PROVEN when any sighting in
+ * it was — see "whose pointer" in locatePointer.
+ */
+export function pointerRuns(track, W, H) {
+  const runs = [];
+  let cur = null;
+  for (const p of track) {
+    const prev = cur?.samples[cur.samples.length - 1];
+    if (!prev || p.t - prev.t > RUN_GAP || Math.hypot((p.x - prev.x) * W, (p.y - prev.y) * H) > NEAR * 2) {
+      cur = { samples: [], proven: false };
+      runs.push(cur);
+    }
+    cur.samples.push(p);
+    if (p.proven) cur.proven = true;
+  }
+  for (const r of runs) {
+    r.start = r.samples[0].t;
+    r.end = r.samples[r.samples.length - 1].t;
+  }
+  return runs;
+}
+
+/**
+ * The located path to DRAW, with any stretch that was somebody else's pointer
+ * replaced by the creator's, held where it was last seen.
+ *
+ * ── WHY THE DRAWN POINTER NEEDS THIS WHEN THE CAMERA DOES NOT ────────────────
+ * A tab capture stops drawing an idle pointer. On a recording of cursorful.com
+ * (2026-09-24) the creator's pointer was not in the picture from 2.6s to
+ * 23.9s, and the locator — lost, searching the whole frame, as it must to find
+ * the creator's again — found the demo's pointer instead, twice, and followed
+ * it: our cursor rode the demo's hand onto a YouTube thumbnail, sat in the
+ * middle of the demo, and jumped with it. Every press it made was refused (the
+ * "in-picture" rule in events.js); the DRAWN path had no such rule, and the
+ * creator saw what they had reported the day before — our pointer applied
+ * over somebody else's.
+ *
+ * Where each of those stretches CAME FROM is already known (the locator's
+ * provenance): a run that did not begin where the creator's pointer was, at
+ * the edge, or as the first sighting clear of any moving picture, appeared
+ * from nowhere. That is what the creator's own pointer does after being
+ * hidden, too — so it is suspicion, not a verdict. The verdict is asked of the model, which is shown a sighting that
+ * is known to be the creator's beside each suspect and judges what surrounds
+ * it. A pointer inside another browser window drawn inside the page is not
+ * theirs.
+ *
+ * ── AND IT CANNOT TAKE A PRESS AWAY ──────────────────────────────────────────
+ * This changes only what is drawn. The presses are placed and gated from the
+ * located track as it was, so a wrong verdict here can move our cursor for a
+ * stretch and can never cost the creator a click. Without an answer from the
+ * model nothing changes at all: the pixels alone have been measured calling
+ * the creator's own pointer part of a picture (events.js "in-picture" on a
+ * rest after a scroll), and that is acceptable for refusing a zoom and not for
+ * taking the pointer off the screen.
+ *
+ * ── WHERE OUR POINTER GOES INSTEAD ───────────────────────────────────────────
+ * To where the creator's was last seen, held until theirs is seen again. That
+ * is where it physically was: a pointer the capture stopped drawing because it
+ * was idle has not moved. The hold runs right up to the next sighting of it,
+ * because cursorAt() switches halfway across a long gap, and that would put
+ * our pointer on the NEXT place the creator went, seconds before they went
+ * there.
+ *
+ * @param {Array}    track   the located track
+ * @param {object}   o
+ * @param {Function} o.judge  ({ reference, runs }) => per-run verdicts; see vision.js judgeRuns
+ * @returns {Promise<{ track: Array, dropped: Array<{start, end}> }>} `dropped` is
+ *          where the tracker's own samples must not be drawn either — it
+ *          followed the same stranger, by the same movement
+ */
+export async function withoutStrangers(track, { W, H, judge = null } = {}) {
+  const same = { track, dropped: [] };
+  if (!judge || !track?.length) return same;
+  const runs = pointerRuns(track, W, H);
+  const proven = track.filter((p) => p.proven && p.located && !p.held);
+  if (!proven.length) return same;
+  const ref = proven.reduce((a, b) => (num(b.score) > num(a.score) ? b : a));
+  const suspects = runs
+    .filter((r) => !r.proven && r.end - r.start >= RUN_MIN)
+    .sort((a, b) => b.end - b.start - (a.end - a.start))
+    .slice(0, RUNS_ASKED);
+  if (!suspects.length) return same;
+
+  const px = (p) => ({ t: p.t, x: p.x * W, y: p.y * H });
+  let verdicts = null;
+  try {
+    verdicts = await judge({
+      reference: px(ref),
+      runs: suspects.map((r) => {
+        const seen = r.samples.filter((p) => p.located && !p.held);
+        const firm = seen.length ? seen : r.samples;
+        const a = firm[0];
+        const b = firm[Math.floor(firm.length / 2)];
+        return { sightings: b && b !== a && b.t - a.t >= 0.3 ? [px(a), px(b)] : [px(a)] };
+      }),
+    });
+  } catch (err) {
+    console.warn("[studio] could not ask whose pointer the unproven stretches were: " + err.message);
+  }
+  if (!Array.isArray(verdicts)) return same;
+
+  const theirs = suspects.filter((r, i) => verdicts[i]?.kind === "content" && verdicts[i].confidence >= RUN_SURE);
+  suspects.forEach((r, i) => {
+    const v = verdicts[i];
+    if (v) console.log("[studio]   pointer " + r.start.toFixed(2) + "-" + r.end.toFixed(2) + "s: " + v.kind + " (" + v.confidence.toFixed(2) + ") — " + v.why);
+  });
+  if (!theirs.length) return same;
+
+  const bad = new Set(theirs.flatMap((r) => r.samples));
+  const out = [];
+  let anchor = null;
+  for (let i = 0; i < track.length; i++) {
+    const p = track[i];
+    if (!bad.has(p)) {
+      out.push(p);
+      anchor = p;
+      continue;
+    }
+    if (!anchor) continue;
+    out.push({ t: p.t, x: anchor.x, y: anchor.y, shape: anchor.shape || "default", held: true });
+    // The last sample of a stretch: hold on until just before the creator's
+    // pointer is next seen, rather than letting the renderer switch halfway.
+    const next = track[i + 1];
+    if (next && !bad.has(next) && next.t - p.t > GAP_HOLD_DRAWN) {
+      out.push({ t: round3(next.t - 0.05), x: anchor.x, y: anchor.y, shape: anchor.shape || "default", held: true });
+    }
+  }
+  console.log(
+    "[studio] " + theirs.length + " stretch(es) of the pointer path were somebody else's pointer; ours holds where the creator's was last seen: " +
+      theirs.map((r) => r.start.toFixed(2) + "-" + r.end.toFixed(2) + "s").join(", ")
+  );
+  return { track: out, dropped: theirs.map((r) => ({ start: r.start - HOLE, end: r.end + HOLE })) };
+}
+
+/** The renderer's own limit for crossing a gap; see GAP_HOLD in camera.mjs. */
+const GAP_HOLD_DRAWN = 0.2;
 
 /**
  * The path as the renderer should draw it: each located position held until

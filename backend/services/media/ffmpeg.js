@@ -309,13 +309,21 @@ export async function extractFrames(src, destDir, { every = 2, start = 0, durati
   }));
 }
 
-/** One still at an exact moment, at analysis size. For a second look at a frame. */
-export function extractFrameAt(src, dest, at, { longEdge = 1280 } = {}) {
+/**
+ * One still at an exact moment, at analysis size. For a second look at a frame.
+ *
+ * `mark` draws a box on it first, in the source's own pixels — for asking a
+ * model about ONE thing in a busy frame without describing where it is.
+ */
+export function extractFrameAt(src, dest, at, { longEdge = 1280, mark = null } = {}) {
+  const box = mark
+    ? `drawbox=x=${Math.round(mark.x)}:y=${Math.round(mark.y)}:w=${Math.round(mark.w)}:h=${Math.round(mark.h)}:color=magenta:t=${mark.t || 5},`
+    : "";
   return ffmpeg([
     "-ss", String(Math.max(0, at)),
     "-i", src,
     "-frames:v", "1",
-    "-vf", `scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))'`,
+    "-vf", `${box}scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))'`,
     "-q:v", "3",
     dest,
   ]);

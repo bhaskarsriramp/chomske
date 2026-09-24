@@ -43,12 +43,13 @@ import path from "path";
 import fsp from "fs/promises";
 import { extractFrames } from "../media/ffmpeg.js";
 import {
-  newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration,
+  newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration, identifyPointer, judgeRuns,
 } from "./vision.js";
+import { providerReady } from "../ai/provider.js";
 import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed, restMoments } from "./events.js";
 import { changeMoments, auditEdit, applyPatches } from "./audit.js";
 import { alignCapture, settleAfter, playingRegions } from "./sync.js";
-import { locatePointer, mergeLocated, stepPath, snapToLocated } from "./locate.js";
+import { locatePointer, mergeLocated, stepPath, snapToLocated, withoutStrangers } from "./locate.js";
 import { intentPath } from "./intent.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
@@ -84,6 +85,22 @@ import { STUDIO_LIMITS } from "./demoService.js";
  */
 export const VISION_ON_ANALYSE =
   String(process.env.STUDIO_VISION_ON_ANALYSE || "off").trim().toLowerCase() === "on";
+
+/**
+ * ── WHETHER THE MODEL SETTLES WHICH POINTER IS THE CREATOR'S ─────────────────
+ *
+ * On, and independent of the switch above. It is one request, made only when a
+ * recording contains two pointers that both look real — the creator's and one
+ * inside a demo on the page — which is the one decision the pixels cannot make
+ * and the one every other result rests on: pick the demo's cursor and every
+ * click is filed where the demo's cursor was. See locate.js chooseIdentity.
+ * Half a dozen frames at analysis size, a fraction of a cent, on the
+ * recordings that need it and on no others.
+ *
+ * `STUDIO_POINTER_VISION=off` falls back to the pixel evidence alone.
+ */
+export const POINTER_VISION =
+  String(process.env.STUDIO_POINTER_VISION || "on").trim().toLowerCase() !== "off";
 
 /**
  * ── WHETHER THE BLUR PASS RUNS AT ALL ────────────────────────────────────────
@@ -233,6 +250,13 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
      */
     screen: aligned.screen,
     /**
+     * When two pointers both fit — the creator's and one in a demo on the
+     * page — the model is shown each, boxed, and asked which is whose.
+     */
+    identify: POINTER_VISION && providerReady()
+      ? (rivals) => identifyPointer({ video, dir: path.join(workDir, "identity"), rivals, spend })
+      : null,
+    /**
      * ── THE HINTS ARE THE RAW LOG, NOT THE CLEANED ONE ────────────────────
      * alignCapture() throws away the samples where the tracker was following a
      * spinner or a repaint instead of the pointer, because those would be
@@ -306,6 +330,26 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
         : " — no pointer design recognised, tracker only")
   );
   const pointerPath = located.track.length ? mergeLocated(located.track, capturedTrack) : capturedTrack;
+
+  /**
+   * ── THE PATH TO DRAW, WITHOUT SOMEBODY ELSE'S POINTER IN IT ───────────────
+   * Asked of the model while the rest of this runs, and read only where the
+   * drawn path is built. The presses below use located.track exactly as found:
+   * this may move our cursor for a stretch and can never cost a click. See
+   * locate.js withoutStrangers.
+   */
+  const drawnTask =
+    POINTER_VISION && providerReady() && located.track.length
+      ? withoutStrangers(located.track, {
+          W: source?.width || 1920,
+          H: source?.height || 1080,
+          judge: ({ reference, runs }) =>
+            judgeRuns({ video, dir: path.join(workDir, "runs"), reference, runs, heightPx: located.heightPx, spend }),
+        }).catch((err) => {
+          console.error("[studio] the check for somebody else's pointer failed:", err);
+          return null;
+        })
+      : Promise.resolve(null);
 
   let events = inferEvents({
     samples: pointerPath,
@@ -545,8 +589,11 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * now decides only whether the recording counts as located overall — which
    * is a claim made to the editor, not a reason to discard measurements.
    */
+  const drawn = await drawnTask;
+  const theirs = drawn?.dropped || [];
+  const notTheirs = (list) => (theirs.length ? list.filter((p) => !theirs.some((s) => p.t >= s.start && p.t <= s.end)) : list);
   if (located.track.length) {
-    tl.track = stepPath(mergeLocated(located.track, shaped));
+    tl.track = stepPath(mergeLocated(drawn?.track || located.track, notTheirs(shaped)));
     tl.cursor = { ...tl.cursor, smoothing: 0, located: locatedShare >= 0.5 };
   } else {
     tl.track = smoothTrack(shaped, { rate: 60, strength: tl.cursor.smoothing, duration });
@@ -562,7 +609,8 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // the recovered one — otherwise the drawn pointer is already on top of it.
   // Always kept: it is what the renderer reconstructs away if the creator
   // switches to the composed path, and it is small.
-  tl.captured = thin(located.track.length ? mergeLocated(located.track, capturedTrack) : capturedTrack);
+  // Somebody else's pointer is part of the picture, not something to erase.
+  tl.captured = thin(located.track.length ? mergeLocated(notTheirs(located.track), notTheirs(capturedTrack)) : capturedTrack);
   if (composed) {
     console.log(
       `[studio] pointer composed from ${composed.anchors.length} clicks ` +

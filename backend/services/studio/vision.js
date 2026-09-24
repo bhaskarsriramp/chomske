@@ -34,12 +34,14 @@
  * what the creator was charged.
  */
 import fsp from "fs/promises";
+import path from "path";
 import { generateJson, pool, TEXT_MODEL } from "../edit/gemini.js";
 import { MODEL } from "../ai/provider.js";
+import { extractFrameAt } from "../media/ffmpeg.js";
 import {
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
-  PRESS_ARBITER, CHANGE_AUDITOR,
+  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS,
   frameIndex, eventLog, elementLog,
 } from "./prompts.js";
 import { newId, clampRect } from "./timeline.js";
@@ -843,6 +845,121 @@ export async function arbitratePress({ frames, at, spend = newSpend() }) {
     settled_by: Number.isFinite(settled) ? clamp(settled, 0, 6) : null,
     what: str(json.what_happened, 160),
   };
+}
+
+/**
+ * Which of several pointers seen in a recording is the creator's own.
+ *
+ * Every sighting is cut from the recording with its pointer boxed, and the
+ * model is asked about all of them in one request, grouped by pointer, so it
+ * judges each against the others. See locate.js chooseIdentity for why this
+ * exists and prompts.js POINTER_IDENTITY for the question.
+ *
+ * ── ONE ANSWER, OR NONE ──────────────────────────────────────────────────────
+ * `own` is set only when exactly one group was called the computer's own with
+ * some confidence. Two "own" answers is the model unable to tell — or the same
+ * pointer offered twice, as an arrow and as a hand — and guessing between them
+ * here would hide that from the fallback that has more to go on.
+ *
+ * @param {object} o
+ * @param {string} o.video
+ * @param {string} o.dir       where the marked frames are written
+ * @param {Array}  o.rivals    [{ key, heightPx, sightings: [{ t, x, y }] }], in source pixels
+ * @returns {Promise<{ own: number|null, verdicts: Array }|null>}
+ */
+export async function identifyPointer({ video, dir, rivals, spend = newSpend() }) {
+  await fsp.mkdir(dir, { recursive: true });
+  const parts = [{ text: POINTER_IDENTITY }];
+  let shown = 0;
+  for (let g = 0; g < rivals.length; g++) {
+    const letter = "ABC"[g];
+    for (let i = 0; i < rivals[g].sightings.length; i++) {
+      const file = path.join(dir, `pointer_${letter}${i}.jpg`);
+      if (!(await boxedFrame(video, file, rivals[g].sightings[i], rivals[g].heightPx))) continue;
+      parts.push({ text: `Group ${letter}, image ${i + 1}:` });
+      parts.push(await imagePart(file));
+      shown++;
+    }
+  }
+  if (!shown) return null;
+
+  const json = await ask({ parts, spend, label: "identifyPointer", maxOutputTokens: 1024 });
+  if (!Array.isArray(json?.groups)) return null;
+  const KINDS = new Set(["own", "content", "none", "unsure"]);
+  const verdicts = json.groups
+    .map((v) => ({
+      index: "ABC".indexOf(String(v?.group || "").trim().toUpperCase()),
+      kind: KINDS.has(v?.kind) ? v.kind : "unsure",
+      confidence: clamp(num(v?.confidence, 0.5), 0, 1),
+      why: str(v?.why, 160),
+    }))
+    .filter((v) => v.index >= 0 && v.index < rivals.length);
+  const own = verdicts.filter((v) => v.kind === "own" && v.confidence >= 0.6);
+  return { own: own.length === 1 ? own[0].index : null, verdicts };
+}
+
+/**
+ * One frame with a box around the pointer at a sighting, or false.
+ * The hotspot is the tip, and the glyph hangs below and to the right of it.
+ */
+async function boxedFrame(video, file, s, heightPx) {
+  const hp = Math.max(8, num(heightPx, 18));
+  const mark = { x: s.x - hp * 0.9, y: s.y - hp * 0.7, w: hp * 2.6, h: hp * 2.7 };
+  try {
+    await extractFrameAt(video, file, s.t, { longEdge: 1280, mark });
+    return (await fsp.stat(file)).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * For each stretch of the pointer's path, whether it was the creator's pointer
+ * or one inside a picture on the page — judged against a sighting known to be
+ * theirs. See locate.js withoutStrangers and prompts.js POINTER_RUNS.
+ *
+ * @param {object} o
+ * @param {{t,x,y}} o.reference   a sighting of the creator's pointer, source pixels
+ * @param {Array}   o.runs        [{ sightings: [{ t, x, y }] }], source pixels
+ * @param {number}  o.heightPx    the pointer's height, for the box
+ * @returns {Promise<Array<{kind, confidence, why}|null>|null>} one per run, in order
+ */
+export async function judgeRuns({ video, dir, reference, runs, heightPx, spend = newSpend() }) {
+  await fsp.mkdir(dir, { recursive: true });
+  const ref = path.join(dir, "run_R.jpg");
+  if (!(await boxedFrame(video, ref, reference, heightPx))) return null;
+  const parts = [{ text: POINTER_RUNS }, { text: "Image R — the computer's own pointer:" }, await imagePart(ref)];
+  let shown = 0;
+  for (let g = 0; g < runs.length; g++) {
+    for (let i = 0; i < runs[g].sightings.length; i++) {
+      const file = path.join(dir, `run_${g + 1}_${i}.jpg`);
+      if (!(await boxedFrame(video, file, runs[g].sightings[i], heightPx))) continue;
+      parts.push({ text: `Group ${g + 1}, image ${i + 1}:` });
+      parts.push(await imagePart(file));
+      shown++;
+    }
+  }
+  if (!shown) return null;
+
+  const json = await ask({ parts, spend, label: "judgeRuns", maxOutputTokens: 2048 });
+  if (!Array.isArray(json?.groups)) return null;
+  /**
+   * The reference is the pixels' best guess at the creator's pointer, and every
+   * verdict below is "the same as R or not". If the model sees R inside a
+   * picture, the whole comparison is upside down; nothing is acted on.
+   */
+  if (json.reference === "content") {
+    console.warn("[studio] the reference sighting for the stranger check looks like somebody else's pointer; no verdicts used");
+    return null;
+  }
+  const KINDS = new Set(["own", "content", "none", "unsure"]);
+  const out = runs.map(() => null);
+  for (const v of json.groups) {
+    const i = Math.round(num(v?.group, 0)) - 1;
+    if (i < 0 || i >= runs.length) continue;
+    out[i] = { kind: KINDS.has(v?.kind) ? v.kind : "unsure", confidence: clamp(num(v?.confidence, 0.5), 0, 1), why: str(v?.why, 160) };
+  }
+  return out;
 }
 
 /**

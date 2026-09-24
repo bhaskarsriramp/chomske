@@ -135,12 +135,30 @@ The footage lives in `fixtures/` and is not; each truth file says where to
 fetch it. When a creator reports a recording, label it and add it here: that is
 the only kind of test that has ever caught the bug nobody thought of.
 
+Run it both ways before a deploy. **With the model** —
+`VERTEX_PROJECT=<project> node scripts/pointerTest/truth.mjs` — is what
+production runs: which of two real pointers is the creator's, and whether a
+stretch of the drawn path was somebody else's, are asked of it
+(`locate.js chooseIdentity`, `withoutStrangers`). **Without it** —
+`STUDIO_POINTER_VISION=off` — is the fallback for a day the model does not
+answer, and a file may hold it to its own `stranger_budget_pixel_s`. Without
+`VERTEX_PROJECT` locally the model is not reachable and the first run is quietly
+the second, so say which one you ran.
+
+`cursorful-now-2026-09-24` is the recording that needed all of it: the demo's
+black arrow fitted as well as the creator's white one, the creator's pointer was
+not drawn for 21 seconds (a tab capture hides an idle pointer), and production
+calibrated to the demo's — no zoom on either click.
+
 `replay.mjs` is how a recording is labelled and diagnosed. It runs the whole
 first analysis on one file — with the browser's tracker replayed over the video
 by the real `tracker.worker.js`, because that report lives in the database and
 not in the file — and prints every press with the gate's reason. The replay is
 close to production, not identical: the browser saw the screen before the
 encoder did, and on one recording it reports a scroll the real tracker did not.
+`--cursor light:18` stands in for a firm browser reading of the pointer, which
+answers "would everything after calibration have worked with the right design?"
+in one run.
 
 `real.mjs` is the one that catches what nobody thought of. The drawn pages
 above can only contain the difficulties we imagined; every real failure so far

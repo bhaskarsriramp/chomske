@@ -186,13 +186,16 @@ export async function replayTracker(file, vw, vh) {
  *
  * @param {string} src
  * @param {object} [o]
- * @param {object} [o.env]  what capture.js environment() would have reported
+ * @param {object} [o.env]     what capture.js environment() would have reported
+ * @param {object} [o.cursor]  replaces the browser's pointer reading — for asking
+ *                             "would the rest have worked with the right design?"
  * @returns {Promise<{ info, capture, result }>}
  */
-export async function replay(src, { env = null } = {}) {
+export async function replay(src, { env = null, cursor = null } = {}) {
   const info = await probe(src);
   const capture = await replayTracker(src, info.width, info.height);
   if (env) capture.env = env;
+  if (cursor) capture.cursor = cursor;
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "lipi-replay-"));
   try {
     const result = await analyseRecording({

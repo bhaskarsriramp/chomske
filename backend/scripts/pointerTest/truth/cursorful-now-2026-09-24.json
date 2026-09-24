@@ -1,0 +1,25 @@
+{
+  "about": "cursorful.com: pointer parked on the hero, scrolled through the embedded YouTube demo (its own black arrow browsing, clicking, saving to a playlist) and the feature demos with the pointer hidden, back to the top, then Pricing and Editor in the fixed nav bar. Recorded 2026-09-24 as 'Cursorful_demo_now'.",
+  "recording": "cursorful-now-2026-09-24.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab4f73ad23295672bb19a9c/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "The creator's pointer is a white 18px arrow (light:18). The demo's is a black arrow that fits dark:21-22 as well as the creator's fits light:18 (0.848 against 0.845 here, 0.860 against 0.802 in production), and production calibrated to it: located 271/1074 frames, every press filed at the demo's cursor, Pricing and Editor both refused, no zoom at all. locate.js chooseIdentity exists because of it.",
+    "The creator's pointer is NOT drawn from about 2.6s to 23.9s — a tab capture stops drawing an idle pointer — so every pointer on screen in that stretch is somebody else's. Pricing was hovered from 23.2s with no pointer drawn; the hand appears on it at 23.9s.",
+    "Pricing: hand at (927,44) from 23.9s, the page starts its jump at 24.3s, so the click is ~24.2s. Editor: hand on it from 30.0s, the page goes blank at 31.3s, so the click is ~31.15s.",
+    "The boxes are where the demos' cursors actually went, not the whole players: the creator's hidden pointer sits at (270,392), in the left margin of the YouTube player, and our pointer held there is theirs, not a stranger's.",
+    "stranger_budget_s (with the model) and stranger_budget_pixel_s (STUDIO_POINTER_VISION=off) are RATCHETS, not targets, measured on 2026-09-24. Without the model the drawn path follows the demo's pointer while the creator's is hidden (never zoomed on); with it, those stretches are judged somebody else's and our pointer holds where the creator's was. Lower them when they improve; never raise them."
+  ],
+  "clicks": [
+    { "label": "Pricing", "t": 24.2, "x": 927, "y": 40 },
+    { "label": "Editor", "t": 31.15, "x": 1205, "y": 45 }
+  ],
+  "strangers": [
+    { "label": "the YouTube demo at the foot of the hero", "from": 0, "to": 2.8, "box": [180, 700, 1740, 1020] },
+    { "label": "the YouTube demo filling the view, creator's pointer hidden", "from": 2.8, "to": 15.8, "box": [450, 90, 1740, 1020] },
+    { "label": "the feature-section demos, creator's pointer hidden", "from": 15.8, "to": 21.0, "box": [320, 60, 1920, 1020] },
+    { "label": "the YouTube demo again on the way back up", "from": 21.0, "to": 23.0, "box": [450, 90, 1740, 1020] }
+  ],
+  "stranger_budget_s": 99,
+  "stranger_budget_pixel_s": 99
+}

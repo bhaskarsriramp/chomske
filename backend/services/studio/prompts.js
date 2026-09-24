@@ -440,6 +440,72 @@ Schema:
 }`;
 
 /* ────────────────────────────────────────────────────────────────────────────
+   8b. Pointer Identity — whose pointer is this
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Asked only when a recording contains two pointers that both look real — the
+ * creator's, and one inside a demo playing on the page — and nothing in the
+ * pixels of one frame can say which is which. See locate.js chooseIdentity.
+ * Everything downstream is measured from the pointer this picks, so it is the
+ * one question in the product that must be answered about the SURROUNDINGS,
+ * not the pointer: both of them are, genuinely, mouse pointers.
+ */
+export const POINTER_IDENTITY = `You are looking at frames from a screen recording of a web browser, made by a person recording a demo of a website or app.
+
+In every image a MAGENTA RECTANGLE marks one mouse pointer. The images come in groups labelled A, B (and sometimes C). Every image in a group marks the SAME pointer — the same design and size — at a different moment of the recording. Different groups are different pointers.
+
+A recording like this can contain two kinds of mouse pointer:
+
+"own" — the recording computer's own pointer, the one the person was holding. The operating system draws it on top of everything, at the scale of the page's own text and buttons. It sits over the page being recorded: its navigation bar, headings, buttons, forms, or empty background.
+
+"content" — a pointer that is part of what the page is SHOWING: inside an embedded video, an animated product demo, a GIF, or a screenshot of another screen. It was recorded on somebody else's machine and belongs to them. Tell it by what surrounds it: another browser window or app drawn inside the page (with its own tab strip, address bar or window buttons), a video player, a rounded card with a shadow floating over a marketing layout, a device bezel. It is usually drawn at the scale of that inner picture, not of the page.
+
+Judge each group by what surrounds its marked pointer across ALL of its images together. The page itself may contain a big demo that fills most of the frame — look for the page's own navigation or margins around it.
+
+Usually exactly one group is "own". Use "none" for a group whose rectangle does not contain a mouse pointer, and "unsure" when the images do not let you tell.
+
+${JSON_ONLY}
+
+Schema:
+{
+  "groups": [
+    { "group": "A", "kind": "own|content|none|unsure", "confidence": 0.0, "why": "at most 20 words" }
+  ]
+}`;
+
+/**
+ * The same question asked of stretches of the pointer's path rather than of
+ * candidate designs: each is a place the locator picked a pointer up with
+ * nothing to connect it to where the creator's was — which is what the
+ * creator's own pointer does after being hidden, and what a demo's cursor does
+ * the moment the creator's is. The reference is a sighting that is known to be
+ * theirs. Asked only to decide what the DRAWN pointer does; see locate.js
+ * withoutStrangers.
+ */
+export const POINTER_RUNS = `You are looking at frames from a screen recording of a web browser, made by a person recording a demo of a website or app.
+
+The first image, labelled R, marks with a MAGENTA RECTANGLE what is believed to be the recording computer's own mouse pointer — the one the person was holding. Check that first: if R's pointer is itself inside an embedded video, demo, GIF or screenshot of another screen, say so in "reference" and judge the groups by their surroundings alone.
+
+Every other image is labelled with a group number and marks, with the same kind of rectangle, a mouse pointer at another moment of the recording. For each group decide whether its pointer is:
+
+"own" — the computer's own pointer, the same one as in R. The operating system draws it on top of the page, at the page's scale. It may be a different SHAPE from R — an arrow becomes a hand over a link, or a text caret over a field — but it keeps R's colours and size, and it sits over the page being recorded.
+
+"content" — a pointer that is part of what the page is SHOWING: inside an embedded video, an animated product demo, a GIF or a screenshot of another screen. It belongs to whoever recorded that. Tell it by what surrounds it — another browser window or app drawn inside the page, a video player, a card floating over a marketing layout — and by its size and colours, which follow that inner picture rather than R.
+
+Judge each group on its own: any number of them may be "own" and any number "content". Use "none" when a group's rectangle holds no mouse pointer, and "unsure" when you cannot tell.
+
+${JSON_ONLY}
+
+Schema:
+{
+  "reference": "own|content|unsure",
+  "groups": [
+    { "group": 1, "kind": "own|content|none|unsure", "confidence": 0.0, "why": "at most 20 words" }
+  ]
+}`;
+
+/* ────────────────────────────────────────────────────────────────────────────
    9. Quality Reviewer — what to fix
    ──────────────────────────────────────────────────────────────────────────── */
 
@@ -535,6 +601,6 @@ export default {
   ANALYSIS_LONG_EDGE,
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
-  PRESS_ARBITER, CHANGE_AUDITOR,
+  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS,
   frameIndex, eventLog, elementLog,
 };

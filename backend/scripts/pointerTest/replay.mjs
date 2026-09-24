@@ -29,8 +29,15 @@ if (!src || !fs.existsSync(src)) {
 const envArg = (process.argv.find((a) => a.startsWith("--env=")) || "").slice(6) ||
   (process.argv.includes("--env") ? process.argv[process.argv.indexOf("--env") + 1] : "");
 
+// --cursor light:18 stands in for a firm browser reading of the pointer.
+const cursorArg = (process.argv.find((a) => a.startsWith("--cursor=")) || "").slice(9) ||
+  (process.argv.includes("--cursor") ? process.argv[process.argv.indexOf("--cursor") + 1] : "");
+const forced = cursorArg
+  ? { design: cursorArg.split(":")[0], height_px: Number(cursorArg.split(":")[1]) || 0, samples: 99, confidence: 1 }
+  : null;
+
 const t0 = Date.now();
-const { info, capture, result: res } = await replay(src, { env: envFrom(envArg) });
+const { info, capture, result: res } = await replay(src, { env: envFrom(envArg), cursor: forced });
 const W = info.width;
 const H = info.height;
 console.log(`\n${path.basename(src)}  ${W}x${H}  ${info.duration.toFixed(2)}s  ${info.fps || "?"}fps  (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
