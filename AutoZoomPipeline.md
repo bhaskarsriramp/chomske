@@ -553,6 +553,14 @@ one frame; the tracker logged that frame as a quarter-screen shift and the press
 was refused as "the page was scrolling". A scroll plays out over frames, so
 `events.js scrolledAfter` now needs at least two samples of shift.
 
+*The same fact at the door (later the same night):* `inferEvents` checks `dy`
+before it will mint a navigation at all, and on a fourth cap.so recording the
+Pricing page arrived in one frame logged as `dy -0.21` — discarded there as a
+scroll, so no click existed for anything downstream to judge. A lone shift (no
+other within 0.2 s) now counts as a scroll only if the video's own measurement
+(`readScreen`) also saw the page move at that moment; with no video reading the
+old rule stands.
+
 **Measured the same day — the arbiter is not the answer to either.** Run on this
 recording (`scripts/pointerTest/arbiter.mjs`), it called three auto-rotating tab
 changes on the home page presses and missed both real ones. From a few stills it

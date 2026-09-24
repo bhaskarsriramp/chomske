@@ -307,6 +307,22 @@ const SCROLL_SUM = 0.05;
  * many small steps, and a single step is indistinguishable from a text caret
  * blinking a row over.
  */
+/** Whether this sample's vertical shift stands alone: no other within a fifth of a second. */
+function lonelyShift(mot, m) {
+  return !mot.some((q) => q !== m && Math.abs(num(q.t) - num(m.t)) <= 0.2 && Math.abs(num(q.dy, 0)) >= SCROLL_SHIFT);
+}
+
+/**
+ * Whether the video's own measurement saw the page move at this moment — two
+ * or more of its rows, within a frame or so. With no measurement at all, yes:
+ * the caller then keeps the answer it had before this existed.
+ */
+function videoScrolled(screen, t) {
+  const list = Array.isArray(screen?.scroll) ? screen.scroll : [];
+  if (!list.length) return true;
+  return list.some((q) => Math.abs(num(q.t) - t) <= 0.12 && Math.abs(num(q.dy)) >= 2 / 270);
+}
+
 function scrolledAfter(mot, t) {
   let sum = 0;
   let steps = 0;
@@ -634,7 +650,23 @@ export function inferEvents({ samples, motion, duration = 0, screen = null, loca
      * Nothing is lost by returning here: the scroll section further down emits
      * a scroll event for exactly these frames.
      */
-    if (Math.abs(num(m.dy, 0)) >= SCROLL_SHIFT) continue;
+    /**
+     * ── UNLESS THE SHIFT IS ONE FRAME THE VIDEO DOES NOT CONFIRM ───────────
+     * A new page arrives in one frame, and the tracker, asked how far
+     * everything moved, often finds SOME shift that explains part of it. On
+     * cap.so a press on "Pricing" in a sticky nav bar replaced the page at
+     * 15.13s and the tracker logged that one frame as dy -0.21: the page change
+     * was thrown away here as a scroll, no navigation was minted, and a hand
+     * held on the link got no click at all. scrolledAfter learned the same
+     * lesson for the scroll FLAG; this is the same fact at the door.
+     *
+     * A lone shift with none around it is only a scroll if the video's own
+     * measurement (sync.js readScreen, which aligns rows of the actual frames)
+     * also saw the page move then — a PageDown jump is coherent and it does; a
+     * page replaced by another does not. With no video reading, the old answer
+     * stands.
+     */
+    if (Math.abs(num(m.dy, 0)) >= SCROLL_SHIFT && !(lonelyShift(mot, m) && !videoScrolled(screen, m.t))) continue;
     /**
      * ── AND NOT JUST THIS FRAME: THE STRETCH AROUND IT ─────────────────────
      * The check above reads one frame, and the first frame of a scroll often

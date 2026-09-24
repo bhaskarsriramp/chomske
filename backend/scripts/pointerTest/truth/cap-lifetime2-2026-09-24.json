@@ -1,0 +1,21 @@
+{
+  "about": "cap.so a fourth time: the hero, the laptop mock-up, the feature sections, then Pricing in the sticky nav bar (after brushing past the Help menu) and Lifetime. Recorded 2026-09-24 as 'Cap-demo (2)'; production missed Lifetime (it had not been redeployed with the stayed-changed search) and the replay then showed Pricing missed as well.",
+  "recording": "cap-lifetime2-2026-09-24.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab55f2c623f6efac200842c/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "Pricing: hovered from 13.9s with no pointer drawn (the tab capture again); the hand appears on it at 14.6s and the new page arrives at 15.08s, so the click is ~14.95s. The tracker logged the page change as a one-frame dy of -0.21 and inferEvents discarded it as a scroll before any navigation was minted; a lone shift is now a scroll only when the video's own measurement saw the page move.",
+    "Lifetime: the switch flips ~19.4s; stayedChanged measures 44% changed.",
+    "stranger_budget_s / stranger_budget_pixel_s are RATCHETS measured on 2026-09-24. Lower them when they improve; never raise them."
+  ],
+  "pointer_drawn_from": 0,
+  "clicks": [
+    { "label": "Pricing", "t": 14.95, "x": 1132, "y": 54 },
+    { "label": "Lifetime", "t": 19.4, "x": 596, "y": 376 }
+  ],
+  "strangers": [
+    { "label": "the cursor inside the laptop mock-up's Cap app", "from": 7.0, "to": 10.0, "box": [300, 60, 1620, 900] }
+  ],
+  "stranger_budget_s": 99,
+  "stranger_budget_pixel_s": 99
+}
