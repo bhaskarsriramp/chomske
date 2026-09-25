@@ -47,9 +47,9 @@ import {
 } from "./vision.js";
 import { providerReady } from "../ai/provider.js";
 import { judgePresses, PRESS_JUDGE_MODE } from "./judge.js";
-import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed, restMoments } from "./events.js";
+import { confirmClicks, shapeFromControls, steadyPath, restOnControls, inferEvents, idleCuts, zoomsFromClicks, restToFull, partCuts, capZoomed, restMoments, dwells } from "./events.js";
 import { changeMoments, auditEdit, applyPatches } from "./audit.js";
-import { alignCapture, settleAfter, playingRegions } from "./sync.js";
+import { alignCapture, settleAfter, playingRegions, fillFromVideo } from "./sync.js";
 import { locatePointer, mergeLocated, stepPath, snapToLocated, withoutStrangers, stayedChanged } from "./locate.js";
 import { intentPath } from "./intent.js";
 import { buildVig, applyVig, vigForStorage, restsToName, VIG_MODE } from "./vig.js";
@@ -173,6 +173,14 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   } else if (cad) {
     console.log("[studio] capture cadence: this browser does not report frame timing");
   }
+  // The tracker's health (capture.js): how early it went quiet, and why.
+  if (cad && cad.last_sample_s != null) {
+    const short = num0(duration) - num0(cad.last_sample_s);
+    console.log(
+      "[studio] browser tracker: last sample at " + num0(cad.last_sample_s).toFixed(1) + "s of " + num0(duration).toFixed(1) + "s" +
+        (short > 1 ? " (" + short.toFixed(1) + "s early)" : "") + ", " + num0(cad.stalls) + " stalled grab(s), " + num0(cad.replays) + " restart(s)" + (cad.mode ? ", read by " + cad.mode : "")
+    );
+  }
   // What the capture delivered, where the browser said (see capture.js startCapture).
   const dev = capture?.device;
   if (dev || capture?.env?.browser) {
@@ -213,7 +221,9 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     return { track: capture.track || [], motion: capture.motion || [], screen: null, sync: { offset: 0, confident: false, reason: "the check could not be run" } };
   });
   const capturedTrack = aligned.track;
-  const capturedMotion = aligned.motion;
+  // Where the browser's tracker went silent — often the last seconds of a demo,
+  // where its last press is — the video's own measurement stands in. See sync.js.
+  const capturedMotion = fillFromVideo(aligned.motion, aligned.screen, duration);
 
   /**
    * ── THE POINTER, FOUND BY WHAT IT LOOKS LIKE ──────────────────────────────
@@ -398,6 +408,8 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   // See locate.js stayedChanged.
   events = await stayedChanged(video, events, {
     located: located.track,
+    // Every rest, so a hand's rest nothing was proposed at is asked too.
+    rests: dwells(pointerPath),
     screen: aligned.screen,
     W: source?.width || 1920,
     H: source?.height || 1080,

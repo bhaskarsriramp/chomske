@@ -193,7 +193,15 @@ export async function replayTracker(file, vw, vh) {
  */
 export async function replay(src, { env = null, cursor = null } = {}) {
   const info = await probe(src);
-  const capture = await replayTracker(src, info.width, info.height);
+  /**
+   * STUDIO_REPLAY_CAPTURE=<file.json> replays with a capture given, not one
+   * simulated from the video: the real one a creator's browser recorded (from
+   * the demo's record), or a doctored copy that asks "what if the browser had
+   * not seen this".
+   */
+  const capture = process.env.STUDIO_REPLAY_CAPTURE
+    ? JSON.parse(fs.readFileSync(process.env.STUDIO_REPLAY_CAPTURE, "utf8"))
+    : await replayTracker(src, info.width, info.height);
   if (env) capture.env = env;
   if (cursor) capture.cursor = cursor;
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "lipi-replay-"));

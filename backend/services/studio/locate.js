@@ -2128,30 +2128,104 @@ const STAY_ALIGN_CLEAR = 2.5;
  * @returns {Promise<Array>} the events, with `corroborated` set on those whose
  *          control stayed changed
  */
-export async function stayedChanged(video, events, { located = [], screen = null, W, H, duration = 0 } = {}) {
+export async function stayedChanged(video, events, { located = [], screen = null, W, H, duration = 0, rests = [] } = {}) {
+  /**
+   * ── AND THE RESTS NOTHING WAS PROPOSED AT ──────────────────────────────────
+   * This used to ask only about presses already proposed, and a press is only
+   * proposed where the browser tracker saw a change beside a rest that cleared
+   * its noise floor. A switch that answers by changing only itself is a change
+   * of a few hundred pixels: on cap.so the "Lifetime" switch measured 0.0017 of
+   * the frame against a floor of 0.0015 in one reading of the recording, and in
+   * the creator's own browser it did not clear it — no press was proposed, this
+   * check never ran, and the one click that mattered got no camera.
+   *
+   * So every rest where the operating system drew a HAND — the pointer over
+   * something that answers a click — and nothing was proposed is asked the
+   * same question: did the thing under it stay changed after the hand left?
+   * The press is read backwards from its result. A rest that did not change
+   * anything is dropped again, not left behind as a refused press.
+   */
+  const presses = (events || []).filter((e) => e.type === "click" || e.type === "dblclick");
+  const candidates = [];
+  for (const r of rests || []) {
+    const from = num(r.start ?? r.from);
+    const to = num(r.end ?? r.to);
+    if (to - from < REST_HAND_MIN || !HAND_SHAPES.has(String(r.shape))) continue;
+    if (presses.some((e) => num(e.t) >= from - 0.2 && num(e.t) <= to + 0.3 && Math.hypot(num(e.x) - num(r.x), num(e.y) - num(r.y)) <= 0.05)) continue;
+    candidates.push({
+      id: "e_" + Math.random().toString(16).slice(2, 12),
+      type: "click",
+      // Early in the rest: a hand arrives on a switch, presses, and waits.
+      t: round3(from + Math.min(0.5, (to - from) / 2)),
+      x: round4(num(r.x)),
+      y: round4(num(r.y)),
+      dy: 0,
+      text: "",
+      confidence: 0.6,
+      source: "stay",
+      shape: String(r.shape),
+      corroborated: false,
+      scrolled: false,
+      scroll_shift: 0,
+      position_age: 0,
+      fromRest: true,
+    });
+    if (candidates.length >= REST_HAND_MAX) break;
+  }
+  events = candidates.length ? [...(events || []), ...candidates].sort((a, b) => num(a.t) - num(b.t)) : events;
   const asked = (events || []).filter((e) => (e.type === "click" || e.type === "dblclick") && e.corroborated === false);
-  if (!asked.length || !located?.length) return events;
+  if (!asked.length || !located?.length) return (events || []).filter((e) => !e.fromRest);
   const out = [];
   for (const e of events) {
     if (!asked.includes(e)) { out.push(e); continue; }
     const m = await measureStay(video, e, { located, screen, W, H, duration });
-    if (m.share != null && m.share >= STAY_SHARE) {
+    // A rest nothing proposed has only this to go on, so it has to clear more.
+    if (m.share != null && m.share >= (e.fromRest ? REST_STAY_SHARE : STAY_SHARE)) {
       console.log(
         "[studio] press at " + num(e.t).toFixed(2) + "s: the control under the pointer changed and stayed changed after it left (" +
           Math.round(m.share * 100) + "% of it, " + m.before.toFixed(2) + "s against " + m.after.toFixed(2) + "s" +
           (m.shift ? ", the page having moved " + m.shift + "px" : "") + ")"
       );
-      out.push({ ...e, corroborated: true, stayed: round3(m.share) });
+      const { fromRest, ...kept } = e;
+      /**
+       * ── ONE LASTING CHANGE IS ONE PRESS ──────────────────────────────────
+       * A hand that pauses on arrival and then settles makes two rests, and
+       * both can be asked about the same switch — and answered from the SAME
+       * two pictures. On cap.so that gave "Lifetime" twice, 0.7 s apart, and
+       * two click ripples in the export. The same change at the same spot
+       * keeps one press: the later, where the hand settled and pressed.
+       */
+      const twin = out.find((q) => q.corroborated && q.stayedAt && Math.abs(q.stayedAt[0] - m.before) < 0.1 &&
+        Math.abs(q.stayedAt[1] - m.after) < 0.1 && Math.hypot(num(q.x) - num(e.x), num(q.y) - num(e.y)) <= 0.03 && Math.abs(num(q.t) - num(e.t)) <= 1.5);
+      if (twin) out.splice(out.indexOf(twin), 1);
+      if (fromRest && !twin) console.log("[studio] press at " + num(e.t).toFixed(2) + "s found from a hand's rest that nothing had proposed");
+      out.push({ ...kept, corroborated: true, stayed: round3(m.share), stayedAt: [round3(m.before), round3(m.after)] });
     } else {
       if (process.env.STUDIO_TRACE_STAY) {
         console.log("[stay] " + num(e.t).toFixed(2) + "s skipped: " + (m.share != null ? "only " + Math.round(m.share * 100) + "% changed" : m.reason) +
           (m.before != null ? " (" + m.before.toFixed(2) + "-" + m.after.toFixed(2) + "s)" : ""));
       }
-      out.push(e);
+      // A rest asked about and not changed was never a press: it goes.
+      if (!e.fromRest) out.push(e);
     }
   }
   return out;
 }
+
+/** Pointer shapes the operating system draws over things that answer a click. */
+const HAND_SHAPES = new Set(["pointer", "hand"]);
+/** A hand resting at least this long is asked whether it changed what it rested on. */
+const REST_HAND_MIN = 0.3;
+/** At most this many such rests per recording (two frame reads each). */
+const REST_HAND_MAX = 24;
+/**
+ * How much of what a hand rested on must have stayed changed for the rest ALONE
+ * to be a press. STAY_SHARE (8%) corroborates a press other evidence proposed;
+ * with nothing else behind it that is too little — on cursorful.com a hand
+ * resting on the Editor page read 9% and became a press nobody made. The
+ * switches, tabs and rows pressed in the labelled recordings read 44-49%.
+ */
+const REST_STAY_SHARE = 0.25;
 
 /**
  * The comparison stayedChanged makes, for one press: how much of the control's

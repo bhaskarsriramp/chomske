@@ -30,6 +30,8 @@ export const TRACKER_VERSION = "px-3";
 
 /** Frames a second the tracker looks at. Not the recording's frame rate. */
 const TRACK_HZ = 24;
+/** How long a frame grab may take before it is abandoned (see `stalls`). */
+const GRAB_WAIT = 600;
 /** Long side the tracker downscales to before looking for the pointer. */
 const TRACK_EDGE = 960;
 /** How often MediaRecorder hands over a chunk. */
@@ -411,6 +413,27 @@ export function createTracker() {
   let paused = 0;
   let pausedAt = 0;
   let busy = false;
+  /**
+   * ── A GRAB THAT NEVER COMES BACK MUST NOT END THE TRACKER ────────────────
+   * `busy` was cleared only when a frame grab finished. The recorder's tab is
+   * in the background for a whole demo, and a grab of a stream the browser has
+   * throttled or paused can simply never finish: `busy` stayed set, every tick
+   * after it returned at once, and the tracker went silent for the rest of the
+   * recording without an error anywhere. Measured on twelve recordings, its
+   * samples ended 1-7 s before the video in nine of them — on cap.so at 23.6 s
+   * of 30.4, just before the press on "Lifetime". So a grab gets GRAB_WAIT to
+   * come back; after that it is abandoned (and its frame thrown away if it ever
+   * arrives), counted, and the stream is told to play again.
+   */
+  let stalls = 0;
+  let replays = 0;
+  let lastSample = 0;
+  /** The frames path's reader and the track it reads (a clone), where the browser has one. */
+  let reader = null;
+  let procTrack = null;
+  let lastGrab = -Infinity;
+  /** Which path is feeding the tracker: "frames" or "timer". Reported with the upload. */
+  let mode = "timer";
 
   const track = [];
   const motion = [];
@@ -433,6 +456,7 @@ export function createTracker() {
       glyphs.push({ h: msg.glyph.h, design: msg.glyph.design });
     }
 
+    if (msg.motion) lastSample = t;
     if (msg.motion) {
       // Motion is kept for every sample. It is small — seven numbers — and it
       // is the entire evidence for clicks, scrolls, typing and dead air.
@@ -476,13 +500,65 @@ export function createTracker() {
     return { x: snap(lastSeen.x * vw, w, vw), y: snap(lastSeen.y * vh, h, vh), w, h };
   }
 
+  /** The timer path: a frame from the hidden <video>, 24 times a second. */
   async function tick() {
-    if (!running || busy || !video || video.readyState < 2 || video.videoWidth === 0) return;
+    if (!running || busy || !video) return;
+    // A stream the browser paused in the background is asked to play again.
+    if (video.paused) {
+      replays++;
+      video.play().catch(() => {});
+    }
+    if (video.readyState < 2 || video.videoWidth === 0) return;
+    await grabFrom(video, video.videoWidth, video.videoHeight, now());
+  }
+
+  /**
+   * ── THE FRAMES PATH: READ FROM THE STREAM, NOT FROM A PLAYER ON A TIMER ───
+   * The timer path copies frames off a hidden <video> on setInterval. The
+   * recorder's tab is in the background for a whole demo, and a background
+   * tab is exactly where a browser slows timers and pauses players — the
+   * tracker went quiet before the recording ended in nine of twelve demos.
+   * MediaStreamTrackProcessor hands over each frame of the capture itself as
+   * it arrives, with no player and no timer between, so the tab being hidden
+   * does not starve it. Frames are taken at TRACK_HZ and every frame is
+   * closed, taken or not — a frame left open holds the stream back. If the
+   * reader ever fails, the timer path takes over.
+   */
+  async function pump() {
+    while (reader) {
+      let res;
+      try {
+        res = await reader.read();
+      } catch {
+        break;
+      }
+      if (!res || res.done) break;
+      const frame = res.value;
+      try {
+        const t = now();
+        if (running && !busy && worker && t - lastGrab >= 1 / TRACK_HZ - 0.004) {
+          lastGrab = t;
+          await grabFrom(frame, frame.displayWidth || frame.codedWidth, frame.displayHeight || frame.codedHeight, t);
+        }
+      } catch {
+        // One frame lost, nothing more.
+      } finally {
+        try { frame.close(); } catch { /* already closed */ }
+      }
+    }
+    // The reader ended or failed while still recording: the timer path takes over.
+    reader = null;
+    if (running && !timer) {
+      mode = "timer";
+      timer = setInterval(tick, 1000 / TRACK_HZ);
+    }
+  }
+
+  /** One sample from a frame source: the <video>, or a VideoFrame. */
+  async function grabFrom(source, vw, vh, t) {
+    if (!running || busy || !worker || !(vw > 0) || !(vh > 0)) return;
     busy = true;
-    const t = now();
     try {
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
       const scale = Math.min(1, TRACK_EDGE / Math.max(vw, vh));
       const w = Math.max(2, Math.round((vw * scale) / 2) * 2);
       const h = Math.max(2, Math.round((vh * scale) / 2) * 2);
@@ -500,10 +576,19 @@ export function createTracker() {
         // moment as the browser will give: the patch is compared against the
         // previous patch, not against the whole frame, so a few milliseconds of
         // skew between the two costs nothing.
-        const [bitmap, patch] = await Promise.all([
-          createImageBitmap(video, { resizeWidth: w, resizeHeight: h, resizeQuality: "low" }),
-          at ? createImageBitmap(video, at.x, at.y, at.w, at.h) : null,
+        const grab = Promise.all([
+          createImageBitmap(source, { resizeWidth: w, resizeHeight: h, resizeQuality: "low" }),
+          at ? createImageBitmap(source, at.x, at.y, at.w, at.h) : null,
         ]);
+        const got = await Promise.race([grab, new Promise((r) => setTimeout(() => r(null), GRAB_WAIT))]);
+        if (!got) {
+          stalls++;
+          // If it does come back, it is too late to be this moment's frame.
+          grab.then(([b, p]) => { try { b?.close?.(); p?.close?.(); } catch { /* gone */ } }, () => {});
+          if (video?.paused) video.play().catch(() => {});
+          return;
+        }
+        const [bitmap, patch] = got;
         worker.postMessage(
           { type: "frame", bitmap, patch, at, vw, vh, t },
           patch ? [bitmap, patch] : [bitmap]
@@ -515,7 +600,7 @@ export function createTracker() {
           canvas.height = h;
           ctx = canvas.getContext("2d", { willReadFrequently: true });
         }
-        ctx.drawImage(video, 0, 0, w, h);
+        ctx.drawImage(source, 0, 0, w, h);
         const img = ctx.getImageData(0, 0, w, h);
 
         let patchData = null;
@@ -526,7 +611,7 @@ export function createTracker() {
             pcanvas.height = at.h;
             pctx = pcanvas.getContext("2d", { willReadFrequently: true });
           }
-          pctx.drawImage(video, at.x, at.y, at.w, at.h, 0, 0, at.w, at.h);
+          pctx.drawImage(source, at.x, at.y, at.w, at.h, 0, 0, at.w, at.h);
           patchData = pctx.getImageData(0, 0, at.w, at.h).data;
         }
 
@@ -655,10 +740,27 @@ export function createTracker() {
 
       watchCadence(video);
 
+      // The frames path where the browser has it (Chrome, Edge), on a clone of
+      // the track so stopping the tracker can never stop the recording.
+      const vtrack = stream.getVideoTracks()[0];
+      if (typeof MediaStreamTrackProcessor === "function" && vtrack) {
+        try {
+          procTrack = vtrack.clone();
+          // eslint-disable-next-line no-undef
+          reader = new MediaStreamTrackProcessor({ track: procTrack }).readable.getReader();
+          mode = "frames";
+        } catch {
+          reader = null;
+          try { procTrack?.stop(); } catch { /* gone */ }
+          procTrack = null;
+        }
+      }
+
       t0 = performance.now();
       paused = 0;
       running = true;
-      timer = setInterval(tick, 1000 / TRACK_HZ);
+      if (reader) pump();
+      else timer = setInterval(tick, 1000 / TRACK_HZ);
     },
 
     pause() {
@@ -668,7 +770,7 @@ export function createTracker() {
     },
 
     resume() {
-      if (running || !timer) return;
+      if (running || (!timer && !reader)) return;
       paused += performance.now() - pausedAt;
       running = true;
       // The screen has almost certainly changed while it was paused, and
@@ -682,6 +784,13 @@ export function createTracker() {
       running = false;
       if (timer) clearInterval(timer);
       timer = null;
+      if (reader) {
+        const r = reader;
+        reader = null;
+        r.cancel().catch(() => {});
+      }
+      try { procTrack?.stop(); } catch { /* gone */ }
+      procTrack = null;
       worker?.terminate();
       worker = null;
       if (video) {
@@ -696,7 +805,7 @@ export function createTracker() {
       return {
         track, motion, tracker: TRACKER_VERSION, samples: track.length,
         cursor: profileOf(glyphs),
-        frames: cadenceOf(),
+        frames: { ...cadenceOf(), stalls, replays, last_sample_s: round3(lastSample), mode },
       };
     },
 

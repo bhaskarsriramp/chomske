@@ -408,6 +408,14 @@ router.post("/demos/:id/upload/complete", wrap(async (req, res) => {
         fastest_quarter_hz: clampNum(cap.frames.fastest_quarter_hz, 0, 1000),
         median_hz: clampNum(cap.frames.median_hz, 0, 1000),
         spread: clampNum(cap.frames.spread, 0, 10000),
+        // The tracker's health: grabs abandoned, pauses restarted, and when its
+        // last sample was — against the video's length, how early it went quiet.
+        stalls: clampNum(cap.frames.stalls, 0, 1e6),
+        replays: clampNum(cap.frames.replays, 0, 1e6),
+        last_sample_s: clampNum(cap.frames.last_sample_s, 0, 1e5),
+        // Which path fed the tracker: frames straight from the stream, or the
+        // older <video> on a timer (capture.js pump / tick).
+        mode: ["frames", "timer"].includes(cap.frames.mode) ? cap.frames.mode : "",
       }
       : cap.frames
         ? { supported: false }

@@ -1,0 +1,20 @@
+{
+  "about": "cap.so a sixth time, recorded right after VIG shipped (2026-09-25, 'after_changes_cap_demo'): the hero, the laptop mock-up, a feature section, back to the top, Pricing in the nav bar, then Lifetime. Production zoomed on Pricing only.",
+  "recording": "cap-after-2026-09-25.mp4",
+  "source": "gs://solosaas-bucket/lipi/studio/6aa2501ea802cb2b72a9103a/6ab625b7d8d9bcdd144fa4cd/src/recording.mp4",
+  "env": "windows:1920x1080",
+  "notes": [
+    "Lifetime: the hand arrives on the switch ~24.5s and it flips at ~24.9s (the price rolls $29 -> $58 from 25.0s); the hand stays until ~26s. The switch changing only itself is a few hundred pixels: in the replay's reading of the recording its change measured 0.0017 of the frame against a floor of 0.0015, so a press was proposed only just. locate.js stayedChanged now also asks every hand's rest that nothing was proposed at, and finds it with the switch's change removed from the browser data entirely.",
+    "Pricing ~17.2s, hand on the link, the pricing page up by 17.5s."
+  ],
+  "pointer_drawn_from": 0,
+  "clicks": [
+    { "label": "Pricing", "t": 17.2, "x": 952, "y": 59 },
+    { "label": "Lifetime", "t": 24.9, "x": 578, "y": 404 }
+  ],
+  "strangers": [
+    { "label": "the cursor inside the laptop mock-up's Cap app", "from": 3.5, "to": 11.5, "box": [300, 60, 1620, 900] }
+  ],
+  "stranger_budget_s": 0.1,
+  "stranger_budget_pixel_s": 0.1
+}

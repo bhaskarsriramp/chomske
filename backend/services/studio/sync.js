@@ -764,6 +764,65 @@ export function chromeBand(screen, capture = null) {
   return band > CHROME_MAX ? 0 : band;
 }
 
+/** A silence in the browser's samples this long is the tracker stopping, not the screen. */
+const FILL_GAP = 0.5;
+
+/**
+ * The browser's screen-change samples, with every hole filled from the video.
+ *
+ * ── THE TRACKER STOPS; THE RECORDING DOES NOT ────────────────────────────────
+ * The browser's tracker reads frames from a copy of the screen stream in the
+ * recorder's own tab, and that tab is in the background for the whole demo.
+ * Measured across twelve recent recordings, its samples ended before the video
+ * did in nine — by 1 to 7 seconds. On cap.so ("after_changes_cap_demo") they
+ * stopped at 23.6 s of 30.4 s; the creator pressed "Lifetime" at 24.9 s, into
+ * the silence, and no press could be proposed there because nothing said the
+ * screen had changed. The last press of a demo is the one most often lost,
+ * because it is the one nearest the end.
+ *
+ * The video says what changed on every frame (readScreen's `motion`). So where
+ * the browser's samples go quiet for longer than FILL_GAP — including the whole
+ * tail after they stop — the video's samples stand in: `energy` from the share
+ * of the screen that changed, the box it changed in, and the vertical travel
+ * from the video's own scroll reading. Marked `from: "video"`.
+ */
+export function fillFromVideo(motion, screen, duration = 0) {
+  const list = Array.isArray(motion) ? [...motion].sort((a, b) => num(a.t) - num(b.t)) : [];
+  const video = Array.isArray(screen?.motion) ? screen.motion : [];
+  if (!video.length) return list;
+  const holes = [];
+  let prev = 0;
+  for (const m of list) {
+    if (num(m.t) - prev > FILL_GAP) holes.push([prev, num(m.t)]);
+    prev = num(m.t);
+  }
+  const end = Math.max(num(duration), num(video[video.length - 1]?.t));
+  if (end - prev > FILL_GAP) holes.push([prev, end + 0.01]);
+  if (!holes.length) return list;
+  const scroll = Array.isArray(screen?.scroll) ? screen.scroll : [];
+  const dyAt = (t) => {
+    let best = null;
+    for (const q of scroll) if (Math.abs(num(q.t) - t) <= 0.05 && (!best || Math.abs(num(q.t) - t) < Math.abs(num(best.t) - t))) best = q;
+    return best ? num(best.dy) : 0;
+  };
+  const added = [];
+  for (const [a, b] of holes) {
+    for (const v of video) {
+      const t = num(v.t);
+      if (t <= a + 0.02 || t >= b - 0.02) continue;
+      added.push({ t: round3(t), energy: round4(num(v.cover)), x: num(v.x, 0.5), y: num(v.y, 0.5), w: num(v.w), h: num(v.h), dy: round4(dyAt(t)), from: "video" });
+    }
+  }
+  if (!added.length) return list;
+  const tail = holes[holes.length - 1];
+  console.log(
+    "[studio] the browser's tracker was silent for " + holes.map(([a, b]) => a.toFixed(1) + "-" + Math.min(b, end).toFixed(1) + "s").join(", ") +
+      (tail[0] < end - FILL_GAP && tail[1] > end ? " (it stopped before the recording did)" : "") +
+      "; " + added.length + " screen-change sample(s) read from the video instead"
+  );
+  return list.concat(added).sort((a, b) => num(a.t) - num(b.t));
+}
+
 /**
  * How far the page had scrolled by a moment, in frame heights.
  *

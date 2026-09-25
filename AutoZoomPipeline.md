@@ -701,6 +701,46 @@ instead of the old one, called it the creator's (4.4 s drawn on it). So it is
 **off by default** (`STUDIO_BACKTRACK=on` to run it) until the mouse-logged corpus
 shows it earns its place.
 
+**Found 2026-09-25 (afternoon) — the browser's tracker goes silent before the
+recording ends.** Read from the stored captures of the twelve most recent
+recordings: the tracker's samples ended before the video in nine, by 1–7 s
+(on "after_changes_cap_demo" at 23.6 s of 30.4 s — the creator pressed
+"Lifetime" at 24.9 s, into the silence). The last press of a demo is the one
+most often lost, and on cap.so the last press is always Lifetime. Cause: the
+tracker waited on each frame grab (`busy`), and a grab of a stream the browser
+throttles in the background tab can never finish — every later tick returned
+at once, with no error. Fixed at both ends:
+
+- *Server:* `sync.js fillFromVideo` — wherever the browser's samples are silent
+  for more than 0.5 s, including the whole tail, the video's own per-frame
+  changes stand in (logged: "the browser's tracker was silent for …").
+- *Browser:* in Chrome and Edge the tracker now reads frames straight from the
+  capture track (`MediaStreamTrackProcessor`, on a clone of it) as they arrive —
+  no hidden `<video>`, no timer, nothing a background tab throttles — at 24 a
+  second, closing every frame; the old `<video>` + timer path remains for other
+  browsers and takes over if the reader fails. Either way a grab is abandoned
+  after 600 ms (`GRAB_WAIT`), a paused stream is restarted, and the upload
+  reports `stalls`, `replays`, `last_sample_s` and `mode` (logged per
+  recording: "browser tracker: last sample at … read by frames").
+
+Replayed with the exact capture that browser sent: Pricing 17.29 s and Lifetime
+24.88 s both zoom.
+
+**Fixed 2026-09-25 (afternoon) — a switch that changes only itself, found from
+the hand's rest.** The first recording after VIG shipped ("after_changes_cap_
+demo") zoomed on Pricing and not on Lifetime. The stayed-changed check only
+asked about presses already proposed, and a press is proposed only where the
+browser tracker saw a change beside a rest that cleared its noise floor; the
+Lifetime switch measured 0.0017 of the frame against 0.0015 in the replay's
+reading of the recording — a hair. Now every rest where the pointer was a
+HAND (≥ 0.3 s, at most 24 a recording) and nothing was proposed is asked the
+same question, and becomes a press only if at least 25% of the thing under it
+stayed changed after the hand left (the 8% that corroborates a proposed press
+let a hand resting on a loading page through at 9%; real switches read
+44–49%); otherwise it is dropped. Two rests measured from the same before and
+after pictures at the same spot are one press, the later. Tested by removing the switch's
+change from the browser data entirely: the press is still found (24.90 s).
+
 `STUDIO_TRACE_NAV=1` prints, for every large screen change, which check kept it
 from being a navigation (or that it minted one), and every rest with the change
 the press search found beside it.

@@ -513,12 +513,23 @@ export function restsToName({ pointer = [], events = [], cap = 20 } = {}) {
     const to = num(r.end);
     const beforeNav = navs.some((T) => from < T && to >= T - OPEN_BEFORE);
     const pressed = presses.some((p) => p >= from - 0.1 && p <= to + 0.3);
-    if (!beforeNav && !pressed) continue;
+    /**
+     * And every rest where the pointer was a hand for long enough to press:
+     * a press nothing proposed — a switch that changed only itself — can then
+     * be read back from the object it was on turning selected (CHANGED below).
+     * On cap.so the readings saw "Lifetime" go hovered → selected under a
+     * resting hand, and because nothing had been proposed there the rest was
+     * never named and the change was never tied to it.
+     */
+    const hand = (r.shape === "pointer" || r.shape === "hand") && to - from >= 0.3;
+    if (!beforeNav && !pressed && !hand) continue;
     // Early in the rest: the element as it was when the hand arrived, before
     // any press had changed it.
-    out.push({ from: round3(from), to: round3(to), x: round4(num(r.x)), y: round4(num(r.y)), t: round3(from + Math.min(0.4, (to - from) / 2)), beforeNav });
+    out.push({ from: round3(from), to: round3(to), x: round4(num(r.x)), y: round4(num(r.y)), t: round3(from + Math.min(0.4, (to - from) / 2)), beforeNav, pressed });
   }
-  return out.sort((a, b) => Number(b.beforeNav) - Number(a.beforeNav)).slice(0, cap).sort((a, b) => a.from - b.from);
+  // Before a page change first, then pressed, then the rest; at most `cap`.
+  const rank = (r) => (r.beforeNav ? 0 : r.pressed ? 1 : 2);
+  return out.sort((a, b) => rank(a) - rank(b)).slice(0, cap).sort((a, b) => a.from - b.from);
 }
 
 /** A press found by reading back from its consequence, at a rest. */
