@@ -145,6 +145,34 @@ answer, and a file may hold it to its own `stranger_budget_pixel_s`. Without
 `VERTEX_PROJECT` locally the model is not reachable and the first run is quietly
 the second, so say which one you ran.
 
+### Test recordings with the real mouse written down (`qa/`)
+
+Labelling by hand does not scale and is not exact — a press that changed
+nothing on screen has no frame to point at. For TEST recordings, write the real
+mouse down while recording, and let the machine do the labelling:
+
+    # on the Windows machine doing the recording, before pressing Record
+    powershell -ExecutionPolicy Bypass -File scripts/pointerTest/qa/mouselog.ps1
+    # … record the demo in TryLipi, stop, then Ctrl+C the logger
+
+    # fetch the recording's src/recording.mp4 into fixtures/, then
+    node scripts/pointerTest/qa/score.mjs fixtures/<rec>.mp4 <mouselog>.jsonl --truth <name>
+
+`mouselog.ps1` logs mouse moves, presses, releases and the wheel (never keys)
+to a local file. It is a testing tool and never part of the product.
+`score.mjs` lines the log up with the recording by itself — the time offset
+from the pointer's speed curve, the screen-to-video mapping by a robust fit of
+positions — and prints, per real press, whether the camera went to it (and if
+not, which rule refused it), every camera move onto nothing, the press timing
+and position error, and how far the drawn pointer was from the real one. With
+`--truth <name>` the presses become `truth/<name>.json`, so the recording joins
+the corpus above. Drags, right and middle presses are written as `optional`:
+not required, but a camera move onto one is not a false one. `--cached` reuses
+the analysis `replay.mjs` saved beside the recording.
+
+Checked on a synthetic log with a known answer (7.35s offset, 0.8 scale): it
+recovered 7.39s and the exact mapping.
+
 `cursorful-now-2026-09-24` is the recording that needed all of it: the demo's
 black arrow fitted as well as the creator's white one, the creator's pointer was
 not drawn for 21 seconds (a tab capture hides an idle pointer), and production

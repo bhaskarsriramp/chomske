@@ -1878,6 +1878,33 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   });
 
   /**
+   * ── AND BACK IN TIME, FROM EVERY PLACE IT WAS FOUND AGAIN ─────────────────
+   * The loop above only ever looks forward. When it loses the pointer — a
+   * flick faster than its search window, a page change that buries it among
+   * changed pixels — it finds it again later with a slower whole-frame search,
+   * and every frame in between is empty. Those holes are where rests are
+   * misplaced and presses mistimed downstream.
+   *
+   * But the place it was found again is a sighting like any other, and the
+   * pointer got there from somewhere. So each hole is read again BACKWARDS
+   * from that sighting — the same templates, the same search window, the
+   * motion run in reverse — for as long as the pointer is still found. What
+   * the forward pass lost on its way in, the backward pass picks up on its
+   * way out. (This is the forward-backward idea the whole of tracking uses;
+   * see backtrack below.)
+   */
+  if (!overBudget && track.length > 1 && BACKTRACK) {
+    const back = await backtrack(video, track, { W, H, fps, tpls, screen });
+    if (back.length) {
+      const seen = new Set(track.map((p) => p.t));
+      const merged = track.concat(back.filter((p) => !seen.has(p.t))).sort((a, b) => a.t - b.t);
+      track.length = 0;
+      track.push(...merged);
+      console.log("[studio] " + back.length + " frame(s) of the pointer recovered by reading back from where it was found again");
+    }
+  }
+
+  /**
    * ── A POINTER THAT WAS ALREADY THERE ──────────────────────────────────────
    * A demo often opens with the mouse already resting on what it is about to
    * click. Nothing is found in those frames: the difference tracker cannot see
@@ -1950,6 +1977,94 @@ export async function locatePointer(video, { sourceWidth, sourceHeight, duration
   }
 
   return { track, flashes, design: cal.dark ? "dark" : "light", heightPx: cal.heightPx, fit: cal.fit, found: track.length, frames };
+}
+
+/**
+ * STUDIO_BACKTRACK=on runs the backward pass. OFF by default, on measurement:
+ * across the 11 labelled recordings it recovered 1-25 frames in six and moved
+ * no press — and on cursorful.com it moved the first sighting of a demo's
+ * cursor a tenth of a second earlier, the stranger check was shown that frame
+ * instead, and called the demo's cursor the creator's (4.4 s drawn on it).
+ * Kept for measuring on the mouse-logged corpus (scripts/pointerTest/qa).
+ */
+const BACKTRACK = String(process.env.STUDIO_BACKTRACK || "off").toLowerCase() === "on";
+/** How far back from a re-found sighting a hole is read. */
+const BACK_MAX = 1.5;
+/** Frames in a row the backward pass may miss before it stops. */
+const BACK_LOST = 2;
+/** At most this many holes are read back, for a recording full of them. */
+const BACK_HOLES = 40;
+
+/**
+ * The forward pass's holes, read backwards from the sighting at the end of
+ * each. Returns the sightings found, marked `back: true`, in no order.
+ *
+ * Only what it can find with the same confidence as the forward pass (FOUND),
+ * and only while it keeps finding it: two frames lost in a row and it stops.
+ * It never follows the pointer into or beside a moving picture, whoever's it
+ * seemed to be — a hole beside a demo is left a hole rather than risk filling
+ * it with the demo's cursor.
+ */
+async function backtrack(video, track, { W, H, fps, tpls, screen }) {
+  const step = 1 / fps;
+  const holes = [];
+  for (let i = 1; i < track.length; i++) {
+    if (track[i].t - track[i - 1].t <= 2.5 * step) continue;
+    holes.push({ prev: track[i - 1], anchor: track[i], next: track[i + 1] || null });
+  }
+  // The longest holes first: they are the ones that cost the most.
+  holes.sort((a, b) => (b.anchor.t - b.prev.t) - (a.anchor.t - a.prev.t));
+  const found = [];
+  for (const h of holes.slice(0, BACK_HOLES)) {
+    const to = h.anchor.t;
+    const i1 = Math.round(to * fps) - 1;
+    const i0 = Math.max(Math.ceil((h.prev.t + step * 0.5) * fps), Math.ceil((to - BACK_MAX) * fps), 0);
+    if (i1 < i0) continue;
+    const frames = [];
+    await ffmpegToFrames(video, {
+      width: W, height: H, fps, pixelFormat: "gray", start: i0 / fps, duration: (i1 - i0 + 1) / fps,
+      onFrame: (f, k) => { if (i0 + k <= i1) frames[k] = Buffer.from(f); },
+    }).catch(() => {});
+    let px = h.anchor.x * W;
+    let py = h.anchor.y * H;
+    // The forward velocity at the anchor, in pixels a frame; backwards, the
+    // pointer came from where that velocity points away from.
+    let vx = 0;
+    let vy = 0;
+    if (h.next && h.next.t - h.anchor.t <= 2.5 * step) {
+      vx = (h.next.x - h.anchor.x) * W;
+      vy = (h.next.y - h.anchor.y) * H;
+    }
+    let lost = 0;
+    for (let k = frames.length - 1; k >= 0; k--) {
+      const frame = frames[k];
+      if (!frame) break;
+      const t = round3((i0 + k) / fps);
+      const qx = px - vx;
+      const qy = py - vy;
+      let hit = search(frame, W, H, tpls, qx - NEAR, qy - NEAR, qx + NEAR, qy + NEAR);
+      if ((!hit || hit.score < FOUND) && (vx || vy)) {
+        const r = search(frame, W, H, tpls, px - NEAR, py - NEAR, px + NEAR, py + NEAR);
+        if (r && (!hit || r.score > hit.score)) hit = r;
+      }
+      // Never into a moving picture, proven or not: walked backwards, a run of
+      // the creator's own pointer led straight onto a demo's cursor on
+      // cursorful.com (0.3 s more of our pointer drawn on a stranger). A hole
+      // there stays a hole, which is what it was before this existed.
+      if (hit && hit.score >= FOUND && (inMedia(screen, t, hit.x / W, hit.y / H) || pictureNear(screen, t, hit.x / W, hit.y / H))) hit = null;
+      if (!hit || hit.score < FOUND) {
+        if (++lost >= BACK_LOST) break;
+        continue;
+      }
+      lost = 0;
+      vx = px - hit.x;
+      vy = py - hit.y;
+      px = hit.x;
+      py = hit.y;
+      found.push({ t, x: round4(hit.x / W), y: round4(hit.y / H), shape: hit.t.shape, score: round3(hit.score), located: true, proven: !!h.anchor.proven, back: true });
+    }
+  }
+  return found;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -2190,19 +2305,28 @@ export async function measureStay(video, e, { located = [], screen = null, W, H,
      * then called the whole control "changed". Right answer that time, for the
      * wrong reason, and on a hover over a white page the same accident is a
      * false zoom. The video's own scroll measurement says how far the page went
-     * between the two pictures (readScreen, `dy` in frame heights, content
-     * moving down positive, which is the sign `s` uses): when it did not move,
-     * only the pictures as they are are compared, and when it did, only shifts
-     * the same way and of about that size — it reads short, so up to twice and
-     * a half — plus none at all, for a control that is fixed while the page
-     * scrolls.
+     * between the two pictures (readScreen, `dy` in frame heights): when it
+     * did not move, only the pictures as they are are compared, and when it
+     * did, only shifts the same way and of about that size — it reads short, so
+     * up to twice and a half — plus none at all, for a control that is fixed
+     * while the page scrolls.
+     *
+     * ── AND THE SAME WAY MEANS THE OPPOSITE SIGN ─────────────────────────────
+     * readScreen's `dy` is positive when the content moved UP the screen (the
+     * page scrolled down; measured 2026-09-25 on a picture moved 20px down,
+     * which read -20). `s` here is positive when the content moved DOWN —
+     * after[y + s] is before[y]. This searched with the sign as given, which is
+     * the wrong direction on every page scrolled between the two pictures: the
+     * case this search exists for ("people scroll the moment they are done")
+     * came back "could not line the pictures up" whenever the scroll was big
+     * enough to be searched at all.
      */
     const moved = (screen?.scroll || []).filter((q) => q.t > before && q.t <= after).reduce((acc, q) => acc + num(q.dy), 0) * H;
     let best = { s: 0, m: mismatch(cx0, cx1, cy0, cy1, 0, 2, true) };
     if (Math.abs(moved) >= STAY_STILL_PX) {
       const reach = Math.round(Math.min(H * STAY_REACH, Math.abs(moved) * 2.5 + 40));
       const least = Math.round(Math.abs(moved) * 0.4);
-      const dir = Math.sign(moved);
+      const dir = -Math.sign(moved);
       for (let k = least; k <= reach; k += 2) {
         const s = dir * k;
         if (s === 0) continue;
@@ -2566,7 +2690,7 @@ export function pointerRuns(track, W, H) {
  *          where the tracker's own samples must not be drawn either — it
  *          followed the same stranger, by the same movement
  */
-export async function withoutStrangers(track, { W, H, judge = null } = {}) {
+export async function withoutStrangers(track, { W, H, judge = null, screen = null } = {}) {
   const same = { track, dropped: [] };
   if (!judge || !track?.length) return same;
   const runs = pointerRuns(track, W, H);
@@ -2576,7 +2700,29 @@ export async function withoutStrangers(track, { W, H, judge = null } = {}) {
   const provenRuns = runs.filter((r) => r.proven).sort((a, b) => b.samples.length - a.samples.length);
   const proven = (provenRuns[0]?.samples || []).filter((p) => p.proven && p.located && !p.held);
   if (!proven.length) return same;
-  const ref = proven.reduce((a, b) => (num(b.score) > num(a.score) ? b : a));
+  /**
+   * ── AND A SECOND CHANCE WHEN THE REFERENCE IS REFUSED ─────────────────────
+   * The reference is the run's best-matching sighting, and on cursorful.com
+   * that was the creator's arrow a hundred pixels left of the embedded demo.
+   * Asked about it twice, the model once said "the creator's" and once "inside
+   * the video" — and the second answer threw every verdict away, leaving our
+   * pointer on the demo's cursor for four seconds. So when the model will not
+   * accept the reference, a second one from another moment of the same run is
+   * offered before giving up.
+   */
+  /**
+   * ── BUT NOT CHOSEN FOR BEING CLEAR — MEASURED ─────────────────────────────
+   * Choosing the reference clear of anything playing sounded right and was
+   * worse: on cursorful.com it picked the creator's arrow on the site's nav
+   * bar, the demo's cursor was on YouTube's nav bar inside a video filling
+   * the view, and the model twice called them the same pointer (4.3 s drawn
+   * on it) where the best-matching sighting had passed every run before. So
+   * the best match stays the reference; what is kept is the second chance.
+   */
+  const byScore = (list) => [...list].sort((a, b) => num(b.score) - num(a.score));
+  const refs = byScore(proven);
+  const ref = refs[0];
+  const second = refs.find((p) => Math.abs(num(p.t) - num(ref.t)) >= 1) || refs[1] || null;
   const suspects = runs
     .filter((r) => !r.proven && r.end - r.start >= RUN_MIN)
     .sort((a, b) => b.end - b.start - (a.end - a.start))
@@ -2584,18 +2730,20 @@ export async function withoutStrangers(track, { W, H, judge = null } = {}) {
   if (!suspects.length) return same;
 
   const px = (p) => ({ t: p.t, x: p.x * W, y: p.y * H });
+  const asked = suspects.map((r) => {
+    const seen = r.samples.filter((p) => p.located && !p.held);
+    const firm = seen.length ? seen : r.samples;
+    const a = firm[0];
+    const b = firm[Math.floor(firm.length / 2)];
+    return { sightings: b && b !== a && b.t - a.t >= 0.3 ? [px(a), px(b)] : [px(a)] };
+  });
   let verdicts = null;
   try {
-    verdicts = await judge({
-      reference: px(ref),
-      runs: suspects.map((r) => {
-        const seen = r.samples.filter((p) => p.located && !p.held);
-        const firm = seen.length ? seen : r.samples;
-        const a = firm[0];
-        const b = firm[Math.floor(firm.length / 2)];
-        return { sightings: b && b !== a && b.t - a.t >= 0.3 ? [px(a), px(b)] : [px(a)] };
-      }),
-    });
+    verdicts = await judge({ reference: px(ref), runs: asked });
+    if (verdicts === "reference" && second) {
+      console.log("[studio] asking again with the creator's pointer at " + num(second.t).toFixed(2) + "s as the reference");
+      verdicts = await judge({ reference: px(second), runs: asked });
+    }
   } catch (err) {
     console.warn("[studio] could not ask whose pointer the unproven stretches were: " + err.message);
   }

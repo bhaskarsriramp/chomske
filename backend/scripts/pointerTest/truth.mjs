@@ -131,9 +131,13 @@ for (const f of files) {
     }
   }
 
-  /* No camera move the creator did not ask for. */
+  /**
+   * No camera move the creator did not ask for. `optional` presses (from a
+   * mouse log: drags, right and middle buttons) are real, so a move onto one
+   * is not a move onto nothing — but none of them is required either.
+   */
   for (const z of zooms) {
-    const earned = (truth.clicks || []).some((c) => z.start <= c.t + 0.3 && z.end >= c.t - 0.3);
+    const earned = [...(truth.clicks || []), ...(truth.optional || [])].some((c) => z.start <= c.t + 0.3 && z.end >= c.t - 0.3);
     if (!earned) line(false, `zoom ${z.start.toFixed(2)}-${z.end.toFixed(2)}s covers no press the creator made`);
   }
 

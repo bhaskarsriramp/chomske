@@ -354,7 +354,28 @@ router.post("/demos/:id/upload/complete", wrap(async (req, res) => {
       dpr: clampNum(cap.env?.dpr, 0.5, 8),
       screen_w: clampNum(cap.env?.screen_w, 240, 16384),
       screen_h: clampNum(cap.env?.screen_h, 240, 16384),
+      browser: ["chrome", "edge", "opera", "brave", "firefox", "safari"].includes(cap.env?.browser) ? cap.env.browser : "unknown",
+      browser_version: String(cap.env?.browser_version || "").replace(/[^0-9.]/g, "").slice(0, 16),
     },
+    /**
+     * What the capture track delivered (capture.js startCapture): the cursor
+     * mode the browser applied — which decides whether an idle pointer is in
+     * the picture at all — its frame rate and pixel ratio. Recorded, not acted
+     * on: it is what lets a recording that behaves oddly be traced to the
+     * browser that made it.
+     */
+    device: cap.device
+      ? {
+        cursor: ["always", "motion", "never"].includes(cap.device.cursor) ? cap.device.cursor : "",
+        cursor_offered: String(cap.device.cursor_offered || "").replace(/[^a-z,]/g, "").slice(0, 40),
+        cursor_supported: cap.device.cursor_supported === true,
+        frame_rate: clampNum(cap.device.frame_rate, 0, 240),
+        logical_surface: typeof cap.device.logical_surface === "boolean" ? cap.device.logical_surface : null,
+        screen_pixel_ratio: clampNum(cap.device.screen_pixel_ratio, 0, 8),
+        width: clampNum(cap.device.width, 0, 16384),
+        height: clampNum(cap.device.height, 0, 16384),
+      }
+      : undefined,
     /**
      * The pointer this machine draws, measured in the browser at full
      * resolution while the recording was being made. Validated on the same

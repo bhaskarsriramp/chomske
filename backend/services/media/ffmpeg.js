@@ -335,18 +335,48 @@ export async function extractFrames(src, destDir, { every = 2, start = 0, durati
  * model about ONE thing in a busy frame without describing where it is.
  * `crop` cuts a region out (also in source pixels) for a close-up.
  */
-export function extractFrameAt(src, dest, at, { longEdge = 1280, mark = null, crop = null } = {}) {
+export async function extractFrameAt(src, dest, at, { longEdge = 1280, mark = null, crop = null } = {}) {
   const box = mark
     ? `drawbox=x=${Math.round(mark.x)}:y=${Math.round(mark.y)}:w=${Math.round(mark.w)}:h=${Math.round(mark.h)}:color=magenta:t=${mark.t || 5},`
     : "";
   const cut = crop
     ? `crop=${Math.round(crop.w)}:${Math.round(crop.h)}:${Math.max(0, Math.round(crop.x))}:${Math.max(0, Math.round(crop.y))},`
     : "";
+  const vf = `${box}${cut}scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))'`;
+  const t = Math.max(0, at);
+  /**
+   * ── THE FRAME ON SCREEN AT `at`, NOT THE NEXT ONE WRITTEN ─────────────────
+   * Seeking to `at` and taking one frame returns the first frame recorded AT
+   * OR AFTER it. A browser's recorder writes a frame only when something on
+   * screen changes, so on a still screen that frame can be seconds later —
+   * and, around a press, it is often the frame AFTER the press's result
+   * arrived: the model asked "is the pointer on a control here" was shown
+   * the next page. What was on screen at `at` is the last frame written at
+   * or before it. So a stretch ending at `at` is decoded and every frame is
+   * written over the same file (`-update 1`); what is left is the last one.
+   * Back 1s first and then 30s, for a screen that sat still longer; with
+   * nothing at all before `at`, the first frame after it, as before.
+   */
+  for (const back of t > 0 ? [1, 30] : []) {
+    const from = Math.max(0, t - back);
+    await fsp.rm(dest, { force: true }).catch(() => {});
+    const ok = await ffmpeg([
+      ...(from > 0 ? ["-ss", String(from)] : []),
+      "-i", src,
+      "-t", String(t - from + 0.001),
+      "-an", "-vf", vf,
+      "-q:v", "3", "-update", "1",
+      dest,
+    ]).then(() => true, () => false);
+    const size = ok ? await fsp.stat(dest).then((s) => s.size, () => 0) : 0;
+    if (size > 0) return;
+    if (from === 0) break;
+  }
   return ffmpeg([
-    "-ss", String(Math.max(0, at)),
+    "-ss", String(t),
     "-i", src,
     "-frames:v", "1",
-    "-vf", `${box}${cut}scale=w='if(gt(iw,ih),min(${longEdge},iw),-2)':h='if(gt(iw,ih),-2,min(${longEdge},ih))'`,
+    "-vf", vf,
     "-q:v", "3",
     dest,
   ]);

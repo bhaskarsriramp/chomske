@@ -41,7 +41,7 @@ import { extractFrameAt } from "../media/ffmpeg.js";
 import {
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
-  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS, PRESS_JUDGE,
+  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS, PRESS_JUDGE, POINTER_TARGET,
   frameIndex, eventLog, elementLog,
 } from "./prompts.js";
 import { newId, clampRect } from "./timeline.js";
@@ -1036,9 +1036,15 @@ export async function judgeRuns({ video, dir, reference, runs, heightPx, spend =
    * verdict below is "the same as R or not". If the model sees R inside a
    * picture, the whole comparison is upside down; nothing is acted on.
    */
+  if (process.env.STUDIO_TRACE_RUNS) {
+    // Where the pictures the model was shown are, so they can be looked at.
+    console.log("[studio] trace: stranger check reference at " + num(reference.t).toFixed(2) + "s (" + Math.round(num(reference.x)) + "," +
+      Math.round(num(reference.y)) + "), model said reference " + (json.reference || "?") + "; images in " + dir);
+  }
   if (json.reference === "content") {
     console.warn("[studio] the reference sighting for the stranger check looks like somebody else's pointer; no verdicts used");
-    return null;
+    // Said apart from every other failure, so the caller can try another.
+    return "reference";
   }
   const KINDS = new Set(["own", "content", "none", "unsure"]);
   const out = runs.map(() => null);
@@ -1046,6 +1052,55 @@ export async function judgeRuns({ video, dir, reference, runs, heightPx, spend =
     const i = Math.round(num(v?.group, 0)) - 1;
     if (i < 0 || i >= runs.length) continue;
     out[i] = { kind: KINDS.has(v?.kind) ? v.kind : "unsure", confidence: clamp(num(v?.confidence, 0.5), 0, 1), why: str(v?.why, 160) };
+  }
+  return out;
+}
+
+/**
+ * What the pointer's tip was on, at each of several moments — one crop each,
+ * the tip marked, all asked in one request. See prompts.js POINTER_TARGET and
+ * vig.js, which uses the answers to name what each rest was on.
+ *
+ * @param {object} o
+ * @param {Array<{t,x,y}>} o.targets  source pixels
+ * @param {number} o.W, o.H           the recording's size
+ * @returns {Promise<Array<{label, type, confidence}|null>>} one per target, in order
+ */
+export async function pointerTargets({ video, dir, targets, W, H, spend = newSpend() }) {
+  if (!Array.isArray(targets) || !targets.length) return [];
+  await fsp.mkdir(dir, { recursive: true });
+  const parts = [{ text: POINTER_TARGET }];
+  const shown = [];
+  // Big enough to hold the element and its neighbours, small enough that one
+  // row of a list is many pixels tall once the model has it.
+  const cw = Math.min(W, 640);
+  const ch = Math.min(H, 360);
+  for (let i = 0; i < targets.length; i++) {
+    const s = targets[i];
+    const x = num(s.x);
+    const y = num(s.y);
+    const file = path.join(dir, `target_${i}.jpg`);
+    try {
+      await extractFrameAt(video, file, num(s.t), {
+        longEdge: 960,
+        mark: { x: x - 7, y: y - 7, w: 14, h: 14, t: 2 },
+        crop: { x: clamp(x - cw / 2, 0, W - cw), y: clamp(y - ch / 2, 0, H - ch), w: cw, h: ch },
+      });
+      if (!((await fsp.stat(file)).size > 0)) continue;
+    } catch {
+      continue;
+    }
+    parts.push({ text: `Image ${shown.length + 1}:` });
+    parts.push(await imagePart(file));
+    shown.push(i);
+  }
+  const out = targets.map(() => null);
+  if (!shown.length) return out;
+  const json = await ask({ parts, spend, label: "pointerTargets", maxOutputTokens: 4096 });
+  for (const v of Array.isArray(json?.targets) ? json.targets : []) {
+    const k = Math.round(num(v?.image, 0)) - 1;
+    if (k < 0 || k >= shown.length) continue;
+    out[shown[k]] = { label: str(v?.label, 80), type: str(v?.type, 20) || "none", confidence: clamp(num(v?.confidence, 0.5), 0, 1) };
   }
   return out;
 }

@@ -609,6 +609,98 @@ model has not read the screen (each came 1.9–2.5 s after the press before it,
 after a quiet screen) — in production the model names both controls and they
 zoom. A pixel-only rule cannot tell them from a hand resting while data loads.
 
+**Added 2026-09-25 (night), after two outside reviews of the pipeline:**
+
+- *Scroll or new page, by phase correlation (`phase.js`).* For every frame
+  where ≥ 8% of the screen changed, `readScreen` asks whether the frame is the
+  previous one moved: the peak of the normalised cross-power spectrum is high
+  when it is and flat when it is not. Measured on every labelled recording:
+  0 of 23 page swaps and 62 of 64 scroll frames pass "peak ≥ 0.2, vertical, at
+  the shift the region median also found" (the two left are 2–3 px nudges);
+  the region `agree` share had two swaps at 57% and 67%. `videoScrolled` uses
+  it wherever it was measured. Pure JS, about 20 ms a frame at half size.
+  (OpenCV.js was considered; the maintained build does not export
+  `phaseCorrelate`.)
+- *`readScreen`'s `dy` sign was documented backwards.* Positive is content
+  moving UP (a picture moved 20 px down reads −20). `measureStay` had been
+  written from the comment and searched the wrong way whenever the page
+  scrolled between its two pictures — the case its alignment exists for. Fixed
+  there; `atTime` (events.js) already used the real sign.
+- *One-off frame grabs are the frame on screen.* `extractFrameAt` (the
+  arbiter's frames, Gemini's pointer-identity and stranger checks, the judge)
+  seeked to `t` and took the next frame WRITTEN — on a still screen, often the
+  frame after a press's result. It now decodes the second before `t` and keeps
+  the last frame.
+- *Every press carries its evidence* — `signals: [[weight, reason], …]` and
+  `pointer_held_s` — so misses can be counted by cause across many recordings.
+- *The stranger check gets a second chance when its reference is refused.*
+  The reference is the longest proven run's best-matching sighting; on
+  cursorful.com that was the creator's arrow ~110 px from the embedded demo,
+  and the model sometimes called it "inside the video" — which discards every
+  verdict (4.3 s of our pointer on the demo's cursor). Now a second reference
+  from another moment of the run is offered first. (Choosing the reference
+  "clear of anything playing" was tried and was worse: it picked the arrow on
+  the site's nav bar, the demo's cursor sat on YouTube's nav bar in a video
+  filling the view, and the model twice called them the same pointer.)
+  `STUDIO_TRACE_RUNS=1` prints the reference and where the images are.
+- *A test kit with the real mouse* (`scripts/pointerTest/qa/`): a Windows mouse
+  logger for test recordings only, a scorer that aligns the log to the
+  recording by itself and reports recall, false moves, timing and pointer
+  error, and a corpus report that counts misses by the rule behind them.
+
+**Added 2026-09-25 (early morning) — the Visual Interaction Graph (`vig.js`).**
+A recording read as structure, not moments: *screens* (cut at every
+navigation, each with its names — the model's name for it, its headings, its
+dialogs, whatever it showed selected), *objects* (every element the model read,
+linked across readings into one object with a state history: normal, hovered,
+pressed, focused, selected, disabled), *rests* (where the pointer stopped, and
+on what) and *edges* (hover, press, opens). Built after the frames are read,
+stored as `analysis.vig`, and it decides two things before the gate:
+
+- **OPENS** — a page change is credited to the rest on the thing the new
+  screen is named after, over "the most recent rest". On claude.ai: "the page
+  change at 10.92 s was the press on 'X algorithm changes and found…' at
+  9.22 s, not the rest at 10.80 s"; Projects, Billing and Capabilities each
+  matched the screen they opened. (Research lineage: screen parsing into
+  element graphs, Screen Correspondence, ActionBert's "which element was
+  tapped to reach the next screen", ScreenLLM's stateful schema.)
+- **CHANGED** — a press on an object that went from not-selected to
+  selected/pressed/focused and stayed so is corroborated, unless the object
+  changes state with nobody's pointer on it (auto-rotating tabs).
+
+Both also run **backwards from the consequence** (the creator's idea: "come
+back from the end and correct the clicks"): every screen that opened and
+every object that turned selected under the pointer is explained by a press at
+the rest that caused it. If the forward rules proposed one there, it is
+confirmed; if they refused it for want of evidence, it now has some; if they
+never proposed one, it is created (`source: "vig"`) — and the gate still
+weighs it like any other. A state change is only believed if the object does
+not change by itself and is still that way at the next reading.
+
+What made it work is a close look: the frame-wide boxes are a row out on thin
+lists often enough that "what the pointer was on" named the neighbour
+("Plugins" for Settings, "Log out" for the account button). So each rest a
+page change or a press followed is asked about in a crop with the pointer's tip
+marked (`vision.js pointerTargets`, prompt `POINTER_TARGET`, one batched
+request), and that name wins — for the graph and for the gate's "on a control".
+Without the model reading frames there are no objects and nothing changes.
+`STUDIO_VIG=off` switches it off.
+
+**Added the same night — the pointer read backwards too (`locate.js
+backtrack`).** The tracker only looked forward; where it lost the pointer (a
+flick past its search window, a page change burying it) it found it again later
+and left the frames between empty. Every re-found sighting is now tracked back
+in time through the hole it ended — same templates, motion reversed, at most
+1.5 s and 40 holes, stopping after two missed frames, and never following the
+pointer into or beside a moving picture at all — the first version only kept
+out unproven pointers, and a proven run walked backwards onto a demo cursor on
+cursorful.com (0.3 s over that recording's stranger budget). Measured on the
+11 labelled recordings: 1–25 frames recovered in six of them, no press moved —
+and on cursorful.com the stranger check, shown the demo cursor's new first frame
+instead of the old one, called it the creator's (4.4 s drawn on it). So it is
+**off by default** (`STUDIO_BACKTRACK=on` to run it) until the mouse-logged corpus
+shows it earns its place.
+
 `STUDIO_TRACE_NAV=1` prints, for every large screen change, which check kept it
 from being a navigation (or that it minted one), and every rest with the change
 the press search found beside it.
@@ -1276,12 +1368,14 @@ STUDIO_POINTER_VISION=off       # default "on" — whose pointer, §3.2.1/§3.2.
 STUDIO_WITNESS=shadow           # default "shadow" — second witness, §7.2; "suggest" offers its missed clicks, "off" skips it
 STUDIO_WITNESS_MODEL=gemini-2.5-pro   STUDIO_WITNESS_FPS=10
 STUDIO_PRESS_JUDGE=off          # default "off" — per-press judge experiment (judge.js); "shadow" records verdicts
+STUDIO_VIG=on                   # default "on" — the Visual Interaction Graph (vig.js): OPENS and CHANGED, needs frames read
+STUDIO_BACKTRACK=off            # default "off" — the pointer tracked back through the forward pass's holes (locate.js); measured, no gain yet
 STUDIO_AUTO_PRESS_ZOOMS=1       # default 1 — auto-apply add_zoom at ≥0.8
 STUDIO_FRAME_EVERY=2            # seconds between UI_ANALYZER frames
 STUDIO_VISION_CONCURRENCY=4     # frames in flight (memory, not rate limit)
 STUDIO_LOCATE_BUDGET_MS=600000  # wall-clock ceiling on the locator
 GEMINI_RPM / GEMINI_CONCURRENCY # the real rate limits, process-wide
-STUDIO_TRACE_STAY=1  STUDIO_TRACE_NAV=1   # debugging only: why a press was or was not found, §7.2
+STUDIO_TRACE_STAY=1  STUDIO_TRACE_NAV=1  STUDIO_TRACE_RUNS=1   # debugging only: why a press was or was not found, §7.2; the stranger check's reference
 ```
 
 ---

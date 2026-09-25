@@ -16,6 +16,6 @@
   "strangers": [
     { "label": "the cursor inside the laptop mock-up's Cap app", "from": 0.0, "to": 6.0, "box": [300, 60, 1620, 900] }
   ],
-  "stranger_budget_s": 99,
-  "stranger_budget_pixel_s": 99
+  "stranger_budget_s": 0.1,
+  "stranger_budget_pixel_s": 0.1
 }

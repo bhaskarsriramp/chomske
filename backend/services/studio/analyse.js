@@ -43,7 +43,7 @@ import path from "path";
 import fsp from "fs/promises";
 import { extractFrames } from "../media/ffmpeg.js";
 import {
-  newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration, identifyPointer, judgeRuns,
+  newSpend, readFrames, detectSteps, findSensitive, writeCaptions, writeNarration, identifyPointer, judgeRuns, pointerTargets,
 } from "./vision.js";
 import { providerReady } from "../ai/provider.js";
 import { judgePresses, PRESS_JUDGE_MODE } from "./judge.js";
@@ -52,6 +52,7 @@ import { changeMoments, auditEdit, applyPatches } from "./audit.js";
 import { alignCapture, settleAfter, playingRegions } from "./sync.js";
 import { locatePointer, mergeLocated, stepPath, snapToLocated, withoutStrangers, stayedChanged } from "./locate.js";
 import { intentPath } from "./intent.js";
+import { buildVig, applyVig, vigForStorage, restsToName, VIG_MODE } from "./vig.js";
 import { emptyTimeline, sanitizeTimeline, smoothTrack, newId, mergedCuts } from "./timeline.js";
 import { STUDIO_LIMITS } from "./demoService.js";
 
@@ -171,6 +172,17 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     );
   } else if (cad) {
     console.log("[studio] capture cadence: this browser does not report frame timing");
+  }
+  // What the capture delivered, where the browser said (see capture.js startCapture).
+  const dev = capture?.device;
+  if (dev || capture?.env?.browser) {
+    console.log(
+      "[studio] captured with " + (capture?.env?.browser || "an unknown browser") + " " + (capture?.env?.browser_version || "") +
+        " on " + (capture?.env?.platform || "?") + ", " + (capture?.surface || "?") + " surface" +
+        (dev ? ", cursor " + (dev.cursor ? '"' + dev.cursor + '"' : "not reported") + (dev.cursor_offered ? " (offered " + dev.cursor_offered + ")" : "") +
+          ", " + (dev.frame_rate || "?") + "fps, " + (dev.width || "?") + "x" + (dev.height || "?") +
+          (dev.screen_pixel_ratio ? ", pixel ratio " + dev.screen_pixel_ratio : "") : "")
+    );
   }
 
   /* ── Frames ──────────────────────────────────────────────────────────── */
@@ -344,6 +356,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
       ? withoutStrangers(located.track, {
           W: source?.width || 1920,
           H: source?.height || 1080,
+          screen: aligned.screen,
           judge: ({ reference, runs }) =>
             judgeRuns({ video, dir: path.join(workDir, "runs"), reference, runs, heightPx: located.heightPx, spend }),
         }).catch((err) => {
@@ -420,6 +433,49 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
       : Promise.resolve({ language: "", language_label: "", cues: [] });
 
   const shots = await uiTask;
+
+  /**
+   * ── THE RECORDING AS A GRAPH (vig.js) ───────────────────────────────────
+   * The readings, the pointer and the page changes, joined into screens, the
+   * objects on them and what the pointer did to what. Two things are decided
+   * from it before the gate weighs the presses: a page change goes to the
+   * press on the thing it is named after, and a press on something that turned
+   * selected (and stayed) is corroborated. Without readings it is empty and
+   * changes nothing.
+   */
+  let vig = null;
+  if (VIG_MODE !== "off" && shots.length) {
+    /**
+     * What each rest was on, asked of a close crop with the pointer's tip
+     * marked (vision.js pointerTargets) — the frame-wide readings box a list
+     * a row out often enough to name the wrong item. One request, only for the
+     * rests a page change or a press followed.
+     */
+    let named = [];
+    const toName = restsToName({ pointer: pointerPath, events });
+    if (toName.length && providerReady()) {
+      const W = source?.width || 1920;
+      const H = source?.height || 1080;
+      const answers = await pointerTargets({
+        video, dir: path.join(workDir, "targets"), W, H, spend,
+        targets: toName.map((r) => ({ t: r.t, x: r.x * W, y: r.y * H })),
+      }).catch((err) => {
+        console.warn("[studio] vig: naming what the pointer was on failed: " + err.message);
+        return [];
+      });
+      named = toName.map((r, i) => ({ ...r, ...(answers[i] || {}) })).filter((r) => r.type);
+      if (named.length) {
+        console.log("[studio] vig: the pointer was on " + named.map((r) => r.from.toFixed(1) + "s " + (r.type === "none" ? "(nothing)" : "\"" + r.label + "\"") + " " + Number(r.confidence).toFixed(2)).join(", "));
+      }
+    }
+    vig = buildVig({ shots, events, pointer: pointerPath, screen: aligned.screen, duration, named });
+    events = applyVig(events, vig, { screen: aligned.screen, onNote: (s) => console.log("[studio] vig: " + s) });
+    console.log(
+      "[studio] vig: " + vig.screens.length + " screen(s), " + vig.objects.length + " object(s), " +
+        vig.opens.length + " page change(s) matched to what was pressed by name, " +
+        vig.changes.filter((c) => c.attended).length + " state change(s) under the pointer"
+    );
+  }
 
   /**
    * ── THE CAMERA WAITS FOR THE MODEL ──────────────────────────────────────
@@ -770,6 +826,8 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     })),
         locate: { found: located.found, frames: located.frames, design: located.design, height_px: located.heightPx, fit: located.fit },
     frames_read: shots.length,
+    // The recording as a graph — screens, objects, rests, what was done to what.
+    vig: vigForStorage(vig),
     /**
      * Whether the frames were checked for private information, which is NOT the
      * same question as whether they were read. With the blur pass paused they

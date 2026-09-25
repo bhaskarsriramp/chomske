@@ -670,10 +670,35 @@ export function elementLog(shots, { limit = 40 } = {}) {
   return lines.length ? lines.join("\n") : "(no elements were detected)";
 }
 
+/**
+ * What the pointer's tip is on, asked of a close crop — never of the whole frame.
+ *
+ * The frame-wide reading (UI_ANALYZER) boxes every element on a screen, and on
+ * a list of 30-pixel rows its boxes are a row out often enough that "the
+ * element under the pointer" was the item above it: the creator on "Projects"
+ * was read as on "New", on "Capabilities" as on "Billing". Asked about one
+ * spot in a crop, with the tip marked, the model reads the label that is
+ * actually there. See vision.js pointerTargets and vig.js.
+ */
+export const POINTER_TARGET = `Each image is a close crop of a screen recording of a web browser. In each one the tip of the mouse pointer is inside the small magenta square.
+
+For each image, name the user-interface element the pointer's tip is on: the thing a click at that exact spot would press.
+
+Rules:
+- Use the element's own visible text, word for word, as "label". If its text is cut off, give what is visible.
+- If the element has no text (an icon, an avatar, a close X), describe it in a few words: "close button (X)", "user avatar menu", "search icon".
+- Only the element under the tip. Rows of a list, items of a menu and tabs are separate elements: name the one the tip is inside, not a neighbour.
+- If the tip is on empty background or plain text that is not clickable, use type "none".
+
+Return only JSON:
+{ "targets": [ { "image": 1, "label": "Settings", "type": "menu_item", "confidence": 0.9 } ] }
+
+One entry per image. "type" is one of: button, link, nav_item, tab, list_item, menu_item, checkbox, toggle, text_field, dropdown, icon_button, card, none. "confidence" is how sure you are that the tip is on that element, from 0 to 1: about 0.9 when the tip is plainly inside it, lower when it sits on the edge between two.`;
+
 export default {
   ANALYSIS_LONG_EDGE,
   UI_ANALYZER, STEP_DETECTOR, ZOOM_PLANNER, BLUR_DETECTOR,
   CAPTION_GENERATOR, NARRATION_WRITER, QUALITY_REVIEWER,
-  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS, PRESS_JUDGE, WITNESS,
+  PRESS_ARBITER, CHANGE_AUDITOR, POINTER_IDENTITY, POINTER_RUNS, PRESS_JUDGE, WITNESS, POINTER_TARGET,
   frameIndex, eventLog, elementLog,
 };

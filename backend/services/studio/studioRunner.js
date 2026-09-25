@@ -387,6 +387,8 @@ const analyse = {
           // The moments the screen changed, measured once. See the model.
           "analysis.changes": result.changes || null,
           "analysis.rests": result.rests || null,
+          // The recording as a graph (vig.js): screens, objects, what was done to what.
+          "analysis.vig": result.vig || null,
           /**
            * ── LAST TIME'S FINDINGS DO NOT SURVIVE A NEW EDIT ────────────────
            * The edit has just been rebuilt from scratch, so every zoom id a

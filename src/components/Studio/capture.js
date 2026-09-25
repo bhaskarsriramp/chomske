@@ -137,7 +137,28 @@ export function environment() {
     // CSS pixels, which is the unit the cursor's own size is fixed in.
     screen_w: Number(s.width) || 0,
     screen_h: Number(s.height) || 0,
+    // Which browser, because what a capture delivers — whether an idle pointer
+    // is drawn, how often frames arrive — is the browser's decision, and a
+    // recording that behaves differently needs to be traceable to one.
+    ...browserOf(ua),
   };
+}
+
+/** The browser's name and major version, from client hints where there are any. */
+function browserOf(ua) {
+  const brands = navigator.userAgentData?.brands || [];
+  const named = brands.find((b) => /edge|opera|brave|chrome/i.test(b.brand) && !/not.?a.?brand/i.test(b.brand));
+  if (named) {
+    const edge = brands.find((b) => /edge/i.test(b.brand));
+    const pick = edge || named;
+    return { browser: /edge/i.test(pick.brand) ? "edge" : /opera/i.test(pick.brand) ? "opera" : /brave/i.test(pick.brand) ? "brave" : "chrome", browser_version: String(pick.version || "") };
+  }
+  const m = (re) => (ua.match(re) || [])[1] || "";
+  if (/edg\//i.test(ua)) return { browser: "edge", browser_version: m(/edg\/(\d+)/i) };
+  if (/firefox\//i.test(ua)) return { browser: "firefox", browser_version: m(/firefox\/(\d+)/i) };
+  if (/chrome\//i.test(ua)) return { browser: "chrome", browser_version: m(/chrome\/(\d+)/i) };
+  if (/safari\//i.test(ua) && /version\//i.test(ua)) return { browser: "safari", browser_version: m(/version\/(\d+)/i) };
+  return { browser: "unknown", browser_version: "" };
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -288,6 +309,23 @@ export async function startCapture({ mic = true, systemAudio = true } = {}) {
     width: settings.width || 0,
     height: settings.height || 0,
     cursorControl,
+    /**
+     * What the capture track actually delivered, as opposed to what was asked
+     * for. `cursor: "always"` is requested and Chrome's tab capture draws an
+     * idle pointer anyway only sometimes — the setting it reports is the only
+     * record of which, and every pointer gap the server finds means something
+     * different depending on it.
+     */
+    device: {
+      cursor: String(settings.cursor || ""),
+      cursor_offered: cursorControl.offered,
+      cursor_supported: cursorControl.supported,
+      frame_rate: Number(settings.frameRate) || 0,
+      logical_surface: typeof settings.logicalSurface === "boolean" ? settings.logicalSurface : null,
+      screen_pixel_ratio: Number(settings.screenPixelRatio) || 0,
+      width: settings.width || 0,
+      height: settings.height || 0,
+    },
     hasSystemAudio: systemTracks.length > 0,
     hasMic: !!micStream,
     videoTrack,

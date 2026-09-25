@@ -8,3 +8,8 @@ backend/.media/
 backend/.env
 npm-debug.log*
 .DS_Store
+
+# Test recordings (somebody's screen, tens of MB) and what was measured on them. Never commit.
+backend/scripts/pointerTest/fixtures/
+# Mouse logs from test recordings (qa/start-mouselog.cmd). Local only.
+mouselogs/

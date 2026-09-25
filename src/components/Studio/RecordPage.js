@@ -208,6 +208,12 @@ export default function RecordPage({ config, onOpen, onCancel }) {
          * lose the cursor for a whole demo. See profileOf() in capture.js.
          */
         cursor: report.cursor,
+        // How often frames really arrived while recording (capture.js
+        // cadenceOf) — measured all along and, until now, never sent.
+        frames: report.frames,
+        // What the capture track delivered: the cursor mode it applied, its
+        // frame rate, its pixel ratio. See startCapture() in capture.js.
+        device: cap?.device,
         // The display and the OS. The pointer's size in the recording follows
         // from the screen's width in CSS pixels, and the server has no other
         // way to learn it. See environment() in capture.js.

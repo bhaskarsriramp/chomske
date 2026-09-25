@@ -207,7 +207,9 @@ export async function replay(src, { env = null, cursor = null } = {}) {
     });
     return { info, capture, result };
   } finally {
-    fs.rmSync(workDir, { recursive: true, force: true });
+    // STUDIO_KEEP_WORK=1 keeps the frames the analysis made, for looking at.
+    if (!process.env.STUDIO_KEEP_WORK) fs.rmSync(workDir, { recursive: true, force: true });
+    else console.log("[replay] work kept in " + workDir);
   }
 }
 

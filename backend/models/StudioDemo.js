@@ -97,6 +97,8 @@ const CaptureSchema = new Schema(
       dpr: { type: Number, default: 0 },
       screen_w: { type: Number, default: 0 },
       screen_h: { type: Number, default: 0 },
+      browser: { type: String, default: "unknown" },
+      browser_version: { type: String, default: "" },
     },
     /**
      * The pointer itself, measured in the browser at full resolution while the
@@ -130,6 +132,12 @@ const CaptureSchema = new Schema(
      * Absent on every recording made before this existed.
      */
     frames: { type: Schema.Types.Mixed, default: null },
+    /**
+     * What the capture track delivered — the cursor mode the browser applied,
+     * its frame rate and pixel ratio (routes/studio.js validates each). Mixed
+     * for the same reason as `frames`; absent before 2026-09-25.
+     */
+    device: { type: Schema.Types.Mixed, default: null },
   },
   { _id: false }
 );
@@ -217,6 +225,14 @@ const AnalysisSchema = new Schema(
     // agreed with, which it thinks were missed, which it did not see. See
     // services/studio/witness.js.
     witness: { type: Schema.Types.Mixed, default: null },
+    /**
+     * The recording as a graph (services/studio/vig.js): screens, the objects
+     * on them with their state over time, where the pointer rested and on what,
+     * and which press opened which screen. Built on every analysis that read
+     * frames; the base for what reads a recording by its structure rather than
+     * by its pixels. Absent before 2026-09-25.
+     */
+    vig: { type: Schema.Types.Mixed, default: null },
     audited_at: { type: Date, default: null },
     /**
      * The demo's `rev` when the audit last ran.

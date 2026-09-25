@@ -42,6 +42,7 @@
  * did before. A wrong offset applied confidently is far worse than none.
  */
 import { ffmpegToFrames } from "../media/ffmpeg.js";
+import { phaseShift } from "./phase.js";
 
 /** Frames a second the video is re-read at. Enough to place a click. */
 const READ_FPS = 12;
@@ -116,6 +117,8 @@ const SCROLL_TEXTURE = 8;
 const SCROLL_MOVED = 3;
 /** ...and how close to zero a cell must be, in the same units, to be "fixed". */
 const SCROLL_STILL = 1.5;
+/** Share of the frame changed before phase.js is asked whether it is the same page moved. */
+const PHASE_FROM = 0.08;
 /** How many scrolling frames a cell must sit out before it is called fixed. */
 const STICKY_VOTES = 3;
 /**
@@ -518,14 +521,24 @@ export async function readScreen(video, { duration = 0, sourceWidth = 1920, sour
           else if (Math.abs(d - dy) <= Math.max(SCROLL_STILL, Math.abs(dy) * 0.3)) rode[c]++;
         }
       }
+      /**
+       * And, for a frame where a good part of the screen changed, whether it
+       * is the same page moved at all (phase.js). Only there: it is the one
+       * question a big change raises, and small ones never reach it.
+       */
+      const ph = changed / N >= PHASE_FROM ? phaseShift(prev, buf, W, H) : null;
       still.push(changed > 0 ? unscrolledGrid(mask, buf, prev, W, H, dy, gw, gh, changed) : grid);
       scroll.push({
         t: round3((energy.length - 1) / fps),
         // In frame heights, so nothing downstream has to know this pass reads
-        // at 480 wide. Positive means the content moved DOWN the screen.
+        // at 480 wide. Positive means the content moved UP the screen — the
+        // page scrolled down — as bandShift reads it: this frame's row y is the
+        // previous frame's row y + dy. (Checked: a picture moved 20px down
+        // reads -20/H.)
         dy: round4(dy / H),
         offset: round4(offset / H),
         ...(agree != null ? { agree: round3(agree), regions: seen.length } : {}),
+        ...(ph ? { phase: { shifted: round3(ph.shifted), still: round3(ph.still), dx: round4(ph.dx / W), dy: round4(ph.dy / H) } } : {}),
       });
       prevProf = prof;
 

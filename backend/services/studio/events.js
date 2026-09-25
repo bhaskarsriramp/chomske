@@ -329,12 +329,33 @@ function lonelyShift(mot, m) {
  * without the agreement on it (an older one) counts as it always did.
  */
 const SCROLL_AGREE = 0.5;
+/**
+ * ── AND, WHERE IT WAS MEASURED, THE SAME PAGE AT ALL ───────────────────────
+ * Agreement is still a vote among regions that each report SOME shift, and two
+ * labelled page swaps got 57% and 67% of it. Phase correlation (phase.js) asks
+ * whether the later frame is the earlier one moved, and answers with how much
+ * of the picture moved together: on every labelled recording, 0 of 23 page
+ * swaps and 62 of 64 scroll frames (the two left were 2-3px nudges) passed
+ * this — a peak of at least PHASE_SAME, vertical, and at the shift the region
+ * median found as well. readScreen measures it on every frame where a good part
+ * of the screen changed, which is every frame this is asked about.
+ */
+const PHASE_SAME = 0.2;
 
 function videoScrolled(screen, t) {
   const list = Array.isArray(screen?.scroll) ? screen.scroll : [];
   if (!list.length) return true;
-  return list.some((q) => Math.abs(num(q.t) - t) <= 0.12 && Math.abs(num(q.dy)) >= 2 / 270 &&
-    (q.agree == null || num(q.agree) >= SCROLL_AGREE));
+  return list.some((q) => {
+    if (Math.abs(num(q.t) - t) > 0.12) return false;
+    const dy = num(q.dy);
+    if (Math.abs(dy) < 2 / 270) return false;
+    if (q.phase) {
+      const pdy = num(q.phase.dy);
+      return num(q.phase.shifted) >= PHASE_SAME && Math.abs(num(q.phase.dx)) <= 4 / 480 &&
+        Math.sign(pdy) === Math.sign(dy) && Math.abs(pdy - dy) <= Math.max(3 / 270, Math.abs(dy) * 0.5);
+    }
+    return q.agree == null || num(q.agree) >= SCROLL_AGREE;
+  });
 }
 
 function scrolledAfter(mot, t) {
@@ -1907,6 +1928,44 @@ const EDGE_SLOP = 0.06;
  */
 const CONTROL_MAX_AREA = 0.2;
 
+/** Whether two labels name the same thing: one inside the other, or most words shared. */
+function labelsAlike(a, b) {
+  const x = String(a || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const y = String(b || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  if (!x || !y) return false;
+  if (x.includes(y) || y.includes(x)) return true;
+  const wa = new Set(x.split(" ").filter((w) => w.length >= 3));
+  const wb = new Set(y.split(" ").filter((w) => w.length >= 3));
+  if (!wa.size || !wb.size) return false;
+  let shared = 0;
+  for (const w of wa) if (wb.has(w)) shared++;
+  return shared / Math.min(wa.size, wb.size) >= 0.6;
+}
+
+/**
+ * The element a close look named, found among the frame-wide readings near
+ * this moment — for its box, which the camera frames. Null when no reading has
+ * an element by that name near the point.
+ */
+function namedControl(shots, t, x, y, named, screen) {
+  let best = null;
+  let bestD = Infinity;
+  for (const shot of shots || []) {
+    if (Math.abs(num(shot.t) - t) > SEEN_WITHIN) continue;
+    for (const el of shot.elements || []) {
+      if (!labelsAlike(el.label, named.label)) continue;
+      const box = atTime(el, num(shot.t), t, screen);
+      const [ex, ey, ew, eh] = box;
+      if (!(ew > 0) || !(eh > 0) || ew * eh > CONTROL_MAX_AREA) continue;
+      const d = Math.hypot(Math.max(ex - x, 0, x - (ex + ew)), Math.max(ey - y, 0, y - (ey + eh)));
+      if (d > EDGE_SLOP * 2 || d >= bestD) continue;
+      bestD = d;
+      best = { label: String(el.label || named.label), type: String(el.type || named.type || "button"), area: round4(ew * eh), off: round4(d), bbox: box.map(round4), state: el.state };
+    }
+  }
+  return best;
+}
+
 /**
  * What the pointer was on when it pressed, or null when nobody looked.
  *
@@ -2685,6 +2744,15 @@ const W_PASSING = 0.3;
 const W_CHROME = 0.25;
 /** Total at or above which the camera moves. */
 const PRESS_BAR = 0.5;
+/**
+ * A screen arrived that is named after the thing pressed (vig.js OPENS): the
+ * pressed item's words in the new screen's title, headings, dialog or selected
+ * item. As strong as the model naming a control under the pointer, because it
+ * is that AND the consequence agreeing with it.
+ */
+const W_OPENED = 0.5;
+/** The pressed thing went to selected / pressed / focused and stayed (vig.js CHANGED). */
+const W_TURNED = 0.5;
 
 /**
  * How long a clickable glyph must be held to count, without settling.
@@ -2834,7 +2902,22 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
      */
     const stale = num(e.position_age, 0) >= STALE_SIGHTING;
     const seenAt = controlUnder(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5), { screen });
-    const on = stale && seenAt === false ? null : seenAt;
+    let on = stale && seenAt === false ? null : seenAt;
+    /**
+     * ── WHAT THE TIP WAS ON, WHERE SOMEBODY LOOKED CLOSELY ────────────────────
+     * controlUnder() reads the frame-wide boxes, and on a list of thin rows
+     * they are a row out often enough to name the neighbour: "Plugins" for
+     * Settings, "Memory" for Capabilities, "Log out" for the account button.
+     * vig.js asked about the rest this press sits in with a close crop and the
+     * tip marked (e.named). That answer wins; the box comes from the reading of
+     * the element with that name, when the readings have one near here.
+     */
+    if (e.named?.type === "none") on = false;
+    else if (e.named?.label) {
+      on = seenAt && labelsAlike(seenAt.label, e.named.label)
+        ? seenAt
+        : namedControl(shots, num(e.t), num(e.x, 0.5), num(e.y, 0.5), e.named, screen) || { label: e.named.label, type: e.named.type || "button" };
+    }
     const had = e.corroborated !== false;
     const scrolled = e.scrolled === true;
 
@@ -2925,7 +3008,26 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
      */
     const ev = [];
     let score = 0;
-    const add = (w, tag) => { score += w; ev.push(tag); };
+    /**
+     * Every signal and what it was worth, kept on the press. A refusal says
+     * why in words; this says it in numbers, so that across many recordings
+     * the question "why are presses being missed" is a count, not a guess.
+     */
+    const signals = [];
+    const add = (w, tag) => { score += w; ev.push(tag); signals.push([Math.round(w * 100) / 100, tag]); };
+
+    /**
+     * ── THE PAGE CHANGE WAS SOMEBODY ELSE'S ──────────────────────────────────
+     * vig.js matched the change this press was built from to a press on the
+     * thing the new screen is named after — the creator pressed a chat in the
+     * sidebar, then waited somewhere else while it loaded. That press gets the
+     * change; this one, a rest with nothing of its own, gets nothing.
+     */
+    if (e.opened_elsewhere) {
+      const why = "the page change was the press on \"" + e.opened_elsewhere.label + "\" at " + num(e.opened_elsewhere.t).toFixed(2) + "s";
+      onNote({ t: num(e.t), zoomable: false, why });
+      return { ...e, zoomable: false, basis: "opened-elsewhere", why, score: 0 };
+    }
 
     /**
      * ── ONE HARD VETO, AND ONLY ONE ──────────────────────────────────────────
@@ -3049,6 +3151,14 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
     // acknowledged rather than a consequence being inferred. See W_PRESSED.
     const pressedLook = on && on.state === "pressed";
     if (pressedLook) add(W_PRESSED, "it was drawn as being pressed");
+    /**
+     * What vig.js saw across the readings (see W_OPENED, W_TURNED): a screen
+     * arriving that is named after what was pressed, and the pressed thing
+     * turning selected and staying so. Both are the interface answering THIS
+     * press, the way a ripple is, so both count as having seen it.
+     */
+    if (e.opened) add(W_OPENED, "it opened \"" + String(e.opened.title || e.opened.label).slice(0, 60) + "\"");
+    if (e.state_changed) add(W_TURNED, "\"" + String(e.state_changed.label).slice(0, 40) + "\" turned " + e.state_changed.to);
     // How the pointer got here: thrown and landed, or still moving through.
     const approach = approachOf(located, num(e.t));
     if (approach.phase === "aimed") add(W_AIMED, settled ? "the pointer was aimed here and stopped" : "the pointer was thrown at this");
@@ -3192,7 +3302,7 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
      * instruments than it did: the crosshair template for canvas apps, and the
      * pressed state the model reads off the control itself.
      */
-    const sawPress = !!lit || !!pressedLook || settled || heldClickable(os);
+    const sawPress = !!lit || !!pressedLook || settled || heldClickable(os) || !!e.opened || !!e.state_changed;
     zoomable = score >= PRESS_BAR && sawPress;
 
     /**
@@ -3272,7 +3382,9 @@ export function confirmClicks(events, shots, { located = null, flashes = null, s
       // What the evidence added up to. Kept because a threshold is only
       // reviewable next to the numbers it was applied to.
       score: Math.round(score * 100) / 100,
+      signals,
       pointer_shape: os && os.shape ? os.shape : null,
+      pointer_held_s: os && Number.isFinite(num(os.held, NaN)) ? num(os.held) : null,
       // How the pointer arrived. Kept because a threshold is only reviewable
       // next to the numbers it was applied to, and because audit.js can tell a
       // refusal made on an approach from one made on a shape.
@@ -3398,7 +3510,9 @@ function ownConsequence(judged, screen, onNote) {
      * click is the fault this product cannot afford, and a rule that guesses
      * wrong should guess in the direction of keeping one.
      */
-    const circumstantial = !ACKNOWLEDGED.has(e.basis) && e.on_control !== true;
+    // A press vig.js tied to its own answer — a screen named after it, or the
+    // control turning selected — is not circumstantial either.
+    const circumstantial = !ACKNOWLEDGED.has(e.basis) && e.on_control !== true && !e.opened && !e.state_changed;
     if (t <= owned && t - owner >= SAME_INTERACTION && circumstantial) {
       const why = "the screen was still finishing the press at " + owner.toFixed(2) + "s";
       out[i] = { ...e, zoomable: false, basis: "still-arriving", why };
