@@ -602,7 +602,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   useEffect(() => {
     const onKey = (e) => {
       const el = e.target;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      // Typing belongs to the field. A slider or a toggle is not typing: with
+      // one focused (just after dragging Size, say) Delete still deletes the
+      // selection, and only the arrow keys are left to the control itself.
+      const control = el?.tagName === "INPUT" && ["range", "checkbox", "radio", "color", "button"].includes(el.type);
+      if (el && ((el.tagName === "INPUT" && !control) || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -611,7 +615,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       } else if (e.key === " ") {
         e.preventDefault();
         setPlaying((p) => !p);
-      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !control) {
         e.preventDefault();
         const step = e.shiftKey ? 1 : 1 / 30;
         seek(clamp(time + (e.key === "ArrowRight" ? step : -step), 0, lay?.duration || 0));
@@ -850,11 +854,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ink)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
         {fmtTime(time, true)} <span style={{ color: "var(--ink-mute)", fontWeight: 500 }}>/ {fmtTime(total, true)}</span>
       </span>
-      {selection && (
-        <Btn size="xs" kind="danger" icon={<Icon name="trash" size={12} />} onClick={removeSelected} title="Delete (Del)">
-          Delete
-        </Btn>
-      )}
+      {/* No Delete button here: a selection is deleted with the Delete key,
+          or from its row in the sidebar, and a button that appeared and
+          vanished with the selection kept pushing this row onto two lines. */}
       <div style={{ marginLeft: "auto" }}>
         <CanvasBar
           tl={tl}

@@ -1,17 +1,15 @@
 import useIsMobile from "../../hooks/useIsMobile";
 import { SUPPORT_EMAIL, SUPPORT_WHATSAPP, BRAND } from "../Legal/LegalPage";
 import { useCredits } from "../../state/CreditsContext";
-import { useProfiles } from "../../state/ProfileContext";
 
 /**
  * Support: one tap to a person.
  *
  * ── WHY WHATSAPP IS THE FIRST THING AND EMAIL IS THE SECOND ──────────────────
- * This product's users are Indian creators on phones, and WhatsApp is where
- * they already are. Email is the channel you use when you have accepted that
- * the answer is coming tomorrow; a creator whose script failed at 11pm with a
- * video to publish in the morning is not writing an email. So the WhatsApp
- * button is the page, and everything else on it is secondary.
+ * WhatsApp is where people already are. Email is the channel you use when you
+ * have accepted that the answer is coming tomorrow; somebody whose export
+ * failed at 11pm with a launch in the morning is not writing an email. So the
+ * WhatsApp button is the page, and everything else on it is secondary.
  *
  * ── THE FIVE MINUTES IS A PROMISE, SO IT IS QUALIFIED ────────────────────────
  * "Replies in under 5 minutes" with nothing beside it is the kind of claim that
@@ -23,7 +21,7 @@ import { useProfiles } from "../../state/ProfileContext";
  * ── WHAT THE MESSAGE ARRIVES WITH ────────────────────────────────────────────
  * The link carries a prefilled first line with the account's email in it.
  * Almost every real support question, a payment that did not land, credits that
- * look wrong, a script that failed, cannot be answered without knowing which
+ * look wrong, an export that failed, cannot be answered without knowing which
  * account is asking, and asking for it is one round trip that also happens to
  * be the round trip during which people give up. Prefilled, the first message
  * is already answerable.
@@ -31,7 +29,6 @@ import { useProfiles } from "../../state/ProfileContext";
 export default function SupportPanel({ user }) {
   const isPhone = useIsMobile(680);
   const { balance } = useCredits();
-  const { active } = useProfiles();
 
   const gut = isPhone ? 16 : 30;
 
@@ -43,7 +40,6 @@ export default function SupportPanel({ user }) {
   const intro =
     `Hi, I need help with ${BRAND}.\n\n` +
     `Account: ${user?.email || "(signed in)"}\n` +
-    (active?.name ? `Channel: ${active.name}\n` : "") +
     (typeof balance === "number" ? `Credits: ${balance}\n` : "") +
     `\nMy question: `;
 
@@ -148,7 +144,7 @@ export default function SupportPanel({ user }) {
 
         {/* ── The other way in ────────────────────────────────────────────────
             Kept quiet and kept second. Email is the right channel for a long
-            explanation or a screenshot thread, and the wrong one for "my script
+            explanation or a screenshot thread, and the wrong one for "my export
             failed and I am publishing in an hour". */}
         <section
           style={{
@@ -178,66 +174,10 @@ export default function SupportPanel({ user }) {
           </a>
         </section>
 
-        {/* ── The answers we already have ─────────────────────────────────────
-            Three questions, chosen because they are the three this product
-            actually generates: a charge that looks wrong, a voice that does not
-            sound right, and a script that failed. Answering them here costs a
-            message we would otherwise have to answer by hand, and a creator who
-            finds their answer in ten seconds is better served than one who gets
-            a reply in five minutes. */}
-        <section style={{ marginTop: 14 }}>
-          <h2
-            style={{
-              fontSize: 11.5, fontWeight: 600, letterSpacing: "0.13em",
-              textTransform: "uppercase", color: "var(--ink-mute)", margin: "0 0 11px",
-            }}
-          >
-            Before you write
-          </h2>
-          <div style={{ display: "grid", gap: 8 }}>
-            {FAQ.map((f) => (
-              <details
-                key={f.q}
-                className="hg-row"
-                style={{
-                  padding: isPhone ? "12px 13px" : "13px 15px", borderRadius: 6,
-                  background: "var(--card)", border: "1px solid var(--line)",
-                }}
-              >
-                <summary
-                  style={{
-                    cursor: "pointer", listStyle: "none",
-                    fontSize: 14, fontWeight: 600, color: "var(--ink)", lineHeight: 1.5,
-                  }}
-                >
-                  {f.q}
-                </summary>
-                <p style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--ink-body)", margin: "8px 0 0" }}>
-                  {f.a}
-                </p>
-              </details>
-            ))}
-          </div>
-        </section>
       </div>
     </div>
   );
 }
-
-const FAQ = [
-  {
-    q: "A script failed. Was I charged?",
-    a: "No. A script that fails is refunded in full, automatically, and the credits are back before you notice. If your balance still looks wrong after a failure, that is worth a message.",
-  },
-  {
-    q: "The scripts don't sound like me yet.",
-    a: "Voice gets sharper with more videos. One video is a hint, three or more is where it starts genuinely sounding like you. Add another under My voice and analyse again.",
-  },
-  {
-    q: "A payment went through but credits did not arrive.",
-    a: "Message us with the payment id from your bank or UPI app. Credits are added against the payment record, so this is usually fixed in one reply.",
-  },
-];
 
 /**
  * The WhatsApp glyph.
