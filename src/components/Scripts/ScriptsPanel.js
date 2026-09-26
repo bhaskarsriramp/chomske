@@ -645,8 +645,7 @@ function ScriptDetail({ script, onClose, compact, onUpdated }) {
         )}
 
         {/* ── Written from ────────────────────────────────────────────────
-            Shut by default, and the same control as the sources list under a
-            story in Topics (see News/StoryDetail.js). A script written from
+            Shut by default, the way the old news feed's sources list was. A script written from
             eight outlets pushes a list that long under the thing a creator
             actually opened this screen to read, and the count in the header is
             what most of them came for. The rows are for the one who wants to

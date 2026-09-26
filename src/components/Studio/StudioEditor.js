@@ -25,10 +25,15 @@ import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
+import { create } from "./create";
 import { ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, CanvasPanel, StepsPanel, SuggestionsPanel } from "./panels";
+import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon } from "./ui";
-import { layout, newId, clamp, fmtTime, mergedCuts } from "./model";
+import { layout, newId, clamp, fmtTime } from "./model";
 import "./studio.css";
+
+/** The inspector tab each kind of selectable thing is edited in. */
+const TAB_OF = { zoom: "zoom", blur: "blur", cue: "captions" };
 
 const TABS = [
   { id: "steps", label: "Steps", icon: "steps" },
@@ -52,6 +57,24 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   const [tab, setTab] = useState("steps");
   const [selection, setSelection] = useState(null);
+
+  /**
+   * ── A SELECTION BELONGS TO ITS TAB ──────────────────────────────────────
+   * A selected zoom draws its rectangle over the picture. Kept across a tab
+   * change, that rectangle sat on the preview through the whole video while
+   * the creator was in Steps or Blur, a handle for something they were no
+   * longer editing. So picking something (from its list, from the timeline,
+   * or by adding it) opens the tab it is edited in, and leaving that tab lets
+   * go of it.
+   */
+  const select = useCallback((s) => {
+    setSelection(s);
+    if (s && TAB_OF[s.kind]) setTab(TAB_OF[s.kind]);
+  }, []);
+  const openTab = useCallback((id) => {
+    setTab(id);
+    setSelection((s) => (s && TAB_OF[s.kind] === id ? s : null));
+  }, []);
   const [time, setTime] = useState(0);
   const [seekTo, setSeekTo] = useState(null);
   // Every request is a new object, so seeking to the same moment twice — the
@@ -346,6 +369,19 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     [edit]
   );
 
+  // A click on an empty stretch of a timeline lane: make one there, in
+  // recording time, and select it, which opens its tab (see Timeline.js).
+  const addAt = useCallback(
+    (kind, start, end) => {
+      const cur = tlRef.current;
+      if (!cur) return;
+      const { item, patch, label } = create(kind, cur, start, end);
+      edit(patch, label);
+      select({ kind, id: item.id });
+    },
+    [edit, select]
+  );
+
   /**
    * Remove whatever is selected.
    *
@@ -549,7 +585,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     );
   }
 
-  if (!demo) return <Centred><span style={{ color: "var(--ink-mute)", fontSize: 13 }}>Opening…</span></Centred>;
+  if (!demo) return <EditorSkeleton narrow={narrow} />;
 
   if (demo.status === "preparing" || demo.recording.status === "processing") {
     return (
@@ -596,7 +632,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   /* ── The editor ───────────────────────────────────────────────────────── */
 
   const total = lay?.duration || 0;
-  const panelProps = { tl, selection, onSelect: setSelection, edit, time, seek };
+  const panelProps = { tl, selection, onSelect: select, edit, time, seek };
 
   /**
    * Whether the model has read what is ON the screens of this recording.
@@ -700,7 +736,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         onTime={setTime}
         seekTo={seekTo}
         selection={selection}
-        onSelect={setSelection}
+        onSelect={select}
         onChange={changeItem}
       />
       {full && (
@@ -746,8 +782,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           Delete
         </Btn>
       )}
-      <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--ink-mute)" }}>{counts(tl)}</span>
-      <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={fullBtn(false)}>
+      <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={{ ...fullBtn(false), marginLeft: "auto" }}>
         <Icon name="expand" size={15} />
       </button>
     </div>
@@ -771,7 +806,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
             type="button"
             role="tab"
             aria-selected={on}
-            onClick={() => setTab(t.id)}
+            onClick={() => openTab(t.id)}
             style={{
               flexShrink: 0, padding: "11px 11px 9px", fontSize: 12.5, fontWeight: on ? 680 : 600,
               color: on ? "var(--ink)" : "var(--ink-mute)", fontFamily: "inherit",
@@ -832,10 +867,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       time={time}
       onSeek={seek}
       selection={selection}
-      onSelect={setSelection}
+      onSelect={select}
       onChange={changeItem}
       onAddCut={addCut}
       onRemoveCut={removeCut}
+      onAdd={addAt}
       onDelete={removeSelected}
     />
   );
@@ -919,17 +955,6 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
 const LABELS = { zoom: "Zoom", blur: "Blur", cue: "Caption" };
 
-function counts(tl) {
-  const bits = [];
-  const z = (tl.zooms || []).length;
-  const b = (tl.blurs || []).length;
-  const c = mergedCuts(tl).length;
-  if (z) bits.push(`${z} zoom${z === 1 ? "" : "s"}`);
-  if (b) bits.push(`${b} blur${b === 1 ? "" : "s"}`);
-  if (c) bits.push(`${c} cut${c === 1 ? "" : "s"}`);
-  return bits.join(" · ");
-}
-
 function sourceOf(outT, lay) {
   for (const s of lay.segments) {
     if (outT >= s.out_start && outT <= s.out_end) return s.src_start + (outT - s.out_start);
@@ -948,6 +973,85 @@ function useNarrow(px = 900) {
     return () => q.removeEventListener("change", on);
   }, [px]);
   return narrow;
+}
+
+/**
+ * The editor before its demo arrives: header, stage, inspector and timeline in
+ * the places they are about to occupy, in both of the editor's layouts. The
+ * word "Opening…" alone in the middle of the page said the same thing and gave
+ * the eye nothing to settle on, and then everything jumped into place at once.
+ */
+function EditorSkeleton({ narrow }) {
+  // The stage is warm grey, and the default skeleton grey vanishes on it.
+  const onStage = { backgroundColor: "#E2DFDA" };
+  const header = (
+    <div
+      style={{
+        flexShrink: 0, display: "flex", alignItems: "center", gap: 10,
+        padding: narrow ? "8px 10px" : "9px 14px", borderBottom: "1px solid var(--line)",
+        background: "var(--card)", minHeight: 54,
+      }}
+    >
+      <Skeleton variant="rectangular" width={narrow ? 32 : 104} height={30} />
+      <Skeleton variant="rectangular" width={narrow ? "38%" : 220} height={18} style={{ borderRadius: 6 }} />
+      <Skeleton variant="rectangular" width={84} height={32} style={{ marginLeft: "auto" }} />
+    </div>
+  );
+  const transport = (
+    <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: narrow ? "8px 14px" : "10px 2px 2px" }}>
+      <Skeleton variant="rectangular" width={40} height={34} style={onStage} />
+      <Skeleton variant="rectangular" width={90} height={12} style={{ ...onStage, borderRadius: 6 }} />
+    </div>
+  );
+  const tabs = (
+    <div style={{ flexShrink: 0, display: "flex", gap: 16, padding: "14px 16px 12px", borderBottom: "1px solid var(--line)", background: "var(--card)" }}>
+      {[46, 40, 38, 58, 50].map((w, i) => (
+        <Skeleton key={i} variant="rectangular" width={w} height={12} style={{ borderRadius: 6 }} />
+      ))}
+    </div>
+  );
+  const cards = [96, 72, 120].map((h, i) => <Skeleton key={i} variant="rectangular" height={h} style={{ borderRadius: 12 }} />);
+  const ruler = (
+    <div style={{ display: "grid", gap: 8 }}>
+      <Skeleton variant="rectangular" height={10} style={{ borderRadius: 5 }} />
+      <Skeleton variant="rectangular" height={44} />
+    </div>
+  );
+
+  if (narrow) {
+    return (
+      <div role="status" aria-label="Opening the recording" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        {header}
+        <div className="st-stage" style={{ flexShrink: 0, height: "min(42vh, 380px)", padding: "10px 12px 4px", display: "flex" }}>
+          <Skeleton variant="rectangular" height="auto" style={{ ...onStage, flex: 1, borderRadius: 10 }} />
+        </div>
+        <div className="st-stage">{transport}</div>
+        {tabs}
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "grid", gap: 12, alignContent: "start", padding: "12px 14px" }}>
+          {cards}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div role="status" aria-label="Opening the recording" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      {header}
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(330px, 400px)", gridTemplateRows: "minmax(0,1fr) auto" }}>
+        <div className="st-stage" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "14px 18px 8px" }}>
+          <Skeleton variant="rectangular" height="auto" style={{ ...onStage, flex: 1, minHeight: 0, borderRadius: 10 }} />
+          {transport}
+        </div>
+        <aside style={{ gridColumn: 2, gridRow: "1 / span 2", minHeight: 0, overflow: "hidden", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
+          {tabs}
+          <div style={{ display: "grid", gap: 12, padding: "14px 16px" }}>{cards}</div>
+        </aside>
+        <div style={{ gridColumn: 1, gridRow: 2, minWidth: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "12px 16px 14px" }}>
+          {ruler}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Centred({ children }) {

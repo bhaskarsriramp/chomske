@@ -15,7 +15,8 @@
  */
 import { useMemo } from "react";
 import { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Empty, Icon } from "./ui";
-import { fmtTime, newId, clamp, layout, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
+import { fmtTime, clamp, layout, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
+import { create } from "./create";
 // Caption colour and size are the script editor's controls, not a second set.
 import { ColorPicker, SizePicker } from "../Edit/captionStyle";
 
@@ -31,22 +32,9 @@ export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {
   const current = zooms.find((z) => z.id === selection?.id && selection.kind === "zoom") || null;
 
   const add = () => {
-    const start = clamp(time, 0, Math.max(0, (tl.duration || 0) - 1.5));
-    const z = {
-      id: newId("z"),
-      start,
-      end: Math.min(tl.duration || start + 2.5, start + 2.5),
-      x: 0.3, y: 0.3, w: 0.4, h: 0.4,
-      level: 1.8,
-      easing: "smooth",
-      camera: "region",
-      follow: false,
-      follow_strength: 0.7,
-      label: "",
-      auto: false,
-    };
-    edit({ zooms: [...(tl.zooms || []), z] }, "Add zoom");
-    onSelect({ kind: "zoom", id: z.id });
+    const { item, patch, label } = create("zoom", tl, time);
+    edit(patch, label);
+    onSelect({ kind: "zoom", id: item.id });
   };
 
   return (
@@ -84,6 +72,16 @@ export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {
         )}
       </Panel>
 
+      {/* ── Two controls, on purpose ─────────────────────────────────────
+          How far in, and what to call it. Everything else a zoom has is set
+          without a form:
+            • timing: drag the zoom's block on the timeline, whose edges are
+              its start and end. The number steppers and "Start here / End
+              here" beside it were a second, slower way to do the same thing.
+            • easing: always Smooth. New zooms are made that way, the analysis
+              is held to it, and a choice between three curves nobody can
+              tell apart at a glance was not a choice worth showing.
+            • the framing: drag the rectangle on the preview. */}
       {current && (
         <Panel title="Selected zoom">
           <Slider
@@ -96,26 +94,7 @@ export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {
             format={(v) => `${v.toFixed(2)}×`}
             hint={current.level > 2.6 ? "Past about 2.5× the recording runs out of pixels and the picture goes soft." : undefined}
           />
-          <TimeRange
-            tl={tl}
-            item={current}
-            time={time}
-            onChange={(p) => edit(patch(tl, "zooms", current.id, p), "Zoom timing")}
-          />
-          <div>
-            <Label>Easing</Label>
-            <Segmented
-              full
-              size="s"
-              value={current.easing}
-              onChange={(v) => edit(patch(tl, "zooms", current.id, { easing: v }), "Zoom easing")}
-              options={[
-                { value: "smooth", label: "Smooth" },
-                { value: "snappy", label: "Snappy" },
-                { value: "slow", label: "Slow" },
-              ]}
-            />
-          </div>
+          {/* Follow the cursor: hidden for now, kept to bring back.
           <Toggle
             label="Follow the cursor"
             hint="The camera tracks the pointer instead of holding still. For a drag or a scroll — on a still target it drifts and looks like a mistake."
@@ -133,6 +112,7 @@ export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {
               format={pct}
             />
           )}
+          */}
           <Field
             label="Label"
             value={current.label}
@@ -204,23 +184,11 @@ export function BlurPanel({ tl, selection, onSelect, edit, time, seek, read = tr
   const current = blurs.find((b) => b.id === selection?.id && selection.kind === "blur") || null;
   const auto = blurs.filter((b) => b.auto).length;
 
+  // To the end of the recording by default; create.js says why.
   const add = () => {
-    const start = clamp(time, 0, Math.max(0, (tl.duration || 0) - 0.5));
-    const b = {
-      id: newId("b"),
-      start,
-      // To the end by default. The safe reading of "cover this" is the wider
-      // one: a secret that is on screen now is usually on screen after, and a
-      // blur that stops too early is the failure that matters.
-      end: tl.duration || start + 3,
-      x: 0.34, y: 0.42, w: 0.32, h: 0.09,
-      kind: "blur",
-      strength: 0.8,
-      label: "",
-      auto: false,
-    };
-    edit({ blurs: [...(tl.blurs || []), b] }, "Add blur");
-    onSelect({ kind: "blur", id: b.id });
+    const { item, patch, label } = create("blur", tl, time);
+    edit(patch, label);
+    onSelect({ kind: "blur", id: item.id });
   };
 
   return (
@@ -381,10 +349,9 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
   const placed = cap.x != null || cues.some((c) => c.custom?.x != null);
 
   const addCue = () => {
-    const start = clamp(time, 0, Math.max(0, (tl.duration || 0) - 1));
-    const c = { id: newId("q"), start, end: Math.min(tl.duration || start + 1.8, start + 1.8), text: "New caption", emphasis: [], custom: null };
-    edit({ cues: [...cues, c], captions: { ...cap, enabled: true } }, "Add caption");
-    onSelect({ kind: "cue", id: c.id });
+    const { item, patch, label } = create("cue", tl, time);
+    edit(patch, label);
+    onSelect({ kind: "cue", id: item.id });
   };
 
   const setCap = (fields, label) => edit({ captions: { ...cap, ...fields } }, label);

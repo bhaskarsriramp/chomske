@@ -23,9 +23,22 @@
  * A chip dragged along the ruler is moving through output time, and what gets
  * written is the recording time it maps back to. Without that, dragging a zoom
  * across a cut would silently change its length by however long the cut was.
+ *
+ * ── AN EMPTY STRETCH OF A LANE IS AN ADD BUTTON ──────────────────────────────
+ * Hovering a gap in the Zoom, Blur or Captions lane draws the item a click
+ * would make there, as a dashed outline, at its real length, with the time on
+ * the ruler above it. Clicking makes it, selects it and opens its tab. Over an
+ * existing item nothing is offered: that item is what a click there selects.
+ * The outline is the promise, so it is sized by the same rules as the result:
+ * the kind's usual length, cut short where the next item in the lane begins,
+ * and not offered at all where there is no room.
+ *
+ * Mouse and pen only. A finger has no hover to preview with, and a tap that
+ * silently created things would be worse than the panel's Add button.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { layout, placedSpans, activeZooms, toSource, mergedCuts, clamp, fmtTime } from "./model";
+import { DEFAULT_LENGTH, MIN_LENGTH } from "./create";
 import { Icon } from "./ui";
 
 const LANES = [
@@ -46,11 +59,15 @@ export default function Timeline({
   onChange,
   onAddCut,
   onRemoveCut,
+  onAdd,
   height = 30,
 }) {
   const railRef = useRef(null);
   const viewRef = useRef(null);
   const [drag, setDrag] = useState(null);
+  // What a click on the empty lane under the pointer would add: { lane, t, end }
+  // in output time, or null.
+  const [ghost, setGhost] = useState(null);
   /**
    * ── ZOOM IS WIDTH ──────────────────────────────────────────────────────────
    * 1 fits the whole edit in the space there is. Past that the time area gets
@@ -200,6 +217,37 @@ export default function Timeline({
 
   const endDrag = useCallback(() => setDrag(null), []);
 
+  /* ── Adding by pointing ───────────────────────────────────────────────── */
+  /**
+   * Where a new item would go if `lane` were clicked here, or null where there
+   * is no room: on an existing item, or with too little time before the next.
+   */
+  const ghostAt = useCallback(
+    (laneKey, clientX) => {
+      const kind = SINGULAR[laneKey];
+      const t = fractionAt(clientX) * total;
+      let gapEnd = total;
+      for (const it of items[laneKey]) {
+        if (t >= it.start && t <= it.end) return null;
+        if (it.start > t && it.start < gapEnd) gapEnd = it.start;
+      }
+      const end = Math.min(gapEnd, t + DEFAULT_LENGTH[kind]);
+      return end - t >= MIN_LENGTH[kind] ? { lane: laneKey, t, end } : null;
+    },
+    [fractionAt, items, total]
+  );
+
+  const addGhost = useCallback(
+    (g) => {
+      // Stored in recording time. Both ends are mapped rather than adding a
+      // length to the start, so an item that crosses a cut covers what plays.
+      onAdd(SINGULAR[g.lane], round3(toSource(g.t, lay)), round3(toSource(g.end, lay)));
+      onSeek(g.t + 0.05);
+      setGhost(null);
+    },
+    [lay, onAdd, onSeek]
+  );
+
   /* ── The ruler's tick marks ───────────────────────────────────────────── */
   const ticks = useMemo(() => {
     const span = total / zoom;
@@ -291,17 +339,60 @@ export default function Timeline({
               ))}
             </div>
 
+            {/* Where the pointer is, while it is offering to add something. */}
+            {ghost && (
+              <>
+                <span
+                  className="st-hover-time"
+                  style={{
+                    left: `${(ghost.t / total) * 100}%`,
+                    // Kept inside the rail at either end rather than clipped.
+                    transform: `translateX(${ghost.t / total < 0.04 ? 0 : ghost.t / total > 0.96 ? -100 : -50}%)`,
+                  }}
+                >
+                  {fmtTime(ghost.t, true)}
+                </span>
+                <span className="st-hover-line" style={{ left: `${(ghost.t / total) * 100}%`, top: RULER - 6 }} />
+              </>
+            )}
+
             {/* Lanes */}
             {LANES.map((lane) => (
               <div
                 key={lane.key}
                 className="st-lane"
-                style={{ height, marginBottom: 6, marginTop: 0 }}
+                style={{ height, marginBottom: 6, marginTop: 0, cursor: ghost?.lane === lane.key ? "copy" : undefined }}
                 onPointerDown={(e) => {
                   if (e.target !== e.currentTarget) return;
-                  onSeek(fractionAt(e.clientX) * total);
+                  const g = onAdd && e.pointerType !== "touch" ? ghostAt(lane.key, e.clientX) : null;
+                  if (g) addGhost(g);
+                  else onSeek(fractionAt(e.clientX) * total);
                 }}
+                onPointerMove={(e) => {
+                  // Nothing is offered mid-drag, mid-scrub, to a finger, or over
+                  // a chip or a cut (the event's target is then that, not the lane).
+                  const off = !onAdd || e.pointerType === "touch" || e.buttons || drag || scrubbing || e.target !== e.currentTarget;
+                  const next = off ? null : ghostAt(lane.key, e.clientX);
+                  setGhost((g) => (g === next || (g && next && g.lane === next.lane && g.t === next.t) ? g : next));
+                }}
+                onPointerLeave={() => setGhost(null)}
               >
+                {ghost?.lane === lane.key && (
+                  <div
+                    className="st-ghost"
+                    aria-hidden="true"
+                    style={{
+                      left: `${(ghost.t / total) * 100}%`,
+                      width: `${((ghost.end - ghost.t) / total) * 100}%`,
+                      borderColor: lane.color,
+                      background: `${lane.color}1F`,
+                    }}
+                  >
+                    <Icon name="plus" size={11} />
+                    <span>Add {NOUN[lane.key]}</span>
+                  </div>
+                )}
+
                 {items[lane.key].map((item, i) => {
                   const left = (item.start / total) * 100;
                   const width = Math.max(0.6 / zoom, ((item.end - item.start) / total) * 100);
@@ -438,6 +529,7 @@ const zoomBtn = (off) => ({
 const LABEL_W = 74;
 
 const SINGULAR = { zooms: "zoom", blurs: "blur", cues: "cue" };
+const NOUN = { zooms: "zoom", blurs: "blur", cues: "caption" };
 
 /** Recording time → output time, snapping a moment inside a cut forward. */
 function outOf(srcT, lay) {

@@ -1,9 +1,9 @@
 /**
- * newsUtils.js: display helpers shared by the feed and the story drawer.
+ * newsUtils.js: display helpers, first written for the news feed.
  *
- * Lives in its own module rather than at the bottom of NewsFeed.js because
- * StoryDetail needs them too, and NewsFeed imports StoryDetail, putting them in
- * either component would make the two files import each other.
+ * The feed and its story drawer are gone (the collector behind them was
+ * removed), but these outlived them: My scripts, the script panel and Edit
+ * videos all format times and source names with them.
  */
 
 /**

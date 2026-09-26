@@ -1,16 +1,15 @@
 import { useState } from "react";
 import useIsMobile from "../../hooks/useIsMobile";
-import ProfilesSection from "./ProfilesSection";
 
 /**
- * Profile: the channels, and the account behind them.
+ * Profile: the account, and the way out of it.
  *
- * The channels come first because they are what a creator actually manages here:
- * what each one covers, which one they are working in, and adding the next one.
- * The Google account below is a fact they already know and can do nothing with
- * except leave, so it sits underneath.
+ * This used to open with the creator's channels, what each one covered and
+ * which voice it wrote in. Those belonged to the script writer; a demo recorder
+ * has no channel to configure, so all that is left is the Google account and
+ * signing out.
  */
-export default function ProfilePanel({ user, onSignOut, onGoVoice }) {
+export default function ProfilePanel({ user, onSignOut }) {
   const isPhone = useIsMobile(680);
   const [confirming, setConfirming] = useState(false);
 
@@ -22,10 +21,8 @@ export default function ProfilePanel({ user, onSignOut, onGoVoice }) {
         Profile
       </h1>
       <p style={{ fontSize: 14, color: "var(--ink-body)", margin: "0 0 8px" }}>
-        Your channel, and the account it belongs to.
+        The account you signed in with.
       </p>
-
-      <ProfilesSection isPhone={isPhone} onGoVoice={onGoVoice} />
 
       <section
         style={{
@@ -102,8 +99,8 @@ export default function ProfilePanel({ user, onSignOut, onGoVoice }) {
           Sign out
         </div>
         <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)", margin: "0 0 14px" }}>
-          Your videos, voice profile and scripts stay where they are. Signing back in
-          with the same Google account brings everything back.
+          Your recordings and exports stay where they are. Signing back in with the
+          same Google account brings everything back.
         </p>
 
         {!confirming ? (

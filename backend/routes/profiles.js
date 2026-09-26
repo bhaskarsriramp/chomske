@@ -31,7 +31,6 @@ import {
 import { runVoiceBuild } from "../services/voiceBuildRunner.js";
 import { SHORT, LONG, laneQuery, LONG_MIN_VIDEOS, LONG_MIN_SECONDS } from "../services/voiceLanes.js";
 import { voiceSpecStale } from "../services/categories.js";
-import { kickoffCategories } from "../services/newsScheduler.js";
 import { getCategory } from "../services/categories.js";
 import { publishUserEvent } from "../services/newsEvents.js";
 import { voiceAnalysisCost } from "../services/creditPricing.js";
@@ -72,11 +71,6 @@ router.post("/", authenticateToken, async (req, res) => {
       categories: req.body?.categories,
     });
 
-    // A category this account has never watched may never have been collected,
-    // or may have gone cold. Without this the new profile opens on an empty feed
-    // and stays empty until the next scheduler tick.
-    kickoffCategories(doc.categories);
-
     const profiles = await listProfiles(req.user.id);
     return res.status(201).json({
       success: true,
@@ -110,7 +104,6 @@ router.patch("/:id", authenticateToken, async (req, res) => {
         categories: req.body?.categories,
       });
       if (!doc) return res.status(404).json({ success: false, message: "Not found" });
-      if (req.body?.categories !== undefined) kickoffCategories(doc.categories);
     }
 
     if (req.body?.is_default === true) {

@@ -42,21 +42,22 @@ const StudioPage = lazy(() => import("../Studio/StudioPage"));
  * in-flight work and its numbers should be fresh on every visit, so it remounts.
  */
 /**
- * ── THREE OF THESE ARE ONE SCREEN ────────────────────────────────────────────
- * discover, import and idea are the three modes of Create (see
+ * ── TWO OF THESE ARE ONE SCREEN ──────────────────────────────────────────────
+ * import and idea are the two modes of Create (see
  * components/Create/CreatePage.js). They are separate tab ids, and therefore
  * separate URLs, because each is a real destination: back and forward work,
  * a refresh lands where you were, and a mode can be linked to. They are NOT
- * separate panels: one CreatePage is mounted for all three, so a generation in
+ * separate panels: one CreatePage is mounted for both, so a generation in
  * flight survives a mode switch.
  *
- * The old "topics" id is deliberately NOT in this list. It falls through to the
- * catch-all redirect below and lands on Discover, which is what it used to show.
+ * There was a third, "discover", the ranked news feed. It went with the news
+ * collector behind it; a stale /app/discover link falls through to the
+ * catch-all redirect below and lands on the studio.
  */
-export const CREATE_TABS = ["discover", "import", "idea"];
+export const CREATE_TABS = ["import", "idea"];
 // "analysis" is reachable only in showcase mode, but it lives in the shared
 // list so a stale link or a refresh on it resolves rather than bouncing to
-// Discover. Shell below sends a human who lands there to Discover instead.
+// Import. Shell below sends a human who lands there to the studio instead.
 // "edit" is the editor, full screen over the shell, with the project in ?p=.
 // "videos" is its list, Edit videos, where a project for any video starts too.
 export const TAB_IDS = ["studio", ...CREATE_TABS, "analysis", "voice", "scripts", "videos", "edit", "dashboard", "profile", "support"];
@@ -128,7 +129,7 @@ function Shell({ user, onSignOut }) {
   );
   const [drawer, setDrawer] = useState(false);
 
-  const { activeId, refresh: refreshProfiles } = useProfiles();
+  const { refresh: refreshProfiles } = useProfiles();
   const { isShowcase } = useShowcase();
 
   const openTab = useCallback((id) => {
@@ -165,10 +166,9 @@ function Shell({ user, onSignOut }) {
 
   useEffect(() => { if (!isNarrow) setDrawer(false); }, [isNarrow]);
 
-  // A typo or a stale bookmark shouldn't render an empty shell. /app/topics is
-  // the specific stale bookmark we know exists, and it lands on Discover, which
-  // is what it used to show.
-  if (!TAB_IDS.includes(tabParam)) return <Navigate to="/app/studio" replace />;
+  // A typo or a stale bookmark shouldn't render an empty shell.
+  // A showcase is sent to Import rather than the studio, which it is refused.
+  if (!TAB_IDS.includes(tabParam)) return <Navigate to={isShowcase ? "/app/import" : "/app/studio"} replace />;
 
   // Three screens exist only for one of the two session kinds, and landing on
   // the wrong one should move you rather than render an empty shell: a showcase
@@ -177,10 +177,10 @@ function Shell({ user, onSignOut }) {
   // The editor is refused to a showcase too: it stores footage and spends
   // render minutes, which a demo link is not an account for.
   if (isShowcase && ["studio", "dashboard", "profile", "support", "videos", "edit"].includes(tab)) {
-    return <Navigate to="/app/discover" replace />;
+    return <Navigate to="/app/import" replace />;
   }
   if (!isShowcase && tab === "analysis") {
-    return <Navigate to="/app/discover" replace />;
+    return <Navigate to="/app/studio" replace />;
   }
 
   return (
@@ -247,12 +247,12 @@ function Shell({ user, onSignOut }) {
               the numbers on it are the old ones. */}
           {isShowcase && tab === "analysis" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <AnalysisPanel user={user} onGoCreate={() => openTab("discover")} />
+              <AnalysisPanel user={user} onGoCreate={() => openTab("import")} />
             </div>
           )}
 
-          {/* One page for all three Create modes. Mounted under a single key so
-              switching between them never unmounts the others: each can have a
+          {/* One page for both Create modes. Mounted under a single key so
+              switching between them never unmounts the other: each can have a
               paid generation polling for a result, and the shell's whole
               hidden-not-unmounted rule exists to stop exactly that being lost. */}
           {mounted.create && (
@@ -260,7 +260,6 @@ function Shell({ user, onSignOut }) {
               <CreatePage
                 mode={tab}
                 onMode={openTab}
-                profileId={activeId}
                 onGoTranscribe={() => openTab("voice")}
               />
             </div>
@@ -271,7 +270,7 @@ function Shell({ user, onSignOut }) {
               <TranscribePanel
                 onVoiceChange={bumpVoice}
                 onGoProfiles={() => openTab("profile")}
-                onGoTopics={() => openTab("discover")}
+                onGoTopics={() => openTab("import")}
               />
             </div>
           )}
@@ -281,7 +280,7 @@ function Shell({ user, onSignOut }) {
               true the moment another script finishes writing. */}
           {tab === "scripts" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <ScriptsPanel onGoTopics={() => openTab("discover")} />
+              <ScriptsPanel onGoTopics={() => openTab("import")} />
             </div>
           )}
 
@@ -289,7 +288,7 @@ function Shell({ user, onSignOut }) {
               statuses (matching, exporting) are only worth showing fresh. */}
           {tab === "videos" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <VideosPanel onGoCreate={() => openTab("discover")} />
+              <VideosPanel onGoCreate={() => openTab("import")} />
             </div>
           )}
 
@@ -307,11 +306,7 @@ function Shell({ user, onSignOut }) {
 
           {tab === "profile" && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
-              <ProfilePanel
-                user={user}
-                onSignOut={onSignOut}
-                onGoVoice={() => openTab("voice")}
-              />
+              <ProfilePanel user={user} onSignOut={onSignOut} />
             </div>
           )}
 

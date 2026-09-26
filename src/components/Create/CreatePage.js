@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import api from "../../api";
 import useIsMobile from "../../hooks/useIsMobile";
-import NewsFeed from "../News/NewsFeed";
 import ImportPanel from "./ImportPanel";
 import IdeaPanel from "./IdeaPanel";
 import ModeSwitch from "./ModeSwitch";
@@ -12,10 +11,16 @@ import { useVoice } from "../../state/VoiceContext";
  * can show it on the same line as the switch. Keyed by mode, because the bar
  * is the one piece of chrome that survives switching panels.
  */
-const MOBILE_TITLES = { discover: "What to cover today", import: "Import", idea: "Idea" };
+const MOBILE_TITLES = { import: "Import", idea: "Idea" };
 
 /**
- * Create: the one screen where a script gets made, and the three ways in.
+ * Create: the one screen where a script gets made, and the two ways in.
+ *
+ * ── DISCOVER IS GONE ─────────────────────────────────────────────────────────
+ * There was a third mode, Discover, a ranked news feed fed by a collector that
+ * ran around the clock. Clipo is a demo recorder now and the collector was
+ * removed, so the feed went with it. What follows is the history of why the
+ * other two exist, and it still holds for them.
  *
  * ── WHAT CHANGED, AND WHY IT IS ONE SCREEN AND NOT THREE ─────────────────────
  * This used to be Topics: a ranked feed, and nothing else. That put a hard
@@ -52,7 +57,7 @@ const MOBILE_TITLES = { discover: "What to cover today", import: "Import", idea:
  * below turns into the order panel the moment the analysis lands, wherever the
  * creator happens to be standing when it does.
  */
-export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) {
+export default function CreatePage({ mode, onMode, onGoTranscribe }) {
   const isPhone = useIsMobile(680);
   const isNarrow = useIsMobile(1100);
 
@@ -99,8 +104,8 @@ export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) 
           So on a phone the title moves up here and sits on one line with the
           switch, and each panel stops drawing its own (see `hideTitle`). The
           title has to live in THIS component rather than inside the panels,
-          because the switch is what moves between them: rendered inside
-          NewsFeed it would vanish the moment somebody switched to Import, and
+          because the switch is what moves between them: rendered inside one
+          panel it would vanish the moment somebody switched to the other, and
           there would be no way back. */}
       <div
         style={{
@@ -129,18 +134,6 @@ export default function CreatePage({ mode, onMode, profileId, onGoTranscribe }) 
       </div>
 
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: mode === "discover" ? "flex" : "none" }}>
-          <NewsFeed
-            voice={voice}
-            onVoiceChange={onVoiceChange}
-            profileId={profileId}
-            onGoTranscribe={onGoTranscribe}
-            onGoImport={() => onMode("import")}
-            onGoIdea={() => onMode("idea")}
-            hideHeading={isPhone}
-          />
-        </div>
-
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: mode === "import" ? "flex" : "none" }}>
           <ImportPanel
             voice={voice}

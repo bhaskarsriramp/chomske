@@ -35,6 +35,9 @@ const KINDS = {
   ghost: { border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink)" },
   quiet: { border: "1px solid transparent", background: "transparent", color: "var(--ink-body)" },
   danger: { border: "1px solid #F1C4C0", background: "var(--card)", color: "var(--bad)" },
+  // The confirming half of something that cannot be undone. Filled, so it is
+  // never mistaken for the Cancel beside it; `danger` stays the quiet form.
+  destroy: { border: "1px solid transparent", background: "var(--bad)", color: "#fff", fontWeight: 700 },
 };
 
 export const Btn = forwardRef(function Btn(

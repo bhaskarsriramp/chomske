@@ -27,7 +27,6 @@ import Skeleton from "./components/Shell/Skeleton";
    already showed while the session check was in flight, so a chunk fetch is
    indistinguishable from the wait that was always there. */
 const Dashboard = lazy(() => import("./components/Dashboard/Dashboard"));
-const CategoryPicker = lazy(() => import("./components/Onboarding/CategoryPicker"));
 const PrivacyPolicy = lazy(() => import("./components/Legal/PrivacyPolicy"));
 const Terms = lazy(() => import("./components/Legal/Terms"));
 const RefundPolicy = lazy(() => import("./components/Legal/RefundPolicy"));
@@ -96,18 +95,15 @@ export default function App() {
                 than rendering, so there is exactly one address per screen. */}
             <Route path="/app" element={<Navigate to="/app/studio" replace />} />
 
-            {/* The category picker replaces the app rather than overlaying it.
-                Until it is answered there is nothing to collect and nothing to
-                show, so letting someone reach an empty dashboard would only teach
-                them the product is broken. No route goes past it. */}
+            {/* No first-run step. A new account lands straight in the studio:
+                recording a demo needs nothing chosen up front, so there is no
+                question worth asking before the first click. */}
             <Route
               path="/app/:tab"
               element={
                 !resolved ? <Booting />
                   : !user ? <Navigate to="/" replace />
-                    : !user.onboarded
-                      ? <CategoryPicker user={user} onDone={setUser} onSignOut={signOut} />
-                      : <Dashboard user={user} onSignOut={signOut} />
+                    : <Dashboard user={user} onSignOut={signOut} />
               }
             />
             {/* ── Public, and deliberately above the auth gate ─────────────────
@@ -166,7 +162,6 @@ function warmAppChunks() {
   // The studio is where /app lands, so its chunk is wanted on the same trip as
   // the shell that will render it.
   import("./components/Studio/StudioPage").catch(() => {});
-  import("./components/Onboarding/CategoryPicker").catch(() => {});
 }
 
 /**

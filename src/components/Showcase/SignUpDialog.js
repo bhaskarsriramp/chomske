@@ -54,7 +54,8 @@ export default function SignUpDialog({ open, onClose, showcaseId, reason }) {
       // (credits, profiles, voice) was primed with the showcase's data, and
       // re-fetching each one in the right order from here is a sequence bug
       // waiting to happen. The account is new; a clean boot is correct.
-      window.location.href = "/app/discover";
+      // Create, the screen they were just using as a guest.
+      window.location.href = "/app/import";
     } catch (err) {
       setError(errorMessage(err, "Couldn't finish that. Please try again."));
       setBusy(false);

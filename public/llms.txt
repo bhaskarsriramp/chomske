@@ -4,10 +4,18 @@
 
 Most auto-zoom recorders need a desktop app for one operating system, or an extension from one browser's store. Clipo needs neither: open it in a tab, press record, and show your product the way you normally would. The zooms, the smooth cursor and the framing are done for you.
 
+## How it works
+
+1. Open Clipo in your browser, press record, and choose a tab, a window or your whole screen.
+2. Show your product the way you normally would, talking over it if you like.
+3. Stop recording. Clipo edits it for you: it zooms in on every click, trims the waiting and smooths the cursor.
+4. Change anything you want on the timeline, then export the video in the size and format you need.
+
 ## What a creator gets
 
 ### Record in the browser
 - Record a tab, a window or the whole screen, straight from the browser
+- Record your microphone along with the screen, and the tab's or computer's sound where your browser allows it
 - Nothing to install and no extension to approve
 - Works in current desktop versions of Chrome, Edge, Firefox, Safari, Brave and Opera, on macOS, Windows, Linux and ChromeOS
 
@@ -31,12 +39,15 @@ Most auto-zoom recorders need a desktop app for one operating system, or an exte
 - Blur, pixelate or cover an email, a key or a customer's name, for a moment or the whole recording
 
 ### An editor for every decision
-- Every zoom sits on a timeline: drag it, retime it, delete it, or add your own
+- Every zoom, blur and caption sits on a timeline: drag it, retime it or delete it
+- Point at an empty spot on the timeline and click to add your own zoom, blur or caption right there
+- Choose how far each zoom goes in, and drag the frame on the preview to choose what it holds
 - Trim, cursor settings and captions in the same place
 
 ### Output in the shape it has to land in
 - MP4, WebM or GIF, from 720p up to 4K, at 24, 30 or 60fps
 - 16:9 for product tours, 9:16 for Reels and Shorts, 1:1, and 4:5 for LinkedIn
+- One-click presets for YouTube, Reels and Shorts, LinkedIn, X and GIF
 
 ## Pricing
 
@@ -53,6 +64,26 @@ Most auto-zoom recorders need a desktop app for one operating system, or an exte
 - Founders and product teams recording demos, launch videos and feature updates
 - Support and customer success teams making walkthroughs
 - Anyone who wants a polished, zoomed demo without installing a desktop recorder
+
+## Frequently asked questions
+
+### Do I need to install anything?
+No. Clipo runs in a browser tab. There is no desktop app and no browser extension.
+
+### Is Clipo free?
+Every new account gets 100 free credits, enough to try it on real recordings. After that, credits come in one-time packs from Rs 199. There is no subscription.
+
+### How long can a recording be?
+Up to 30 minutes.
+
+### Can I change what Clipo decides?
+Yes. Every zoom, blur and caption can be moved, retimed, resized or deleted, and you can add your own anywhere on the timeline.
+
+### How long are recordings kept?
+Recordings are deleted automatically about a week after you last work on them, and you can delete one yourself at any time. Videos you have downloaded are yours to keep.
+
+### Who owns the videos?
+You do. You own your recordings and every video Clipo makes from them.
 
 ## Key pages
 

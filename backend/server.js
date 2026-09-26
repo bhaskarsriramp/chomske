@@ -18,7 +18,6 @@ import { dbDropoutAnswers, answeredDbDropout } from "./middleware/dbDropout.js";
 import authRoutes from "./routes/auth.js";
 import transcribeRoutes from "./routes/transcribe.js";
 import channelRoutes from "./routes/channel.js";
-import newsRoutes from "./routes/news.js";
 import scriptRoutes from "./routes/script.js";
 import sourceRoutes from "./routes/source.js";
 import statsRoutes from "./routes/stats.js";
@@ -33,7 +32,6 @@ import { startEditRunner } from "./services/edit/editRunner.js";
 import { startStudioRunner } from "./services/studio/studioRunner.js";
 import VoiceProfile from "./models/VoiceProfile.js";
 import User from "./models/User.js";
-import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
 import { initSocketServer } from "./socket/index.js";
 import { describeProvider, describeModels, providerReady, limits } from "./services/ai/provider.js";
@@ -117,9 +115,6 @@ app.use(
   rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false }),
   transcribeRoutes
 );
-// Reads only, the collection/ranking cost is on the scheduler's clock, not the
-// caller's, so this needs no per-user cap beyond the global limiter.
-app.use("/news", newsRoutes);
 app.use(
   "/script",
   // Generation costs real money per call, so it gets its own ceiling on top of
@@ -308,7 +303,6 @@ function assertConfig() {
     server.listen(PORT, () => {
       console.log(`[server] Clipo API listening on :${PORT} (${process.env.NODE_ENV || "development"})`);
       console.log(`[server] CORS: ${allowedOrigins.join(", ")}`);
-      startNewsScheduler();
       /**
        * ── THE QUEUES RUN HERE ONLY IF NOBODY ELSE IS RUNNING THEM ───────────
        * The heavy work moved to worker.js. Not for capacity — for the event

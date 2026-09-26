@@ -15,10 +15,12 @@
  * page owns the one action that costs credits, so there is one place where the
  * price is confirmed and one place where a refusal is reported.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getStudioConfig, listDemos, deleteDemo, startAnalysis } from "./studioApi";
 import RecordPage from "./RecordPage";
 import StudioEditor from "./StudioEditor";
+import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon, Badge, Empty } from "./ui";
 import { fmtTime } from "./model";
 import "./studio.css";
@@ -90,15 +92,12 @@ export default function StudioPage() {
   const bleed = view.name === "edit";
 
   return (
-    <div
-      className="st-root"
-      style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", padding: bleed ? 0 : "18px 20px 20px" }}
-    >
+    <div className="st-root" style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
       {notice && (
         <div
           role="status"
           style={{
-            margin: bleed ? 0 : "0 0 14px", padding: "11px 14px", borderRadius: bleed ? 0 : 11, fontSize: 12.5, lineHeight: 1.5,
+            margin: bleed ? 0 : "18px 20px 0", padding: "11px 14px", borderRadius: bleed ? 0 : 11, fontSize: 12.5, lineHeight: 1.5,
             border: "1px solid #F5C7C3", background: "#FCE8E6", color: "var(--bad)",
             display: "flex", gap: 10, alignItems: "center", flexShrink: 0,
           }}
@@ -117,8 +116,22 @@ export default function StudioPage() {
           one, and this tree is mounted inside the dashboard's flex column
           where that is not guaranteed — so the script simply ran off the
           bottom of the window with nothing to scroll. A flex item with
-          minHeight: 0 needs no such promise. */}
-      <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          minHeight: 0 needs no such promise.
+
+          ── AND WHY THE PAGES SCROLL IN HERE ─────────────────────────────
+          The library and the recorder are pages, and a library with a dozen
+          recordings is taller than the window. With no scroller of its own
+          it overflowed the app shell and the whole DOCUMENT scrolled, taking
+          the sidebar and the credits card with it. So the pages scroll here,
+          vertically only, and the sidebar stays put. The editor gets no
+          scroller: it fits the window and scrolls inside its own regions. */}
+      <div
+        className={bleed ? undefined : "st-scroll"}
+        style={{
+          flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column",
+          ...(bleed ? null : { overflowX: "hidden", overflowY: "auto", padding: `${notice ? 14 : 18}px 20px 20px` }),
+        }}
+      >
         {view.name === "record" && (
           <RecordPage config={config} onOpen={opened} onCancel={() => setView({ name: "library" })} />
         )}
@@ -142,7 +155,10 @@ export default function StudioPage() {
             onRecord={() => setView({ name: "record" })}
             onOpen={(id) => setView({ name: "edit", id })}
             onDelete={async (id) => {
-              await deleteDemo(id).catch(() => {});
+              // Throws on failure, so the confirmation dialog can say so
+              // rather than closing over a recording that is still there.
+              await deleteDemo(id);
+              setDemos((list) => (list || []).filter((d) => d.id !== id));
               refresh();
             }}
           />
@@ -156,9 +172,14 @@ export default function StudioPage() {
    The library
    ──────────────────────────────────────────────────────────────────────────── */
 
+const GRID = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(248px, 1fr))", gap: 16 };
+
 function Library({ demos, config, onRecord, onOpen, onDelete }) {
+  // The recording waiting on "are you sure", or null.
+  const [doomed, setDoomed] = useState(null);
+
   return (
-    <div style={{ maxWidth: 1080, margin: "0 auto" }}>
+    <div style={{ width: "100%", maxWidth: 1080, margin: "0 auto" }}>
       <header style={{ display: "flex", alignItems: "flex-end", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
           <h1 style={{ margin: 0, fontSize: 25, fontWeight: 720, letterSpacing: "-0.035em", color: "var(--ink)" }}>
@@ -173,7 +194,7 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
         </Btn>
       </header>
 
-      {demos === null && <div style={{ fontSize: 13, color: "var(--ink-mute)" }}>Loading…</div>}
+      {demos === null && <LibrarySkeleton />}
 
       {demos?.length === 0 && (
         <div style={{ border: "1px dashed var(--line)", borderRadius: 18, padding: "10px 0" }}>
@@ -193,9 +214,9 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
       )}
 
       {demos?.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(248px, 1fr))", gap: 16 }}>
+        <div style={GRID}>
           {demos.map((d) => (
-            <Card key={d.id} demo={d} onOpen={() => onOpen(d.id)} onDelete={() => onDelete(d.id)} />
+            <Card key={d.id} demo={d} onOpen={() => onOpen(d.id)} onDelete={() => setDoomed(d)} />
           ))}
         </div>
       )}
@@ -206,7 +227,147 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
           Exports you have downloaded are yours to keep.
         </p>
       )}
+
+      {doomed && (
+        <ConfirmDelete
+          demo={doomed}
+          onCancel={() => setDoomed(null)}
+          onConfirm={async () => {
+            await onDelete(doomed.id);
+            setDoomed(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * The library before its list arrives: the same grid and the same cards, in
+ * grey. It holds the page's shape so nothing jumps when the real cards land,
+ * and it cannot be misread the way a blank page can, as "no recordings".
+ */
+function LibrarySkeleton() {
+  return (
+    <div role="status" aria-label="Loading your recordings" style={GRID}>
+      {Array.from({ length: 6 }, (_, i) => (
+        <div
+          key={i}
+          style={{
+            border: "1px solid var(--line)", borderRadius: 15, overflow: "hidden",
+            background: "var(--card)", boxShadow: "var(--shadow-xs)",
+          }}
+        >
+          <Skeleton variant="rectangular" height="auto" style={{ aspectRatio: "16 / 9", borderRadius: 0 }} />
+          <div style={{ padding: "12px 13px 14px" }}>
+            <Skeleton variant="text" width="58%" height={14} />
+            <Skeleton variant="text" width="44%" height={11} style={{ marginTop: 8 }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// "26 Sep 2026, 3:45 pm", in the viewer's own locale and clock.
+const WHEN = new Intl.DateTimeFormat(undefined, {
+  day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit",
+});
+
+/**
+ * When the demo was last changed. `updated_at` moves on an edit, an analysis
+ * or an export, and not on merely opening it, so "Edited" is true of it.
+ */
+function editedAt(demo) {
+  const iso = demo.updated_at || demo.created_at;
+  const t = iso ? new Date(iso) : null;
+  if (!t || Number.isNaN(t.getTime())) return null;
+  return <time dateTime={t.toISOString()}>Edited {WHEN.format(t)}</time>;
+}
+
+/**
+ * Deleting removes the recording and every export of it, and cannot be undone,
+ * so it asks first. In the app's own dialog rather than window.confirm, which
+ * names the website instead of the recording, cannot show which button is the
+ * dangerous one, and freezes the whole tab while it waits.
+ */
+function ConfirmDelete({ demo, onCancel, onConfirm }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const cancelRef = useRef(null);
+
+  // Focus starts on Cancel: pressing Enter on a dialog that has just appeared
+  // must never be the answer that deletes something.
+  useEffect(() => {
+    const before = document.activeElement;
+    cancelRef.current?.focus();
+    return () => before?.focus?.();
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && !busy) onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+
+  const confirm = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(err?.response?.data?.message || "We couldn't delete this recording. Please try again.");
+      setBusy(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="hg-fade"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget && !busy) onCancel();
+      }}
+      style={{
+        position: "fixed", inset: 0, zIndex: 80, display: "grid", placeItems: "center", padding: 16,
+        background: "rgba(15,15,15,.45)",
+      }}
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="st-delete-title"
+        aria-describedby="st-delete-body"
+        className="hg-sheet-up"
+        style={{
+          width: "min(420px, 100%)", padding: 22, borderRadius: 16,
+          border: "1px solid var(--line)", background: "var(--card)", boxShadow: "var(--shadow-modal)",
+        }}
+      >
+        <h2 id="st-delete-title" style={{ margin: 0, fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--ink)" }}>
+          Delete this recording?
+        </h2>
+        <p id="st-delete-body" style={{ margin: "8px 0 0", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)", overflowWrap: "anywhere" }}>
+          <strong style={{ fontWeight: 650, color: "var(--ink)" }}>{demo.title}</strong> and all of its exports will be
+          deleted. This can't be undone.
+        </p>
+        {error && (
+          <p role="alert" style={{ margin: "12px 0 0", fontSize: 12.5, lineHeight: 1.5, color: "var(--bad)" }}>
+            {error}
+          </p>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: 8, marginTop: 20 }}>
+          <Btn ref={cancelRef} onClick={onCancel} disabled={busy}>
+            Cancel
+          </Btn>
+          <Btn kind="destroy" onClick={confirm} disabled={busy} icon={<Icon name="trash" size={13} />}>
+            {busy ? "Deleting…" : "Delete"}
+          </Btn>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -273,8 +434,13 @@ function Card({ demo, onOpen, onDelete }) {
             {demo.status === "failed" && <Badge tone="warn">Failed</Badge>}
             {demo.renders > 0 && <Badge tone="good">{demo.renders}</Badge>}
           </div>
-          <div style={{ marginTop: 5, fontSize: 11.5, lineHeight: 1.5, color: "var(--ink-mute)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-            {demo.summary || new Date(demo.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+          <div
+            style={{
+              marginTop: 5, fontSize: 11.5, lineHeight: 1.5, color: "var(--ink-mute)", fontVariantNumeric: "tabular-nums",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}
+          >
+            {editedAt(demo)}
           </div>
         </div>
       </button>
@@ -282,11 +448,13 @@ function Card({ demo, onOpen, onDelete }) {
       <button
         type="button"
         title="Delete"
+        aria-label={`Delete ${demo.title}`}
         onClick={(e) => {
           e.stopPropagation();
-          // Deleting removes gigabytes and cannot be undone, so it asks. Every
-          // other control in the studio is reversible and none of them do.
-          if (window.confirm(`Delete "${demo.title}"? This removes the recording and its exports.`)) onDelete();
+          // Deleting removes gigabytes and cannot be undone, so it asks (see
+          // ConfirmDelete). Every other control in the studio is reversible
+          // and none of them do.
+          onDelete();
         }}
         style={{
           position: "absolute", top: 8, right: 8, width: 28, height: 28, display: "grid", placeItems: "center",

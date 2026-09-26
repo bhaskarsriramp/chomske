@@ -73,7 +73,7 @@ const SHOWCASE_SECTIONS = [
     label: "Studio",
     items: [
       { id: "analysis", label: "Analysis", icon: SparkIcon },
-      { id: "discover", label: "Create", icon: TargetIcon, match: ["discover", "import", "idea"] },
+      { id: "import", label: "Create", icon: TargetIcon, match: ["import", "idea"] },
       { id: "voice", label: "My voice", icon: WaveIcon },
       { id: "scripts", label: "My scripts", icon: ScriptIcon },
     ],

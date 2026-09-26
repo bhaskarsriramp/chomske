@@ -31,6 +31,7 @@ import {
   placedSpans, placedCues, captionPoint, captionLook, clamp, EASE,
 } from "./model";
 import { useBox } from "./ui";
+import Skeleton from "../Shell/Skeleton";
 
 /** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
@@ -271,9 +272,11 @@ export default function Preview({
           <RectHandle tl={tl} selection={selection} time={time} cam={cam} vb={vb} frame={{ w: fw, h: fh }} onChange={onChange} />
         )}
 
+        {/* The frame pulses while the video loads, rather than carrying the
+            words "Loading the recording…", grey on near-black. */}
         {showChrome && !ready && (
-          <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "var(--ink-mute)", fontSize: 13 }}>
-            Loading the recording…
+          <div role="status" aria-label="Loading the recording" style={{ position: "absolute", inset: 0 }}>
+            <Skeleton variant="rectangular" width="100%" height="100%" style={{ borderRadius: 10, backgroundColor: "#1B1D24" }} />
           </div>
         )}
       </div>

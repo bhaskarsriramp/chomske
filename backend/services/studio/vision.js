@@ -492,7 +492,10 @@ export async function planZooms({ steps, shots, events, duration, spend = newSpe
         end: Math.min(end, start + 8),
         x: b.x, y: b.y, w: b.w, h: b.h,
         level: clamp(num(z.level, 1.6), 1.05, 3),
-        easing: ["smooth", "snappy", "slow"].includes(z.easing) ? z.easing : "smooth",
+        // Always Smooth, whatever the model asked for. The editor no longer
+        // offers an easing, so a Snappy or Slow chosen here could never be
+        // seen or changed by the creator.
+        easing: "smooth",
         camera: ["cursor", "element", "modal", "region", "full"].includes(z.camera) ? z.camera : "element",
         follow: !!z.follow,
         follow_strength: 0.7,
