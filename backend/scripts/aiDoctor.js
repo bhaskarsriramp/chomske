@@ -39,7 +39,7 @@
  */
 import "dotenv/config";
 import { GoogleGenAI } from "@google/genai";
-import { isVertex, describeProvider, limits, aistudioKeys } from "../services/ai/provider.js";
+import { isVertex, describeProvider, limits, aistudioKeys, MODEL } from "../services/ai/provider.js";
 
 const arg = (name, fallback = "") => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -60,10 +60,10 @@ const REGIONS = String(arg("regions", process.env.VERTEX_LOCATION || "us-central
  * worse than no doctor.
  */
 function configured() {
-  const vision = process.env.GEMINI_VISION_MODEL || process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
-  const text = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_AUDIO_MODEL || "gemini-3.5-flash";
+  const vision = process.env.GEMINI_VISION_MODEL || process.env.GEMINI_TEXT_MODEL || MODEL.vision;
+  const text = process.env.GEMINI_TEXT_MODEL || process.env.GEMINI_AUDIO_MODEL || MODEL.text;
   const audio = process.env.GEMINI_AUDIO_MODEL || vision;
-  const video = process.env.GEMINI_VIDEO_MODEL || "gemini-3.5-flash";
+  const video = process.env.GEMINI_VIDEO_MODEL || MODEL.video;
   const byModel = new Map();
   const add = (id, who, envVar) => {
     if (!byModel.has(id)) byModel.set(id, { uses: [], envVars: new Set() });

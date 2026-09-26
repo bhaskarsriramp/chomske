@@ -40,13 +40,18 @@
 import path from "path";
 import fsp from "fs/promises";
 import { makeWatchCopy } from "../media/ffmpeg.js";
-import { generateJson } from "../ai/provider.js";
+import { generateJson, PROVIDER, MODEL } from "../ai/provider.js";
 import { WITNESS } from "./prompts.js";
 import { newId } from "./timeline.js";
 import { containingBox, levelForBox } from "./events.js";
 
 export const WITNESS_MODE = String(process.env.STUDIO_WITNESS || "shadow").trim().toLowerCase();
-const WITNESS_MODEL = String(process.env.STUDIO_WITNESS_MODEL || "gemini-2.5-pro").trim();
+/**
+ * The pro model on Vertex, where 2.5 is still served; on AI Studio the same
+ * model the rest of the studio uses (services/ai/provider.js MODEL), because
+ * AI Studio has retired 2.5 for new accounts. STUDIO_WITNESS_MODEL wins.
+ */
+const WITNESS_MODEL = String(process.env.STUDIO_WITNESS_MODEL || (PROVIDER === "aistudio" ? MODEL.video : "gemini-2.5-pro")).trim();
 /** Frames a second the model samples. 10 found clicks to a tenth of a second. */
 const WITNESS_FPS = Math.max(1, Math.min(24, Number(process.env.STUDIO_WITNESS_FPS) || 10));
 /** The thinking it may do; the measured run used this much. */

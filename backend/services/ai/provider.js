@@ -195,13 +195,13 @@ const FALLBACK = {
   // us-central1 and every one of them refuses with 404.
   vertex: "gemini-2.5-flash",
   /**
-   * The same model on AI Studio, on purpose. Every prompt the studio pipeline
-   * sends — the frame reader, the pointer checks, the crop question — was
-   * tuned and validated against gemini-2.5-flash, and changing the provider
-   * must not quietly change the model under them as well. A newer model is a
-   * deliberate GEMINI_MODEL change, measured on the labelled recordings first.
+   * Not the same model as Vertex, because AI Studio no longer serves it: on
+   * 2026-09-26 a new paid account got 404 "gemini-2.5-flash is no longer
+   * available to new users … use models/gemini-3.8-flash" on every frame.
+   * The studio prompts were tuned on 2.5-flash, so this one is re-measured on
+   * the labelled recordings (scripts/pointerTest/truth.mjs) — see the notes.
    */
-  aistudio: "gemini-2.5-flash",
+  aistudio: "gemini-3.8-flash",
 };
 
 const first = (...vals) => vals.map((v) => String(v || "").trim()).find(Boolean) || "";
@@ -554,14 +554,32 @@ const outRate = () => num(process.env.GEMINI_USD_PER_M_OUTPUT, 9.0);
  * honest consequence of choosing it.
  */
 const _noZeroThinking = new Set();
+
+/**
+ * ── A MODEL GOOGLE HAS RETIRED IS REPLACED WITH THE ONE GOOGLE NAMES ─────────
+ * Google retires models under running code and says what to use instead, in
+ * the refusal itself: 404 "This model models/gemini-2.5-flash is no longer
+ * available to new users. Please update your code to use
+ * models/gemini-3.8-flash". Every frame of every recording failed on that until
+ * a deploy — so the replacement Google names is taken, once per model, for the
+ * rest of this process, and said loudly: the environment still names the old
+ * model, and that should be changed on purpose.
+ */
+const _retired = new Map();
+const replacementFor = (err) => {
+  if (statusOf(err) !== 404) return null;
+  const m = String(err?.message || "").match(/use\s+models\/([a-z0-9][a-z0-9.\-]*)/i);
+  return m ? m[1].replace(/\.+$/, "") || null : null;
+};
 const refusesZeroThinking = (err) =>
   /thinking_budget/i.test(String(err?.message || "")) && statusOf(err) === 400;
 
-export async function request({ model, contents, config = {}, onWait = null } = {}) {
+export async function request({ model: asked, contents, config = {}, onWait = null } = {}) {
   const deadline = Date.now() + MAX_WAIT_MS;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    const model = _retired.get(asked) || asked;
     const { client, bucket, where } = pick();
     await budget(bucket, deadline, onWait);
     await enter();
@@ -591,6 +609,14 @@ export async function request({ model, contents, config = {}, onWait = null } = 
     if (refusesZeroThinking(failed) && !_noZeroThinking.has(model)) {
       _noZeroThinking.add(model);
       console.warn(`[ai] ${model} will not accept thinkingBudget: 0; sending without it (it will cost more)`);
+      attempt--;
+      continue;
+    }
+
+    const next = replacementFor(failed);
+    if (next && next !== model && !_retired.has(asked)) {
+      _retired.set(asked, next);
+      console.warn(`[ai] ${model} is retired for this account; using ${next}, as Google's refusal says. Set GEMINI_MODEL (or the specific GEMINI_*_MODEL) to ${next} to make it deliberate.`);
       attempt--;
       continue;
     }
