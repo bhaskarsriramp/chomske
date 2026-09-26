@@ -62,6 +62,10 @@ import {
 import { GRADIENTS } from "../services/studio/render/frame.js";
 import { applySuggestion } from "../services/studio/suggestions.js";
 import { isDemoSlug, ensureDemoSlug } from "../services/studio/demoSlug.js";
+import StudioAsset from "../models/StudioAsset.js";
+import {
+  BACKGROUND_LIMITS, BACKGROUND_TYPES, prepareBackground, saveBackground, deleteBackground, shapeBackground,
+} from "../services/studio/backgrounds.js";
 import { cuesFromNarration } from "../services/studio/captionsFromScript.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 import { dbUnreachable, noteDbFault } from "../db.js";
@@ -214,6 +218,56 @@ router.get("/demos", wrap(async (req, res) => {
     success: true,
     demos: await Promise.all(demos.map((d) => shapeDemoCard(d, { baseUrl: baseUrlOf() }))),
   });
+}));
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Background images
+   The creator's own, for the canvas. They belong to the account rather than to
+   a demo, so they are listed and stored apart from any one recording. See
+   services/studio/backgrounds.js.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+router.get("/backgrounds", wrap(async (req, res) => {
+  const rows = await StudioAsset.find({ user: req.user.id, kind: "background" })
+    .sort({ created_at: -1 })
+    .limit(BACKGROUND_LIMITS.maxPerUser)
+    .lean();
+  res.json({
+    success: true,
+    backgrounds: await Promise.all(rows.map((a) => shapeBackground(a, { baseUrl: baseUrlOf() }))),
+  });
+}));
+
+router.post(
+  "/backgrounds",
+  // Refused on the declared size before a byte is read, with a sentence rather
+  // than the parser's bare 413.
+  (req, res, next) =>
+    Number(req.get("content-length") || 0) > BACKGROUND_LIMITS.maxBytes
+      ? fail(res, 413, `That image is over ${Math.round(BACKGROUND_LIMITS.maxBytes / 1048576)} MB.`)
+      : next(),
+  express.raw({ type: BACKGROUND_TYPES, limit: BACKGROUND_LIMITS.maxBytes }),
+  wrap(async (req, res) => {
+    const held = await StudioAsset.countDocuments({ user: req.user.id, kind: "background" });
+    if (held >= BACKGROUND_LIMITS.maxPerUser) {
+      return fail(res, 429, `You have ${held} background images, which is the most there can be.`);
+    }
+    let prepared;
+    try {
+      prepared = await prepareBackground(req.body);
+    } catch (err) {
+      if (err.userMessage) return fail(res, err.status || 400, err.userMessage);
+      throw err;
+    }
+    const asset = await saveBackground(req.user.id, prepared);
+    res.json({ success: true, background: await shapeBackground(asset, { baseUrl: baseUrlOf() }) });
+  })
+);
+
+router.delete("/backgrounds/:id", wrap(async (req, res) => {
+  const gone = await deleteBackground(req.user.id, req.params.id);
+  if (!gone) return fail(res, 404, "That image isn't here any more.");
+  res.json({ success: true, deleted: String(req.params.id) });
 }));
 
 router.post("/demos", wrap(async (req, res) => {

@@ -178,6 +178,54 @@
 .st-ghost-tag.is-left { left: auto; right: calc(100% + 6px); }
 @keyframes st-ghost-in { from { opacity: 0; } to { opacity: 1; } }
 
+/* ── The canvas controls under the preview (CanvasBar.js) ────────────────
+   Short sliders with their name beside them. The value rises above a slider
+   while it is hovered, focused or dragged, so it costs the row no width. */
+.st-canvasbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.st-mini { position: relative; display: inline-flex; align-items: center; gap: 7px; }
+.st-mini-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-mute); cursor: default;
+}
+.st-mini .st-range { width: 76px; }
+.st-mini-value {
+  position: absolute; right: 0; bottom: calc(100% + 5px);
+  padding: 2px 6px; border-radius: 5px; background: var(--ink); color: #fff;
+  font-size: 10.5px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap;
+  opacity: 0; transform: translateY(2px); pointer-events: none;
+  transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.st-mini:hover .st-mini-value, .st-mini:focus-within .st-mini-value { opacity: 1; transform: none; }
+/* An uploaded background in the picker: its delete button shows on hover or
+   keyboard focus (always, on a touch screen), and "delete?" is asked on the
+   tile itself. */
+.st-bg-tile { position: relative; }
+.st-bg-del {
+  position: absolute; top: 6px; right: 6px; width: 26px; height: 26px;
+  display: grid; place-items: center; border: none; border-radius: 7px; cursor: pointer;
+  background: rgba(6, 8, 14, .72); color: #fff; backdrop-filter: blur(4px);
+  opacity: 0; transition: opacity var(--dur-hover) var(--ease-out);
+}
+.st-bg-tile:hover .st-bg-del, .st-bg-tile:focus-within .st-bg-del { opacity: 1; }
+@media (hover: none) { .st-bg-del { opacity: 1; } }
+.st-bg-confirm {
+  position: absolute; inset: 0; border-radius: 10px;
+  display: grid; place-items: center; align-content: center; gap: 7px; padding: 6px;
+  background: rgba(6, 8, 14, .8); color: #fff; font-size: 12px; font-weight: 650; text-align: center;
+}
+.st-bg-confirm button {
+  font: inherit; font-size: 11.5px; padding: 4px 10px; border-radius: 7px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, .38); background: transparent; color: #fff;
+}
+.st-bg-confirm button.is-yes { background: var(--bad); border-color: transparent; }
+.st-bg-confirm button:disabled { opacity: .6; cursor: default; }
+
+/* An uploaded background still on its way, in the picker's grid. */
+.st-bg-loading { display: block; background: #EDEDED; animation: hg-pulse 1.5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .st-mini-value { transition: none; }
+}
+
 /* The time under the pointer, on the ruler, and a hairline down to the lanes. */
 .st-hover-time {
   position: absolute; top: 0; z-index: 7; pointer-events: none;

@@ -390,6 +390,8 @@ const PATHS = {
   close: <path d="M6 6l12 12M18 6L6 18" />,
   chevron: <path d="M9 6l6 6-6 6" />,
   download: <><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5" /><path d="M4 19h16" /></>,
+  upload: <><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5" /><path d="M4 19h16" /></>,
+  image: <><rect x="3.5" y="5" width="17" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="M20.5 16l-5-5-8 8" /></>,
   check: <path d="M5 12.5l4.5 4.5L19 7" />,
   back: <path d="M15 6l-6 6 6 6" />,
   scissors: <><circle cx="7" cy="6" r="2.5" /><circle cx="7" cy="18" r="2.5" /><path d="M9 7.5L19 17M9 16.5L19 7" /></>,

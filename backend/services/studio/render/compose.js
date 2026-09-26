@@ -46,6 +46,7 @@ import { cleanExportOptions, crfFor, SPEEDS } from "../exportOptions.js";
 import { zoomFilter, cameraKeys } from "./camera.js";
 import { renderOverlay } from "./overlay.js";
 import { videoBox, radiusFor, drawBackground, drawCornerMask } from "./frame.js";
+import { loadBackgroundImage } from "../backgrounds.js";
 import { hideFilter } from "./hide.js";
 import { buildAss, buildSrt, missingFonts, FONTS_DIR } from "./ass.js";
 
@@ -63,7 +64,7 @@ const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
  * @param {Function} o.onProgress (fraction, stage)
  * @returns {Promise<{ width, height, duration, drew, srt }>}
  */
-export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {} }) {
+export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null }) {
   const o = cleanExportOptions(options, { hevc: options?.codec === "hevc" });
   const lay = layout(timeline);
   if (!(lay.duration > 0.1)) {
@@ -74,7 +75,7 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   const sourceWidth = src.width || timeline.source?.width || 1920;
   const sourceHeight = src.height || timeline.source?.height || 1080;
 
-  const design = timeline.canvas || {};
+  let design = timeline.canvas || {};
   const box = videoBox({
     aspect: o.aspect,
     resolution: o.resolution,
@@ -145,7 +146,15 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   const bgPath = path.join(workDir, "background.png");
   const maskPath = path.join(workDir, "mask.png");
   const radius = radiusFor(design.radius ?? 18, H);
-  await drawBackground({ canvas: design, box, dest: bgPath });
+  // An uploaded image, fetched from storage and checked against the demo's
+  // owner (`user`). One that is gone or unreadable exports as no background
+  // rather than failing a render somebody paid for.
+  let bgImage = null;
+  if (design.background?.kind === "image") {
+    bgImage = await loadBackgroundImage({ id: design.background.value, user, workDir });
+    if (!bgImage) design = { ...design, background: { kind: "none" } };
+  }
+  await drawBackground({ canvas: design, box, dest: bgPath, image: bgImage });
   const rounded = radius > 0;
   if (rounded) await drawCornerMask({ box, radius, dest: maskPath });
 

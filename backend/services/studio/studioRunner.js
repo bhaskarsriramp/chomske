@@ -992,6 +992,8 @@ const render = {
       workDir,
       dest: out,
       options,
+      // Whose background images the timeline may name (backgrounds.js).
+      user: demo.user,
       onProgress: (p, stage) => report({ stage, progress: Math.max(0.01, Math.min(0.99, p)) }),
     });
 

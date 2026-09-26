@@ -76,10 +76,43 @@ export const renderDownloadUrl = (id, rid, file = "") =>
   api.get(`/studio/demos/${id}/renders/${rid}/download`, { params: file ? { file } : undefined }).then((r) => abs(r.data.url));
 export const deleteRender = (id, rid) => api.delete(`/studio/demos/${id}/renders/${rid}`).then(data);
 
+/* ── Background images ──────────────────────────────────────────────────────
+   The creator's own, kept on the account for every demo. */
+const withBgLinks = (b) => ({ ...b, url: abs(b.url), thumb_url: abs(b.thumb_url) });
+
+export const listBackgrounds = () =>
+  api.get("/studio/backgrounds").then((r) => (r.data.backgrounds || []).map(withBgLinks));
+export const deleteBackground = (id) => api.delete(`/studio/backgrounds/${id}`).then((r) => r.data);
+
+/**
+ * Upload one image as a background.
+ *
+ * Straight fetch rather than `api`, which only speaks JSON: the body here is
+ * the file itself, sent as it is, with its own type. Errors come back in the
+ * same `{ response: { status, data } }` shape as everything else.
+ */
+export async function uploadBackground(file) {
+  const res = await fetch(`${ROOT}/studio/backgrounds`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": file.type, Accept: "application/json" },
+    body: file,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body?.background) {
+    // A proxy in front of the API refuses an oversized body with an HTML page,
+    // not our JSON, so a 413 with no message still gets a sentence.
+    const message = body?.message || (res.status === 413 ? "That image is too large to upload." : "");
+    throw Object.assign(new Error(message || "Upload failed"), { response: { status: res.status, data: { ...body, message } } });
+  }
+  return withBgLinks(body.background);
+}
+
 const studioApi = {
   getStudioConfig, listDemos, createDemo, getDemo, renameDemo, deleteDemo,
   startUpload, resumeUpload, completeUpload,
   startAnalysis, readScreens, requestCaptions, captionsFromScript, requestReview, resolveSuggestion,
   saveTimeline, startRender, renderDownloadUrl, deleteRender,
+  listBackgrounds, uploadBackground, deleteBackground,
 }
 export default studioApi;

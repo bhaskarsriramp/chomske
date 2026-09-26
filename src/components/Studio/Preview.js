@@ -52,8 +52,26 @@ export default function Preview({
   // pins it to the top edge, so leftover height gathers below it rather than
   // opening a gap under the header.
   align = "center",
+  // The signed URL of an uploaded background image, when the canvas uses one.
+  backgroundUrl = "",
 }) {
   const wrapRef = useRef(null);
+  // The background image, once loaded. A ref, not state: the frame loop below
+  // runs every animation frame and simply picks it up on the next one.
+  const bgImgRef = useRef(null);
+  useEffect(() => {
+    bgImgRef.current = null;
+    if (!backgroundUrl) return undefined;
+    const img = new Image();
+    let live = true;
+    img.onload = () => {
+      if (live) bgImgRef.current = img;
+    };
+    img.src = backgroundUrl;
+    return () => {
+      live = false;
+    };
+  }, [backgroundUrl]);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const box = useBox(wrapRef);
@@ -140,7 +158,7 @@ export default function Preview({
     const cam = cameraAt(tl, srcT, { track: drawnTrack(tl) });
 
     // ── The ground ──────────────────────────────────────────────────────
-    paintBackground(ctx, tl.canvas, W, H);
+    paintBackground(ctx, tl.canvas, W, H, bgImgRef.current);
 
     // ── The picture ─────────────────────────────────────────────────────
     const dx = vb.x * W;
@@ -295,9 +313,29 @@ export default function Preview({
 const ASPECTS = { "16:9": [1920, 1080], "9:16": [1080, 1920], "1:1": [1080, 1080], "4:5": [1080, 1350] };
 const ASPECT_OF = (a, sw, sh) => ASPECTS[a] || (a === "source" && sw > 0 && sh > 0 ? [sw, sh] : ASPECTS["16:9"]);
 
-function paintBackground(ctx, design, W, H) {
+function paintBackground(ctx, design, W, H, image = null) {
   const bg = design?.background || { kind: "none" };
   ctx.clearRect(0, 0, W, H);
+  if (bg.kind === "image") {
+    // Exactly as frame.js draws it for the export: cover, centred, then a 28%
+    // dark veil so the interface on top stays the brightest thing. Black until
+    // the image has loaded, which is also what the export does without one.
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, W, H);
+    if (image?.width) {
+      const ar = image.width / image.height;
+      let iw = W;
+      let ih = W / ar;
+      if (ih < H) {
+        ih = H;
+        iw = H * ar;
+      }
+      ctx.drawImage(image, (W - iw) / 2, (H - ih) / 2, iw, ih);
+      ctx.fillStyle = "rgba(8,10,14,0.28)";
+      ctx.fillRect(0, 0, W, H);
+    }
+    return;
+  }
   if (bg.kind === "none") {
     ctx.fillStyle = "#000";
   } else if (bg.kind === "solid") {

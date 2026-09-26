@@ -106,7 +106,7 @@ export function publishProgress(demo, fields = {}) {
    each signature is a round trip to IAM. So a URL is minted once and reused for
    half its lifetime. Same cache as the script editor's, separate instance. */
 const urlCache = new Map();
-async function stableUrl(key, opts) {
+export async function stableUrl(key, opts) {
   if (!key) return "";
   const now = Date.now();
   const hit = urlCache.get(key);

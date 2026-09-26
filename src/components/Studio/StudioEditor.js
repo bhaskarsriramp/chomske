@@ -20,7 +20,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onLiveEvent } from "../../realtime/socket";
-import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, requestReview, resolveSuggestion } from "./studioApi";
+// requestReview and resolveSuggestion are hidden with the Review tab (see TABS).
+import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds } from "./studioApi";
 import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
@@ -28,7 +29,10 @@ import ExportDialog from "./ExportDialog";
 import { create } from "./create";
 // StepsPanel is hidden for now with the Steps tab (see TABS); put it back in
 // this import when the tab returns.
-import { ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, CanvasPanel, /* StepsPanel, */ SuggestionsPanel } from "./panels";
+// CanvasPanel and SuggestionsPanel are hidden with their tabs (see TABS): the
+// canvas controls moved under the preview (CanvasBar.js).
+import { ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, /* CanvasPanel, StepsPanel, SuggestionsPanel */ } from "./panels";
+import CanvasBar from "./CanvasBar";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon } from "./ui";
 import { layout, newId, clamp, fmtTime } from "./model";
@@ -46,8 +50,10 @@ const TABS = [
   { id: "blur", label: "Blur", icon: "blur" },
   { id: "captions", label: "Captions", icon: "caption" },
   { id: "cursor", label: "Cursor", icon: "cursor" },
-  { id: "canvas", label: "Canvas", icon: "canvas" },
-  { id: "review", label: "Review", icon: "sparkle" },
+  // Canvas moved under the preview (CanvasBar.js); Review is hidden for now.
+  // Both are commented out, not removed, with their panel blocks in `panel`.
+  // { id: "canvas", label: "Canvas", icon: "canvas" },
+  // { id: "review", label: "Review", icon: "sparkle" },
 ];
 
 /** Changes closer together than this, to the same thing, are one undo step. */
@@ -116,6 +122,19 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const [reading, setReading] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [starting, setStarting] = useState(false);
+  // The creator's uploaded background images (null while loading). Read once
+  // here so the preview can draw the one the canvas names, and handed to the
+  // background picker, which adds to it when something new is uploaded.
+  const [backgrounds, setBackgrounds] = useState(null);
+  useEffect(() => {
+    let live = true;
+    listBackgrounds()
+      .then((list) => live && setBackgrounds(list))
+      .catch(() => live && setBackgrounds([]));
+    return () => {
+      live = false;
+    };
+  }, []);
   const narrow = useNarrow();
 
   const undo = useRef([]);
@@ -522,6 +541,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     }
   }, [demoId]);
 
+  /* Review: hidden for now with its tab (see TABS). Restore with it.
   const onReview = useCallback(async () => {
     setReviewing(true);
     try {
@@ -548,6 +568,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     },
     [demoId, save]
   );
+  */
 
   /* ── Keyboard ─────────────────────────────────────────────────────────── */
 
@@ -641,6 +662,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   const total = lay?.duration || 0;
   const panelProps = { tl, selection, onSelect: select, edit, time, seek };
+
+  // The uploaded image the canvas names, if it names one and it is still there.
+  const bgChoice = tl.canvas?.background;
+  const bgImageUrl =
+    bgChoice?.kind === "image" ? (backgrounds || []).find((b) => b.id === bgChoice.value)?.url || "" : "";
 
   /**
    * Whether the model has read what is ON the screens of this recording.
@@ -750,6 +776,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         // Up against the header on a desk, so the spare height goes to the
         // timeline's side. Full screen and phones stay centred.
         align={full || narrow ? "center" : "top"}
+        backgroundUrl={bgImageUrl}
       />
       {full && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 4px 0", color: "#fff" }}>
@@ -794,6 +821,17 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           Delete
         </Btn>
       )}
+      {/* Shape, size, corners, shadow and background: they change the whole
+          picture, so they sit under it (CanvasBar.js). */}
+      <div style={{ marginLeft: "auto" }}>
+        <CanvasBar
+          tl={tl}
+          edit={edit}
+          backgrounds={backgrounds}
+          onUploaded={(b) => setBackgrounds((list) => [b, ...(list || []).filter((x) => x.id !== b.id)])}
+          onDeleted={(id) => setBackgrounds((list) => (list || []).filter((x) => x.id !== id))}
+        />
+      </div>
       {/* Cut from the playhead: a transport action, so it sits with play and
           full screen rather than at the far end of the timeline. */}
       <Btn
@@ -801,7 +839,6 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         icon={<Icon name="scissors" size={13} />}
         onClick={() => addCut(time)}
         title="Cut two seconds from here"
-        style={{ marginLeft: "auto" }}
       >
         Cut here
       </Btn>
@@ -873,6 +910,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         />
       )}
       {tab === "cursor" && <CursorPanel tl={tl} edit={edit} />}
+      {/* Canvas and Review: hidden with their tabs (see TABS).
       {tab === "canvas" && <CanvasPanel tl={tl} edit={edit} />}
       {tab === "review" && (
         <SuggestionsPanel
@@ -883,6 +921,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           onDismiss={(sid) => onSuggestion(sid, "dismiss")}
         />
       )}
+      */}
     </>
   );
 
