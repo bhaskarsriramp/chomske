@@ -48,6 +48,10 @@ export default function Preview({
   onSelect,
   onChange,
   showChrome = true,
+  // "center" puts the frame in the middle of the space it is given; "top"
+  // pins it to the top edge, so leftover height gathers below it rather than
+  // opening a gap under the header.
+  align = "center",
 }) {
   const wrapRef = useRef(null);
   const videoRef = useRef(null);
@@ -244,7 +248,7 @@ export default function Preview({
   return (
     <div
       ref={wrapRef}
-      style={{ position: "relative", flex: 1, minHeight: 0, display: "grid", placeItems: "center", overflow: "hidden" }}
+      style={{ position: "relative", flex: 1, minHeight: 0, display: "grid", placeItems: align === "top" ? "start center" : "center", overflow: "hidden" }}
     >
       <video
         ref={videoRef}

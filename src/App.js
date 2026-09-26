@@ -98,8 +98,12 @@ export default function App() {
             {/* No first-run step. A new account lands straight in the studio:
                 recording a demo needs nothing chosen up front, so there is no
                 question worth asking before the first click. */}
+            {/* `item` is a screen's own sub-address. Only the studio has one,
+                /app/studio/<slug> for an open recording. One route with an
+                optional segment rather than two, so the shell is never
+                remounted moving between a list and one of its items. */}
             <Route
-              path="/app/:tab"
+              path="/app/:tab/:item?"
               element={
                 !resolved ? <Booting />
                   : !user ? <Navigate to="/" replace />

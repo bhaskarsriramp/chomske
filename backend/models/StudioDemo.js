@@ -297,6 +297,17 @@ const RenderSchema = new Schema(
 
 const StudioDemoSchema = new Schema({
   user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+
+  /**
+   * What the address bar shows for this demo: /app/studio/<slug>. Random, not
+   * derived from _id. See services/studio/demoSlug.js.
+   *
+   * No default, deliberately. A sparse index skips documents where the field
+   * is MISSING, not where it is null, so a null default would make every demo
+   * from before slugs existed collide on the unique index.
+   */
+  slug: { type: String, unique: true, sparse: true },
+
   title: { type: String, default: "" },
 
   //   new        created, nothing uploaded

@@ -1,13 +1,21 @@
 /**
  * StudioPage.js: the studio's own shell, and the library it opens on.
  *
- * Three destinations, and which one is showing is a piece of state rather than
- * a route, because a recording in progress must not be lost to a stray
- * navigation and a route change is the easiest way to lose one.
+ * Three destinations:
  *
- *   library   every recording, newest first
- *   record    the setup screen and then the capture itself
- *   edit      one demo open in the editor
+ *   library   every recording, newest first        /app/studio
+ *   record    the setup screen and the capture     /app/studio (state)
+ *   edit      one demo open in the editor          /app/studio/<slug>
+ *
+ * ── THE EDITOR IS A URL, THE RECORDER IS NOT ─────────────────────────────────
+ * An open demo has its own address, so a reload lands back in the editor
+ * rather than on the library, Back returns to the library, and a demo can be
+ * bookmarked. The address carries the demo's slug, a random id made for the
+ * address bar (backend services/studio/demoSlug.js), never its database id.
+ *
+ * The recorder stays a piece of state, because a recording in progress must
+ * not be lost to a stray navigation and a route change is the easiest way to
+ * lose one.
  *
  * ── THE ANALYSIS IS STARTED FROM HERE ────────────────────────────────────────
  * Not from the recorder, which has already navigated away by then, and not from
@@ -17,6 +25,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { getStudioConfig, listDemos, deleteDemo, startAnalysis } from "./studioApi";
 import RecordPage from "./RecordPage";
 import StudioEditor from "./StudioEditor";
@@ -26,7 +35,16 @@ import { fmtTime } from "./model";
 import "./studio.css";
 
 export default function StudioPage() {
+  // The open demo's slug, from /app/studio/<slug>, or undefined on the library.
+  const { item: openKey } = useParams();
+  const navigate = useNavigate();
+  // Whether this page pushed the editor's address itself. If it did, leaving
+  // the editor steps Back, so the history does not fill with library entries;
+  // if the editor was reached by a reload or a link, it replaces instead.
+  const pushedEditor = useRef(false);
+
   const [config, setConfig] = useState(null);
+  // "library" or "record". The editor is not here: it is the URL.
   const [view, setView] = useState({ name: "library" });
   const [demos, setDemos] = useState(null);
   const [notice, setNotice] = useState("");
@@ -41,18 +59,42 @@ export default function StudioPage() {
 
   useEffect(() => {
     getStudioConfig().then(setConfig).catch(() => setConfig(null));
-    refresh();
-  }, [refresh]);
+  }, []);
+
+  // Read whenever the library is what is showing: on arrival, and on the way
+  // back from the editor, where a status or a title may have changed.
+  useEffect(() => {
+    if (!openKey) refresh();
+  }, [openKey, refresh]);
 
   // The library goes stale while a demo is preparing or analysing somewhere
   // else. Only polled while something is actually running.
   useEffect(() => {
-    if (view.name !== "library") return undefined;
+    if (openKey || view.name !== "library") return undefined;
     const busy = (demos || []).some((d) => ["preparing", "analysing", "uploading"].includes(d.status));
     if (!busy) return undefined;
     const id = setInterval(refresh, 4000);
     return () => clearInterval(id);
-  }, [view.name, demos, refresh]);
+  }, [openKey, view.name, demos, refresh]);
+
+  const openEditor = useCallback(
+    (key) => {
+      // Leaving the editor lands on the library, never back on the recorder.
+      setView({ name: "library" });
+      pushedEditor.current = true;
+      navigate(`/app/studio/${key}`);
+    },
+    [navigate]
+  );
+
+  const closeEditor = useCallback(() => {
+    if (pushedEditor.current) {
+      pushedEditor.current = false;
+      navigate(-1);
+    } else {
+      navigate("/app/studio", { replace: true });
+    }
+  }, [navigate]);
 
   /**
    * Start the automatic edit.
@@ -63,33 +105,34 @@ export default function StudioPage() {
    * credits" — comes back as a 402 either way.
    */
   const analyse = useCallback(
-    async (demo, opts = {}) => {
+    async (key, opts = {}) => {
       try {
-        await startAnalysis(demo.id, { captions: !!opts.captions });
-        setView({ name: "edit", id: demo.id });
+        await startAnalysis(key, { captions: !!opts.captions });
       } catch (err) {
         const d = err?.response?.data;
         setNotice(d?.message || "We couldn't start the edit.");
-        setView({ name: "edit", id: demo.id });
       }
       refresh();
     },
     [refresh]
   );
 
+  // A recording has just been saved. The edit is started BEFORE the editor
+  // opens, so the editor's first read already sees it running rather than
+  // offering to start it.
   const opened = useCallback(
-    (id, opts) => {
-      refresh();
-      if (opts?.autoAnalyse) analyse({ id }, opts);
-      else setView({ name: "edit", id });
+    async (key, opts) => {
+      if (opts?.autoAnalyse) await analyse(key, opts);
+      else refresh();
+      openEditor(key);
     },
-    [analyse, refresh]
+    [analyse, openEditor, refresh]
   );
 
   // The editor is full-bleed: its own header, stage, inspector and ruler each
   // own their edge, exactly as the script editor's workspace does. The library
   // and the recorder are pages, and pages have margins.
-  const bleed = view.name === "edit";
+  const bleed = !!openKey;
 
   return (
     <div className="st-root" style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -132,28 +175,24 @@ export default function StudioPage() {
           ...(bleed ? null : { overflowX: "hidden", overflowY: "auto", padding: `${notice ? 14 : 18}px 20px 20px` }),
         }}
       >
-        {view.name === "record" && (
-          <RecordPage config={config} onOpen={opened} onCancel={() => setView({ name: "library" })} />
-        )}
-
-        {view.name === "edit" && (
+        {openKey ? (
+          // Keyed, so moving from one demo to another starts a fresh editor
+          // rather than one carrying the last demo's undo history.
           <StudioEditor
-            demoId={view.id}
+            key={openKey}
+            demoId={openKey}
             config={config}
-            onExit={() => {
-              setView({ name: "library" });
-              refresh();
-            }}
-            onAnalyse={analyse}
+            onExit={closeEditor}
+            onAnalyse={(demo) => analyse(demo.slug || demo.id)}
           />
-        )}
-
-        {view.name === "library" && (
+        ) : view.name === "record" ? (
+          <RecordPage config={config} onOpen={opened} onCancel={() => setView({ name: "library" })} />
+        ) : (
           <Library
             demos={demos}
             config={config}
             onRecord={() => setView({ name: "record" })}
-            onOpen={(id) => setView({ name: "edit", id })}
+            onOpen={(d) => openEditor(d.slug || d.id)}
             onDelete={async (id) => {
               // Throws on failure, so the confirmation dialog can say so
               // rather than closing over a recording that is still there.
@@ -172,7 +211,14 @@ export default function StudioPage() {
    The library
    ──────────────────────────────────────────────────────────────────────────── */
 
-const GRID = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(248px, 1fr))", gap: 16 };
+// Three a row at most. Each column is at least a third of the row (less the two
+// gaps) and never under 248px, so a wide window gets three larger cards rather
+// than a fourth, and a narrow one drops to two, then one, on its own.
+const GRID = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(max(248px, calc((100% - 32px) / 3)), 1fr))",
+  gap: 16,
+};
 
 function Library({ demos, config, onRecord, onOpen, onDelete }) {
   // The recording waiting on "are you sure", or null.
@@ -216,7 +262,7 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
       {demos?.length > 0 && (
         <div style={GRID}>
           {demos.map((d) => (
-            <Card key={d.id} demo={d} onOpen={() => onOpen(d.id)} onDelete={() => setDoomed(d)} />
+            <Card key={d.id} demo={d} onOpen={() => onOpen(d)} onDelete={() => setDoomed(d)} />
           ))}
         </div>
       )}

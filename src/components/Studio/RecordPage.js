@@ -221,7 +221,8 @@ export default function RecordPage({ config, onOpen, onCancel }) {
       });
 
       setPhase("thinking");
-      onOpen(demo.id, { autoAnalyse, captions: wantCaptions });
+      // By slug, the id the editor's address uses (StudioPage.js).
+      onOpen(demo.slug || demo.id, { autoAnalyse, captions: wantCaptions });
     } catch (err) {
       console.error("[studio] finish failed", err);
       setError(err?.message?.includes("abort") ? "The upload was stopped." : "We couldn't save that recording. Please try again.");

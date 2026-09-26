@@ -137,6 +137,8 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
 
   return {
     id: String(d._id),
+    // The address-bar id (demoSlug.js). The browser opens a demo by this.
+    slug: d.slug || "",
     title: d.title || "Untitled recording",
     status: d.status,
     stage: d.stage || "",
@@ -239,6 +241,7 @@ export async function shapeDemoCard(doc, { baseUrl } = {}) {
   const lay = d.timeline ? layout(d.timeline) : null;
   return {
     id: String(d._id),
+    slug: d.slug || "",
     title: d.title || "Untitled recording",
     status: d.status,
     progress: d.progress || 0,
@@ -248,7 +251,6 @@ export async function shapeDemoCard(doc, { baseUrl } = {}) {
     width: d.recording?.width || 0,
     height: d.recording?.height || 0,
     renders: (d.renders || []).filter((r) => r.status === "done").length,
-    summary: d.analysis?.summary || "",
     thumb_url: await stableUrl(d.recording?.thumb_key, { baseUrl }),
     created_at: d.created_at,
     updated_at: d.updated_at,

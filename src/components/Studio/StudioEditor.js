@@ -26,7 +26,9 @@ import Preview from "./Preview";
 import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
 import { create } from "./create";
-import { ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, CanvasPanel, StepsPanel, SuggestionsPanel } from "./panels";
+// StepsPanel is hidden for now with the Steps tab (see TABS); put it back in
+// this import when the tab returns.
+import { ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, CanvasPanel, /* StepsPanel, */ SuggestionsPanel } from "./panels";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon } from "./ui";
 import { layout, newId, clamp, fmtTime } from "./model";
@@ -36,7 +38,10 @@ import "./studio.css";
 const TAB_OF = { zoom: "zoom", blur: "blur", cue: "captions" };
 
 const TABS = [
-  { id: "steps", label: "Steps", icon: "steps" },
+  // Steps is hidden for now, not removed. Restoring it is this line, the
+  // StepsPanel import above, `screensRead` and the panel block in `panel`, and
+  // the default tab back to "steps".
+  // { id: "steps", label: "Steps", icon: "steps" },
   { id: "zoom", label: "Zoom", icon: "zoom" },
   { id: "blur", label: "Blur", icon: "blur" },
   { id: "captions", label: "Captions", icon: "caption" },
@@ -55,7 +60,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const [tab, setTab] = useState("steps");
+  // Zoom while Steps is hidden (see TABS).
+  const [tab, setTab] = useState("zoom");
   const [selection, setSelection] = useState(null);
 
   /**
@@ -208,7 +214,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
    */
   useEffect(() => {
     const off = onLiveEvent("studio:update", (e) => {
-      if (String(e?.demo) !== String(demoId)) return;
+      // Events name the demo by its database id; `demoId` here is usually the
+      // slug from the address bar, so the loaded demo's own id is the match.
+      if (String(e?.demo) !== String(demoRef.current?.id || demoId)) return;
       if (e.notice) setNotice(e.notice);
       if (e.captioning === false) setCaptioning(false);
       if (e.reading === false || e.read) setReading(false);
@@ -643,7 +651,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
    * the same thing to a creator about to export — nothing on these frames has
    * been checked — so all three say it.
    */
-  const screensRead = (demo.analysis?.frames_read || 0) > 0;
+  // Read only by the Steps panel, which is hidden for now (see TABS).
+  // const screensRead = (demo.analysis?.frames_read || 0) > 0;
   /**
    * ── READING THE FRAMES AND CHECKING THEM ARE DIFFERENT PROMISES ───────────
    * The blur pass can be paused while the rest of the vision pass runs, and
@@ -738,6 +747,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         selection={selection}
         onSelect={select}
         onChange={changeItem}
+        // Up against the header on a desk, so the spare height goes to the
+        // timeline's side. Full screen and phones stay centred.
+        align={full || narrow ? "center" : "top"}
       />
       {full && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 4px 0", color: "#fff" }}>
@@ -782,7 +794,18 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           Delete
         </Btn>
       )}
-      <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={{ ...fullBtn(false), marginLeft: "auto" }}>
+      {/* Cut from the playhead: a transport action, so it sits with play and
+          full screen rather than at the far end of the timeline. */}
+      <Btn
+        size="s"
+        icon={<Icon name="scissors" size={13} />}
+        onClick={() => addCut(time)}
+        title="Cut two seconds from here"
+        style={{ marginLeft: "auto" }}
+      >
+        Cut here
+      </Btn>
+      <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={fullBtn(false)}>
         <Icon name="expand" size={15} />
       </button>
     </div>
@@ -823,6 +846,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   const panel = (
     <>
+      {/* Steps: hidden for now with its tab (see TABS).
       {tab === "steps" && (
         <StepsPanel
           tl={tl}
@@ -836,6 +860,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           readCost={readCost}
         />
       )}
+      */}
       {tab === "zoom" && <ZoomPanel {...panelProps} />}
       {tab === "blur" && <BlurPanel {...panelProps} read={blurChecked} reading={reading} onRead={onRead} readCost={readCost} />}
       {tab === "captions" && (
@@ -869,10 +894,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       selection={selection}
       onSelect={select}
       onChange={changeItem}
-      onAddCut={addCut}
       onRemoveCut={removeCut}
       onAdd={addAt}
       onDelete={removeSelected}
+      // Taller lanes on a desk: bigger chips to grab, drag and resize.
+      height={narrow ? 30 : 42}
     />
   );
 
@@ -933,18 +959,25 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       {header}
       {banner}
+      {/* ── THE TIMELINE RUNS THE FULL WIDTH ───────────────────────────────
+          Picture and inspector share the top row; the timeline has the whole
+          bottom row to itself, under the inspector too. Every second of the
+          ruler is wider, so a short zoom is something a pointer can actually
+          catch, and nothing on it is hidden behind the side panel. The
+          inspector scrolls inside its own column when its settings outgrow
+          the height the timeline leaves it. */}
       <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(330px, 400px)", gridTemplateRows: "minmax(0,1fr) auto" }}>
-        <div className="st-stage" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "14px 18px 8px" }}>
+        <div className="st-stage" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "8px 18px 8px" }}>
           {preview}
           {transport}
         </div>
-        <aside style={{ gridColumn: 2, gridRow: "1 / span 2", minHeight: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
+        <aside style={{ gridColumn: 2, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
           {tabs}
           <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "14px 16px 28px" }}>
             {panel}
           </div>
         </aside>
-        <div style={{ gridColumn: 1, gridRow: 2, minWidth: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "12px 16px 14px" }}>
+        <div style={{ gridColumn: "1 / -1", gridRow: 2, minWidth: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "12px 16px 14px" }}>
           {ruler}
         </div>
       </div>
@@ -1011,10 +1044,13 @@ function EditorSkeleton({ narrow }) {
     </div>
   );
   const cards = [96, 72, 120].map((h, i) => <Skeleton key={i} variant="rectangular" height={h} style={{ borderRadius: 12 }} />);
+  // The ruler, then one bar per lane, at the lane height the real timeline uses.
   const ruler = (
-    <div style={{ display: "grid", gap: 8 }}>
-      <Skeleton variant="rectangular" height={10} style={{ borderRadius: 5 }} />
-      <Skeleton variant="rectangular" height={44} />
+    <div style={{ display: "grid", gap: 6 }}>
+      <Skeleton variant="rectangular" height={10} style={{ borderRadius: 5, marginBottom: 4 }} />
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} variant="rectangular" height={narrow ? 30 : 42} />
+      ))}
     </div>
   );
 
@@ -1038,15 +1074,15 @@ function EditorSkeleton({ narrow }) {
     <div role="status" aria-label="Opening the recording" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       {header}
       <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(330px, 400px)", gridTemplateRows: "minmax(0,1fr) auto" }}>
-        <div className="st-stage" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "14px 18px 8px" }}>
+        <div className="st-stage" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "8px 18px 8px" }}>
           <Skeleton variant="rectangular" height="auto" style={{ ...onStage, flex: 1, minHeight: 0, borderRadius: 10 }} />
           {transport}
         </div>
-        <aside style={{ gridColumn: 2, gridRow: "1 / span 2", minHeight: 0, overflow: "hidden", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
+        <aside style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflow: "hidden", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
           {tabs}
           <div style={{ display: "grid", gap: 12, padding: "14px 16px" }}>{cards}</div>
         </aside>
-        <div style={{ gridColumn: 1, gridRow: 2, minWidth: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "12px 16px 14px" }}>
+        <div style={{ gridColumn: "1 / -1", gridRow: 2, minWidth: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "12px 16px 14px" }}>
           {ruler}
         </div>
       </div>

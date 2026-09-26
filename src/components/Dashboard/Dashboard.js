@@ -115,7 +115,7 @@ export default function Dashboard(props) {
 
 function Shell({ user, onSignOut }) {
   const isNarrow = useIsMobile(900);
-  const { tab: tabParam } = useParams();
+  const { tab: tabParam, item } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -169,6 +169,9 @@ function Shell({ user, onSignOut }) {
   // A typo or a stale bookmark shouldn't render an empty shell.
   // A showcase is sent to Import rather than the studio, which it is refused.
   if (!TAB_IDS.includes(tabParam)) return <Navigate to={isShowcase ? "/app/import" : "/app/studio"} replace />;
+  // Only the studio has sub-addresses (an open recording); anywhere else one
+  // is a stale or mistyped link, and the screen itself is what was meant.
+  if (item && tabParam !== "studio") return <Navigate to={`/app/${tabParam}`} replace />;
 
   // Three screens exist only for one of the two session kinds, and landing on
   // the wrong one should move you rather than render an empty shell: a showcase

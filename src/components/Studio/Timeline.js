@@ -57,7 +57,6 @@ export default function Timeline({
   selection,
   onSelect,
   onChange,
-  onAddCut,
   onRemoveCut,
   onAdd,
   height = 30,
@@ -232,7 +231,11 @@ export default function Timeline({
         if (it.start > t && it.start < gapEnd) gapEnd = it.start;
       }
       const end = Math.min(gapEnd, t + DEFAULT_LENGTH[kind]);
-      return end - t >= MIN_LENGTH[kind] ? { lane: laneKey, t, end } : null;
+      if (end - t < MIN_LENGTH[kind]) return null;
+      // The label goes to the pointer's left when there is not room for it
+      // on the right before the visible edge of the timeline.
+      const edge = viewRef.current?.getBoundingClientRect().right ?? Infinity;
+      return { lane: laneKey, t, end, flip: edge - clientX < TAG_ROOM };
     },
     [fractionAt, items, total]
   );
@@ -388,8 +391,14 @@ export default function Timeline({
                       background: `${lane.color}1F`,
                     }}
                   >
-                    <Icon name="plus" size={11} />
-                    <span>Add {NOUN[lane.key]}</span>
+                    {/* The label is its own tag rather than text inside the
+                        outline: a 2.5 second zoom or a 1.8 second caption is
+                        often narrower than "Add caption", and the outline's
+                        width is the promise, so it is not stretched to fit. */}
+                    <span className={`st-ghost-tag${ghost.flip ? " is-left" : ""}`} style={{ borderColor: lane.color }}>
+                      <Icon name="plus" size={11} />
+                      Add {NOUN[lane.key]}
+                    </span>
                   </div>
                 )}
 
@@ -497,21 +506,8 @@ export default function Timeline({
             </button>
           )}
         </span>
-        {onAddCut && (
-          <button
-            type="button"
-            onClick={() => onAddCut(time)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 5,
-              border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-body)",
-              borderRadius: 8, padding: "4px 9px", fontSize: 11.5, fontWeight: 620, cursor: "pointer", fontFamily: "inherit",
-            }}
-            title="Cut two seconds from here"
-          >
-            <Icon name="scissors" size={12} />
-            Cut here
-          </button>
-        )}
+        {/* "Cut here" lives with the play controls under the preview now
+            (StudioEditor.js transport), beside full screen. */}
       </div>
     </div>
   );
@@ -530,6 +526,9 @@ const LABEL_W = 74;
 
 const SINGULAR = { zooms: "zoom", blurs: "blur", cues: "cue" };
 const NOUN = { zooms: "zoom", blurs: "blur", cues: "caption" };
+
+/** Pixels the add label needs to the right of the pointer, or it flips left. */
+const TAG_ROOM = 118;
 
 /** Recording time → output time, snapping a moment inside a cut forward. */
 function outOf(srcT, lay) {

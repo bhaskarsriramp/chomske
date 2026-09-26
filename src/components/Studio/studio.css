@@ -151,21 +151,31 @@
 .st-cut:hover { background: repeating-linear-gradient(-45deg, rgba(197, 34, 31, .22) 0 5px, rgba(197, 34, 31, .08) 5px 10px); }
 
 /* ── Adding by pointing at an empty stretch of a lane ──────────────────────
-   The dashed outline of what a click would make (Timeline.js). It never takes
-   the pointer, so the lane underneath keeps receiving the moves that place it.
-   The label starts clear of the arrow, whose tip sits on the outline's left
-   edge. It fades in once when it appears and then tracks the pointer with no
-   transition: an outline that lagged behind the cursor would read as slow. */
+   The dashed outline of what a click would make (Timeline.js), at its real
+   length. It never takes the pointer, so the lane underneath keeps receiving
+   the moves that place it. It fades in once when it appears and then tracks
+   the pointer with no transition: an outline that lagged behind the cursor
+   would read as slow. Above the chips (z-index) so its label is never hidden
+   under a neighbouring zoom; below the playhead. */
 .st-ghost {
-  position: absolute; top: 2px; bottom: 2px;
-  display: flex; align-items: center; gap: 4px;
-  padding: 0 7px 0 13px;
+  position: absolute; top: 2px; bottom: 2px; z-index: 3;
   border: 1.5px dashed; border-radius: 6px;
-  color: var(--ink-body); font-size: 10.5px; font-weight: 650;
-  white-space: nowrap; overflow: hidden;
   pointer-events: none;
   animation: st-ghost-in 120ms var(--ease-out) both;
 }
+
+/* Its label: a solid tag, free to run past a short outline so the words are
+   always whole. It starts clear of the arrow, whose tip sits on the outline's
+   left edge, and moves to the arrow's left near the end of the timeline. */
+.st-ghost-tag {
+  position: absolute; top: 50%; left: 13px; transform: translateY(-50%);
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px 3px 6px; border: 1px solid; border-radius: 6px;
+  background: var(--card); box-shadow: var(--shadow-xs);
+  color: var(--ink); font-size: 10.5px; font-weight: 650; line-height: 1.2;
+  white-space: nowrap;
+}
+.st-ghost-tag.is-left { left: auto; right: calc(100% + 6px); }
 @keyframes st-ghost-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* The time under the pointer, on the ruler, and a hairline down to the lanes. */

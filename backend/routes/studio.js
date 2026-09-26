@@ -61,6 +61,7 @@ import {
 } from "../services/studio/timeline.js";
 import { GRADIENTS } from "../services/studio/render/frame.js";
 import { applySuggestion } from "../services/studio/suggestions.js";
+import { isDemoSlug, ensureDemoSlug } from "../services/studio/demoSlug.js";
 import { cuesFromNarration } from "../services/studio/captionsFromScript.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 import { dbUnreachable, noteDbFault } from "../db.js";
@@ -100,16 +101,26 @@ const wrap = (fn) => async (req, res) => {
 const cleanTitle = (v) => String(v || "").replace(/\s+/g, " ").trim().slice(0, 120);
 const sinceDay = () => new Date(Date.now() - 24 * 3600 * 1000);
 
+/**
+ * The caller's own demo, by slug or by id.
+ *
+ * The browser opens a demo by its slug, the id in the address bar
+ * (services/studio/demoSlug.js); older links and internal calls use the _id.
+ * The two can never be confused: a slug is ten characters, an id is 24.
+ */
 async function ownDemo(req, res) {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+  const key = String(req.params.id || "");
+  const by = isDemoSlug(key) ? { slug: key } : mongoose.Types.ObjectId.isValid(key) ? { _id: key } : null;
+  if (!by) {
     fail(res, 404, "Recording not found.");
     return null;
   }
-  const demo = await StudioDemo.findOne({ _id: req.params.id, user: req.user.id });
+  const demo = await StudioDemo.findOne({ ...by, user: req.user.id });
   if (!demo) {
     fail(res, 404, "Recording not found.");
     return null;
   }
+  await ensureDemoSlug(demo);
   return demo;
 }
 
@@ -197,6 +208,8 @@ router.get("/demos", wrap(async (req, res) => {
     .limit(120)
     .select("-timeline -capture.track -capture.motion -analysis.suggestions")
     .lean();
+  // Demos from before slugs existed get theirs here, the first time they are listed.
+  await Promise.all(demos.filter((d) => !d.slug).map(ensureDemoSlug));
   res.json({
     success: true,
     demos: await Promise.all(demos.map((d) => shapeDemoCard(d, { baseUrl: baseUrlOf() }))),
@@ -214,6 +227,9 @@ router.post("/demos", wrap(async (req, res) => {
     status: "new",
     expires_at: bumpExpiry(),
   });
+  // Minted here rather than in create(), so the one place that handles a
+  // collision on the unique index is ensureDemoSlug.
+  await ensureDemoSlug(demo);
   return respond(req, res, demo);
 }));
 
