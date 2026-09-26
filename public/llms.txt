@@ -1,34 +1,42 @@
 # Clipo
 
-> Clipo is a screen recorder for product demos that runs entirely in the browser. It finds the creator's cursor in every frame of the recording, works out which controls were clicked, and moves the camera to them automatically, so one take becomes a demo people can follow. There is nothing to install and no browser extension. Credits are bought once and never expire. There is no subscription.
+> Clipo is a screen recorder for product demos that runs entirely in the browser. Record a tab, a window or your whole screen, and Clipo turns it into a polished demo that zooms in on every click, smoothly and automatically. There is nothing to install and no browser extension. Credits are bought once and never expire. There is no subscription.
 
-A browser's screen capture hands over pixels and nothing else: no cursor position, no clicks, no record of what was pressed. Most auto-zoom recorders get around that with a desktop app or an extension that logs the mouse. Clipo does not. It reads the pointer and the presses back out of the recording itself, then builds the camera moves from them.
+Most auto-zoom recorders need a desktop app for one operating system, or an extension from one browser's store. Clipo needs neither: open it in a tab, press record, and show your product the way you normally would. The zooms, the smooth cursor and the framing are done for you.
 
 ## What a creator gets
 
 ### Record in the browser
 - Record a tab, a window or the whole screen, straight from the browser
 - Nothing to install and no extension to approve
+- Works in current desktop versions of Chrome, Edge, Firefox, Safari, Brave and Opera, on macOS, Windows, Linux and ChromeOS
 
-### The pointer, found in every frame
-- The cursor is matched by its shape, at the size and design the creator's machine actually draws
-- A cursor inside a video playing on the page is recognised as somebody else's and left alone
+### Automatic zoom on every click
+- The camera glides in on each click and eases back out once the result is on screen
+- Nothing to mark or tag while recording
+- Clipo suggests a zoom wherever a moment deserves one
 
-### Clicks, worked out from the picture
-- A press is weighed from the pointer's approach, the interface acknowledging it, and what changed on screen afterwards
-- A hand resting on a link is not a click, and a page scrolling under a still cursor is not a click
+### A cursor worth watching
+- A shaky cursor path, redrawn smooth
+- Arrow, ring or dot styles, with a glow, a trail and a ripple on every click
 
-### Camera moves built around the control
-- Each zoom is framed on the control that was pressed rather than a single coordinate, so the whole thing stays in shot
-- The camera arrives before the press and leaves once the result is on screen
+### Framed like a product shot
+- Backgrounds, padding, rounded corners and a shadow, kept for every export
+
+### Captions and steps
+- Captions from your voice, timed and burned in, in the style you pick
+- A step-by-step of the demo, written for you, ready for a help article or a voiceover script
+
+### Private information stays private
+- Blur, pixelate or cover an email, a key or a customer's name, for a moment or the whole recording
 
 ### An editor for every decision
-- Each camera move is an object on a timeline with a position, a level and a curve: drag it, retime it, delete it, or add one
-- The cursor path is redrawn and smoothed
-- Steps are read out of the recording, and captions are burned into the final file
+- Every zoom sits on a timeline: drag it, retime it, delete it, or add your own
+- Trim, cursor settings and captions in the same place
 
 ### Output in the shape it has to land in
-- 16:9 for product tours, 9:16 for launch clips, 1:1 for feature updates, and GIF
+- MP4, WebM or GIF, from 720p up to 4K, at 24, 30 or 60fps
+- 16:9 for product tours, 9:16 for Reels and Shorts, 1:1, and 4:5 for LinkedIn
 
 ## Pricing
 
@@ -48,10 +56,10 @@ A browser's screen capture hands over pixels and nothing else: no cursor positio
 
 ## Key pages
 
-- [Homepage](https://tryclipo.com/): what Clipo does and a live demonstration of the auto zoom
-- [How it works](https://tryclipo.com/#how): from recording to finished camera moves
-- [The editor](https://tryclipo.com/#editor): changing what Clipo decided
-- [Privacy](https://tryclipo.com/#privacy): where a recording goes
+- [Homepage](https://tryclipo.com/): what Clipo does, with a live demonstration of the auto zoom
+- [How it works](https://tryclipo.com/#how): from recording to finished demo
+- [Features](https://tryclipo.com/#features): cursor, backgrounds, formats, captions, blur and export
+- [Pricing](https://tryclipo.com/#pricing): credit packs and free credits
 - [Contact](https://tryclipo.com/contact): support, sales and security
 - [Privacy Policy](https://tryclipo.com/privacy): what is collected and why
 - [Terms of Service](https://tryclipo.com/terms): the agreement, credits, and who owns the videos
@@ -61,7 +69,7 @@ A browser's screen capture hands over pixels and nothing else: no cursor positio
 ## Ownership and control
 
 - Creators own their recordings and every video Clipo renders from them
-- Recordings are uploaded and analysed on Clipo's servers. Sampled frames are read by Google Gemini to work out the steps; the rest is measured from the pixels
+- Recordings are uploaded securely and edited on Clipo's servers; the privacy policy has the details
 - Recordings and their renders can be deleted at any time, and deleting removes the source file too
 
 ## Company

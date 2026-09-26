@@ -6,8 +6,9 @@
  * applied and one screen keeps saying the old name for a year.
  *
  * The mark is the real file from public/ rather than a letter in a coloured
- * tile. It ships at 192px and renders at 26-30, so it stays sharp on a retina
- * screen at every size used here.
+ * tile: logo.svg, the Play Pointer, so it is sharp at every size and on every
+ * screen. (A new file name, not logo192.png, so nobody's month-long image
+ * cache keeps showing the previous mark.)
  */
 /**
  * @param {string} color  wordmark colour. Defaults to the app's ink, which is
@@ -18,7 +19,7 @@ export default function Logo({ size = 27, text = true, fontSize = 16.5, color = 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
       <img
-        src={`${process.env.PUBLIC_URL || ""}/logo192.png`}
+        src={`${process.env.PUBLIC_URL || ""}/logo.svg`}
         alt=""
         aria-hidden="true"
         width={size}

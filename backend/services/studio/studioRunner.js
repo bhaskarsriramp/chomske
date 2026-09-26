@@ -43,6 +43,7 @@ import { sanitizeTimeline } from "./timeline.js";
 import { RENDER_ENGINE, cleanExportOptions } from "./exportOptions.js";
 import { STUDIO_LIMITS, demoKey, demoPrefix, bumpExpiry, publishProgress } from "./demoService.js";
 import { jobDir } from "../media/scratch.js";
+import { retryDb } from "../../db.js";
 
 const WORKER = `${os.hostname()}:${process.pid}`;
 const LEASE_MS = 90_000;
@@ -145,8 +146,30 @@ async function execute(job) {
       throw Object.assign(userError("This kept failing, so we stopped trying. Your credits are back."), { final: true });
     }
     await handler.run(job, workDir);
-    await StudioJob.updateOne({ _id: job._id }, { $set: { status: "done", lease_until: null, updated_at: new Date() } });
   } catch (err) {
+    await settleFailed(job, handler, err);
+    return;
+  } finally {
+    clearInterval(beat);
+    await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+  // The work is done and saved; only the job row is left. A dropout here must
+  // not send a finished analysis round again (and pay the model twice), so it
+  // is waited out. If it outlasts that, the lease lapses and the job runs again.
+  await retryDb(`job ${job._id} done`, () =>
+    StudioJob.updateOne({ _id: job._id }, { $set: { status: "done", lease_until: null, updated_at: new Date() } })
+  ).catch((err) => console.error(`[studio] ${job.type} ${job._id}: could not mark done:`, err.message));
+}
+
+/**
+ * What a failed job becomes: waiting out a network fault, another attempt, or
+ * failed with the credits back. Never throws: the caller is a promise nobody
+ * awaits, and a rejection there crashed the worker whenever the database was
+ * the thing that had failed. If even these writes cannot land, the lease lapses
+ * and the job is claimed again, which is the same outcome one step later.
+ */
+async function settleFailed(job, handler, err) {
+  try {
     console.error(`[studio] ${job.type} ${job._id} (attempt ${job.attempts}) failed:`, err.message);
     const retries = job.retries || 0;
     const network = !err.final && transient(err) && retries < (NETWORK_RETRIES[job.type] || 0);
@@ -157,27 +180,34 @@ async function execute(job) {
 
     if (network) {
       const wait = Math.min(10 * 60_000, 15_000 * 2 ** retries);
-      await StudioJob.updateOne(
-        { _id: job._id },
-        {
-          $set: {
-            status: "queued", lease_until: null,
-            not_before: new Date(Date.now() + wait),
-            error: String(err.message).slice(0, 500), updated_at: new Date(),
-          },
-          $inc: { retries: 1, attempts: -1 },
-        }
+      await retryDb(`job ${job._id} requeue`, () =>
+        StudioJob.updateOne(
+          { _id: job._id },
+          {
+            $set: {
+              status: "queued", lease_until: null,
+              not_before: new Date(Date.now() + wait),
+              error: String(err.message).slice(0, 500), updated_at: new Date(),
+            },
+            $inc: { retries: 1, attempts: -1 },
+          }
+        )
       );
       console.log(`[studio] ${job.type} ${job._id}: network fault, trying again in ${Math.round(wait / 1000)}s (${retries + 1}/${NETWORK_RETRIES[job.type]})`);
     } else if (again) {
-      await StudioJob.updateOne({ _id: job._id }, { $set: { status: "queued", lease_until: null, error: String(err.message).slice(0, 500) } });
+      await retryDb(`job ${job._id} requeue`, () =>
+        StudioJob.updateOne({ _id: job._id }, { $set: { status: "queued", lease_until: null, error: String(err.message).slice(0, 500) } })
+      );
     } else {
-      await StudioJob.updateOne({ _id: job._id }, { $set: { status: "failed", lease_until: null, error: String(err.message).slice(0, 500), updated_at: new Date() } });
-      await handler.fail(job, err).catch((e) => console.error(`[studio] ${job.type} failure handling:`, e.message));
+      await retryDb(`job ${job._id} failed`, () =>
+        StudioJob.updateOne({ _id: job._id }, { $set: { status: "failed", lease_until: null, error: String(err.message).slice(0, 500), updated_at: new Date() } })
+      );
+      await retryDb(`job ${job._id} failure handling`, () => handler.fail(job, err)).catch((e) =>
+        console.error(`[studio] ${job.type} failure handling:`, e.message)
+      );
     }
-  } finally {
-    clearInterval(beat);
-    await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  } catch (e) {
+    console.error(`[studio] ${job.type} ${job._id}: could not record the failure (${e.message}); the lease will lapse and it runs again`);
   }
 }
 
@@ -365,7 +395,8 @@ const analyse = {
       onProgress: (p, stage) => report({ stage, progress: Math.max(0.01, Math.min(0.99, p)) }),
     });
 
-    await StudioDemo.updateOne(
+    // Waits out a database dropout: this is what the model calls were paid for.
+    await retryDb(`save analysis ${demo._id}`, () => StudioDemo.updateOne(
       { _id: demo._id },
       {
         $set: {
@@ -411,7 +442,7 @@ const analyse = {
         },
         $inc: { rev: 1 },
       }
-    );
+    ));
 
     console.log(
       `[studio] analysed ${demo._id}: ${result.frames_read} frames (${result.frames_failed} missed), ` +
@@ -544,7 +575,7 @@ const vision = {
       { duration: fresh.recording?.duration || 0, source: fresh.timeline?.source }
     );
 
-    await StudioDemo.updateOne(
+    await retryDb(`save reading ${demo._id}`, () => StudioDemo.updateOne(
       { _id: demo._id },
       {
         $set: {
@@ -564,7 +595,7 @@ const vision = {
         },
         $inc: { rev: 1, "analysis.usd": result.spend.usd, "analysis.calls": result.spend.calls },
       }
-    );
+    ));
 
     console.log(
       `[studio] read ${demo._id}: ${result.frames_read} frames (${result.frames_failed} missed), ` +
@@ -637,7 +668,7 @@ const captions = {
       { duration: fresh.recording?.duration || 0, source: fresh.timeline?.source }
     );
 
-    await StudioDemo.updateOne(
+    await retryDb(`save captions ${demo._id}`, () => StudioDemo.updateOne(
       { _id: demo._id },
       {
         $set: {
@@ -650,7 +681,7 @@ const captions = {
         },
         $inc: { rev: 1, "analysis.usd": result.spend.usd, "analysis.calls": result.spend.calls },
       }
-    );
+    ));
 
     console.log(`[studio] captioned ${demo._id}: ${result.cues.length} cues (${result.language_label || "unknown"})`);
     publishProgress(demo, { stage: "", progress: 1, captioning: false, captions: result.cues.length });
@@ -910,10 +941,10 @@ const review = {
     // they would be stale the moment they were stored.
     set["analysis.audited_rev"] = (fresh.rev || 0) + (patched ? 1 : 0);
 
-    await StudioDemo.updateOne(
+    await retryDb(`save review ${demo._id}`, () => StudioDemo.updateOne(
       { _id: demo._id },
       { $set: set, $inc: { "analysis.usd": spend.usd, "analysis.calls": spend.calls, ...(patched ? { rev: 1 } : {}) } }
-    );
+    ));
 
     console.log(
       `[studio] reviewed ${demo._id}: ${audit.checked} moment(s) checked, ` +
@@ -980,7 +1011,7 @@ const render = {
 
     const stat = await statObject(outKey).catch(() => null);
 
-    await setRender(demo._id, job.ref, {
+    await retryDb(`save export ${demo._id}/${job.ref}`, () => setRender(demo._id, job.ref, {
       status: "done",
       stage: "",
       progress: 1,
@@ -993,8 +1024,8 @@ const render = {
       drew: result.drew,
       engine: RENDER_ENGINE,
       finished_at: new Date(),
-    });
-    await setDemo(demo._id, { expires_at: bumpExpiry() });
+    }));
+    await setDemo(demo._id, { expires_at: bumpExpiry() }).catch(() => {});
 
     console.log(`[studio] rendered ${demo._id}/${job.ref}: ${result.width}x${result.height} ${result.duration.toFixed(1)}s ${JSON.stringify(result.drew)}`);
     publishProgress(demo, { render: job.ref, status: "done", progress: 1 });
@@ -1019,9 +1050,12 @@ const render = {
  */
 async function refundCharge(demo, charged, note) {
   if (!(charged > 0)) return;
-  await refund(demo.user, charged, { refType: "StudioDemo", refId: demo._id, note }).catch((err) =>
-    console.error(`[studio] refund failed for ${demo._id}:`, err.message)
-  );
+  // A dropout waits rather than losing the creator's credits. Still never
+  // throws: settleFailed() retries a whole fail handler on a dropout, which is
+  // only safe because nothing after the refund can fail it.
+  await retryDb(`refund ${demo._id}`, () =>
+    refund(demo.user, charged, { refType: "StudioDemo", refId: demo._id, note })
+  ).catch((err) => console.error(`[studio] refund failed for ${demo._id}:`, err.message));
 }
 
 const HANDLERS = { prepare, analyse, vision, captions, render, review };

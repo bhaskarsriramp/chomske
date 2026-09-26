@@ -63,6 +63,7 @@ import { GRADIENTS } from "../services/studio/render/frame.js";
 import { applySuggestion } from "../services/studio/suggestions.js";
 import { cuesFromNarration } from "../services/studio/captionsFromScript.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
+import { dbUnreachable, noteDbFault } from "../db.js";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -84,7 +85,14 @@ const wrap = (fn) => async (req, res) => {
   try {
     await fn(req, res);
   } catch (err) {
-    console.error(`[studio] ${req.method} ${req.originalUrl} failed:`, err);
+    // A database dropout is one line, and recorded before the 500 goes out so
+    // it leaves as a 503 the browser retries (middleware/dbDropout.js).
+    if (dbUnreachable(err)) {
+      noteDbFault(err);
+      console.warn(`[studio] ${req.method} ${req.originalUrl}: database unreachable (${err.name}: ${String(err.message).split("\n")[0].slice(0, 160)})`);
+    } else {
+      console.error(`[studio] ${req.method} ${req.originalUrl} failed:`, err);
+    }
     if (!res.headersSent) fail(res, 500, err.userMessage || "Something went wrong. Please try again.");
   }
 };

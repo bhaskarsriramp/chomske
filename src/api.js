@@ -43,7 +43,36 @@ function httpError(message, extra) {
   return Object.assign(new Error(message), extra);
 }
 
+/**
+ * ── A READ THAT HIT A MOMENT'S OUTAGE IS SENT AGAIN ─────────────────────────
+ * The database behind the API drops out for a few seconds now and then (see
+ * backend/db.js), and the API restarts on a deploy. Either way the answer is a
+ * 502/503/504 or no answer at all, and the same request a moment later works.
+ * So a GET, which changes nothing and is safe to repeat, is tried up to twice
+ * more before the caller hears about it; the server's Retry-After is honoured
+ * up to a few seconds. Anything that changes something is never repeated here:
+ * a POST that timed out may already have charged credits.
+ */
+const RETRY_STATUSES = new Set([502, 503, 504]);
+const RETRY_PAUSES_MS = [1500, 4000];
+
 async function request(method, path, body, config = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await once(method, path, body, config);
+    } catch (err) {
+      const status = err?.response?.status;
+      const retryable = method === "GET" && (RETRY_STATUSES.has(status) || err?.code === "ERR_NETWORK");
+      if (!retryable || attempt >= RETRY_PAUSES_MS.length || config.signal?.aborted) throw err;
+      const asked = Number(err?.response?.headers?.get?.("Retry-After")) * 1000;
+      const pause = asked > 0 ? Math.min(asked, 5000) : RETRY_PAUSES_MS[attempt];
+      await new Promise((resolve) => setTimeout(resolve, pause));
+      if (config.signal?.aborted) throw httpError("canceled", { code: "ERR_CANCELED", name: "CanceledError" });
+    }
+  }
+}
+
+async function once(method, path, body, config = {}) {
   const controller = new AbortController();
   // A flag rather than abort(reason), because we need to tell OUR timeout apart
   // from the caller's own abort, and abort reasons are not universally readable.

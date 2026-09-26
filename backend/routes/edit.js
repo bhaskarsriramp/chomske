@@ -56,6 +56,7 @@ import {
 import { sanitizeTimeline, layout, newId, buildFreeTimeline, mergeFreeTimeline } from "../services/edit/timeline.js";
 import { CAPTION_LANGUAGES, LANGUAGE_CODES, languageByCode } from "../services/edit/languages.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
+import { dbUnreachable, noteDbFault } from "../db.js";
 import {
   editCost, EDIT_ANALYSE_CREDITS_PER_MIN, EDIT_EXPORT_CREDITS_PER_MIN, EDIT_TRANSLATE_CREDITS_PER_MIN,
 } from "../services/creditPricing.js";
@@ -84,7 +85,14 @@ const wrap = (fn) => async (req, res) => {
   try {
     await fn(req, res);
   } catch (err) {
-    console.error(`[edit] ${req.method} ${req.originalUrl} failed:`, err);
+    // A database dropout is one line, and recorded before the 500 goes out so
+    // it leaves as a 503 the browser retries (middleware/dbDropout.js).
+    if (dbUnreachable(err)) {
+      noteDbFault(err);
+      console.warn(`[edit] ${req.method} ${req.originalUrl}: database unreachable (${err.name}: ${String(err.message).split("\n")[0].slice(0, 160)})`);
+    } else {
+      console.error(`[edit] ${req.method} ${req.originalUrl} failed:`, err);
+    }
     if (!res.headersSent) fail(res, 500, err.userMessage || "Something went wrong. Please try again.");
   }
 };

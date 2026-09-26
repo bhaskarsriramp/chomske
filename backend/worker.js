@@ -37,7 +37,7 @@
  */
 import "dotenv/config";
 import os from "os";
-import connectToMongo from "./db.js";
+import connectToMongo, { keepRunningThroughDbDropouts } from "./db.js";
 import { startEditRunner } from "./services/edit/editRunner.js";
 import { startStudioRunner } from "./services/studio/studioRunner.js";
 import { describeProvider, describeModels, providerReady, limits } from "./services/ai/provider.js";
@@ -45,6 +45,10 @@ import redis, { isRedisEnabled } from "./redis.js";
 import { scratchRoot, scratchFree, isTmpfs } from "./services/media/scratch.js";
 
 const WHO = `${os.hostname()}:${process.pid}`;
+
+// A job's write that loses the database mid-flight must not take every other
+// job in this process down with it. See db.js.
+keepRunningThroughDbDropouts("worker");
 
 /**
  * ── A WORKER THAT CANNOT REACH REDIS IS A WORKER NOBODY CAN SEE ──────────────

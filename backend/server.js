@@ -12,7 +12,9 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
 
-import connectToMongo from "./db.js";
+import "./middleware/asyncErrors.js";
+import connectToMongo, { keepRunningThroughDbDropouts } from "./db.js";
+import { dbDropoutAnswers, answeredDbDropout } from "./middleware/dbDropout.js";
 import authRoutes from "./routes/auth.js";
 import transcribeRoutes from "./routes/transcribe.js";
 import channelRoutes from "./routes/channel.js";
@@ -35,6 +37,9 @@ import { startNewsScheduler } from "./services/newsScheduler.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
 import { initSocketServer } from "./socket/index.js";
 import { describeProvider, describeModels, providerReady, limits } from "./services/ai/provider.js";
+
+// A query that loses the database mid-flight must not take the API down with it. See db.js.
+keepRunningThroughDbDropouts("server");
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "8001", 10);
@@ -81,6 +86,10 @@ app.use("/edit", express.json({ limit: "8mb" }));
 app.use("/studio", express.json({ limit: "48mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
+
+// A route's 500 during a database dropout becomes a 503 that says so, and the
+// browser retries reads that get one. See middleware/dbDropout.js.
+app.use(dbDropoutAnswers);
 
 // ── Local media storage, ahead of the global ceiling ────────────────────────
 // Upload chunks and <video> range requests arrive by the hundred, and each one
@@ -198,6 +207,11 @@ app.use(
 // stack traces and provider messages must never reach the browser.
 app.use((req, res) => res.status(404).json({ success: false, message: "Not found" }));
 app.use((err, req, res, _next) => {
+  // Already answered, then failed: nothing more can be sent. Express's own
+  // handler closes the connection. (Async failures reach here now; see
+  // middleware/asyncErrors.js.)
+  if (res.headersSent) return _next(err);
+  if (answeredDbDropout(err, req, res)) return;
   console.error("[server] unhandled:", err);
   const status = /not allowed by CORS/.test(err?.message || "") ? 403 : 500;
   res.status(status).json({ success: false, message: status === 403 ? "Origin not allowed" : "Server error" });
