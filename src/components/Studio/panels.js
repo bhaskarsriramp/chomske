@@ -649,7 +649,7 @@ function CaptionLooks({ value, color, onChange, compact = false }) {
 }
 
 const LOOK_TILE = "linear-gradient(135deg,#6B7F95,#C9A27A)";
-const STYLE_LABEL = { trylipi: "TryLipi", hormozi: "Bold", apple: "Quiet", minimal: "Minimal", neon: "Neon" };
+const STYLE_LABEL = { trylipi: "Clipo", hormozi: "Bold", apple: "Quiet", minimal: "Minimal", neon: "Neon" };
 /** Caption pixels are measured against a 1080-short-side frame. See render/ass.js. */
 const CAPTION_PX = { min: 12, max: 96 };
 

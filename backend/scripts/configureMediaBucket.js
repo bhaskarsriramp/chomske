@@ -41,7 +41,7 @@ const origins = String(process.env.CORS_ORIGINS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 if (!origins.length) {
-  console.error("CORS_ORIGINS is empty. Set it to the app's origins (e.g. https://trylipi.online) first.");
+  console.error("CORS_ORIGINS is empty. Set it to the app's origins (e.g. https://tryclipo.com) first.");
   process.exit(1);
 }
 const retention = parseInt(process.env.EDIT_RETENTION_DAYS || "7", 10);

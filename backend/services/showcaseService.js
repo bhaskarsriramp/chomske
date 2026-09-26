@@ -97,7 +97,7 @@ export function newSlug() {
 
 /** The link an admin copies. Absolute, because it goes into an email. */
 export function shareUrl(slug) {
-  const base = (process.env.PUBLIC_APP_URL || "https://trylipi.online").replace(/\/+$/, "");
+  const base = (process.env.PUBLIC_APP_URL || "https://tryclipo.com").replace(/\/+$/, "");
   return `${base}/v/${slug}`;
 }
 
@@ -200,7 +200,7 @@ export async function createShowcase({ adminId, displayName, urls = [], notes = 
     name,
     // Not a real inbox, and never emailed. Present because too much of the app
     // assumes a user has one; unique so two showcases cannot collide.
-    email: `showcase+${slug}@trylipi.invalid`,
+    email: `showcase+${slug}@clipo.invalid`,
     // The showcase sees the same feed a new creator sees.
     categories: [DEFAULT_CATEGORY],
     onboarded_at: now,

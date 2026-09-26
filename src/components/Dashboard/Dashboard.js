@@ -63,7 +63,7 @@ export const TAB_IDS = ["studio", ...CREATE_TABS, "analysis", "voice", "scripts"
 
 /**
  * ── THE OLD PRODUCT IS PARKED, NOT DELETED ───────────────────────────────────
- * Lipi began as a news-to-script writer with a video editor attached. It is now
+ * Clipo (then called Lipi) began as a news-to-script writer with a video editor attached. It is now
  * a demo recorder, and these screens are no longer in the navigation. They are
  * still HERE: the routes resolve, the panels render, the data and the scripts
  * are untouched, and anybody holding a link to one still lands on it. Only the

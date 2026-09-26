@@ -89,7 +89,7 @@ function Nav() {
   return (
     <header className="lp-nav">
       <div className="lp-nav__in">
-        <a className="lp-mark" href="#top" aria-label="Lipi Demo Studio, back to top">
+        <a className="lp-mark" href="#top" aria-label="Clipo Demo Studio, back to top">
           <Logo size={22} color="currentColor" />
           <span>Demo Studio</span>
         </a>
@@ -117,11 +117,11 @@ function Hero({ onCredential, onError, busy, error }) {
         <div className="lp-hero__copy">
           <h1>
             Your screen recording doesn&rsquo;t know you clicked.
-            <span> Lipi works it out.</span>
+            <span> Clipo works it out.</span>
           </h1>
           <p className="lp-lede">
             A browser hands over pixels and nothing else &mdash; no clicks, no cursor position, no idea what you
-            pressed. Lipi finds the pointer in every frame, works out what it landed on, and moves the camera
+            pressed. Clipo finds the pointer in every frame, works out what it landed on, and moves the camera
             there. You record once and get a demo people can follow.
           </p>
 
@@ -185,7 +185,7 @@ function ZoomDemo() {
         </div>
       </div>
       <figcaption id="lp-demo-cap">
-        <span className="lp-tick" /> The camera is not keyframed. It is following a press Lipi recovered from the
+        <span className="lp-tick" /> The camera is not keyframed. It is following a press Clipo recovered from the
         picture.
       </figcaption>
     </figure>
@@ -212,7 +212,7 @@ function Trick() {
             outline that identifies a cursor has been smeared by the compressor.
           </p>
           <p>
-            So Lipi reads it back out. It matches the pointer&rsquo;s shape in every frame, watches for the
+            So Clipo reads it back out. It matches the pointer&rsquo;s shape in every frame, watches for the
             interface acknowledging a press, measures what changed and where, and weighs those together. A hand
             resting on a link is not a click. A page scrolling under a still cursor is not a click. A button
             lighting up under a pointer that stopped is.
@@ -285,7 +285,7 @@ function Editor() {
           <h2>Every decision it made is a thing you can move.</h2>
           <p className="lp-body">
             The first cut is a starting point, not an export. Each camera move is an object on a timeline with a
-            position, a level and a curve &mdash; drag it, retime it, delete it, or add one where Lipi was too
+            position, a level and a curve &mdash; drag it, retime it, delete it, or add one where Clipo was too
             careful.
           </p>
           <ul className="lp-list">
@@ -426,7 +426,7 @@ function Close({ busy }) {
     <section className="lp-close">
       <div className="lp-in">
         <h2>Record it once.</h2>
-        <p>Then see what Lipi makes of it.</p>
+        <p>Then see what Clipo makes of it.</p>
         <button className="lp-btn lp-btn--solid" type="button" disabled={busy} onClick={() => scrollTo(SIGN_IN)}>
           Continue with Google
         </button>

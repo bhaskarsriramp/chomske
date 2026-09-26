@@ -153,7 +153,7 @@ mouse down while recording, and let the machine do the labelling:
 
     # on the Windows machine doing the recording, before pressing Record
     powershell -ExecutionPolicy Bypass -File scripts/pointerTest/qa/mouselog.ps1
-    # … record the demo in TryLipi, stop, then Ctrl+C the logger
+    # … record the demo in Clipo, stop, then Ctrl+C the logger
 
     # fetch the recording's src/recording.mp4 into fixtures/, then
     node scripts/pointerTest/qa/score.mjs fixtures/<rec>.mp4 <mouselog>.jsonl --truth <name>

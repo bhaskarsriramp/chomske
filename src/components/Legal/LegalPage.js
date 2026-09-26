@@ -24,9 +24,9 @@ import useIsMobile from "../../hooks/useIsMobile";
  * terms. See App.js, where the routes sit above the auth gate.
  */
 export const ORG = "Betafounder Enterprises";
-export const BRAND = "Lipi";
-export const SITE = "trylipi.online";
-export const SUPPORT_EMAIL = "sreeram@trylipi.online";
+export const BRAND = "Clipo";
+export const SITE = "tryclipo.com";
+export const SUPPORT_EMAIL = "sreeram@tryclipo.com";
 
 /**
  * The WhatsApp line, in international format with no +, spaces or dashes.

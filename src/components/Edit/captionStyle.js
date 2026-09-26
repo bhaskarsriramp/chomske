@@ -17,7 +17,7 @@
  *
  * What is NOT here is the LOOK picker. The two products have genuinely
  * different caption looks — the script editor draws Bold, Clean and Box; the
- * studio draws TryLipi, Hormozi, Apple, Minimal and Neon — so each one renders
+ * studio draws Clipo, Hormozi, Apple, Minimal and Neon — so each one renders
  * its own tiles. Everything else is this file.
  */
 import { useEffect, useState } from "react";

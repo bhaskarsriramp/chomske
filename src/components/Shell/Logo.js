@@ -35,7 +35,7 @@ export default function Logo({ size = 27, text = true, fontSize = 16.5, color = 
             whiteSpace: "nowrap",
           }}
         >
-          Lipi
+          Clipo
         </span>
       )}
     </div>

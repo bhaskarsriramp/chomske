@@ -5,4 +5,4 @@ User-agent: *
 Allow: /
 Disallow: /app/
 
-Sitemap: https://trylipi.online/sitemap.xml
+Sitemap: https://tryclipo.com/sitemap.xml

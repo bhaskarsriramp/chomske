@@ -556,6 +556,37 @@ const outRate = () => num(process.env.GEMINI_USD_PER_M_OUTPUT, 9.0);
 const _noZeroThinking = new Set();
 
 /**
+ * ── AND MODELS THAT THINK WHEN TOLD NOT TO ───────────────────────────────────
+ * The gemini-3 family does not switch thinking off: asked for thinkingBudget 0
+ * it thinks anyway, out of the same allowance as the answer. On 2026-09-26 an
+ * audit question sized for a ~1,000-token answer spent 973 of them thinking
+ * and stopped after 44 of answer — "a reply would not parse (MAX_TOKENS, 44
+ * tokens of answer after 973 of thinking)".
+ *
+ * So a model seen thinking after being told not to (or refusing the field) is
+ * remembered, and from then on its requests (a) ask for the least thinking the
+ * family allows — thinkingLevel MINIMAL, else LOW, each tried once and
+ * dropped if refused — and (b) carry THINK_ROOM more output tokens, so thinking
+ * cannot eat the answer. Room that is not used is not billed.
+ */
+const _thinksAnyway = new Set();
+const _levelFor = new Map();
+const LEVELS = ["MINIMAL", "LOW"]; // as the SDK spells them (ThinkingLevel)
+const THINK_ROOM = 4096;
+
+function configFor(model, config) {
+  if (config.thinkingConfig?.thinkingBudget !== 0) return config;
+  if (!_noZeroThinking.has(model) && !_thinksAnyway.has(model)) return config;
+  const { thinkingConfig, ...rest } = config;
+  const out = { ...rest, maxOutputTokens: num(rest.maxOutputTokens, 8192) + THINK_ROOM };
+  const level = _levelFor.has(model) ? _levelFor.get(model) : LEVELS[0];
+  if (level) out.thinkingConfig = { thinkingLevel: level };
+  return out;
+}
+const refusesLevel = (err) =>
+  statusOf(err) === 400 && /thinking_?level|thinkingLevel/i.test(String(err?.message || ""));
+
+/**
  * ── A MODEL GOOGLE HAS RETIRED IS REPLACED WITH THE ONE GOOGLE NAMES ─────────
  * Google retires models under running code and says what to use instead, in
  * the refusal itself: 404 "This model models/gemini-2.5-flash is no longer
@@ -585,12 +616,13 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
     await enter();
     let failed = null;
     try {
-      const use =
-        _noZeroThinking.has(model) && config.thinkingConfig?.thinkingBudget === 0
-          ? (({ thinkingConfig, ...rest }) => rest)(config)
-          : config;
+      const use = configFor(model, config);
       const res = await client.models.generateContent({ model, contents, config: use });
       const u = res?.usageMetadata || {};
+      if (config.thinkingConfig?.thinkingBudget === 0 && !_thinksAnyway.has(model) && num(u.thoughtsTokenCount) > 0) {
+        _thinksAnyway.add(model);
+        console.warn(`[ai] ${model} thinks even when asked not to (${num(u.thoughtsTokenCount)} tokens); from now on it gets the least thinking it allows and ${THINK_ROOM} more tokens of room`);
+      }
       const input = num(u.promptTokenCount);
       const output = num(u.candidatesTokenCount) + num(u.thoughtsTokenCount);
       return { res, usd: (input / 1e6) * inRate() + (output / 1e6) * outRate(), input, output };
@@ -608,7 +640,18 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
      */
     if (refusesZeroThinking(failed) && !_noZeroThinking.has(model)) {
       _noZeroThinking.add(model);
-      console.warn(`[ai] ${model} will not accept thinkingBudget: 0; sending without it (it will cost more)`);
+      console.warn(`[ai] ${model} will not accept thinkingBudget: 0; asking for the least thinking it allows instead, with room for it`);
+      attempt--;
+      continue;
+    }
+
+    // A thinking level the model does not take: the next one down the list, then none.
+    if (refusesLevel(failed)) {
+      const tried = _levelFor.has(model) ? _levelFor.get(model) : LEVELS[0];
+      const i = LEVELS.indexOf(tried);
+      const after = i >= 0 && i + 1 < LEVELS.length ? LEVELS[i + 1] : null;
+      _levelFor.set(model, after);
+      console.warn(`[ai] ${model} will not take thinkingLevel "${tried}"; ${after ? 'trying "' + after + '"' : "sending no thinking setting"}`);
       attempt--;
       continue;
     }
@@ -963,6 +1006,24 @@ const spentOn = (res) => {
 export async function generateJson(opts) {
   const { res, usd, input, output } = await generate({ ...opts, json: true });
   const text = res?.text || "{}";
+  /**
+   * ── THINKING ATE THE ANSWER: ASK ONCE MORE, WITH ROOM ────────────────────
+   * Cut off for length with most of the allowance spent thinking is not a
+   * reply to repair — the answer was barely started. The model is now known
+   * to think (see _thinksAnyway), so the second request carries the room it
+   * needs; the first request's cost travels with the second's.
+   */
+  const u = res?.usageMetadata || {};
+  const thoughts = num(u.thoughtsTokenCount);
+  if (!opts._roomy && stoppedBecause(res) === "MAX_TOKENS" && thoughts > 0 && thoughts >= num(u.candidatesTokenCount)) {
+    let parsesAnyway = false;
+    try { JSON.parse(text); parsesAnyway = true; } catch { /* truncated, as expected */ }
+    if (!parsesAnyway) {
+      console.warn(`[ai] ${opts.label ? opts.label + ": " : ""}the answer was cut off after ${thoughts} tokens of thinking; asking again with room`);
+      const again = await generateJson({ ...opts, _roomy: true, maxOutputTokens: num(opts.maxOutputTokens, 16384) + thoughts + 1024 });
+      return { ...again, usd: usd + num(again.usd), input: input + num(again.input), output: output + num(again.output) };
+    }
+  }
 
   try {
     return { json: JSON.parse(text), usd, input, output };

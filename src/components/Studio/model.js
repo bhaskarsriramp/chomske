@@ -33,6 +33,11 @@ export const ASPECTS = {
 
 export const CURSOR_MODES = ["intent", "recorded"];
 export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
+/**
+ * "trylipi" is the house style's stored id, from before the product was named
+ * Clipo. Saved timelines hold it (captions.style) and the renderer looks it up
+ * (render/ass.js), so the id stays; only its label changed (panels.js).
+ */
 export const CAPTION_STYLES = ["trylipi", "hormozi", "apple", "minimal", "neon"];
 export const BLUR_KINDS = ["blur", "pixelate", "box"];
 

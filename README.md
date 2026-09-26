@@ -4,7 +4,7 @@ Paste a YouTube link, get the transcript **in the language it was spoken in**.
 Hindi comes back in Devanagari, Telugu in Telugu script, and Hinglish keeps its
 code-mixing exactly as said: no translation, no romanisation.
 
-Production domain: **trylipi.online**
+Production domain: **tryclipo.com** (the product is Clipo; the old trylipi.online 301s to it)
 
 ---
 
@@ -66,7 +66,7 @@ npm start                 # http://localhost:3000
 
 In Google Cloud Console → Credentials → your OAuth client, add:
 
-- **Authorised JavaScript origins**: `http://localhost:3000`, `https://trylipi.online`
+- **Authorised JavaScript origins**: `http://localhost:3000`, `https://tryclipo.com`
 - **Authorised redirect URIs**: not needed: `@react-oauth/google` uses the
   popup/ID-token flow, not a redirect.
 

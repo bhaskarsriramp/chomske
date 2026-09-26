@@ -10,7 +10,7 @@ import LandingPage from "./components/Landing/LandingPage";
 import Skeleton from "./components/Shell/Skeleton";
 
 /* ── WHAT IS SPLIT, AND WHY ──────────────────────────────────────────────────
-   A stranger arriving at trylipi.online sees exactly one screen: the landing
+   A stranger arriving at tryclipo.com sees exactly one screen: the landing
    page. Before this split they downloaded, parsed and executed all of it:
    the dashboard, the news feed, the transcriber, the script editor, the
    billing dialog, the legal pages, and socket.io-client, to read a headline

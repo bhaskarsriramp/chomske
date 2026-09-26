@@ -69,7 +69,7 @@ router.use(authenticateToken);
  * Empty unless PUBLIC_API_URL is set, which makes the links root-relative
  * ("/media/upload/..."), and the browser puts its own API address in front
  * (src/components/Edit/editApi.js). It used to fall back to this request's own
- * host, which behind nginx is "https://trylipi.online" WITHOUT the "/api" the
+ * host, which behind nginx is "https://tryclipo.com" WITHOUT the "/api" the
  * proxy strips, so every upload chunk went to the static site and nginx
  * refused it with 413.
  */

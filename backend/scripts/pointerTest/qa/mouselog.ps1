@@ -12,7 +12,7 @@
   Usage (a PowerShell window, before starting the recording):
       powershell -ExecutionPolicy Bypass -File mouselog.ps1
       powershell -ExecutionPolicy Bypass -File mouselog.ps1 -Out C:\logs\run1.jsonl
-  Record the demo in TryLipi as usual, then come back and press Ctrl+C.
+  Record the demo in Clipo as usual, then come back and press Ctrl+C.
 #>
 param(
   [string]$Out = (Join-Path (Get-Location) ("mouselog-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".jsonl"))
@@ -25,7 +25,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-public static class TryLipiMouseLog {
+public static class ClipoMouseLog {
   delegate IntPtr Proc(int nCode, IntPtr wParam, IntPtr lParam);
 
   [StructLayout(LayoutKind.Sequential)] struct PT { public int x; public int y; }
@@ -91,4 +91,4 @@ Write-Host ""
 Write-Host "  Logging the mouse to $Out"
 Write-Host "  Record your demo now. Press Ctrl+C here when you have stopped recording."
 Write-Host ""
-[TryLipiMouseLog]::Run($Out)
+[ClipoMouseLog]::Run($Out)

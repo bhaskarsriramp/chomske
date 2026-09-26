@@ -1,7 +1,7 @@
 {
   "name": "lipi-backend",
   "version": "1.0.0",
-  "description": "Lipi: today's topics for a creator's niche, written in their own voice.",
+  "description": "Clipo: a browser-based product demo recorder that finds the cursor and clicks and zooms to them.",
   "type": "module",
   "main": "server.js",
   "scripts": {

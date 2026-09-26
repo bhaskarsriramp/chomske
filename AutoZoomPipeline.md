@@ -1,4 +1,4 @@
-# TryLipi — How the auto zoom-in is decided, end to end
+# Clipo — How the auto zoom-in is decided, end to end
 
 **What this document is.** A complete, self-contained description of how this
 product decides *where* and *when* to zoom in on a screen recording, including
@@ -7,7 +7,7 @@ done with their answers. It is written to be handed to another model or engineer
 for critique, so it states the real constants, the real prompt text, the real
 failure modes, and the places where the design is known to be weak.
 
-**Product.** TryLipi (trylipi.online) — browser-native screen recording plus
+**Product.** Clipo (tryclipo.com) — browser-native screen recording plus
 automatic editing. A creator records their screen in a browser tab; the
 recording is uploaded and edited automatically: dead air cut, camera moves added
 on the things they clicked, captions written.

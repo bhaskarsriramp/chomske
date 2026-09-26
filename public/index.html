@@ -10,45 +10,43 @@
     <!-- ── TITLE AND DESCRIPTION ───────────────────────────────────────────
          Two different jobs, which is why they are not the same sentence.
 
-         The <title> is a search result. Nobody searches "know what to post
-         today". The old one described the product to someone who already
-         knew what it was. What an Indian creator actually types is some
-         arrangement of "youtube script writer", "AI script", "in Hindi", so
-         the keywords lead and the brand, which nobody is searching for yet,
-         sits at the end. 53 characters, inside the ~60 Google will render
-         before it truncates.
+         The <title> is a search result. What someone making a product demo
+         actually types is some arrangement of "screen recorder", "auto zoom",
+         "product demo", so the keywords lead and the brand, which nobody is
+         searching for yet, sits at the end. 51 characters, inside the ~60
+         Google will render before it truncates.
 
          og:title is a shared link, not a search result. There is no keyword to
          win there, only a reason to click, so it uses the page's own headline
          verbatim: what the visitor will read a second later. -->
-    <title>AI YouTube Script Writer in 9 Indian Languages | Lipi</title>
+    <title>Auto-Zoom Screen Recorder for Product Demos | Clipo</title>
     <meta
       name="description"
-      content="Lipi ranks the news worth a video in your niche today and writes the whole script in your own voice, Hindi, Telugu, Tamil and 6 more. 100 free credits."
+      content="Record a product demo in your browser. Clipo finds your cursor and every click in the recording and moves the camera to them. Nothing to install."
     />
-    <link rel="canonical" href="https://trylipi.online/" />
+    <link rel="canonical" href="https://tryclipo.com/" />
     <!-- www and http both 301 to this apex (see deploy/nginx.conf); the
          canonical says the same thing to a crawler that arrived some other way. -->
     <meta name="robots" content="index, follow, max-image-preview:large" />
 
-    <meta property="og:site_name" content="Lipi" />
-    <meta property="og:title" content="Script writer for Indian Content Creators. One that sounds like you." />
+    <meta property="og:site_name" content="Clipo" />
+    <meta property="og:title" content="Your screen recording doesn't know you clicked. Clipo works it out." />
     <meta
       property="og:description"
-      content="Lipi finds the stories worth making a video about and writes the entire script like how you write, in Hindi, Telugu, Tamil and 6 more. 100 free credits."
+      content="Clipo finds the pointer in every frame, works out what it landed on, and moves the camera there. Record once in your browser and get a demo people can follow."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://trylipi.online/" />
+    <meta property="og:url" content="https://tryclipo.com/" />
     <meta property="og:locale" content="en_IN" />
     <!-- A square logo, because that is the only social image that exists. The
          card type matches it on purpose: summary_large_image was declared here
          with no og:image at all, which renders as no card, and pointing it at a
          512x512 logo would crop the top and bottom off to make 2:1. A real
          1200x630 image is the upgrade, and then this becomes summary_large_image. -->
-    <meta property="og:image" content="https://trylipi.online/logo512.png" />
+    <meta property="og:image" content="https://tryclipo.com/logo512.png" />
     <meta property="og:image:width" content="512" />
     <meta property="og:image:height" content="512" />
-    <meta property="og:image:alt" content="Lipi" />
+    <meta property="og:image:alt" content="Clipo" />
     <meta name="twitter:card" content="summary" />
 
     <!-- Structured data. Deliberately only claims things the page itself says:
@@ -57,12 +55,11 @@
       {
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
-        "name": "Lipi",
-        "url": "https://trylipi.online/",
+        "name": "Clipo",
+        "url": "https://tryclipo.com/",
         "applicationCategory": "MultimediaApplication",
         "operatingSystem": "Web",
-        "description": "Lipi tells Indian YouTube creators what is worth covering today and writes the script in their own voice, in their own language.",
-        "inLanguage": ["hi", "te", "ta", "mr", "kn", "bn", "gu", "ml", "pa", "en"],
+        "description": "Clipo records product demos in the browser, finds the creator's cursor and clicks in the recording, and zooms the camera to them automatically.",
         "publisher": { "@type": "Organization", "name": "Betafounder Enterprises" }
       }
     </script>

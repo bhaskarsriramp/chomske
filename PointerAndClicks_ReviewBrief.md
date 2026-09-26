@@ -1,4 +1,4 @@
-# TryLipi Demo Studio — how the creator's pointer and clicks are found
+# Clipo Demo Studio — how the creator's pointer and clicks are found
 
 A brief for reviewing this pipeline for bugs and design flaws. It describes what
 the code does today (2026-09-25). File paths are relative to the repo root.
@@ -7,7 +7,7 @@ the code does today (2026-09-25). File paths are relative to the repo root.
 
 ## 1. The product constraint that shapes everything
 
-- TryLipi is a **100% browser-based** screen recorder for product demos. It records
+- Clipo is a **100% browser-based** screen recorder for product demos. It records
   with `getDisplayMedia` (usually a Chrome tab, sometimes a window or screen).
   After recording, the server edits the video automatically: it **zooms the
   camera onto each click**, draws a larger smooth pointer of its own over the

@@ -1,7 +1,7 @@
 /**
  * db.js: one Mongo connection for the process.
  *
- * Lipi shares the Atlas account/cluster with betaFounderProduction, so this is
+ * Clipo shares the Atlas account/cluster with betaFounderProduction, so this is
  * deliberately plain: username and host sit in code, only the password comes
  * from the environment.
  *
@@ -9,7 +9,7 @@
  * `…mongodb.net/?appName=…` — the shape betaFounderProduction uses — connects to
  * the cluster's default `test` database instead, which is where data goes to
  * quietly get lost. Same cluster, different database: that path segment is the
- * only thing separating Lipi's collections from betaFounder's.
+ * only thing separating Clipo's collections from betaFounder's.
  *
  * Unlike the reference project (which fires connect() and never awaits it), this
  * AWAITS and rethrows: a server that boots against a dead database answers every
