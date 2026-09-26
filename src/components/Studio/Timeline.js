@@ -35,6 +35,17 @@
  *
  * Mouse and pen only. A finger has no hover to preview with, and a tap that
  * silently created things would be worse than the panel's Add button.
+ *
+ * ── THE VIDEO LANE ───────────────────────────────────────────────────────────
+ * The recording itself, above the others. Pointing at it offers "Cut here":
+ * the hatched outline is the two seconds a click removes. The cuts already
+ * made are drawn on it too, as the marks where time was taken out, and a click
+ * on one puts that time back.
+ *
+ * ── THE WHEEL ZOOMS ──────────────────────────────────────────────────────────
+ * Up zooms in and down zooms out, around the moment under the pointer: a mouse
+ * wheel, a two-finger swipe on a trackpad and a pinch all do it. A sideways
+ * swipe, or Shift with the wheel, is left alone, so it still pans.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { layout, placedSpans, activeZooms, toSource, mergedCuts, clamp, fmtTime } from "./model";
@@ -46,6 +57,10 @@ const LANES = [
   { key: "blurs", label: "Blur", color: "#FF9482", icon: "blur" },
   { key: "cues", label: "Captions", color: "#F09BE5", icon: "caption" },
 ];
+
+// Every row, top to bottom: the recording, then the things laid over it.
+const VIDEO = { key: "video", label: "Video", color: "#C5221F", icon: "film" };
+const ROWS = [VIDEO, ...LANES];
 
 /** Smallest drag that counts, so a click on a chip is not read as a nudge. */
 const SLOP = 3;
@@ -59,6 +74,7 @@ export default function Timeline({
   onChange,
   onRemoveCut,
   onAdd,
+  onAddCut,
   height = 30,
 }) {
   const railRef = useRef(null);
@@ -100,41 +116,60 @@ export default function Timeline({
   }, []);
 
   /* ── Zoom ─────────────────────────────────────────────────────────────── */
+  // Where the view is about to be scrolled, between a zoom and the frame that
+  // applies it. A trackpad sends wheel events faster than frames; anchoring
+  // each one on the scroll the last one has not applied yet made it drift.
+  const pendingScroll = useRef(null);
   const zoomBy = useCallback((factor, anchorClientX = null) => {
     const view = viewRef.current;
     setZoom((z) => {
-      const next = clamp(Math.round(z * factor * 100) / 100, 1, ZOOM_MAX);
+      // Three decimals, not two: a trackpad's small steps each move the zoom
+      // by less than a hundredth, and rounding them away stalled it at 100%.
+      const next = clamp(Math.round(z * factor * 1000) / 1000, 1, ZOOM_MAX);
       if (view && next !== z) {
         // Keep the moment under the pointer (or the playhead) where it is on
         // screen, which is what makes zooming feel like zooming and not like
         // being thrown somewhere else in the edit.
         const vr = view.getBoundingClientRect();
         const x = anchorClientX == null ? null : anchorClientX - vr.left;
+        const left = pendingScroll.current ?? view.scrollLeft;
         const focusFrac = x == null
           ? clamp(time / Math.max(0.1, total), 0, 1)
-          : clamp((view.scrollLeft + x) / (vr.width * z), 0, 1);
+          : clamp((left + x) / (vr.width * z), 0, 1);
         const px = x == null ? vr.width / 2 : x;
+        const target = Math.max(0, focusFrac * vr.width * next - px);
+        pendingScroll.current = target;
         requestAnimationFrame(() => {
-          view.scrollLeft = Math.max(0, focusFrac * vr.width * next - px);
+          view.scrollLeft = target;
+          pendingScroll.current = null;
         });
       }
       return next;
     });
   }, [time, total]);
 
-  // Ctrl / Cmd + wheel zooms, the way every editor and map does. A plain wheel
-  // still scrolls the page, which is what a creator reaching for it expects.
+  // The wheel handler reads the latest zoomBy through a ref, so it is attached
+  // once rather than again on every frame the playhead moves.
+  const zoomByRef = useRef(zoomBy);
+  zoomByRef.current = zoomBy;
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return undefined;
     const onWheel = (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
+      // Sideways is a pan: a horizontal swipe, or Shift with a wheel.
+      if (e.shiftKey || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
       e.preventDefault();
-      zoomBy(e.deltaY < 0 ? 1.25 : 0.8, e.clientX);
+      // Lines and pages into pixels, so a mouse notch (about 100px) and a
+      // trackpad's stream of small deltas land on one scale.
+      const px = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+      // A pinch arrives as a wheel with Ctrl held, in small deltas, and should
+      // feel direct; a wheel notch should be one clear step, about a quarter.
+      const k = e.ctrlKey || e.metaKey ? 0.01 : 0.0025;
+      zoomByRef.current(Math.exp(-clamp(px, -240, 240) * k), e.clientX);
     };
     view.addEventListener("wheel", onWheel, { passive: false });
     return () => view.removeEventListener("wheel", onWheel);
-  }, [zoomBy]);
+  }, []);
 
   // While playing zoomed in, the view follows the playhead instead of letting
   // it run off the edge.
@@ -223,10 +258,11 @@ export default function Timeline({
    */
   const ghostAt = useCallback(
     (laneKey, clientX) => {
-      const kind = SINGULAR[laneKey];
+      const kind = laneKey === "video" ? "cut" : SINGULAR[laneKey];
       const t = fractionAt(clientX) * total;
       let gapEnd = total;
-      for (const it of items[laneKey]) {
+      // A cut may go anywhere on the video; the other kinds only in a gap.
+      for (const it of items[laneKey] || []) {
         if (t >= it.start && t <= it.end) return null;
         if (it.start > t && it.start < gapEnd) gapEnd = it.start;
       }
@@ -242,13 +278,20 @@ export default function Timeline({
 
   const addGhost = useCallback(
     (g) => {
-      // Stored in recording time. Both ends are mapped rather than adding a
-      // length to the start, so an item that crosses a cut covers what plays.
-      onAdd(SINGULAR[g.lane], round3(toSource(g.t, lay)), round3(toSource(g.end, lay)));
-      onSeek(g.t + 0.05);
+      if (g.lane === "video") {
+        // The editor's addCut takes output time and removes DEFAULT_LENGTH.cut
+        // from there. Landing on the cut point shows what now follows it.
+        onAddCut(g.t);
+        onSeek(g.t);
+      } else {
+        // Stored in recording time. Both ends are mapped rather than adding a
+        // length to the start, so an item that crosses a cut covers what plays.
+        onAdd(SINGULAR[g.lane], round3(toSource(g.t, lay)), round3(toSource(g.end, lay)));
+        onSeek(g.t + 0.05);
+      }
       setGhost(null);
     },
-    [lay, onAdd, onSeek]
+    [lay, onAdd, onAddCut, onSeek]
   );
 
   /* ── The ruler's tick marks ───────────────────────────────────────────── */
@@ -289,22 +332,27 @@ export default function Timeline({
       <div style={{ display: "flex", gap: 10 }}>
         {/* ── Lane names, which do not scroll ─────────────────────────── */}
         <div style={{ width: LABEL_W, flexShrink: 0, paddingTop: RULER }}>
-          {LANES.map((lane) => (
-            <div
-              key={lane.key}
-              style={{
-                height, marginBottom: 6, display: "flex", alignItems: "center", gap: 6,
-                fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase",
-                color: items[lane.key].length ? "var(--ink-body)" : "var(--ink-mute)",
-                opacity: items[lane.key].length ? 1 : 0.55,
-              }}
-            >
-              <span style={{ color: items[lane.key].length ? lane.color : "inherit" }}>
-                <Icon name={lane.icon} size={12} />
-              </span>
-              {lane.label}
-            </div>
-          ))}
+          {ROWS.map((lane) => {
+            // The video is always there; the other lanes read as empty until
+            // something is on them.
+            const full = lane.key === "video" || items[lane.key].length > 0;
+            return (
+              <div
+                key={lane.key}
+                style={{
+                  height, marginBottom: 6, display: "flex", alignItems: "center", gap: 6,
+                  fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase",
+                  color: full ? "var(--ink-body)" : "var(--ink-mute)",
+                  opacity: full ? 1 : 0.55,
+                }}
+              >
+                <span style={{ color: full && lane.key !== "video" ? lane.color : "inherit" }}>
+                  <Icon name={lane.icon} size={12} />
+                </span>
+                {lane.label}
+              </div>
+            );
+          })}
         </div>
 
         {/* ── The time area, which zooms and scrolls ──────────────────── */}
@@ -359,36 +407,42 @@ export default function Timeline({
               </>
             )}
 
-            {/* Lanes */}
-            {LANES.map((lane) => (
+            {/* Lanes: the video first, then the things laid over it. */}
+            {ROWS.map((lane) => {
+              const isVideo = lane.key === "video";
+              const canAdd = isVideo ? !!onAddCut : !!onAdd;
+              return (
               <div
                 key={lane.key}
                 className="st-lane"
-                style={{ height, marginBottom: 6, marginTop: 0, cursor: ghost?.lane === lane.key ? "copy" : undefined }}
+                style={{ height, marginBottom: 6, marginTop: 0, cursor: ghost?.lane === lane.key ? (isVideo ? "pointer" : "copy") : undefined }}
                 onPointerDown={(e) => {
                   if (e.target !== e.currentTarget) return;
-                  const g = onAdd && e.pointerType !== "touch" ? ghostAt(lane.key, e.clientX) : null;
+                  const g = canAdd && e.pointerType !== "touch" ? ghostAt(lane.key, e.clientX) : null;
                   if (g) addGhost(g);
                   else onSeek(fractionAt(e.clientX) * total);
                 }}
                 onPointerMove={(e) => {
                   // Nothing is offered mid-drag, mid-scrub, to a finger, or over
                   // a chip or a cut (the event's target is then that, not the lane).
-                  const off = !onAdd || e.pointerType === "touch" || e.buttons || drag || scrubbing || e.target !== e.currentTarget;
+                  const off = !canAdd || e.pointerType === "touch" || e.buttons || drag || scrubbing || e.target !== e.currentTarget;
                   const next = off ? null : ghostAt(lane.key, e.clientX);
                   setGhost((g) => (g === next || (g && next && g.lane === next.lane && g.t === next.t) ? g : next));
                 }}
                 onPointerLeave={() => setGhost(null)}
               >
+                {/* The recording, as one strip the length of the edit. It never
+                    takes the pointer, so pointing at it reaches the lane. */}
+                {isVideo && <span className="st-clip" aria-hidden="true" />}
+
                 {ghost?.lane === lane.key && (
                   <div
-                    className="st-ghost"
+                    className={`st-ghost${isVideo ? " is-cut" : ""}`}
                     aria-hidden="true"
                     style={{
                       left: `${(ghost.t / total) * 100}%`,
                       width: `${((ghost.end - ghost.t) / total) * 100}%`,
-                      borderColor: lane.color,
-                      background: `${lane.color}1F`,
+                      ...(isVideo ? null : { borderColor: lane.color, background: `${lane.color}1F` }),
                     }}
                   >
                     {/* The label is its own tag rather than text inside the
@@ -396,13 +450,13 @@ export default function Timeline({
                         often narrower than "Add caption", and the outline's
                         width is the promise, so it is not stretched to fit. */}
                     <span className={`st-ghost-tag${ghost.flip ? " is-left" : ""}`} style={{ borderColor: lane.color }}>
-                      <Icon name="plus" size={11} />
-                      Add {NOUN[lane.key]}
+                      <Icon name={isVideo ? "scissors" : "plus"} size={11} />
+                      {isVideo ? "Cut here" : `Add ${NOUN[lane.key]}`}
                     </span>
                   </div>
                 )}
 
-                {items[lane.key].map((item, i) => {
+                {(items[lane.key] || []).map((item, i) => {
                   const left = (item.start / total) * 100;
                   const width = Math.max(0.6 / zoom, ((item.end - item.start) / total) * 100);
                   const on = selection?.kind === SINGULAR[lane.key] && selection.id === item.id;
@@ -436,9 +490,8 @@ export default function Timeline({
                   );
                 })}
 
-                {/* Cuts, drawn on the first lane so the gap reads as a gap in
-                    the video rather than as something missing from one track. */}
-                {lane.key === "zooms" &&
+                {/* Cuts, on the video: each mark is where time was taken out. */}
+                {isVideo &&
                   cuts.map((c) => {
                     const at = outOf(c.start, lay);
                     return (
@@ -455,7 +508,8 @@ export default function Timeline({
                     );
                   })}
               </div>
-            ))}
+              );
+            })}
 
             {/* The playhead: a line to see, and a handle to hold. The handle
                 is wider than the line so it can be caught with a mouse. */}

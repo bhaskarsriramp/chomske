@@ -26,7 +26,7 @@ import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
-import { create } from "./create";
+import { create, DEFAULT_LENGTH } from "./create";
 // StepsPanel is hidden for now with the Steps tab (see TABS); put it back in
 // this import when the tab returns.
 // CanvasPanel and SuggestionsPanel are hidden with their tabs (see TABS): the
@@ -441,8 +441,10 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     (at) => {
       if (!tlRef.current || !lay) return;
       const src = sourceOf(at, lay);
+      // The same length the timeline's "Cut here" outline promises (create.js).
+      const len = DEFAULT_LENGTH.cut;
       const start = clamp(src, 0, Math.max(0, (tlRef.current.duration || 0) - 0.4));
-      const end = Math.min(tlRef.current.duration || start + 2, start + 2);
+      const end = Math.min(tlRef.current.duration || start + len, start + len);
       edit({ cuts: [...(tlRef.current.cuts || []), { id: newId("cut"), start, end, reason: "manual", auto: false }] }, "Add cut");
     },
     [edit, lay]
@@ -799,52 +801,43 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     </div>
   );
 
+  /**
+   * Two rows under the picture. On top, the frame around it: shape, size,
+   * corners, shadow and background (CanvasBar.js), since they change the
+   * whole picture. Below, next to the timeline it drives, play, the time and
+   * full screen at the far end. "Cut here" is on the timeline's video lane.
+   */
   const transport = (
-    <div
-      className="st-stage"
-      style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: narrow ? "8px 14px" : "10px 2px 2px" }}
-    >
-      <Btn
-        kind="primary"
-        size="s"
-        onClick={() => setPlaying((p) => !p)}
-        aria-label={playing ? "Pause" : "Play"}
-        title="Play / pause (Space)"
-        icon={<Icon name={playing ? "pause" : "play"} size={14} />}
-        style={{ width: 40, height: 34, padding: 0 }}
+    <div className="st-stage" style={{ flexShrink: 0, display: "grid", gap: 10, padding: narrow ? "8px 14px" : "10px 2px 2px" }}>
+      <CanvasBar
+        tl={tl}
+        edit={edit}
+        backgrounds={backgrounds}
+        onUploaded={(b) => setBackgrounds((list) => [b, ...(list || []).filter((x) => x.id !== b.id)])}
+        onDeleted={(id) => setBackgrounds((list) => (list || []).filter((x) => x.id !== id))}
       />
-      <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-        {fmtTime(time, true)} <span style={{ color: "var(--ink-mute)", fontWeight: 500 }}>/ {fmtTime(total, true)}</span>
-      </span>
-      {selection && (
-        <Btn size="s" kind="danger" icon={<Icon name="trash" size={13} />} onClick={removeSelected} title="Delete (Del)">
-          Delete
-        </Btn>
-      )}
-      {/* Shape, size, corners, shadow and background: they change the whole
-          picture, so they sit under it (CanvasBar.js). */}
-      <div style={{ marginLeft: "auto" }}>
-        <CanvasBar
-          tl={tl}
-          edit={edit}
-          backgrounds={backgrounds}
-          onUploaded={(b) => setBackgrounds((list) => [b, ...(list || []).filter((x) => x.id !== b.id)])}
-          onDeleted={(id) => setBackgrounds((list) => (list || []).filter((x) => x.id !== id))}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <Btn
+          kind="primary"
+          size="s"
+          onClick={() => setPlaying((p) => !p)}
+          aria-label={playing ? "Pause" : "Play"}
+          title="Play / pause (Space)"
+          icon={<Icon name={playing ? "pause" : "play"} size={14} />}
+          style={{ width: 40, height: 34, padding: 0 }}
         />
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+          {fmtTime(time, true)} <span style={{ color: "var(--ink-mute)", fontWeight: 500 }}>/ {fmtTime(total, true)}</span>
+        </span>
+        {selection && (
+          <Btn size="s" kind="danger" icon={<Icon name="trash" size={13} />} onClick={removeSelected} title="Delete (Del)">
+            Delete
+          </Btn>
+        )}
+        <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={{ ...fullBtn(false), marginLeft: "auto" }}>
+          <Icon name="expand" size={15} />
+        </button>
       </div>
-      {/* Cut from the playhead: a transport action, so it sits with play and
-          full screen rather than at the far end of the timeline. */}
-      <Btn
-        size="s"
-        icon={<Icon name="scissors" size={13} />}
-        onClick={() => addCut(time)}
-        title="Cut two seconds from here"
-      >
-        Cut here
-      </Btn>
-      <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={fullBtn(false)}>
-        <Icon name="expand" size={15} />
-      </button>
     </div>
   );
 
@@ -935,6 +928,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       onChange={changeItem}
       onRemoveCut={removeCut}
       onAdd={addAt}
+      onAddCut={addCut}
       onDelete={removeSelected}
       // Taller lanes on a desk: bigger chips to grab, drag and resize.
       height={narrow ? 30 : 42}
@@ -1069,10 +1063,20 @@ function EditorSkeleton({ narrow }) {
       <Skeleton variant="rectangular" width={84} height={32} style={{ marginLeft: "auto" }} />
     </div>
   );
+  // The two rows under the picture: the canvas controls, then play and time.
   const transport = (
-    <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: narrow ? "8px 14px" : "10px 2px 2px" }}>
-      <Skeleton variant="rectangular" width={40} height={34} style={onStage} />
-      <Skeleton variant="rectangular" width={90} height={12} style={{ ...onStage, borderRadius: 6 }} />
+    <div style={{ flexShrink: 0, display: "grid", gap: 10, padding: narrow ? "8px 14px" : "10px 2px 2px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <Skeleton variant="rectangular" width={150} height={26} style={onStage} />
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} variant="rectangular" width={120} height={10} style={{ ...onStage, borderRadius: 5 }} />
+        ))}
+        <Skeleton variant="rectangular" width={112} height={32} style={onStage} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <Skeleton variant="rectangular" width={40} height={34} style={onStage} />
+        <Skeleton variant="rectangular" width={90} height={12} style={{ ...onStage, borderRadius: 6 }} />
+      </div>
     </div>
   );
   const tabs = (
@@ -1087,7 +1091,7 @@ function EditorSkeleton({ narrow }) {
   const ruler = (
     <div style={{ display: "grid", gap: 6 }}>
       <Skeleton variant="rectangular" height={10} style={{ borderRadius: 5, marginBottom: 4 }} />
-      {[0, 1, 2].map((i) => (
+      {[0, 1, 2, 3].map((i) => (
         <Skeleton key={i} variant="rectangular" height={narrow ? 30 : 42} />
       ))}
     </div>

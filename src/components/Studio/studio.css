@@ -164,6 +164,23 @@
   animation: st-ghost-in 120ms var(--ease-out) both;
 }
 
+/* On the video lane the outline is what a cut takes out: hatched like the
+   cut marks themselves, in the same red. */
+.st-ghost.is-cut {
+  border-color: rgba(197, 34, 31, .7);
+  background: repeating-linear-gradient(-45deg, rgba(197, 34, 31, .16) 0 5px, rgba(197, 34, 31, .05) 5px 10px);
+}
+
+/* The recording on the video lane: one strip the length of the edit, with a
+   faint frame line every few pixels so it reads as footage, not as a chip. */
+.st-clip {
+  position: absolute; top: 2px; bottom: 2px; left: 0; right: 0; border-radius: 6px;
+  background:
+    repeating-linear-gradient(90deg, rgba(58, 55, 51, .07) 0 1px, transparent 1px 22px),
+    rgba(58, 55, 51, .07);
+  pointer-events: none;
+}
+
 /* Its label: a solid tag, free to run past a short outline so the words are
    always whole. It starts clear of the arrow, whose tip sits on the outline's
    left edge, and moves to the arrow's left near the end of the timeline. */

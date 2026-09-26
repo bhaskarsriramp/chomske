@@ -23,6 +23,13 @@
  * corners, which is a background by any other name. So it puts the whole frame
  * back: no background, full size, square corners, no shadow. The shape is left
  * alone; that is a separate choice with its own control.
+ *
+ * ── TURNING A BACKGROUND ON MAKES ROOM FOR IT ────────────────────────────────
+ * At full size the video covers the whole frame, so a background picked there
+ * would change nothing on screen. Switching one on from none therefore brings
+ * the video to 90% at the same time, in the same undo step. Only then: a
+ * creator who has since chosen a size, 100% included, keeps it while trying
+ * other backgrounds.
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -55,6 +62,12 @@ export default function CanvasBar({ tl, edit, backgrounds, onUploaded, onDeleted
   const bg = c.background || { kind: "none" };
   const set = (fields, label) => edit({ canvas: { ...c, ...fields } }, label);
   const [picking, setPicking] = useState(false);
+
+  // Choosing a background (see the header on making room for it).
+  const pickBackground = (next) => {
+    const turningOn = bg.kind === "none" && next.kind !== "none" && !(c.padding > 0);
+    set({ background: next, ...(turningOn ? { padding: 0.05 } : null) }, "Background");
+  };
 
   // Back to the recording exactly as recorded (see the header). One undo step.
   const reset = () => set({ background: { kind: "none" }, padding: 0, radius: 0, shadow: 0 }, "No background");
@@ -103,7 +116,7 @@ export default function CanvasBar({ tl, edit, backgrounds, onUploaded, onDeleted
           bg={bg}
           plain={plain}
           backgrounds={backgrounds}
-          onPick={(next) => set({ background: next }, "Background")}
+          onPick={pickBackground}
           onReset={reset}
           onUploaded={onUploaded}
           onDeleted={onDeleted}
