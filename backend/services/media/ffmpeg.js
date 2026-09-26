@@ -17,6 +17,7 @@
  * process the server waits on, not work it does.
  */
 import os from "os";
+import fs from "fs";
 import { spawn } from "child_process";
 import path from "path";
 import fsp from "fs/promises";
@@ -25,6 +26,29 @@ import ffprobeStatic from "ffprobe-static";
 
 export const FFMPEG_PATH = process.env.FFMPEG_PATH || ffmpegStatic;
 export const FFPROBE_PATH = process.env.FFPROBE_PATH || ffprobeStatic.path;
+
+/**
+ * ── A BINARY THAT LOST ITS EXECUTE BIT IS PUT BACK, NOT FAILED ON ────────────
+ * The npm binaries are only as runnable as their file mode, and a reinstall or
+ * a copy from a Windows machine can leave them without it. On 2026-09-26 every
+ * recording failed its first step with "spawn …/ffprobe EACCES" — nothing
+ * wrong with the recording, the server simply was not allowed to run the
+ * program. So at load, on anything but Windows, each binary that is not
+ * executable is made so, and said out loud either way.
+ */
+for (const bin of [FFMPEG_PATH, FFPROBE_PATH]) {
+  if (process.platform === "win32" || !bin) continue;
+  try {
+    fs.accessSync(bin, fs.constants.X_OK);
+  } catch {
+    try {
+      fs.chmodSync(bin, 0o755);
+      console.warn("[media] " + bin + " was not executable; made it executable");
+    } catch (err) {
+      console.error("[media] " + bin + " is not executable and could not be fixed (" + err.message + "): run chmod +x on it");
+    }
+  }
+}
 
 /** How much stderr is kept for an error message. The rest is noise. */
 const STDERR_TAIL = 16000;
