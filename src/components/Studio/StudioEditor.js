@@ -26,26 +26,29 @@ import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
-import { create, DEFAULT_LENGTH } from "./create";
+import { create } from "./create";
+import { clipsOf, splitPatch, deleteClipPatch } from "./clips";
 // StepsPanel is hidden for now with the Steps tab (see TABS); put it back in
 // this import when the tab returns.
 // CanvasPanel and SuggestionsPanel are hidden with their tabs (see TABS): the
 // canvas controls moved under the preview (CanvasBar.js).
-import { ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, /* CanvasPanel, StepsPanel, SuggestionsPanel */ } from "./panels";
+import { VideoPanel, ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, /* CanvasPanel, StepsPanel, SuggestionsPanel */ } from "./panels";
 import CanvasBar from "./CanvasBar";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon } from "./ui";
-import { layout, newId, clamp, fmtTime } from "./model";
+import { layout, clamp, fmtTime } from "./model";
 import "./studio.css";
 
 /** The inspector tab each kind of selectable thing is edited in. */
-const TAB_OF = { zoom: "zoom", blur: "blur", cue: "captions" };
+const TAB_OF = { clip: "video", zoom: "zoom", blur: "blur", cue: "captions" };
 
 const TABS = [
   // Steps is hidden for now, not removed. Restoring it is this line, the
   // StepsPanel import above, `screensRead` and the panel block in `panel`, and
   // the default tab back to "steps".
   // { id: "steps", label: "Steps", icon: "steps" },
+  // The recording as clips (panels.js VideoPanel, clips.js).
+  { id: "video", label: "Video", icon: "film" },
   { id: "zoom", label: "Zoom", icon: "zoom" },
   { id: "blur", label: "Blur", icon: "blur" },
   { id: "captions", label: "Captions", icon: "caption" },
@@ -66,8 +69,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  // Zoom while Steps is hidden (see TABS).
-  const [tab, setTab] = useState("zoom");
+  // The first tab, Video, while Steps is hidden (see TABS).
+  const [tab, setTab] = useState("video");
   const [selection, setSelection] = useState(null);
 
   /**
@@ -427,28 +430,50 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       setSelection(null);
       return;
     }
+    if (sel.kind === "clip") {
+      const clip = clipsOf(cur, layout(cur)).find((c) => c.id === sel.id);
+      if (clip) deleteClipRef.current?.(clip);
+      return;
+    }
     const list = { zoom: "zooms", blur: "blurs", cue: "cues" }[sel.kind];
     if (!list) return;
     edit({ [list]: (cur[list] || []).filter((x) => x.id !== sel.id) }, `Remove ${sel.kind === "cue" ? "caption" : sel.kind}`);
     setSelection(null);
   }, [selection, edit]);
 
-  /* ── Cuts ─────────────────────────────────────────────────────────────── */
+  /* ── Clips and cuts ───────────────────────────────────────────────────── */
 
   const lay = useMemo(() => (tl ? layout(tl) : null), [tl]);
 
-  const addCut = useCallback(
-    (at) => {
-      if (!tlRef.current || !lay) return;
-      const src = sourceOf(at, lay);
-      // The same length the timeline's "Cut here" outline promises (create.js).
-      const len = DEFAULT_LENGTH.cut;
-      const start = clamp(src, 0, Math.max(0, (tlRef.current.duration || 0) - 0.4));
-      const end = Math.min(tlRef.current.duration || start + len, start + len);
-      edit({ cuts: [...(tlRef.current.cuts || []), { id: newId("cut"), start, end, reason: "manual", auto: false }] }, "Add cut");
+  // "Cut here" on the video lane: split the clip under that moment in two,
+  // taking nothing out (clips.js). A moment too near a clip's edge is ignored.
+  const addSplit = useCallback(
+    (srcT) => {
+      const cur = tlRef.current;
+      if (!cur) return;
+      const patch = splitPatch(cur, layout(cur), srcT);
+      if (patch) edit(patch, "Cut");
     },
-    [edit, lay]
+    [edit]
   );
+
+  // Take a clip out: a cut over exactly its stretch. The last clip stays,
+  // because a demo with nothing left in it cannot be exported.
+  const deleteClipRef = useRef(null);
+  const deleteClip = useCallback(
+    (clip) => {
+      const cur = tlRef.current;
+      if (!cur) return;
+      if (clipsOf(cur, layout(cur)).length <= 1) {
+        setNotice("A demo needs at least one clip, so the last one stays.");
+        return;
+      }
+      edit(deleteClipPatch(cur, clip), "Delete clip");
+      setSelection(null);
+    },
+    [edit]
+  );
+  deleteClipRef.current = deleteClip;
 
   // Held in a ref so removeSelected() above can reach it without the two
   // callbacks having to be declared in dependency order.
@@ -802,42 +827,46 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   );
 
   /**
-   * Two rows under the picture. On top, the frame around it: shape, size,
-   * corners, shadow and background (CanvasBar.js), since they change the
-   * whole picture. Below, next to the timeline it drives, play, the time and
-   * full screen at the far end. "Cut here" is on the timeline's video lane.
+   * One row under the picture: play and the time on the left; the frame
+   * around the picture (shape, size, corners, shadow, background: CanvasBar.js)
+   * towards the right; full screen at the far end. Everything is compact so it
+   * fits one line on a laptop, and wraps rather than clips on anything narrower.
+   * "Cut here" is on the timeline's video lane.
    */
   const transport = (
-    <div className="st-stage" style={{ flexShrink: 0, display: "grid", gap: 10, padding: narrow ? "8px 14px" : "10px 2px 2px" }}>
-      <CanvasBar
-        tl={tl}
-        edit={edit}
-        backgrounds={backgrounds}
-        onUploaded={(b) => setBackgrounds((list) => [b, ...(list || []).filter((x) => x.id !== b.id)])}
-        onDeleted={(id) => setBackgrounds((list) => (list || []).filter((x) => x.id !== id))}
+    <div
+      className="st-stage"
+      style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: narrow ? "8px 14px" : "10px 2px 2px" }}
+    >
+      <Btn
+        kind="primary"
+        size="xs"
+        onClick={() => setPlaying((p) => !p)}
+        aria-label={playing ? "Pause" : "Play"}
+        title="Play / pause (Space)"
+        icon={<Icon name={playing ? "pause" : "play"} size={12} />}
+        style={{ width: 32, height: 28, padding: 0 }}
       />
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <Btn
-          kind="primary"
-          size="s"
-          onClick={() => setPlaying((p) => !p)}
-          aria-label={playing ? "Pause" : "Play"}
-          title="Play / pause (Space)"
-          icon={<Icon name={playing ? "pause" : "play"} size={14} />}
-          style={{ width: 40, height: 34, padding: 0 }}
+      <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ink)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+        {fmtTime(time, true)} <span style={{ color: "var(--ink-mute)", fontWeight: 500 }}>/ {fmtTime(total, true)}</span>
+      </span>
+      {selection && (
+        <Btn size="xs" kind="danger" icon={<Icon name="trash" size={12} />} onClick={removeSelected} title="Delete (Del)">
+          Delete
+        </Btn>
+      )}
+      <div style={{ marginLeft: "auto" }}>
+        <CanvasBar
+          tl={tl}
+          edit={edit}
+          backgrounds={backgrounds}
+          onUploaded={(b) => setBackgrounds((list) => [b, ...(list || []).filter((x) => x.id !== b.id)])}
+          onDeleted={(id) => setBackgrounds((list) => (list || []).filter((x) => x.id !== id))}
         />
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-          {fmtTime(time, true)} <span style={{ color: "var(--ink-mute)", fontWeight: 500 }}>/ {fmtTime(total, true)}</span>
-        </span>
-        {selection && (
-          <Btn size="s" kind="danger" icon={<Icon name="trash" size={13} />} onClick={removeSelected} title="Delete (Del)">
-            Delete
-          </Btn>
-        )}
-        <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={{ ...fullBtn(false), marginLeft: "auto" }}>
-          <Icon name="expand" size={15} />
-        </button>
       </div>
+      <button type="button" onClick={toggleFull} title="Full screen" aria-label="Full screen" style={{ ...fullBtn(false), width: 28, height: 28 }}>
+        <Icon name="expand" size={14} />
+      </button>
     </div>
   );
 
@@ -891,6 +920,16 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         />
       )}
       */}
+      {tab === "video" && (
+        <VideoPanel
+          tl={tl}
+          selection={selection}
+          onSelect={select}
+          seek={seek}
+          onDeleteClip={deleteClip}
+          onRestoreCut={removeCut}
+        />
+      )}
       {tab === "zoom" && <ZoomPanel {...panelProps} />}
       {tab === "blur" && <BlurPanel {...panelProps} read={blurChecked} reading={reading} onRead={onRead} readCost={readCost} />}
       {tab === "captions" && (
@@ -928,7 +967,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       onChange={changeItem}
       onRemoveCut={removeCut}
       onAdd={addAt}
-      onAddCut={addCut}
+      onSplit={addSplit}
       onDelete={removeSelected}
       // Taller lanes on a desk: bigger chips to grab, drag and resize.
       height={narrow ? 30 : 42}
@@ -1021,13 +1060,6 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
 const LABELS = { zoom: "Zoom", blur: "Blur", cue: "Caption" };
 
-function sourceOf(outT, lay) {
-  for (const s of lay.segments) {
-    if (outT >= s.out_start && outT <= s.out_end) return s.src_start + (outT - s.out_start);
-  }
-  return lay.segments.length ? lay.segments[lay.segments.length - 1].src_end : 0;
-}
-
 /** True while the window is too narrow for a picture and an inspector side by side. */
 function useNarrow(px = 900) {
   const [narrow, setNarrow] = useState(() => (typeof window === "undefined" ? false : window.innerWidth < px));
@@ -1063,20 +1095,19 @@ function EditorSkeleton({ narrow }) {
       <Skeleton variant="rectangular" width={84} height={32} style={{ marginLeft: "auto" }} />
     </div>
   );
-  // The two rows under the picture: the canvas controls, then play and time.
+  // The row under the picture: play and time, the canvas controls, full screen.
   const transport = (
-    <div style={{ flexShrink: 0, display: "grid", gap: 10, padding: narrow ? "8px 14px" : "10px 2px 2px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-        <Skeleton variant="rectangular" width={150} height={26} style={onStage} />
+    <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: narrow ? "8px 14px" : "10px 2px 2px" }}>
+      <Skeleton variant="rectangular" width={32} height={28} style={onStage} />
+      <Skeleton variant="rectangular" width={84} height={11} style={{ ...onStage, borderRadius: 6 }} />
+      <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+        <Skeleton variant="rectangular" width={140} height={24} style={onStage} />
         {[0, 1, 2].map((i) => (
-          <Skeleton key={i} variant="rectangular" width={120} height={10} style={{ ...onStage, borderRadius: 5 }} />
+          <Skeleton key={i} variant="rectangular" width={100} height={10} style={{ ...onStage, borderRadius: 5 }} />
         ))}
-        <Skeleton variant="rectangular" width={112} height={32} style={onStage} />
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <Skeleton variant="rectangular" width={40} height={34} style={onStage} />
-        <Skeleton variant="rectangular" width={90} height={12} style={{ ...onStage, borderRadius: 6 }} />
-      </div>
+        <Skeleton variant="rectangular" width={104} height={26} style={onStage} />
+      </span>
+      <Skeleton variant="rectangular" width={28} height={28} style={onStage} />
     </div>
   );
   const tabs = (

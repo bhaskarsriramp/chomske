@@ -639,6 +639,22 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     }))
     .filter((x) => x.end - x.start > 0.02);
 
+  // ── Splits ────────────────────────────────────────────────────────────────
+  // Where the creator cut the recording into clips, in recording time. They
+  // take nothing out: each is only where one clip ends and the next begins,
+  // so a clip can be deleted on its own (deleting one adds a cut over it).
+  // The render never reads them; the editor draws clips from them.
+  out.splits = [
+    ...new Set(
+      (Array.isArray(src.splits) ? src.splits : [])
+        .map((v) => num(v, -1))
+        .filter((v) => v > 0 && v < total)
+        .map(round3)
+    ),
+  ]
+    .sort((a, b) => a - b)
+    .slice(0, 300);
+
   // ── Zooms ─────────────────────────────────────────────────────────────────
   out.zooms = (src.zooms || [])
     .slice(0, 300)

@@ -15,8 +15,9 @@
  */
 import { useMemo } from "react";
 import { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Empty, Icon } from "./ui";
-import { fmtTime, clamp, layout, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
+import { fmtTime, clamp, layout, mergedCuts, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
 import { create } from "./create";
+import { clipsOf } from "./clips";
 // Caption colour and size are the script editor's controls, not a second set.
 import { ColorPicker, SizePicker } from "../Edit/captionStyle";
 
@@ -24,7 +25,72 @@ const pct = (v) => `${Math.round(v * 100)}%`;
 const secs = (v) => `${v.toFixed(1)}s`;
 
 /* ────────────────────────────────────────────────────────────────────────────
-   Zooms
+   Video
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The recording as clips, in playing order, with what was taken out between
+ * them (clips.js says what a clip is).
+ *
+ * A clip's times are the finished video's, so they match the ruler. Deleting
+ * one takes its stretch out; the last clip cannot go, because a demo with
+ * nothing left in it cannot be exported. Every stretch already taken out,
+ * by a deleted clip or by the automatic edit trimming the waiting, is listed
+ * where it was, with Restore, which is the easiest way to get it back.
+ */
+export function VideoPanel({ tl, selection, onSelect, seek, onDeleteClip, onRestoreCut }) {
+  const lay = useMemo(() => layout(tl), [tl]);
+  const clips = useMemo(() => clipsOf(tl, lay), [tl, lay]);
+  const rows = useMemo(
+    () =>
+      [
+        ...clips.map((c) => ({ kind: "clip", at: c.src_start, c })),
+        ...mergedCuts(tl).map((k) => ({ kind: "cut", at: k.start, k })),
+      ].sort((a, b) => a.at - b.at),
+    [clips, tl]
+  );
+  const only = clips.length <= 1;
+
+  return (
+    <Panel title={`Video · ${clips.length} clip${clips.length === 1 ? "" : "s"}`}>
+      <div style={{ display: "grid", gap: 2, margin: -6 }}>
+        {rows.map((r) =>
+          r.kind === "clip" ? (
+            <Row
+              key={r.c.id}
+              accent="#8A8F98"
+              selected={selection?.kind === "clip" && selection.id === r.c.id}
+              onClick={() => {
+                onSelect({ kind: "clip", id: r.c.id });
+                seek(r.c.out_start + 0.05);
+              }}
+              onRemove={only ? undefined : () => onDeleteClip(r.c)}
+              title={`Clip ${r.c.n}`}
+              sub={`${fmtTime(r.c.out_start, true)} – ${fmtTime(r.c.out_end, true)} · ${secs(r.c.out_end - r.c.out_start)}`}
+            />
+          ) : (
+            <div key={`cut${r.k.start}`} className="st-cutrow">
+              <Icon name="scissors" size={12} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                {secs(r.k.end - r.k.start)} taken out{r.k.auto ? " automatically" : ""}
+              </span>
+              <Btn size="xs" kind="quiet" onClick={() => onRestoreCut(r.k)}>
+                Restore
+              </Btn>
+            </div>
+          )
+        )}
+      </div>
+      <Hint>
+        Point at the video on the timeline and click to cut it into clips. Select a clip and delete it to take it out;
+        Restore brings back anything taken out.
+      </Hint>
+    </Panel>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Zoom
    ──────────────────────────────────────────────────────────────────────────── */
 
 export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {

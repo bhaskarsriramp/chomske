@@ -40,7 +40,7 @@ import { uploadBackground, deleteBackground } from "./studioApi";
 const SHAPES = [
   // First and default: the recording's own shape, at its own size. Anything
   // else scales the picture to fit and softens the text.
-  { value: "source", label: "As recorded" },
+  { value: "source", label: "Recorded" },
   { value: "16:9", label: "16:9" },
   { value: "9:16", label: "9:16" },
   // Hidden for now, kept to bring back.
@@ -107,7 +107,7 @@ export default function CanvasBar({ tl, edit, backgrounds, onUploaded, onDeleted
         onChange={(v) => set({ shadow: v }, "Shadow")}
         format={(v) => (v === 0 ? "None" : pct(v))}
       />
-      <Btn size="s" aria-haspopup="dialog" onClick={() => setPicking(true)} icon={<Swatch bg={bg} backgrounds={backgrounds} />}>
+      <Btn size="xs" aria-haspopup="dialog" onClick={() => setPicking(true)} icon={<Swatch bg={bg} backgrounds={backgrounds} size={14} />}>
         Background
       </Btn>
 

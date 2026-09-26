@@ -164,22 +164,43 @@
   animation: st-ghost-in 120ms var(--ease-out) both;
 }
 
-/* On the video lane the outline is what a cut takes out: hatched like the
-   cut marks themselves, in the same red. */
+/* On the video lane the outline is a line, not a stretch: "Cut here" splits a
+   clip at one moment and takes nothing out. */
 .st-ghost.is-cut {
-  border-color: rgba(197, 34, 31, .7);
-  background: repeating-linear-gradient(-45deg, rgba(197, 34, 31, .16) 0 5px, rgba(197, 34, 31, .05) 5px 10px);
+  top: 0; bottom: 0; width: 0;
+  border: none; border-left: 2px dashed rgba(197, 34, 31, .85); border-radius: 0;
+  margin-left: -1px;
 }
 
-/* The recording on the video lane: one strip the length of the edit, with a
-   faint frame line every few pixels so it reads as footage, not as a chip. */
+/* A clip on the video lane: footage, so a faint frame line every few pixels
+   rather than a flat chip, with a seam against its neighbour. Its body passes
+   the pointer through (see Timeline.js); only its number takes a click. */
 .st-clip {
-  position: absolute; top: 2px; bottom: 2px; left: 0; right: 0; border-radius: 6px;
+  position: absolute; top: 2px; bottom: 2px; border-radius: 6px;
   background:
     repeating-linear-gradient(90deg, rgba(58, 55, 51, .07) 0 1px, transparent 1px 22px),
-    rgba(58, 55, 51, .07);
+    rgba(58, 55, 51, .09);
+  border: 1px solid rgba(58, 55, 51, .2);
   pointer-events: none;
 }
+.st-clip.is-on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.st-clip-tag {
+  position: absolute; left: 5px; top: 50%; transform: translateY(-50%);
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 6px;
+  border: 1px solid rgba(58, 55, 51, .28); background: var(--card); color: var(--ink);
+  font: inherit; font-size: 10.5px; font-weight: 700; line-height: 1; cursor: pointer;
+  pointer-events: auto;
+  transition: border-color var(--dur-hover) var(--ease-out);
+}
+.st-clip-tag:hover { border-color: var(--ink); }
+.st-clip.is-on .st-clip-tag { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+/* A stretch taken out, in the Video panel's list between two clips. */
+.st-cutrow {
+  display: flex; align-items: center; gap: 8px; margin: 0 11px; padding: 4px 0 4px 3px;
+  font-size: 12px; color: var(--ink-mute);
+}
+.st-cutrow > svg { color: var(--bad); flex-shrink: 0; }
 
 /* Its label: a solid tag, free to run past a short outline so the words are
    always whole. It starts clear of the arrow, whose tip sits on the outline's
@@ -198,13 +219,13 @@
 /* ── The canvas controls under the preview (CanvasBar.js) ────────────────
    Short sliders with their name beside them. The value rises above a slider
    while it is hovered, focused or dragged, so it costs the row no width. */
-.st-canvasbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.st-canvasbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .st-mini { position: relative; display: inline-flex; align-items: center; gap: 7px; }
 .st-mini-label {
   font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
   color: var(--ink-mute); cursor: default;
 }
-.st-mini .st-range { width: 76px; }
+.st-mini .st-range { width: 56px; }
 .st-mini-value {
   position: absolute; right: 0; bottom: calc(100% + 5px);
   padding: 2px 6px; border-radius: 5px; background: var(--ink); color: #fff;

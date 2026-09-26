@@ -37,10 +37,11 @@
  * silently created things would be worse than the panel's Add button.
  *
  * ── THE VIDEO LANE ───────────────────────────────────────────────────────────
- * The recording itself, above the others. Pointing at it offers "Cut here":
- * the hatched outline is the two seconds a click removes. The cuts already
- * made are drawn on it too, as the marks where time was taken out, and a click
- * on one puts that time back.
+ * The recording itself, above the others, drawn as its clips (clips.js).
+ * Pointing at a clip offers "Cut here" on a dashed line: a click splits the
+ * clip in two there and takes nothing out. A clip's number selects it, which
+ * opens the Video tab, where it can be deleted. The red marks between clips
+ * are where time was taken out; a click on one puts it back.
  *
  * ── THE WHEEL ZOOMS ──────────────────────────────────────────────────────────
  * Up zooms in and down zooms out, around the moment under the pointer: a mouse
@@ -50,6 +51,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { layout, placedSpans, activeZooms, toSource, mergedCuts, clamp, fmtTime } from "./model";
 import { DEFAULT_LENGTH, MIN_LENGTH } from "./create";
+import { clipsOf, MIN_CLIP } from "./clips";
 import { Icon } from "./ui";
 
 const LANES = [
@@ -74,7 +76,7 @@ export default function Timeline({
   onChange,
   onRemoveCut,
   onAdd,
-  onAddCut,
+  onSplit,
   height = 30,
 }) {
   const railRef = useRef(null);
@@ -96,6 +98,7 @@ export default function Timeline({
   const lay = useMemo(() => layout(tl), [tl]);
   const total = Math.max(0.1, lay.duration);
   const cuts = useMemo(() => mergedCuts(tl), [tl]);
+  const clips = useMemo(() => clipsOf(tl, lay), [tl, lay]);
 
   const items = useMemo(() => {
     const out = {};
@@ -258,30 +261,37 @@ export default function Timeline({
    */
   const ghostAt = useCallback(
     (laneKey, clientX) => {
-      const kind = laneKey === "video" ? "cut" : SINGULAR[laneKey];
       const t = fractionAt(clientX) * total;
+      // The label goes to the pointer's left when there is not room for it
+      // on the right before the visible edge of the timeline.
+      const edge = viewRef.current?.getBoundingClientRect().right ?? Infinity;
+      const flip = edge - clientX < TAG_ROOM;
+
+      // On the video, a split: anywhere inside a clip, not hard against its
+      // ends, where it would leave a sliver too short to be a clip.
+      if (laneKey === "video") {
+        const inClip = clips.some((c) => t - c.out_start >= MIN_CLIP && c.out_end - t >= MIN_CLIP);
+        return inClip ? { lane: laneKey, t, end: t, flip } : null;
+      }
+
+      const kind = SINGULAR[laneKey];
       let gapEnd = total;
-      // A cut may go anywhere on the video; the other kinds only in a gap.
-      for (const it of items[laneKey] || []) {
+      for (const it of items[laneKey]) {
         if (t >= it.start && t <= it.end) return null;
         if (it.start > t && it.start < gapEnd) gapEnd = it.start;
       }
       const end = Math.min(gapEnd, t + DEFAULT_LENGTH[kind]);
       if (end - t < MIN_LENGTH[kind]) return null;
-      // The label goes to the pointer's left when there is not room for it
-      // on the right before the visible edge of the timeline.
-      const edge = viewRef.current?.getBoundingClientRect().right ?? Infinity;
-      return { lane: laneKey, t, end, flip: edge - clientX < TAG_ROOM };
+      return { lane: laneKey, t, end, flip };
     },
-    [fractionAt, items, total]
+    [clips, fractionAt, items, total]
   );
 
   const addGhost = useCallback(
     (g) => {
       if (g.lane === "video") {
-        // The editor's addCut takes output time and removes DEFAULT_LENGTH.cut
-        // from there. Landing on the cut point shows what now follows it.
-        onAddCut(g.t);
+        // Stored in recording time, like everything else.
+        onSplit(round3(toSource(g.t, lay)));
         onSeek(g.t);
       } else {
         // Stored in recording time. Both ends are mapped rather than adding a
@@ -291,7 +301,7 @@ export default function Timeline({
       }
       setGhost(null);
     },
-    [lay, onAdd, onAddCut, onSeek]
+    [lay, onAdd, onSplit, onSeek]
   );
 
   /* ── The ruler's tick marks ───────────────────────────────────────────── */
@@ -410,7 +420,7 @@ export default function Timeline({
             {/* Lanes: the video first, then the things laid over it. */}
             {ROWS.map((lane) => {
               const isVideo = lane.key === "video";
-              const canAdd = isVideo ? !!onAddCut : !!onAdd;
+              const canAdd = isVideo ? !!onSplit : !!onAdd;
               return (
               <div
                 key={lane.key}
@@ -431,9 +441,39 @@ export default function Timeline({
                 }}
                 onPointerLeave={() => setGhost(null)}
               >
-                {/* The recording, as one strip the length of the edit. It never
-                    takes the pointer, so pointing at it reaches the lane. */}
-                {isVideo && <span className="st-clip" aria-hidden="true" />}
+                {/* The clips. A clip's body never takes the pointer, so pointing
+                    at it reaches the lane and offers "Cut here"; only its
+                    number does, and that selects it. */}
+                {isVideo &&
+                  clips.map((c) => {
+                    const on = selection?.kind === "clip" && selection.id === c.id;
+                    return (
+                      <div
+                        key={c.id}
+                        className={`st-clip${on ? " is-on" : ""}`}
+                        style={{
+                          left: `calc(${(c.out_start / total) * 100}% + 1px)`,
+                          width: `calc(${((c.out_end - c.out_start) / total) * 100}% - 2px)`,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="st-clip-tag"
+                          title={`Clip ${c.n} · ${fmtTime(c.out_start, true)} – ${fmtTime(c.out_end, true)}. Click to select.`}
+                          aria-label={`Select clip ${c.n}`}
+                          aria-pressed={on}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelect({ kind: "clip", id: c.id });
+                            onSeek(c.out_start + 0.05);
+                          }}
+                        >
+                          {c.n}
+                        </button>
+                      </div>
+                    );
+                  })}
 
                 {ghost?.lane === lane.key && (
                   <div
@@ -441,8 +481,9 @@ export default function Timeline({
                     aria-hidden="true"
                     style={{
                       left: `${(ghost.t / total) * 100}%`,
-                      width: `${((ghost.end - ghost.t) / total) * 100}%`,
-                      ...(isVideo ? null : { borderColor: lane.color, background: `${lane.color}1F` }),
+                      ...(isVideo
+                        ? null
+                        : { width: `${((ghost.end - ghost.t) / total) * 100}%`, borderColor: lane.color, background: `${lane.color}1F` }),
                     }}
                   >
                     {/* The label is its own tag rather than text inside the

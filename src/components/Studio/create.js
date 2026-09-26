@@ -11,14 +11,11 @@
  */
 import { newId, clamp } from "./model";
 
-/**
- * How long each kind runs when nobody has said, in seconds. Infinity is "to
- * the end". `cut` is how much a "Cut here" removes (the editor's addCut).
- */
-export const DEFAULT_LENGTH = { zoom: 2.5, blur: Infinity, cue: 1.8, cut: 2 };
+/** How long each kind runs when nobody has said, in seconds. Infinity is "to the end". */
+export const DEFAULT_LENGTH = { zoom: 2.5, blur: Infinity, cue: 1.8 };
 
 /** How much room each kind needs before it is worth making. */
-export const MIN_LENGTH = { zoom: 0.4, blur: 0.4, cue: 0.4, cut: 0.4 };
+export const MIN_LENGTH = { zoom: 0.4, blur: 0.4, cue: 0.4 };
 
 /**
  * @returns {{ item: object, patch: object, label: string }} the new item, the
