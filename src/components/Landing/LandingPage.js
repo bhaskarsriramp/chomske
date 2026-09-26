@@ -97,6 +97,25 @@ function Head({ eyebrow, title, sub, dark = false }) {
   );
 }
 
+/* The hero chip's two icons, as plain line drawings: the browser-extension
+   puzzle piece (a square with a knob on top and one on the right, the shape
+   browsers use for extensions) and a download arrow (Lucide, ISC licence). */
+function ExtensionIcon() {
+  return (
+    <svg className="lp-pill__icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3.5 9.5a1.5 1.5 0 0 1 1.5-1.5H8a2.5 2.5 0 1 1 3.5 0h3a1.5 1.5 0 0 1 1.5 1.5v3a2.5 2.5 0 1 1 0 3.5v3a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19Z" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg className="lp-pill__icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+    </svg>
+  );
+}
+
 function StartButton({ busy, children = "Start recording, free", kind = "solid" }) {
   return (
     <button type="button" className={`lp-btn lp-btn--${kind}`} disabled={busy} onClick={() => scrollTo(SIGN_IN)}>
@@ -154,12 +173,16 @@ function Hero({ onCredential, onError, busy, error }) {
   return (
     <section className="lp-hero" id="top">
       <div className="lp-in lp-hero__copy">
-        <a className="lp-pill" href="#install">
-          <span className="lp-pill__dot" />
-          No extension. No download.
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+        <a className="lp-pill" href="#install" aria-label="No installation, no download">
+          <span className="lp-pill__item">
+            No installation
+            <ExtensionIcon />
+          </span>
+          <span className="lp-pill__sep" aria-hidden="true" />
+          <span className="lp-pill__item">
+            No download
+            <DownloadIcon />
+          </span>
         </a>
         <h1>
           Product demos that zoom
@@ -176,7 +199,7 @@ function Hero({ onCredential, onError, busy, error }) {
             <GoogleLogin onSuccess={onCredential} onError={onError} text="continue_with" shape="pill" size="large" width="248" />
           </div>
         </div>
-        <p className="lp-start__note">100 free credits · No card · Works on Mac, Windows, Linux and ChromeOS</p>
+        <p className="lp-start__note">100 free credits · No card · Works on all browsers.</p>
         {error && (
           <p className="lp-error" role="alert">
             {error}

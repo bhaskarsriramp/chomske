@@ -112,12 +112,16 @@
   backdrop-filter: saturate(1.5) blur(14px);
   box-shadow: 0 1px 0 var(--lp-line);
 }
-.lp-nav__in { max-width: var(--lp-max); margin: 0 auto; padding: 0 var(--lp-gutter); height: 64px; display: flex; align-items: center; gap: 20px; }
-.lp-mark { color: var(--lp-ink); display: flex; }
-.lp-nav nav { display: flex; gap: 2px; margin-left: 12px; }
+/* Three columns across the whole window, not the content width: the mark at
+   the left edge, the links in the exact centre, the buttons at the right edge.
+   Pushing the chrome outward leaves the middle of the first screen to the
+   headline and the line under it, which is where the eye should land. */
+.lp-nav__in { margin: 0 auto; padding: 0 clamp(20px, 2.8vw, 48px); height: 68px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; column-gap: 20px; }
+.lp-mark { grid-column: 1; justify-self: start; color: var(--lp-ink); display: flex; }
+.lp-nav nav { grid-column: 2; display: flex; gap: 4px; }
 .lp-nav nav a { font-size: 14px; font-weight: 500; color: var(--lp-body); padding: 8px 12px; border-radius: 8px; transition: color 0.15s ease, background-color 0.15s ease; }
 .lp-nav nav a:hover { color: var(--lp-ink); background: rgba(15, 15, 15, 0.045); }
-.lp-nav__end { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.lp-nav__end { grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 6px; }
 
 /* ── Hero ──────────────────────────────────────────────────────────────────── */
 
@@ -137,15 +141,18 @@
 .lp-hero__copy { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; text-align: center; }
 
 .lp-pill {
-  display: inline-flex; align-items: center; gap: 9px; padding: 6px 12px 6px 11px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px; border-radius: 999px;
   background: #fff; border: 1px solid var(--lp-line); box-shadow: 0 1px 2px rgba(15, 15, 15, 0.04);
   font-size: 13px; font-weight: 560; color: var(--lp-ink);
   animation: lp-rise 0.8s var(--lp-ease) both;
   transition: border-color 0.15s ease;
 }
 .lp-pill:hover { border-color: var(--lp-line-2); }
-.lp-pill svg { width: 14px; height: 14px; color: var(--lp-faint); }
-.lp-pill__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--lp-blue); animation: lp-pulse 2.4s infinite; }
+.lp-pill__item { display: inline-flex; align-items: center; gap: 6px; }
+.lp-pill .lp-pill__icon { width: 15px; height: 15px; color: var(--lp-mute); fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+/* The "·" between the two phrases, drawn rather than typed: at 13px the
+   font's middle dot is small enough to read as a full stop. */
+.lp-pill__sep { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: 0.45; flex-shrink: 0; }
 @keyframes lp-pulse {
   0% { box-shadow: 0 0 0 0 rgba(27, 23, 255, 0.45); }
   70% { box-shadow: 0 0 0 8px rgba(27, 23, 255, 0); }
@@ -1019,6 +1026,7 @@
   .lp-hero h1 br { display: none; }
   .lp-hero__film { margin-top: 44px; }
   .lp-textbtn { display: none; }
+  .lp-nav__in { padding: 0 16px; height: 60px; }
   .hf-stage, .cmp { border-radius: 14px; }
   .pb { gap: 8px; }
   .pb-auto, .pb-time--end { display: none; }

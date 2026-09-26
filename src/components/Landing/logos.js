@@ -24,10 +24,11 @@ export const BROWSERS = [
   ["Opera", "opera"],
 ];
 
-export function BrowserRow({ label = "Records in" }) {
+/** The logos alone, or with a short label before them when `label` is given. */
+export function BrowserRow({ label = "" }) {
   return (
-    <div className="br">
-      <span className="br-label">{label}</span>
+    <div className="br" aria-label={label ? undefined : "Works in Chrome, Edge, Firefox, Safari, Brave and Opera"}>
+      {label && <span className="br-label">{label}</span>}
       <ul className="br-list">
         {BROWSERS.map(([name, file]) => (
           <li key={name} title={name}>
