@@ -39,7 +39,7 @@
  */
 import "dotenv/config";
 import { GoogleGenAI } from "@google/genai";
-import { isVertex, describeProvider, limits } from "../services/ai/provider.js";
+import { isVertex, describeProvider, limits, aistudioKeys } from "../services/ai/provider.js";
 
 const arg = (name, fallback = "") => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -80,7 +80,7 @@ function configured() {
 function client(location) {
   return isVertex()
     ? new GoogleGenAI({ vertexai: true, ...(PROJECT ? { project: PROJECT } : {}), location })
-    : new GoogleGenAI({ apiKey: String(process.env.AISTUDIO_KEY || "").split(",")[0].trim() });
+    : new GoogleGenAI({ apiKey: aistudioKeys()[0] || "" });
 }
 
 const statusOf = (err) => err?.status ?? err?.code ?? err?.response?.status ?? 0;
@@ -119,13 +119,11 @@ async function main() {
     console.log(`  project      ${PROJECT || "(unset — resolved from the environment or VM metadata)"}`);
     console.log(`  regions      ${REGIONS.join(", ")}`);
     console.log(`  credentials  ADC${process.env.GOOGLE_APPLICATION_CREDENTIALS ? ` from ${process.env.GOOGLE_APPLICATION_CREDENTIALS}` : " from the environment / VM metadata"}`);
-    if (String(process.env.AISTUDIO_KEY || "").trim()) {
-      console.log("  note         AISTUDIO_KEY is set and is NOT read on vertex. It is inert, not a fallback.");
+    if (aistudioKeys().length) {
+      console.log("  note         an AI Studio key is set, but GEMINI_PROVIDER=vertex forces Vertex; the key is not read.");
     }
   } else {
-    const n = String(process.env.AISTUDIO_KEY || "").split(",").filter((k) => k.trim()).length;
-    console.log(`  keys         ${n}`);
-    console.log("  note         GEMINI_PROVIDER is 'aistudio'. It defaults to 'vertex' — something is setting it.");
+    console.log(`  keys         ${aistudioKeys().length}`);
   }
 
   const wanted = configured();

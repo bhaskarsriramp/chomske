@@ -65,10 +65,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
  * the one that needs saying out loud. GEMINI_PROVIDER=aistudio moves back when
  * there are credits there.
  */
-export const PROVIDER =
-  String(process.env.GEMINI_PROVIDER || "vertex").trim().toLowerCase() === "aistudio"
-    ? "aistudio"
-    : "vertex";
+/**
+ * ── AND NOW AI STUDIO, BECAUSE THERE ARE CREDITS THERE (2026-09-25) ─────────
+ * The move back the paragraph above waited for. A key in the environment now
+ * means AI Studio, without GEMINI_PROVIDER having to say so as well — the key
+ * IS the statement. GEMINI_PROVIDER still wins when it is set: "vertex" forces
+ * the Cloud project whatever keys are lying around, "aistudio" insists on a key.
+ */
+export const PROVIDER = (() => {
+  const said = String(process.env.GEMINI_PROVIDER || "").trim().toLowerCase();
+  if (said === "vertex" || said === "aistudio") return said;
+  return aistudioKeys().length ? "aistudio" : "vertex";
+})();
 
 export const isVertex = () => PROVIDER === "vertex";
 
@@ -101,11 +109,18 @@ const PROJECT = String(
  * list, used round-robin, because on AI Studio each key carries its own
  * per-minute limit.
  */
-const KEYS = () =>
-  String(process.env.AISTUDIO_KEY || "")
+/**
+ * AISTUDIO_KEY is this project's name for it; GEMINI_API_KEY and
+ * GOOGLE_API_KEY are the names Google's own documentation and SDK use, and
+ * a key set under either of those is the same key.
+ */
+export function aistudioKeys() {
+  return String(process.env.AISTUDIO_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "")
     .split(",")
     .map((k) => k.trim())
     .filter(Boolean);
+}
+const KEYS = aistudioKeys;
 
 let _cursor = 0;
 const _clients = new Map();
@@ -144,7 +159,7 @@ function pick() {
   }
 
   const keys = KEYS();
-  if (!keys.length) throw new Error("AISTUDIO_KEY is not set");
+  if (!keys.length) throw new Error("No AI Studio key: set AISTUDIO_KEY (or GEMINI_API_KEY)");
   const key = keys[_cursor++ % keys.length];
   const id = "aistudio:" + key.slice(-6);
   if (!_clients.has(id)) _clients.set(id, new GoogleGenAI({ apiKey: key }));
@@ -179,7 +194,14 @@ const FALLBACK = {
   // Verified callable on this project: the 3.x families are listed in
   // us-central1 and every one of them refuses with 404.
   vertex: "gemini-2.5-flash",
-  aistudio: "gemini-3.5-flash",
+  /**
+   * The same model on AI Studio, on purpose. Every prompt the studio pipeline
+   * sends — the frame reader, the pointer checks, the crop question — was
+   * tuned and validated against gemini-2.5-flash, and changing the provider
+   * must not quietly change the model under them as well. A newer model is a
+   * deliberate GEMINI_MODEL change, measured on the labelled recordings first.
+   */
+  aistudio: "gemini-2.5-flash",
 };
 
 const first = (...vals) => vals.map((v) => String(v || "").trim()).find(Boolean) || "";
@@ -236,11 +258,22 @@ export function providerReady() {
  * what that is; a new project is often far lower than the documented default
  * until quota is requested.
  */
-const RPM = Math.max(1, num(process.env.GEMINI_RPM, 60));
+/**
+ * ── THE DEFAULTS FOLLOW THE PROVIDER ─────────────────────────────────────────
+ * 60 a minute and 4 in flight was sized for a Vertex testing project with a
+ * small quota. AI Studio on a paid tier grants far more (gemini-2.5-flash: 1,000
+ * a minute on tier 1), and a studio analysis is a few dozen requests — frames,
+ * pointer checks, the crop question, the audit — that were queueing behind a
+ * budget nobody had. 600 a minute leaves room under the tier for everything
+ * else on the same key (the server shares it: buckets live in Redis). Each is
+ * still overridden by its environment variable.
+ */
+const DEFAULTS = PROVIDER === "aistudio" ? { rpm: 600, burst: 60, concurrency: 16 } : { rpm: 60, burst: 10, concurrency: 4 };
+const RPM = Math.max(1, num(process.env.GEMINI_RPM, DEFAULTS.rpm));
 /** Burst allowed above the steady rate, in requests. */
-const BURST = clamp(num(process.env.GEMINI_BURST, Math.min(RPM, 10)), 1, Math.max(1, RPM));
+const BURST = clamp(num(process.env.GEMINI_BURST, Math.min(RPM, DEFAULTS.burst)), 1, Math.max(1, RPM));
 /** Simultaneous in-flight requests, across every caller in this process. */
-const CONCURRENCY = Math.max(1, int(process.env.GEMINI_CONCURRENCY, 4));
+const CONCURRENCY = Math.max(1, int(process.env.GEMINI_CONCURRENCY, DEFAULTS.concurrency));
 /** Attempts per request, including the first. */
 const ATTEMPTS = Math.max(1, int(process.env.GEMINI_ATTEMPTS, 5));
 /**

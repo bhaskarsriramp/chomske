@@ -226,7 +226,7 @@ function assertConfig() {
    * work and the reason is on the first screen of the boot output.
    */
   if (!providerReady()) {
-    throw new Error("AISTUDIO_KEY is not set, and GEMINI_PROVIDER is not \"vertex\". Set one or the other.");
+    throw new Error("GEMINI_PROVIDER is \"aistudio\" but no key is set (AISTUDIO_KEY or GEMINI_API_KEY).");
   }
   const l = limits();
   console.log(

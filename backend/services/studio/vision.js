@@ -92,7 +92,9 @@ const ELEMENT_STATES = new Set(["normal", "hovered", "pressed", "focused", "sele
  * which is now only a statement about its own memory: each one is a base64 JPEG
  * held until the answer comes back.
  */
-const CONCURRENCY = parseInt(process.env.STUDIO_VISION_CONCURRENCY || "4", 10);
+// 8 since the move to AI Studio's paid tier (2026-09-25): the provider's own
+// budget is what limits the rate, and eight small JPEGs in the air is nothing.
+const CONCURRENCY = parseInt(process.env.STUDIO_VISION_CONCURRENCY || "8", 10);
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
