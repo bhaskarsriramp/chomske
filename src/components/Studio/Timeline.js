@@ -58,8 +58,7 @@
  * is on screen (follow.mjs, "Applying a blur"). So a blur here has no ends to
  * drag: it is a tag at the moment it was placed, saying where it is with being
  * applied (Apply, Applying… 40%, a tick), and once applied, the stretches it
- * actually covers, drawn faint along the lane, amber where it lost sight of
- * the thing and held still. Ctrl/⌘ + click on the lane places a new one at
+ * actually covers, drawn faint along the lane. Ctrl/⌘ + click on the lane places a new one at
  * that moment, on one line rather than an outline, because it has no length.
  *
  * ── TRIMMING A CLIP BY ITS EDGES ─────────────────────────────────────────────
@@ -162,20 +161,19 @@ export default function Timeline({
   }, [tl, lay]);
 
   // The blur lane: each blur's tag, where it was placed, and once applied the
-  // stretches it covers and any where it held still, all in output time.
+  // stretches it covers, in output time.
   const blurMarks = useMemo(() => {
     const names = blurNames(tl.blurs);
     const spans = (list) => placedSpans(list.map(([s, e]) => ({ start: s, end: e })), lay, { min: 0.005 });
     return (tl.blurs || []).map((b) => {
       const st = applyState(b, follows, following);
-      const f = st.kind === "applied" || st.kind === "check" ? follows?.[b.id] : null;
+      const f = st.kind === "applied" ? follows?.[b.id] : null;
       return {
         b,
         st,
         name: names.get(b.id),
         at: outOf(b.at ?? b.start, lay),
         cover: spans(f ? coverage(f, b.end) : st.kind === "still" ? [[b.start, b.end]] : []),
-        held: spans(st.held || []),
       };
     });
   }, [tl, lay, follows, following]);
@@ -701,16 +699,6 @@ export default function Timeline({
                             style={{ left: `${(s.start / total) * 100}%`, width: `${((s.end - s.start) / total) * 100}%`, background: lane.color }}
                           />
                         ))}
-                        {m.held.map((s, k) => (
-                          <span
-                            key={`h${k}`}
-                            className="st-cover-held"
-                            title={`${m.name} lost sight of it here and held still. Play this part to check.`}
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={pick}
-                            style={{ left: `${(s.start / total) * 100}%`, width: `${((s.end - s.start) / total) * 100}%` }}
-                          />
-                        ))}
                       </Fragment>
                     );
                   })}
@@ -855,7 +843,6 @@ function BlurTag({ mark, color, left, on, onPick, onApply }) {
     unapplied: `${name}: not applied yet. It stays where you put it until you apply it.`,
     applying: `${name}: applying. Finding it through the whole recording.`,
     applied: `${name}: applied. It covers this wherever it is on screen.`,
-    check: `${name}: applied, but it lost sight of it for a moment and held still. Check that part.`,
     still: `${name}: applied. Nothing under it to recognise, so it stays where you put it.`,
     failed: `${name}: couldn't be applied. Try again.`,
   }[st.kind];
@@ -883,7 +870,7 @@ function BlurTag({ mark, color, left, on, onPick, onApply }) {
         <span className="st-spin" aria-hidden="true" />
       ) : st.kind === "applied" ? (
         <Icon name="check" size={11} />
-      ) : st.kind === "check" || st.kind === "failed" ? (
+      ) : st.kind === "failed" ? (
         <Icon name="alert" size={11} />
       ) : (
         <Icon name="blur" size={11} />

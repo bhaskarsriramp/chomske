@@ -264,7 +264,7 @@
 
 /* ── Blurs on their lane (Timeline.js BlurTag) ────────────────────────────
    Where an applied blur covers its secret: faint, so the tags read over it,
-   and stronger for the selected blur. Amber hatching where it held still. */
+   and stronger for the selected blur. */
 .st-cover {
   position: absolute; top: 3px; bottom: 3px; border-radius: 4px;
   opacity: .22; cursor: pointer;
@@ -272,11 +272,6 @@
 }
 .st-cover:hover { opacity: .34; }
 .st-cover.is-on { opacity: .5; }
-.st-cover-held {
-  position: absolute; top: 3px; bottom: 3px; border-radius: 4px; cursor: pointer;
-  background: repeating-linear-gradient(-45deg, rgba(214, 140, 20, .38) 0 5px, rgba(214, 140, 20, .12) 5px 10px);
-  border: 1px dashed rgba(214, 140, 20, .7);
-}
 
 /* The tag: at the moment the blur was placed, its left edge on that moment
    (its right edge, flipped, near the end of the timeline). */
@@ -299,7 +294,7 @@
 /* Not applied: dashed, like something not finished. */
 .st-btag.is-unapplied, .st-btag.is-failed { border-style: dashed; }
 .st-btag.is-applied > svg { color: var(--ok); }
-.st-btag.is-check > svg, .st-btag.is-failed > svg { color: #C27C0E; }
+.st-btag.is-failed > svg { color: #C27C0E; }
 .st-btag.is-applying { color: var(--ink-body); font-variant-numeric: tabular-nums; }
 .st-btag-apply {
   height: 20px; padding: 0 8px; border-radius: 5px; border: 0;

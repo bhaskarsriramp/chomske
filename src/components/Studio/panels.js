@@ -251,7 +251,6 @@ const APPLY_BADGE = {
   unapplied: { tone: "warn", text: "Not applied" },
   applying: { tone: "mute", text: "Applying…" },
   applied: { tone: "good", text: "Applied" },
-  check: { tone: "warn", text: "Check" },
   still: { tone: "mute", text: "Stays put" },
   failed: { tone: "warn", text: "Not applied" },
 };
@@ -261,7 +260,7 @@ const APPLY_BADGE = {
  * stretches it covers its secret, as the timeline draws them.
  */
 function coveredSpans(b, follows, st, lay) {
-  const f = st.kind === "applied" || st.kind === "check" ? follows?.[b.id] : null;
+  const f = st.kind === "applied" ? follows?.[b.id] : null;
   const src = f ? coverage(f, b.end) : st.kind === "still" ? [[b.start, b.end]] : [];
   return placedSpans(src.map(([s, e]) => ({ start: s, end: e })), lay, { min: 0.005 });
 }
@@ -327,7 +326,7 @@ export function BlurPanel({
                 // Where it shows once applied; where it was placed until then.
                 const where = spans.length
                   ? `On screen ${fmtTime(spans[0].start, true)} – ${fmtTime(spans[0].end, true)}${spans.length > 1 ? ` +${spans.length - 1}` : ""}`
-                  : st.kind === "applied" || st.kind === "check"
+                  : st.kind === "applied"
                     ? "Not on screen after cuts"
                     : `Placed at ${fmtTime(outOf(b.at ?? b.start, lay), true)}`;
                 return (
@@ -367,7 +366,6 @@ export function BlurPanel({
             st={applyState(current, follows, following)}
             spans={coveredSpans(current, follows, applyState(current, follows, following), lay)}
             seekTo={(outT) => seek(outT + 0.02)}
-            seekHeld={(t) => seek(outOf(t, lay) + 0.05)}
             onApply={() => onApply?.(current)}
           />
           <div>
@@ -1104,12 +1102,9 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
  * The selected blur's state (follow.mjs applyState) in a sentence, with the
  * one thing to do about it. Applying shows its progress, and says so plainly
  * when it is waiting to start or taking longer than it should, with a way to
- * ask again: a spinner with no end is the failure this replaced. The held
- * case matters most once applied: the blur lost sight of what it covers and
- * stayed put, which is safe only if what it covered went away too, and only a
- * person can check that.
+ * ask again: a spinner with no end is the failure this replaced.
  */
-function ApplyStatus({ blur, st, spans, seekTo, seekHeld, onApply }) {
+function ApplyStatus({ blur, st, spans, seekTo, onApply }) {
   const box = (tone, children) => (
     <div
       role="status"
@@ -1190,17 +1185,6 @@ function ApplyStatus({ blur, st, spans, seekTo, seekHeld, onApply }) {
           Applied. It covers this wherever it is on screen{where ? `: ${where}` : ""}, and steps aside while it is off the
           screen.{spans.length ? <> {link("Play it", () => seekTo(Math.max(0, spans[0].start - 0.5)))}</> : null}
         </span>
-      </span>
-    );
-  }
-  if (st.kind === "check") {
-    const [a, b] = st.held[0];
-    return box(
-      "warn",
-      <span>
-        Applied, but it lost sight of it from {fmtTime(a, true)} to {fmtTime(b, true)}
-        {st.held.length > 1 ? ` (and ${st.held.length - 1} more time${st.held.length > 2 ? "s" : ""})` : ""}, so it stayed where it
-        was. Play that part to check nothing shows. {link("Show me", () => seekHeld(a))}
       </span>
     );
   }

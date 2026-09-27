@@ -78,8 +78,10 @@
  */
 import { spawn } from "child_process";
 import { FFMPEG_PATH } from "../media/ffmpeg.js";
+import { FOLLOW_VERSION } from "../../../src/components/Studio/follow.mjs";
 
-export const TRACK_VERSION = 3;
+// The same number the editor and the export require of a follow (follow.mjs).
+export const TRACK_VERSION = FOLLOW_VERSION;
 
 /** The working copy's width. A source pixel is ~3 of these at 1920. */
 const WORK_W = 640;
@@ -104,6 +106,18 @@ const BAND_OK = 0.8;
 /** Motion trusted on its own, when the text itself cannot be matched. */
 const BAND_STRONG = 0.9;
 /**
+ * ...or motion that is CLEAR: the best move of the band clears BAND_CLEAR_MIN
+ * and beats every other move (more than a few pixels away) by BAND_CLEAR.
+ * Measured: a name cut in half by the edge of an embedded video, the page
+ * scrolling 115 px between two frames 0.28 s apart, band 0.80 against 0.45,
+ * text 0.13 (half the box was over the page outside the video); holding still
+ * there showed the name for three frames. On a page of lookalike rows the
+ * band's moves come out close together, so this never picks between
+ * lookalikes. Over five recordings it decided two frames, both right.
+ */
+const BAND_CLEAR_MIN = 0.75;
+const BAND_CLEAR = 0.1;
+/**
  * The blurred text matching its original: this is it. Not higher: the same
  * text re-drawn half a pixel off after a scroll scores 0.87-0.88 (measured),
  * while the nearest lookalike, a neighbouring document's id, scored 0.75. The
@@ -124,18 +138,33 @@ const VERIFY = 0.8;
 const STRICT_RECT = 0.82;
 const STRICT_MARGIN = 0.08;
 /**
- * ...and, unless the text alone is unmistakable (STRICT_ALONE), its
- * surroundings must not be something else entirely. A blur follows its secret
- * through the WHOLE recording, so a find is tried on every other page too,
- * and a box drawn loosely (half blank, or across two lines) is at identity
- * size mostly "a dark band": the lower half of a bold heading on another page
- * matched one at 0.93. Measured over four recordings: every true find had
- * surroundings of 0.88 to 1, every false one 0 to 0.21. A low floor rather
- * than a bar, because surroundings can be partly hidden (a toolbar over the
- * line above), which is why they are not otherwise required.
+ * ...and its surroundings must be its own. A blur follows ONE thing through
+ * the whole recording, so a find is tried on every other page too, where the
+ * same word can sit somewhere else entirely: a channel name "levelsio" was
+ * found again in the search box above ("…startup by levelsio"), text 0.83,
+ * surroundings 0.41, and the blur moved there. A loosely drawn box (half
+ * blank, or across two lines) is at identity size mostly "a dark band", and
+ * the lower half of a bold heading matched one at 0.93 with surroundings 0.12.
+ * Measured over five recordings: every true find had surroundings of 0.88 to
+ * 1, every false one 0 to 0.41.
  */
-const STRICT_ALONE = 0.95;
-const STRICT_CONTEXT = 0.35;
+const STRICT_CONTEXT = 0.6;
+/**
+ * ── SIZE ──────────────────────────────────────────────────────────────────
+ * What a blur covers can grow and shrink: a demo video embedded in a page
+ * zooms in, a page is zoomed. Templates exist at SC_STEP^k of the drawn size,
+ * k from K_MIN to K_MAX, cut from the anchor frame (templateSets). Following
+ * tries the sizes either side of the current one, SPREAD_NEAR steps, or
+ * SPREAD_FAR after a long gap between frames; a find anywhere tries the size
+ * it was lost at and the size it was drawn at. Measured: an embedded video
+ * zoomed a channel name to about 1.7x in 1.3 s; at a fixed size the blur held
+ * still while the name slid out from under it.
+ */
+const SC_STEP = 1.03;
+const K_MIN = -20;
+const K_MAX = 24;
+const SPREAD_NEAR = 3;
+const SPREAD_FAR = 6;
 /**
  * How much the surroundings count beside the text when choosing between
  * places. Real ids made in the same second share most of their digits:
@@ -174,6 +203,13 @@ const LOOK_EVERY = 0.1;
  */
 const LET_GO = 0.5;
 const PAGE_SAME = 0.4;
+/**
+ * The same, for the part of the screen around the blur: a video embedded in
+ * a page going from a results page to a video page scored 0.43-0.45 there
+ * while the page around it scored 0.8. Stricter than the whole screen, since
+ * it only ever lets go with the text itself gone from under the blur too.
+ */
+const NEAR_SAME = 0.6;
 const GONE_ID = 0.5;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -403,6 +439,18 @@ function meanDiff(a, b) {
   return s / a.length;
 }
 
+/** The cells of a tw × th thumbnail within (hw, hh) of (cx, cy), as one array. */
+function windowOf(d, tw, th, cx, cy, hw, hh) {
+  const x0 = clamp(Math.round(cx - hw), 0, tw - 1);
+  const x1 = clamp(Math.round(cx + hw), x0 + 1, tw);
+  const y0 = clamp(Math.round(cy - hh), 0, th - 1);
+  const y1 = clamp(Math.round(cy + hh), y0 + 1, th);
+  const out = new Float32Array((x1 - x0) * (y1 - y0));
+  let i = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) out[i++] = d[y * tw + x];
+  return out;
+}
+
 /** How alike two tiny thumbnails' layouts are: their correlation, -1 to 1 (0 if either is flat). */
 function layoutCorr(a, b) {
   const n = a.length;
@@ -427,45 +475,150 @@ function layoutCorr(a, b) {
   return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0;
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+   Templates at any scale
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The region [x0, x0 + rw) × [y0, y0 + rh) of img (iw × ih bytes) resampled
+ * to ow × oh: each output pixel is the mean of up to 4 × 4 bilinear samples
+ * over its footprint, so shrinking does not alias and growing is smooth.
+ * Outside the image reads as its nearest edge.
+ */
+function resample(img, iw, ih, x0, y0, rw, rh, ow, oh) {
+  const out = new Float32Array(ow * oh);
+  const fx = rw / ow;
+  const fy = rh / oh;
+  const nx = clamp(Math.ceil(fx), 1, 4);
+  const ny = clamp(Math.ceil(fy), 1, 4);
+  const at = (x, y) => {
+    const u = clamp(x - 0.5, 0, iw - 1);
+    const v = clamp(y - 0.5, 0, ih - 1);
+    const xi = Math.floor(u);
+    const yi = Math.floor(v);
+    const ax = u - xi;
+    const ay = v - yi;
+    const x1 = Math.min(iw - 1, xi + 1);
+    const r0 = yi * iw;
+    const r1 = Math.min(ih - 1, yi + 1) * iw;
+    return (img[r0 + xi] * (1 - ax) + img[r0 + x1] * ax) * (1 - ay) + (img[r1 + xi] * (1 - ax) + img[r1 + x1] * ax) * ay;
+  };
+  for (let j = 0; j < oh; j++) {
+    for (let i = 0; i < ow; i++) {
+      let s = 0;
+      for (let b = 0; b < ny; b++) {
+        const y = y0 + (j + (b + 0.5) / ny) * fy;
+        for (let a = 0; a < nx; a++) s += at(x0 + (i + (a + 0.5) / nx) * fx, y);
+      }
+      out[j * ow + i] = s / (nx * ny);
+    }
+  }
+  return out;
+}
+
+/** A template from resampled pixels: the same shape templateOf makes. */
+function asTemplate(t, w, h) {
+  let s = 0;
+  let s2 = 0;
+  for (let i = 0; i < t.length; i++) {
+    s += t[i];
+    s2 += t[i] * t[i];
+  }
+  const n = t.length;
+  return { t, w, h, std: Math.sqrt(Math.max(0, s2 / n - (s / n) ** 2)) };
+}
+
+/**
+ * Every template the follower matches with, at scale SC_STEP^k of the anchor,
+ * made on demand and kept. All are cut from the anchor frame's identity copy
+ * (twice the working size), so up to twice the original size a template is
+ * still made of real pixels rather than enlarged ones.
+ *
+ * Positions are in working pixels of the anchor frame: R0 the rectangle, P0
+ * the patch around it (the rectangle and its surroundings, cut short at the
+ * frame's edges), c0 the rectangle's centre. At scale s each covers the same
+ * part of the anchor frame, drawn s times larger.
+ */
+function templateSets(anchorHi, W2, H2, R0, P0, c0) {
+  const cache = new Map();
+  const cut = (reg, d) => {
+    const ow = Math.max(2, Math.round(reg.w * d));
+    const oh = Math.max(2, Math.round(reg.h * d));
+    return asTemplate(resample(anchorHi, W2, H2, reg.x * HI, reg.y * HI, reg.w * HI, reg.h * HI, ow, oh), ow, oh);
+  };
+  return (k) => {
+    let set = cache.get(k);
+    if (set) return set;
+    const s = SC_STEP ** k;
+    const T = cut(P0, s);
+    set = {
+      k,
+      s,
+      rw: R0.w * s,
+      rh: R0.h * s,
+      T,
+      Tc: cut(P0, s / K),
+      TrectLo: cut(R0, s),
+      TrectHalf: cut(R0, s / 2),
+      TrectHi: cut(R0, s * HI),
+      // Where the rectangle's centre sits inside the patch, in working pixels.
+      pcx: ((c0.x - P0.x) / P0.w) * T.w,
+      pcy: ((c0.y - P0.y) / P0.h) * T.h,
+    };
+    cache.set(k, set);
+    return set;
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Following, one direction at a time
+   ──────────────────────────────────────────────────────────────────────────── */
+
 /**
  * One direction of the walk from the anchor. `dir` is +1 walking forward in
  * time and -1 walking back. Feed it frames in that order with an increasing
- * `idx`; each call returns the patch's top-left and state for that frame, and,
- * after a find, `fill`: earlier frames (by idx) whose positions it now knows.
+ * `idx`; each call returns the rectangle's centre `c` (working pixels), its
+ * scale step `k` and its state for that frame, and, after a find, `fill`:
+ * earlier frames (by idx) whose places it now knows.
  */
-function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir, debug = null }) {
-  const bx = clamp(Math.round(R.w * 0.5), 24, 120);
-  const by = clamp(Math.round(R.h * 2), 24, 70);
-
-  let pos = { ...start };
+function follower({ tplAt, W, H, c0, dir, debug = null }) {
+  let c = { ...c0 };
+  let k = 0;
   let state = "seen";
   let prev = null;
   let lastT = null;
   let vel = { x: 0, y: 0 };
-  let carry = null;           // { pos, t } where carrying began
+  let carry = null;           // { c, t } where carrying began
   let thumb = null;
   let lookedT = null;         // when a lost search last ran
-  let lost = null;            // { t, tiny } the last frame it was seen on, once lost
+  let lost = null;            // { t, tiny, k } the last frame it was seen on, once lost
   const recent = [];          // frames since the last seen one, for backfill
 
-  const rectAt = (p) => ({ x: p.x + off.x, y: p.y + off.y });
-  const onFrame = (p) => {
-    const r = rectAt(p);
-    return r.x + R.w > 0 && r.y + R.h > 0 && r.x < W && r.y < H;
+  const rectOf = (cc, kk) => {
+    const S = tplAt(kk);
+    return { x: cc.x - S.rw / 2, y: cc.y - S.rh / 2, w: S.rw, h: S.rh };
   };
+  const onFrame = (cc, kk) => {
+    const r = rectOf(cc, kk);
+    return r.x + r.w > 0 && r.y + r.h > 0 && r.x < W && r.y < H;
+  };
+  const inRange = (kk) => kk >= K_MIN && kk <= K_MAX;
 
   /**
-   * Where the band around the rectangle at `p` in frame a could have gone in
-   * frame b: `still` if it did not move, otherwise up to four distinct shifts,
-   * best band match first. Null when there is no band to measure (off the
-   * frame, or a flat panel).
+   * Where the band around the rectangle (centre cc, scale kk) in frame a
+   * could have gone in frame b: `still` if it did not move, otherwise up to
+   * four distinct shifts, best band match first. Null when there is no band
+   * to measure (off the frame, or a flat panel). Frame to frame, so it copes
+   * with a zoom: between two frames a zoom changes the size by a few per cent.
    */
-  function bandShifts(a, b, p) {
-    const r = rectAt(p);
+  function bandShifts(a, b, cc, kk) {
+    const r = rectOf(cc, kk);
+    const bx = clamp(Math.round(r.w * 0.5), 24, 120);
+    const by = clamp(Math.round(r.h * 2), 24, 70);
     const x0 = Math.max(0, Math.round(r.x - bx));
     const y0 = Math.max(0, Math.round(r.y - by));
-    const x1 = Math.min(W, Math.round(r.x + R.w + bx));
-    const y1 = Math.min(H, Math.round(r.y + R.h + by));
+    const x1 = Math.min(W, Math.round(r.x + r.w + bx));
+    const y1 = Math.min(H, Math.round(r.y + r.h + by));
     if (x1 - x0 < 12 || y1 - y0 < 12) return null;
     const Tb = templateOf(a.img, W, x0, y0, x1 - x0, y1 - y0);
     if (Tb.std < MIN_TEXTURE) return null;
@@ -486,8 +639,8 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
       const Tbc = templateOf(a.small.data, a.small.w, Math.floor(x0 / K), Math.floor(y0 / K),
         Math.max(2, Math.floor((x1 - x0) / K)), Math.max(2, Math.floor((y1 - y0) / K)));
       if (Tbc.std >= MIN_TEXTURE / 2) {
-        for (const c of search(b.small.data, b.small.w, b.small.h, Tbc, x0 / K, y0 / K, b.small.w / 8, b.small.h, 1, 6)) {
-          add(search(b.img, W, H, Tb, c.x * K, c.y * K, K + 1, K + 1));
+        for (const m of search(b.small.data, b.small.w, b.small.h, Tbc, x0 / K, y0 / K, b.small.w / 8, b.small.h, 1, 6)) {
+          add(search(b.img, W, H, Tb, m.x * K, m.y * K, K + 1, K + 1));
         }
       }
     }
@@ -496,115 +649,149 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
   }
 
   /**
-   * The text alone, anywhere within (rx, ry) of the rectangle at `p` (or the
-   * whole frame), as up to `n` distinct patch positions. It proposes places
-   * the band cannot: the band depends on the surroundings, and it is the
-   * surroundings that change when a line slides under a toolbar.
+   * The text alone at scale kk, anywhere within (rx, ry) of centre cc (or the
+   * whole frame), as up to `n` distinct centres. It proposes places the band
+   * cannot: the band depends on the surroundings, and it is the surroundings
+   * that change when a line slides under a toolbar.
    */
-  function textCandidates(f, p, rx, ry, n) {
-    // Half size first (a whole-frame search at full working size cost half a
-    // second a frame), then each distinct hit refined at the working size.
-    const r = rectAt(p);
+  function textCandidates(f, cc, kk, rx, ry, n) {
+    const S = tplAt(kk);
     const hf = f.half || (f.half = shrink(f.img, W, H, 2));
-    const hits = search(hf.data, hf.w, hf.h, TrectHalf, r.x / 2, r.y / 2, rx / 2 + 1, ry / 2 + 1, 1, n * 4);
+    const r = rectOf(cc, kk);
+    const hits = search(hf.data, hf.w, hf.h, S.TrectHalf, r.x / 2, r.y / 2, rx / 2 + 1, ry / 2 + 1, 1, n * 4);
     const out = [];
     for (const h of hits) {
-      if (out.some((o) => Math.abs(o.x - h.x) < R.w / 6 && Math.abs(o.y - h.y) < Math.max(1, R.h / 4))) continue;
+      if (out.some((o) => Math.abs(o.x - h.x) < S.rw / 6 && Math.abs(o.y - h.y) < Math.max(1, S.rh / 4))) continue;
       out.push(h);
       if (out.length >= n) break;
     }
     return out.map((h) => {
-      const fine = search(f.img, W, H, TrectLo, h.x * 2, h.y * 2, 2, 2);
-      return { x: fine.x - off.x, y: fine.y - off.y };
+      const fine = search(f.img, W, H, S.TrectLo, h.x * 2, h.y * 2, 2, 2);
+      return { x: fine.x + S.TrectLo.w / 2, y: fine.y + S.TrectLo.h / 2 };
     });
   }
 
   /**
-   * How well the blurred text at `p` matches the original, at the identity
-   * size, and exactly where; `score` adds the surroundings (CONTEXT_WEIGHT).
+   * How well the blurred text at centre cc and scale kk matches the original,
+   * at the identity size, and exactly where; `ctx` is how well its
+   * surroundings do, and `score` the two together (CONTEXT_WEIGHT).
    */
-  function identityAt(f, p) {
-    const id = search(f.hi, W * HI, H * HI, TrectHi, (p.x + off.x) * HI, (p.y + off.y) * HI, 4, 4);
-    const pos = { x: id.x / HI - off.x, y: id.y / HI - off.y };
-    const ctx = Math.max(0, ncc(f.img, W, H, T, Math.round(pos.x), Math.round(pos.y)));
-    return { s: id.s, ctx, score: id.s + CONTEXT_WEIGHT * ctx, pos };
+  function identityAt(f, cc, kk) {
+    const S = tplAt(kk);
+    const id = search(f.hi, W * HI, H * HI, S.TrectHi, (cc.x - S.rw / 2) * HI, (cc.y - S.rh / 2) * HI, 4, 4);
+    const nc = { x: (id.x + S.TrectHi.w / 2) / HI, y: (id.y + S.TrectHi.h / 2) / HI };
+    const ctx = Math.max(0, ncc(f.img, W, H, S.T, Math.round(nc.x - S.pcx), Math.round(nc.y - S.pcy)));
+    return { s: id.s, ctx, score: id.s + CONTEXT_WEIGHT * ctx, c: nc, k: kk };
   }
 
   /**
-   * One step of following, from frame a (rectangle at p) to frame b. Returns
-   * the new position, or null when it cannot be followed. The band proposes;
-   * the text decides; motion alone only when the text is not itself.
+   * The best of some candidate centres, over the scales near kk: each at kk
+   * first, then the best few walked a step at a time towards whichever size
+   * matches better, at most `spread` steps. A zoom is found this way; a page
+   * that did not zoom costs one extra look each way.
    */
-  function advance(a, b, p, v, dt) {
-    const band = bandShifts(a, b, p);
-    if (band?.still) return verify(b.img, p);
-    const pts = (band?.list || []).map((m) => ({ x: p.x + m.dx, y: p.y + m.dy }));
-    if (dt && (v.x || v.y)) pts.push({ x: p.x + v.x * dt, y: p.y + v.y * dt });
-    let best = null;
-    if (b.hi) {
-      pts.push(...textCandidates(b, p, Math.max(8, R.w / 3), 90, 3));
-      for (const q of pts) {
-        const id = identityAt(b, q);
-        if (!best || id.score > best.score) best = id;
+  function bestAcross(f, cands, kk, spread, few = 2) {
+    const firsts = [];
+    for (const q of cands) firsts.push(identityAt(f, q, kk));
+    firsts.sort((u, v) => v.score - u.score);
+    let best = firsts[0] || null;
+    for (const st of firsts.slice(0, few)) {
+      for (const d of [1, -1]) {
+        let here = st;
+        for (let n = 0; n < spread && inRange(here.k + d); n++) {
+          const next = identityAt(f, here.c, here.k + d);
+          if (next.score <= here.score) break;
+          here = next;
+          if (here.score > best.score) best = here;
+        }
       }
     }
-    debug?.({ at: b.t, follow: (band?.list || []).map((m) => [m.dx, m.dy, +m.s.toFixed(3)]), id: best ? +best.s.toFixed(3) : null });
-    if (best && best.s >= ID_OK) return best.pos;
+    return best;
+  }
+
+  /**
+   * One step of following, from frame a (centre cc, scale kk) to frame b.
+   * Returns { c, k }, or null when it cannot be followed. The band proposes;
+   * the text decides, at whichever nearby size fits; motion alone only when
+   * the text is not itself.
+   */
+  function advance(a, b, cc, kk, v, dt) {
+    const band = bandShifts(a, b, cc, kk);
+    if (band?.still) return { c: verify(b.img, cc, kk), k: kk };
+    const pts = (band?.list || []).map((m) => ({ x: cc.x + m.dx, y: cc.y + m.dy }));
+    if (dt && (v.x || v.y)) pts.push({ x: cc.x + v.x * dt, y: cc.y + v.y * dt });
+    let best = null;
+    if (b.hi) {
+      pts.push(...textCandidates(b, cc, kk, Math.max(8, tplAt(kk).rw / 3), 90, 3));
+      // A long gap between frames can hold a whole zoom: look further then.
+      best = bestAcross(b, pts, kk, Math.abs(dt) > 0.15 ? SPREAD_FAR : SPREAD_NEAR);
+    }
+    debug?.({ at: b.t, follow: (band?.list || []).map((m) => [m.dx, m.dy, +m.s.toFixed(3)]), id: best ? [+best.s.toFixed(3), best.k] : null });
+    if (best && best.s >= ID_OK) return { c: best.c, k: best.k };
     const top = band?.list?.[0];
-    if (top && top.s >= BAND_STRONG) return verify(b.img, { x: p.x + top.dx, y: p.y + top.dy });
+    if (top && top.s >= BAND_STRONG) return { c: verify(b.img, { x: cc.x + top.dx, y: cc.y + top.dy }, kk), k: kk };
+    if (top && top.s >= BAND_CLEAR_MIN) {
+      const rival = band.list.find((m) => Math.hypot(m.dx - top.dx, m.dy - top.dy) > 4);
+      if (!rival || top.s - rival.s >= BAND_CLEAR) return { c: verify(b.img, { x: cc.x + top.dx, y: cc.y + top.dy }, kk), k: kk };
+    }
     return null;
   }
 
-  /** Snap a moved position to the original patch, when it is there to snap to. */
-  function verify(img, p) {
-    const v = search(img, W, H, T, p.x, p.y, 3, 3);
-    return v.s >= VERIFY ? { x: v.x, y: v.y } : p;
+  /** Snap a moved centre to the original patch, when it is there to snap to. */
+  function verify(img, cc, kk) {
+    const S = tplAt(kk);
+    const v = search(img, W, H, S.T, Math.round(cc.x - S.pcx), Math.round(cc.y - S.pcy), 3, 3);
+    return v.s >= VERIFY ? { x: v.x + S.pcx, y: v.y + S.pcy } : cc;
   }
 
   /**
-   * Anywhere on the frame, strictly. Candidates come from the working copy;
-   * which of them is the blurred text is decided on the identity copy, with a
-   * few pixels of give, and the winner must beat every other place clearly.
+   * Anywhere on the frame, strictly, at the size it was last seen at and the
+   * size it was placed at. Candidates come from the working copy; which of
+   * them is the blurred text is decided on the identity copy, with a few
+   * pixels and a few sizes of give; the winner must beat every other place
+   * clearly, and its surroundings must be its own (STRICT_CONTEXT): the same
+   * word elsewhere on the screen is not the thing that was blurred.
    */
-  function strictFind(f) {
-    // Candidates from the patch with its surroundings (coarse, fast) and from
-    // the text alone across the whole frame (what still works when the
-    // surroundings have changed). Identity decides between all of them.
+  function strictFind(f, kLast) {
     const pts = [];
-    for (const c of search(f.small.data, f.small.w, f.small.h, Tc, f.small.w / 2, f.small.h / 2, f.small.w, f.small.h, 1, 8)) {
-      const r = search(f.img, W, H, T, c.x * K, c.y * K, K + 1, K + 1);
-      if (r.s >= 0) pts.push({ x: r.x, y: r.y });
-    }
-    pts.push(...textCandidates(f, { x: W / 2 - off.x - R.w / 2, y: H / 2 - off.y - R.h / 2 }, W, H, 8));
-    const scored = [];
-    for (const q of pts) {
-      const id = identityAt(f, q);
-      if (!scored.some((o) => Math.abs(o.x - id.pos.x) < 2 && Math.abs(o.y - id.pos.y) < 2)) {
-        scored.push({ ...id.pos, rs: id.s, ctx: id.ctx, score: id.score });
+    for (const kk of new Set([kLast, 0])) {
+      const S = tplAt(kk);
+      for (const m of search(f.small.data, f.small.w, f.small.h, S.Tc, f.small.w / 2, f.small.h / 2, f.small.w, f.small.h, 1, 8)) {
+        const r = search(f.img, W, H, S.T, m.x * K, m.y * K, K + 1, K + 1);
+        if (r.s >= 0) pts.push({ c: { x: r.x + S.pcx, y: r.y + S.pcy }, k: kk });
       }
+      for (const q of textCandidates(f, { x: W / 2, y: H / 2 }, kk, W, H, 8)) pts.push({ c: q, k: kk });
     }
-    scored.sort((a, b) => b.score - a.score);
-    debug?.({ at: f.t, find: scored.slice(0, 5).map((c) => [Math.round(c.x), Math.round(c.y), +c.rs.toFixed(3), +c.score.toFixed(3), +c.ctx.toFixed(2)]) });
+    const scored = [];
+    for (const p of pts) {
+      const id = identityAt(f, p.c, p.k);
+      if (!scored.some((o) => Math.abs(o.c.x - id.c.x) < 2 && Math.abs(o.c.y - id.c.y) < 2)) scored.push(id);
+    }
+    scored.sort((u, v) => v.score - u.score);
+    // The strongest few, each given a few sizes of give.
+    for (let i = 0; i < Math.min(3, scored.length); i++) scored[i] = bestAcross(f, [scored[i].c], scored[i].k, SPREAD_NEAR, 1);
+    scored.sort((u, v) => v.score - u.score);
+    debug?.({ at: f.t, find: scored.slice(0, 5).map((o) => [Math.round(o.c.x), Math.round(o.c.y), o.k, +o.s.toFixed(3), +o.ctx.toFixed(2)]) });
     const best = scored[0];
-    if (!best || best.rs < STRICT_RECT) return null;
-    if (best.rs < STRICT_ALONE && best.ctx < STRICT_CONTEXT) return null;
-    const rival = scored.find((c) => Math.abs(c.y - best.y) > R.h || Math.abs(c.x - best.x) > R.w / 2);
+    if (!best || best.s < STRICT_RECT || best.ctx < STRICT_CONTEXT) return null;
+    const S = tplAt(best.k);
+    const rival = scored.find((o) => Math.abs(o.c.y - best.c.y) > S.rh || Math.abs(o.c.x - best.c.x) > S.rw / 2);
     if (rival && rival.score > best.score - STRICT_MARGIN) return null;
-    return { x: best.x, y: best.y };
+    return { c: best.c, k: best.k };
   }
 
-  /** After a find at frame f (position p), walk the frames just before it back. */
-  function backfill(f, p) {
+  /** After a find at frame f (centre cc, scale kk), walk the frames just before it back. */
+  function backfill(f, cc, kk) {
     const fill = [];
     let next = f;
-    let np = p;
+    let np = { c: cc, k: kk };
     for (let i = recent.length - 1; i >= 0; i--) {
       const g = recent[i];
       if (Math.abs(f.t - g.t) > BACKFILL) break;
       // The same step as following: the band proposes, the text decides.
-      const gp = advance(next, g, np, { x: 0, y: 0 }, 0);
+      const gp = advance(next, g, np.c, np.k, { x: 0, y: 0 }, Math.abs(next.t - g.t));
       if (!gp) break;
-      fill.push({ idx: g.idx, x: gp.x, y: gp.y, state: onFrame(gp) ? "seen" : "gone" });
+      fill.push({ idx: g.idx, c: gp.c, k: gp.k, state: onFrame(gp.c, gp.k) ? "seen" : "gone" });
       next = g;
       np = gp;
     }
@@ -616,32 +803,34 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
     if (!prev) {
       prev = f;
       lastT = t;
-      return { ...pos, state };
+      return { c: { ...c }, k, state };
     }
 
     let fill = null;
 
     if (state === "seen") {
       const dt = t - lastT;
-      const np = advance(prev, f, pos, vel, dt);
+      const np = advance(prev, f, c, k, vel, dt);
       if (np) {
-        if (dt) vel = { x: (np.x - pos.x) / dt, y: (np.y - pos.y) / dt };
-        pos = np;
-        state = onFrame(pos) ? "seen" : "gone";
+        if (dt) vel = { x: (np.c.x - c.x) / dt, y: (np.c.y - c.y) / dt };
+        c = np.c;
+        k = np.k;
+        state = onFrame(c, k) ? "seen" : "gone";
       } else {
         // The neighbourhood is not where it was: the page changed, or it left.
-        lost = { t: lastT, tiny: shrink(prev.img, W, H, 8).data };
-        const found = strictFind(f);
+        lost = { t: lastT, tiny: shrink(prev.img, W, H, 8).data, k };
+        const found = strictFind(f, k);
         if (found) {
-          pos = found;
+          c = found.c;
+          k = found.k;
           vel = { x: 0, y: 0 };
         } else {
-          const ahead = { x: pos.x + vel.x * EXIT_WINDOW * dir, y: pos.y + vel.y * EXIT_WINDOW * dir };
-          if (Math.hypot(vel.x, vel.y) > 1 && !onFrame(ahead)) {
-            carry = { pos: { ...pos }, t: lastT };
+          const ahead = { x: c.x + vel.x * EXIT_WINDOW * dir, y: c.y + vel.y * EXIT_WINDOW * dir };
+          if (Math.hypot(vel.x, vel.y) > 1 && !onFrame(ahead, k)) {
+            carry = { c: { ...c }, t: lastT };
             state = "moving";
-            pos = { x: carry.pos.x + vel.x * (t - carry.t), y: carry.pos.y + vel.y * (t - carry.t) };
-            if (!onFrame(pos)) state = "gone";
+            c = { x: carry.c.x + vel.x * (t - carry.t), y: carry.c.y + vel.y * (t - carry.t) };
+            if (!onFrame(c, k)) state = "gone";
           } else {
             state = "held";
           }
@@ -649,17 +838,25 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
       }
     } else {
       if (state === "moving") {
-        pos = { x: carry.pos.x + vel.x * (t - carry.t), y: carry.pos.y + vel.y * (t - carry.t) };
-        if (!onFrame(pos)) state = "gone";
+        c = { x: carry.c.x + vel.x * (t - carry.t), y: carry.c.y + vel.y * (t - carry.t) };
+        if (!onFrame(c, k)) state = "gone";
         else if (Math.abs(t - carry.t) > CARRY_MAX) state = "held";
       }
       const tiny = shrink(img, W, H, 8).data;
       // Held on a screen that is no longer the one it was on, over something
-      // that is not it: the page changed. Let go, and keep looking.
+      // that is not it: the page changed. Let go, and keep looking. The
+      // screen as a whole, or the part of it around the blur: a video
+      // embedded in a page can change completely while the page around it,
+      // most of the screen, stays exactly as it was.
       if (state === "held" && lost && Math.abs(t - lost.t) >= LET_GO) {
-        const same = layoutCorr(tiny, lost.tiny);
-        if (same < PAGE_SAME) {
-          const here = identityAt(f, pos).s;
+        const S = tplAt(k);
+        const near = (d) => windowOf(d, Math.floor(W / 8), Math.floor(H / 8), c.x / 8, c.y / 8,
+          Math.max(S.rw * 1.5, 60) / 8, Math.max(S.rh * 4, 40) / 8);
+        const whole = layoutCorr(tiny, lost.tiny);
+        const around = layoutCorr(near(tiny), near(lost.tiny));
+        if (whole < PAGE_SAME || around < NEAR_SAME) {
+          const same = Math.min(whole, around);
+          const here = identityAt(f, c, k).s;
           debug?.({ at: t, letGo: [+same.toFixed(3), +here.toFixed(3)] });
           if (here < GONE_ID) state = "gone";
         }
@@ -668,12 +865,13 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
       if (since >= LOOK_EVERY && (!thumb || meanDiff(tiny, thumb) >= CHANGED || since >= RELOOK)) {
         thumb = tiny;
         lookedT = t;
-        const found = strictFind(f);
+        const found = strictFind(f, lost ? lost.k : k);
         if (found) {
-          pos = found;
+          c = found.c;
+          k = found.k;
           vel = { x: 0, y: 0 };
           state = "seen";
-          fill = backfill(f, pos);
+          fill = backfill(f, c, k);
         }
       }
     }
@@ -690,7 +888,7 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
     while (recent.length && Math.abs(t - recent[0].t) > BACKFILL) recent.shift();
     prev = f;
     lastT = t;
-    return { ...pos, state, fill };
+    return { c: { ...c }, k, state, fill };
   };
 }
 
@@ -708,26 +906,34 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
  * @param {number} o.start      the blur's span, seconds
  * @param {number} o.end
  * @param {number} o.sourceWidth, o.sourceHeight
- * @returns {Promise<{ version, at, keys: Array<[t, x, y, on]>, held: Array<[t0, t1]>, trackable, frames }>}
+ * @returns {Promise<{ version, at, keys: Array<[t, x, y, on, s]>, held: Array<[t0, t1]>, trackable, frames }>}
  *   keys: from time t (a real frame time) the rectangle's top-left is at
- *   (x, y), fractions, and is drawn when on is 1, until the next key.
+ *   (x, y), fractions, it is s times the size it was drawn, and it is drawn
+ *   when on is 1, until the next key.
  */
 export async function trackBlur(file, { rect, at, start, end, sourceWidth, sourceHeight, onProgress = () => {}, onDebug = null }) {
   const W = WORK_W;
   const H = Math.max(2, Math.round((W * sourceHeight) / sourceWidth / 2) * 2);
-  const R = {
+  // On whole working pixels, so the templates at the drawn size are the
+  // anchor frame's own pixels, not an interpolation of them: interpolating
+  // softened a Mongo id's template enough that the id itself scored 0.78
+  // instead of 0.88 where it was found again, under the 0.82 bar.
+  const R0 = {
     x: Math.round(rect.x * W),
     y: Math.round(rect.y * H),
     w: Math.max(2, Math.round(rect.w * W)),
     h: Math.max(2, Math.round(rect.h * H)),
   };
+  const c0 = { x: R0.x + R0.w / 2, y: R0.y + R0.h / 2 };
+  // What that rounding moved the rectangle by, put back on every key, so at
+  // the anchor the blur is exactly where it was drawn.
+  const nudge = { x: rect.x - (c0.x / W - rect.w / 2), y: rect.y - (c0.y / H - rect.h / 2) };
   // The patch recognised: the rectangle and a margin of what surrounds it.
-  const padY = Math.max(6, Math.round(R.h * 0.6));
-  const padX = Math.max(6, Math.round(R.w * 0.1));
-  const P = { x: clamp(R.x - padX, 0, W - 4), y: clamp(R.y - padY, 0, H - 4) };
-  P.w = Math.max(4, Math.min(W - P.x, R.w + 2 * padX));
-  P.h = Math.max(4, Math.min(H - P.y, R.h + 2 * padY));
-  const off = { x: R.x - P.x, y: R.y - P.y };
+  const padY = Math.max(6, Math.round(R0.h * 0.6));
+  const padX = Math.max(6, Math.round(R0.w * 0.1));
+  const P0 = { x: clamp(R0.x - padX, 0, W - 4), y: clamp(R0.y - padY, 0, H - 4) };
+  P0.w = Math.max(4, Math.min(W - P0.x, R0.x + R0.w + padX - P0.x));
+  P0.h = Math.max(4, Math.min(H - P0.y, R0.y + R0.h + padY - P0.y));
 
   const W2 = W * HI;
   const H2 = H * HI;
@@ -747,37 +953,28 @@ export async function trackBlur(file, { rect, at, start, end, sourceWidth, sourc
   if (!anchorHi) throw new Error("no frame at the anchor");
   const anchorImg = half(anchorHi, W2, H2);
 
-  const T = templateOf(anchorImg, W, P.x, P.y, P.w, P.h);
-  const rx = clamp(R.x, 0, W - 2);
-  const ry = clamp(R.y, 0, H - 2);
-  const TrectHi = templateOf(anchorHi, W2, rx * HI, ry * HI, Math.min(R.w, W - rx) * HI, Math.min(R.h, H - ry) * HI);
-  const TrectLo = templateOf(anchorImg, W, rx, ry, Math.min(R.w, W - rx), Math.min(R.h, H - ry));
-  const halfA = shrink(anchorImg, W, H, 2);
-  const TrectHalf = templateOf(halfA.data, halfA.w, Math.floor(rx / 2), Math.floor(ry / 2),
-    Math.max(2, Math.floor(Math.min(R.w, W - rx) / 2)), Math.max(1, Math.floor(Math.min(R.h, H - ry) / 2)));
-  const small = shrink(anchorImg, W, H, K);
-  const Tc = templateOf(small.data, small.w, Math.floor(P.x / K), Math.floor(P.y / K), Math.max(2, Math.floor(P.w / K)), Math.max(2, Math.floor(P.h / K)));
-  if (T.std < MIN_TEXTURE) {
+  const tplAt = templateSets(anchorHi, W2, H2, R0, P0, c0);
+  if (tplAt(0).T.std < MIN_TEXTURE) {
     // Nothing there to recognise (a blank field, a flat panel). Following it
     // would mean following noise; the blur stays where it was drawn.
     return { version: TRACK_VERSION, at: anchorT, keys: [], held: [], trackable: false, frames: 0 };
   }
 
-  const all = [{ t: anchorT, x: P.x, y: P.y, state: "seen" }];
+  const all = [{ t: anchorT, c: c0, k: 0, state: "seen" }];
   const span = Math.max(0.001, end - start);
   let done = 0;
 
   /** Run one direction; `feed(cb)` delivers (buf, t) in walking order. */
   async function walk(dir, feed) {
     const states = [];
-    const step = follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start: P, R, off, dir, debug: onDebug });
+    const step = follower({ tplAt, W, H, c0, dir, debug: onDebug });
     step(anchorHi, anchorImg, anchorT, -1);
     await feed((buf, t) => {
       const idx = states.length;
       const r = step(buf, half(buf, W2, H2), t, idx);
-      states.push({ t, x: r.x, y: r.y, state: r.state });
+      states.push({ t, c: r.c, k: r.k, state: r.state });
       for (const u of r.fill || []) {
-        if (states[u.idx]) Object.assign(states[u.idx], { x: u.x, y: u.y, state: u.state });
+        if (states[u.idx]) Object.assign(states[u.idx], { c: u.c, k: u.k, state: u.state });
       }
     });
     all.push(...states);
@@ -825,18 +1022,20 @@ export async function trackBlur(file, { rect, at, start, end, sourceWidth, sourc
   const keys = [];
   const held = [];
   let heldFrom = null;
-  for (const s of all) {
-    const x = +((s.x + off.x) / W).toFixed(5);
-    const y = +((s.y + off.y) / H).toFixed(5);
-    const on = s.state === "gone" ? 0 : 1;
+  for (const st of all) {
+    const s = SC_STEP ** st.k;
+    const x = +(st.c.x / W - (rect.w * s) / 2 + nudge.x).toFixed(5);
+    const y = +(st.c.y / H - (rect.h * s) / 2 + nudge.y).toFixed(5);
+    const sc = +s.toFixed(4);
+    const on = st.state === "gone" ? 0 : 1;
     const last = keys[keys.length - 1];
-    if (!last || last[3] !== on || Math.abs(last[1] - x) * W > 0.25 || Math.abs(last[2] - y) * H > 0.25) {
-      keys.push([+s.t.toFixed(4), x, y, on]);
+    if (!last || last[3] !== on || last[4] !== sc || Math.abs(last[1] - x) * W > 0.25 || Math.abs(last[2] - y) * H > 0.25) {
+      keys.push([+st.t.toFixed(4), x, y, on, sc]);
     }
-    if (s.state === "held") {
-      if (heldFrom === null) heldFrom = s.t;
+    if (st.state === "held") {
+      if (heldFrom === null) heldFrom = st.t;
     } else if (heldFrom !== null) {
-      held.push([+heldFrom.toFixed(3), +s.t.toFixed(3)]);
+      held.push([+heldFrom.toFixed(3), +st.t.toFixed(3)]);
       heldFrom = null;
     }
   }

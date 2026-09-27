@@ -263,8 +263,10 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   for (const { b, f } of followed) {
     const w = Math.max(2, Math.round((b.w * sourceWidth) / 2) * 2);
     const h = Math.max(2, Math.round((b.h * sourceHeight) / 2) * 2);
+    // Each region at its own size: a blur over something that zooms is drawn
+    // at a few sizes, each switched on while it is that size (followBlur.js).
     for (const r of followedRegions(b, f, segs, { FPS, W: sourceWidth, H: sourceHeight, w, h })) {
-      regions.push({ b, w, h, r });
+      regions.push({ b, w: r.w || w, h: r.h || h, r });
     }
   }
   const blurs = placedSpans(fixed, lay);

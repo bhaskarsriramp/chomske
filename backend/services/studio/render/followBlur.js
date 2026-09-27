@@ -24,10 +24,22 @@
  *
  * Positions are steps (a flat sum of `gte` gates, no nesting, the same shape
  * as the camera's and the pointer patch's), constant between frames.
+ *
+ * ── SIZE COMES IN STEPS ──────────────────────────────────────────────────────
+ * What a blur covers can zoom, so a follow says how big it is too (s). ffmpeg
+ * fixes a region's size when the graph starts, so a blur that changes size is
+ * drawn as one region per SIZE_STEP it passes through, each switched on only
+ * while the blur is that size, each ROUNDED UP to the step above so it is
+ * never smaller than what it covers, and centred where the blur is. A blur
+ * that never changes size is one region, as before.
  */
 import { followAt } from "../../../../src/components/Studio/follow.mjs";
 
 const even = (v) => Math.round(v / 2) * 2;
+/** Sizes a changing blur is drawn at: powers of this, rounded up to. */
+const SIZE_STEP = 1.15;
+/** The size step at or above s. */
+const levelOf = (s) => SIZE_STEP ** Math.ceil(Math.log(Math.max(0.05, s || 1)) / Math.log(SIZE_STEP) - 1e-9);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const n3 = (v) => (Math.round(v * 1000) / 1000).toString();
 
@@ -39,15 +51,17 @@ const n3 = (v) => (Math.round(v * 1000) / 1000).toString();
  * @param {Array}  segs      [{ src_start, src_end, out_start }], out_start the
  *                           actual start of each kept stretch in the joined file
  * @param {object} o         { FPS, W, H, w, h }: frame and region in pixels
- * @returns {Array<[number, {x, y, on}]>} [output time the value starts, value]
+ * @returns {Array<[number, {cx, cy, s, on}]>} [output time the value starts,
+ *   the blur's centre in pixels, its size multiple, and whether it is drawn]
  */
 function steps(blur, follow, segs, { FPS, W, H, w, h }) {
   const at = (ts) => {
-    if (ts < blur.start - 1e-6 || ts >= blur.end - 1e-6) return { x: 0, y: 0, on: 0 };
+    if (ts < blur.start - 1e-6 || ts >= blur.end - 1e-6) return { cx: 0, cy: 0, s: 1, on: 0 };
     const p = followAt(follow, ts);
     return {
-      x: even(clamp(p.x * W, 0, W - w)),
-      y: even(clamp(p.y * H, 0, H - h)),
+      cx: p.x * W + (w * p.s) / 2,
+      cy: p.y * H + (h * p.s) / 2,
+      s: p.s,
       on: p.on ? 1 : 0,
     };
   };
@@ -91,20 +105,33 @@ function expr(list, key, FPS, shift) {
 }
 
 /**
- * The regions to draw for one followed blur: three when it ever moves (see
- * the header), one when it never does. Each is { x, y, on } expressions of t,
- * to be used as crop/overlay x and y and as the overlay's `enable`.
+ * The regions to draw for one followed blur: for each size it is drawn at
+ * (see SIZE COMES IN STEPS), three when it ever moves (see the header), one
+ * when it never does. Each is { x, y, on, w, h }: x, y and on expressions of
+ * t, to be used as crop/overlay x and y and as the overlay's `enable`, and
+ * the region's size in pixels.
  */
 export function followedRegions(blur, follow, segs, o) {
-  const list = steps(blur, follow, segs, o);
-  if (!list.length) return [];
-  const moves = list.some((st, i) => i > 0 && (st[1].x !== list[i - 1][1].x || st[1].y !== list[i - 1][1].y));
-  const shifts = moves ? [-1, 0, 1] : [0];
-  return shifts.map((sh) => ({
-    x: expr(list, "x", o.FPS, sh),
-    y: expr(list, "y", o.FPS, sh),
-    on: expr(list, "on", o.FPS, sh),
-  }));
+  const raw = steps(blur, follow, segs, o);
+  if (!raw.length) return [];
+  const { W, H } = o;
+  const levels = [...new Set(raw.filter(([, v]) => v.on).map(([, v]) => levelOf(v.s)))];
+  if (!levels.length) levels.push(1);
+  const out = [];
+  for (const L of levels) {
+    const w = Math.min(W, Math.max(2, even(o.w * L)));
+    const h = Math.min(H, Math.max(2, even(o.h * L)));
+    const list = raw.map(([t, v]) => [t, {
+      x: even(clamp(v.cx - w / 2, 0, W - w)),
+      y: even(clamp(v.cy - h / 2, 0, H - h)),
+      on: v.on && (levels.length === 1 || levelOf(v.s) === L) ? 1 : 0,
+    }]);
+    const moves = list.some((st, i) => i > 0 && (st[1].x !== list[i - 1][1].x || st[1].y !== list[i - 1][1].y));
+    for (const sh of moves ? [-1, 0, 1] : [0]) {
+      out.push({ x: expr(list, "x", o.FPS, sh), y: expr(list, "y", o.FPS, sh), on: expr(list, "on", o.FPS, sh), w, h });
+    }
+  }
+  return out;
 }
 
 export default { followedRegions };

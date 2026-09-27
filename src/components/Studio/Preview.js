@@ -218,7 +218,8 @@ export default function Preview({
         if (f) {
           const p = followAt(f, srcT);
           if (!p.on) continue;
-          paintBlur(ctx, v, { ...b, x: p.x, y: p.y }, cam, { dx, dy, dw, dh });
+          // At the size it is on this frame: what it covers can zoom.
+          paintBlur(ctx, v, { ...b, x: p.x, y: p.y, w: b.w * p.s, h: b.h * p.s }, cam, { dx, dy, dw, dh });
         } else {
           paintBlur(ctx, v, b, cam, { dx, dy, dw, dh });
         }
@@ -751,7 +752,7 @@ function RectHandle({ tl, selection, time, srcT, follows, following, cam, vb, fr
     if (f) {
       const p = followAt(f, srcT);
       if (!p.on) return null;
-      item = { ...item, x: p.x, y: p.y };
+      item = { ...item, x: p.x, y: p.y, w: item.w * p.s, h: item.h * p.s };
     }
   }
 

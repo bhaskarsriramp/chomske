@@ -69,9 +69,51 @@ async function bucket() {
   if (!_bucket) {
     // Loaded on first use, so a local install never pays for the client.
     const { Storage } = await import("@google-cloud/storage");
-    _bucket = new Storage().bucket(BUCKET);
+    const storage = new Storage();
+    signWithBuiltInFetch(storage.authClient);
+    _bucket = storage.bucket(BUCKET);
   }
   return _bucket;
+}
+
+/**
+ * ── SIGNING WITH NODE'S OWN fetch ────────────────────────────────────────────
+ * Without a key file (the VM), the client signs a URL by POSTing it to IAM's
+ * signBlob through its own HTTP stack (gaxios over node-fetch). On the VM that
+ * one call failed EVERY time with "Invalid response body … Premature close",
+ * while the same request from curl on the same VM, as the same service
+ * account, answered at once (2026-09-27), and every other call the client
+ * makes (reads, uploads) was fine. So only that request is swapped: same URL,
+ * same token, same body, sent with Node's built-in fetch, and its signedBlob
+ * handed back exactly as the client's own signBlob would. A key file, or an
+ * impersonated client, still signs the client's own way.
+ */
+export function signWithBuiltInFetch(auth) {
+  if (!auth || typeof auth.sign !== "function" || typeof fetch !== "function" || auth.__fetchSigning) return;
+  const original = auth.sign.bind(auth);
+  auth.__fetchSigning = true;
+  auth.sign = async (data, endpoint) => {
+    const client = await auth.getClient();
+    if (client?.key || typeof client?.sign === "function") return original(data, endpoint);
+    const creds = await auth.getCredentials();
+    if (!creds?.client_email) return original(data, endpoint);
+    const universe = (await auth.getUniverseDomain?.()) || "googleapis.com";
+    const base = endpoint || `https://iamcredentials.${universe}/v1/projects/-/serviceAccounts/`;
+    const { token } = await client.getAccessToken();
+    const res = await fetch(`${base}${creds.client_email}:signBlob`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ payload: Buffer.from(String(data), "utf8").toString("base64") }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.signedBlob) {
+      const err = new Error(`signBlob answered ${res.status}: ${body?.error?.message || res.statusText || "no signature"}`);
+      err.code = res.status;
+      throw err;
+    }
+    return body.signedBlob;
+  };
 }
 
 /** A key as a path on disk, refusing anything that could climb out of the root. */
