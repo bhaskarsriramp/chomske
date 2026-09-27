@@ -185,8 +185,8 @@ export async function deleteBackground(user, id) {
 export async function shapeBackground(a, { baseUrl } = {}) {
   return {
     id: String(a._id),
-    url: await stableUrl(a.key, { baseUrl }),
-    thumb_url: await stableUrl(a.thumb_key || a.key, { baseUrl }),
+    url: await stableUrl(a.key, { baseUrl, optional: true }),
+    thumb_url: await stableUrl(a.thumb_key || a.key, { baseUrl, optional: true }),
     width: a.width || 0,
     height: a.height || 0,
   };

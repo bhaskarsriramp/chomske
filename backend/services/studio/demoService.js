@@ -104,22 +104,53 @@ export function publishProgress(demo, fields = {}) {
    fresh signed URL on every read would change the <video> element's src each
    time, restarting the preview mid-playback, and on a VM without a key file
    each signature is a round trip to IAM. So a URL is minted once and reused for
-   half its lifetime. Same cache as the script editor's, separate instance. */
+   half its lifetime. Same cache as the script editor's, separate instance.
+
+   That round trip sometimes fails ("Premature close": IAM's reply cut off).
+   readUrl tries again; if it still fails, an older URL for the same file that
+   has not expired yet is used, and failing that an `optional` one (a
+   thumbnail, an export link, a background) comes back empty, so one dropped
+   signature costs a missing picture rather than the whole library or editor.
+   Only what cannot be done without (the editor's video) still fails the
+   request. A key being signed is signed once, however many ask at once: after
+   a restart the cache is empty and a library page asks for every thumbnail
+   together. */
+const URL_LIFE = 12 * 3600 * 1000;
 const urlCache = new Map();
-export async function stableUrl(key, opts) {
+const signing = new Map();
+export async function stableUrl(key, opts = {}) {
   if (!key) return "";
+  const { optional = false, ...rest } = opts;
   const now = Date.now();
   const hit = urlCache.get(key);
   if (hit && hit.until > now) return hit.url;
-  const url = await readUrl(key, { ...opts, expiresSec: 12 * 3600 });
-  urlCache.set(key, { url, until: now + 6 * 3600 * 1000 });
-  if (urlCache.size > 5000) {
-    for (const k of urlCache.keys()) {
-      urlCache.delete(k);
-      if (urlCache.size <= 4000) break;
-    }
+  let job = signing.get(key);
+  if (!job) {
+    job = readUrl(key, { ...rest, expiresSec: URL_LIFE / 1000 })
+      .then((url) => {
+        const at = Date.now();
+        urlCache.set(key, { url, until: at + URL_LIFE / 2, valid: at + URL_LIFE - 30 * 60 * 1000 });
+        if (urlCache.size > 5000) {
+          for (const k of urlCache.keys()) {
+            urlCache.delete(k);
+            if (urlCache.size <= 4000) break;
+          }
+        }
+        return url;
+      })
+      .finally(() => signing.delete(key));
+    signing.set(key, job);
   }
-  return url;
+  try {
+    return await job;
+  } catch (err) {
+    if (hit && hit.valid > Date.now()) return hit.url;
+    if (optional) {
+      console.error(`[studio] couldn't sign ${key}, left empty:`, err.message);
+      return "";
+    }
+    throw err;
+  }
 }
 
 /** The follows of the blurs the timeline still has; a deleted blur's go unsaid. */
@@ -172,7 +203,7 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
       // The editor plays the 540p copy, never the original: a 4K screen
       // recording is not something a scrubbing preview can seek in.
       proxy_url: await stableUrl(r.proxy_key, { baseUrl }),
-      thumb_url: await stableUrl(r.thumb_key, { baseUrl }),
+      thumb_url: await stableUrl(r.thumb_key, { baseUrl, optional: true }),
     },
 
     capture: {
@@ -239,7 +270,7 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
         // this file predates. The editor offers a re-export rather than
         // pretending the old file has it.
         stale: (x.engine || 0) < RENDER_ENGINE,
-        url: x.status === "done" ? await stableUrl(x.output_key, { baseUrl }) : "",
+        url: x.status === "done" ? await stableUrl(x.output_key, { baseUrl, optional: true }) : "",
       }))
     ),
   };
@@ -261,7 +292,7 @@ export async function shapeDemoCard(doc, { baseUrl } = {}) {
     width: d.recording?.width || 0,
     height: d.recording?.height || 0,
     renders: (d.renders || []).filter((r) => r.status === "done").length,
-    thumb_url: await stableUrl(d.recording?.thumb_key, { baseUrl }),
+    thumb_url: await stableUrl(d.recording?.thumb_key, { baseUrl, optional: true }),
     created_at: d.created_at,
     updated_at: d.updated_at,
     expires_at: d.expires_at || null,

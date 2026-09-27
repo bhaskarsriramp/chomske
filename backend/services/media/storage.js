@@ -144,6 +144,17 @@ export async function putFile(localPath, key, contentType) {
   await fsp.copyFile(localPath, dest);
 }
 
+/** Tries at signing one URL before giving up (see readUrl). */
+const SIGN_TRIES = 3;
+
+/** A signing failure worth trying again: anything but being told no. */
+function retryableSigning(err) {
+  const msg = String(err?.message || "");
+  const code = Number(err?.code || err?.response?.status || 0);
+  if ([400, 401, 403, 404].includes(code)) return false;
+  return !/permission|denied|forbidden|unauthori[sz]ed|not found/i.test(msg);
+}
+
 /**
  * A URL a browser can fetch this object from.
  *
@@ -153,14 +164,27 @@ export async function putFile(localPath, key, contentType) {
 export async function readUrl(key, { baseUrl, filename, contentType, expiresSec = 12 * 3600 } = {}) {
   const safeName = filename ? String(filename).replace(/["\\\r\n]/g, "").slice(0, 120) : "";
   if (storageKind() === "gcs") {
-    const [url] = await (await bucket()).file(key).getSignedUrl({
+    const file = (await bucket()).file(key);
+    const opts = {
       version: "v4",
       action: "read",
       expires: Date.now() + expiresSec * 1000,
       ...(safeName ? { responseDisposition: `attachment; filename="${safeName}"` } : {}),
       ...(contentType ? { responseType: contentType } : {}),
-    });
-    return url;
+    };
+    // On the VM there is no key file, so every signature is a call to IAM's
+    // signBlob over the network, and that call is sometimes cut off mid-reply
+    // ("Invalid response body … Premature close"). A dropped connection is
+    // worth another try; a refusal (no permission to sign) is not.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const [url] = await file.getSignedUrl(opts);
+        return url;
+      } catch (err) {
+        if (attempt >= SIGN_TRIES || !retryableSigning(err)) throw err;
+        await new Promise((r) => setTimeout(r, 200 * 2 ** (attempt - 1) + Math.random() * 150));
+      }
+    }
   }
   const token = jwt.sign({ k: key, op: "get", ct: contentType, fn: safeName }, secret(), { expiresIn: expiresSec });
   return `${baseUrl}/media/file/${token}`;
