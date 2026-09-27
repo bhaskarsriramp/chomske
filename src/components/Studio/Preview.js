@@ -32,7 +32,7 @@ import {
 } from "./model";
 import { useBox, Icon } from "./ui";
 import Skeleton from "../Shell/Skeleton";
-import { followFor, followAt, applyState } from "./follow.mjs";
+import { followFor, followAt, applyState, blurCorner } from "./follow.mjs";
 
 /** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
@@ -161,6 +161,11 @@ export default function Preview({
     const H = canvas.height;
     if (!W || !H) return;
     const ctx = canvas.getContext("2d");
+    // The picture is scaled to fit on every frame, usually down from 1920
+    // wide. The default ("low") is plain bilinear, which makes small
+    // interface text shimmer and break up when shrunk that far.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
     // Where in the OUTPUT we are, from the element's own clock.
     const srcT = v.currentTime;
@@ -440,11 +445,15 @@ function paintBlur(ctx, video, b, cam, d) {
   const h = (b.h / cam.h) * d.dh;
   if (w < 1 || h < 1) return;
   if (x > d.dx + d.dw || y > d.dy + d.dh || x + w < d.dx || y + h < d.dy) return;
+  // Rounded, the same as the export: the recording's height in this frame's
+  // pixels is d.dh / cam.h, so a zoom rounds it as much as it enlarges it.
+  const r = blurCorner(w, h, d.dh / cam.h);
 
   if (b.kind === "box") {
     ctx.save();
     ctx.fillStyle = "#000";
-    ctx.fillRect(x, y, w, h);
+    roundRect(ctx, x, y, w, h, r);
+    ctx.fill();
     ctx.restore();
     return;
   }
@@ -457,8 +466,7 @@ function paintBlur(ctx, video, b, cam, d) {
   const canBlur = typeof ctx.filter === "string";
   if (b.kind === "blur" && canBlur) {
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(x, y, w, h);
+    roundRect(ctx, x, y, w, h, r);
     ctx.clip();
     ctx.filter = `blur(${Math.max(3, Math.min(w, h) * 0.18 * (b.strength ?? 0.8))}px)`;
     // Drawn slightly larger than the region so the blur kernel has pixels to
@@ -478,6 +486,8 @@ function paintBlur(ctx, video, b, cam, d) {
   const sc = scratch.getContext("2d");
   sc.drawImage(video, sx, sy, sw, sh, 0, 0, tw, th);
   ctx.save();
+  roundRect(ctx, x, y, w, h, r);
+  ctx.clip();
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(scratch, 0, 0, tw, th, x, y, w, h);
   ctx.restore();
@@ -766,6 +776,8 @@ function RectHandle({ tl, selection, time, srcT, follows, following, cam, vb, fr
   const y = ((item.y - cam.y) / cam.h) * vb.h + vb.y;
   const w = (item.w / cam.w) * vb.w;
   const h = (item.h / cam.h) * vb.h;
+  // A blur's outline follows its rounded corners (paintBlur), in CSS pixels.
+  const corner = blur ? blurCorner(w * frame.w, h * frame.h, (vb.h / cam.h) * frame.h) : 0;
 
   const begin = (mode) => (e) => {
     e.stopPropagation();
@@ -843,6 +855,7 @@ function RectHandle({ tl, selection, time, srcT, follows, following, cam, vb, fr
         top: `${y * 100}%`,
         width: `${w * 100}%`,
         height: `${h * 100}%`,
+        borderRadius: corner || undefined,
         borderColor: selection.kind === "blur" ? "#FF9482" : "var(--ink)",
       }}
     >

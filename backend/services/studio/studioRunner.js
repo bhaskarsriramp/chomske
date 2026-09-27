@@ -39,11 +39,12 @@ import { witnessPass, WITNESS_MODE } from "./witness.js";
 import { applySuggestion } from "./suggestions.js";
 import { renderTimeline } from "./render/compose.js";
 import { trackBlur } from "./blurTrack.js";
+import { twinOf } from "./foundBlurs.js";
 import { blurSig } from "../../../src/components/Studio/follow.mjs";
 import { missingFonts, FONTS_DIR } from "./render/ass.js";
 import { sanitizeTimeline } from "./timeline.js";
 import { RENDER_ENGINE, cleanExportOptions } from "./exportOptions.js";
-import { STUDIO_LIMITS, demoKey, demoPrefix, bumpExpiry, publishProgress } from "./demoService.js";
+import { STUDIO_LIMITS, PREVIEW_LINES, PREVIEW_VERSION, demoKey, demoPrefix, bumpExpiry, publishProgress } from "./demoService.js";
 import { jobDir } from "../media/scratch.js";
 import { retryDb } from "../../db.js";
 
@@ -285,10 +286,17 @@ const prepare = {
     }
 
     // ── The copies everything else reads ──────────────────────────────────
+    // The editor's copy is the recording's own size (up to 1440 lines) and
+    // near the export's quality. It was 540p at CRF 30, which smeared every
+    // line of interface text in the preview while the export, made from the
+    // original, was sharp: the editor looked worse than what it made. Twice
+    // the encode time of the small one, about 4 s for a 44 s demo.
     await report({ stage: "Making a preview copy", progress: 0.35 }, true);
     const proxy = path.join(workDir, "proxy.mp4");
     await makeVideoProxy(mp4, proxy, {
       duration: meta.duration,
+      shortSide: PREVIEW_LINES,
+      crf: 22,
       onProgress: (p) => report({ stage: "Making a preview copy", progress: 0.35 + 0.3 * p }),
     });
 
@@ -328,6 +336,7 @@ const prepare = {
           "recording.status": "ready",
           "recording.mp4_key": mp4Key,
           "recording.proxy_key": proxyKey,
+          "recording.proxy_v": PREVIEW_VERSION,
           "recording.thumb_key": thumbKey,
           "recording.audio_key": audioKey,
           "recording.duration": meta.duration,
@@ -458,6 +467,7 @@ const analyse = {
     );
 
     publishProgress(demo, { status: "ready", stage: "", progress: 1, analysed: true });
+    await applyFound(demo, result.timeline.blurs);
 
     /**
      * ── THE CHECK IS ITS OWN JOB, AND IT RUNS EVERY TIME NOW ─────────────────
@@ -569,11 +579,18 @@ const vision = {
       return seen ? { ...e, target: seen.target, control: seen.control, on_control: seen.on_control } : e;
     });
 
+    // The blurs found this time replace the ones found last time, and only
+    // when the blur pass actually ran. The creator's own are never touched: a
+    // re-read used to write result.blurs over the lot, which deleted every
+    // blur drawn by hand (and all of them, found or not, with the pass paused).
+    const blurs = result.blur_checked
+      ? [...(fresh.timeline?.blurs || []).filter((b) => !b.auto), ...(result.blurs || [])]
+      : fresh.timeline?.blurs || [];
     const timeline = sanitizeTimeline(
       {
         ...fresh.timeline,
         events,
-        blurs: result.blurs,
+        blurs,
         steps: result.steps,
         narration: result.narration,
       },
@@ -607,6 +624,7 @@ const vision = {
         `${result.steps.length} steps, ${result.blurs.length} blurs, $${result.spend.usd.toFixed(4)}`
     );
     publishProgress(demo, { stage: "", progress: 1, reading: true, read: true, blurs: result.blurs.length, steps: result.steps.length });
+    if (result.blur_checked) await applyFound(demo, timeline.blurs);
 
     await enqueue({ demo: demo._id, user: demo.user, type: "review" }).catch(() => {});
   },
@@ -1081,10 +1099,12 @@ async function refundCharge(demo, charged, note) {
  */
 const track = {
   async run(job, workDir) {
-    const { blur, seq } = job.data || {};
+    const { blur, seq, found } = job.data || {};
     if (!blur?.id) return;
     const demo = await StudioDemo.findById(job.demo).select("user recording purged").lean();
     if (!demo || demo.purged || !demo.recording?.mp4_key) return;
+    // A found blur the follows so far already cover is dropped, not followed.
+    if (found && (await dropFoundTwins(demo)).includes(blur.id)) return;
 
     const sig = blurSig(blur);
     const source = await materialize(demo.recording.mp4_key, workDir, "recording.mp4");
@@ -1117,6 +1137,9 @@ const track = {
         (result.held.length ? `, held ${result.held.length}x` : "")
     );
     publishProgress(demo, { follow: { id: blur.id, ...follow } });
+    // This follow may be the proof that a found blur is a thing already
+    // covered. Never a reason to fail the job that made it.
+    await dropFoundTwins(demo).catch((err) => console.error(`[studio] found-blur check failed for ${demo._id}:`, err.message));
   },
 
   async fail(job, err) {
@@ -1130,6 +1153,76 @@ const track = {
     publishProgress(demo, { following: { id: blur.id, sig: blurSig(blur), failed: true, message } });
   },
 };
+
+/**
+ * Blurs the vision pass found, applied the moment the edit is saved: the same
+ * track job the editor's Apply button queues (routes/studio.js POST /follow),
+ * so the editor shows each "Applying…" and then following what it covers,
+ * exactly like a blur drawn by hand. Queued in the order they were found in,
+ * so the first sighting of each thing is followed first and the later ones
+ * can be checked against it (dropFoundTwins) before being followed at all.
+ */
+async function applyFound(demo, blurs) {
+  const found = (blurs || []).filter((b) => b.auto && b.at != null).sort((a, b) => a.at - b.at);
+  for (const b of found) {
+    const blur = { id: b.id, x: b.x, y: b.y, w: b.w, h: b.h, at: b.at, start: b.start, end: b.end };
+    try {
+      await StudioJob.deleteMany({ demo: demo._id, type: "track", ref: b.id, status: "queued" });
+      await enqueue({ demo: demo._id, user: demo.user, type: "track", ref: b.id, data: { blur, seq: Date.now(), found: true } });
+      publishProgress(demo, { following: { id: b.id, sig: blurSig(blur), progress: 0 } });
+    } catch (err) {
+      // It shows as not applied, one click from applying; the edit is saved.
+      console.error(`[studio] couldn't apply found blur ${demo._id}/${b.id}:`, err.message);
+    }
+  }
+}
+
+/**
+ * Found blurs that turned out to be a thing another blur already follows
+ * (foundBlurs.js twinOf), taken out of the edit. Only one still exactly as
+ * it was found: the job that applied it was the found one, for the box it
+ * has now. A found blur the creator has moved, resized or applied again is
+ * theirs, and stays.
+ *
+ * Without a new revision, on purpose: a creator mid-edit would otherwise have
+ * their next save refused as stale and their edit reloaded away. If that save
+ * does carry the twin back in, it comes back with its follow, a duplicate
+ * that covers the same thing, which is harmless.
+ *
+ * @returns {Promise<string[]>} the ids dropped
+ */
+async function dropFoundTwins(demo) {
+  const d = await StudioDemo.findById(demo._id).select("timeline.blurs follows").lean();
+  const blurs = d?.timeline?.blurs || [];
+  const candidates = blurs.filter((b) => b.auto && b.at != null).sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1));
+  if (!candidates.length) return [];
+
+  const jobs = await StudioJob.find({ demo: demo._id, type: "track", ref: { $in: candidates.map((b) => b.id) } })
+    .sort({ created_at: -1 })
+    .select("ref data")
+    .lean();
+  const latest = new Map();
+  for (const j of jobs) if (!latest.has(j.ref)) latest.set(j.ref, j);
+
+  const drop = [];
+  for (const b of candidates) {
+    const j = latest.get(b.id);
+    if (!j?.data?.found || blurSig(j.data.blur) !== blurSig(b)) continue;
+    const others = blurs.filter((x) => !drop.includes(x.id));
+    if (twinOf(b, others, d.follows || {})) drop.push(b.id);
+  }
+  if (!drop.length) return [];
+
+  await retryDb(`drop found twins ${demo._id}`, () => StudioDemo.updateOne(
+    { _id: demo._id },
+    { $pull: { "timeline.blurs": { id: { $in: drop }, auto: true } } }
+  ));
+  await StudioJob.deleteMany({ demo: demo._id, type: "track", ref: { $in: drop }, status: "queued" }).catch(() => {});
+  console.log(`[studio] ${demo._id}: ${drop.length} found blur(s) were a thing already covered: ${drop.join(", ")}`);
+  // Not a follow event, so an open editor reads the demo again.
+  publishProgress(demo, { found_twins: drop });
+  return drop;
+}
 
 const HANDLERS = { prepare, analyse, vision, captions, render, review, track };
 

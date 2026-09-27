@@ -419,11 +419,11 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     return events;
   });
 
-  // The pointer log goes in with the frames: a blur is released when the screen
-  // changes under it, not when the model happens to miss a sample. See
-  // vision.js joinRegions.
+  // One blur per thing found, placed where it was seen and applied once the
+  // edit is saved (studioRunner applyFound): where it shows is the tracker's
+  // answer, like a blur drawn by hand. See vision.js joinRegions.
   const blurTask = VISION_ON_ANALYSE && BLUR_ON
-    ? findSensitive(frames, { every, duration, events, spend }).catch((err) => {
+    ? findSensitive(frames, { every, duration, spend }).catch((err) => {
         console.error("[studio] blur pass failed:", err);
         return [];
       })
@@ -935,7 +935,7 @@ export async function visionPass({ video, workDir, duration, events = [], onProg
    * flow and needs none of its opinion about what is private.
    */
   const blurTask = BLUR_ON
-    ? findSensitive(frames, { every, duration, events, spend }).catch((err) => {
+    ? findSensitive(frames, { every, duration, spend }).catch((err) => {
         console.error("[studio] blur pass failed:", err);
         return [];
       })

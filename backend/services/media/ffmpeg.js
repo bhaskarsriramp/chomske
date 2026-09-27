@@ -228,19 +228,23 @@ export async function probe(file) {
 }
 
 /**
- * The preview copy the editor plays: short side 540, keyframe every second.
+ * The preview copy an editor plays: short side 540 by default, keyframe every
+ * second.
  *
  * The keyframe interval is the point. Seeking a phone recording with one
  * keyframe every few seconds lands the scrubber late and makes every trim
  * handle feel broken; one per second makes a seek land where it was asked to.
+ * `shortSide` and `crf` are for a preview that has to be READ, not just
+ * scrubbed: the demo studio's is a screen recording (studioRunner prepare).
  */
-export function makeVideoProxy(src, dest, { duration, onProgress } = {}) {
+export function makeVideoProxy(src, dest, { duration, onProgress, shortSide = 540, crf = 30 } = {}) {
+  const s = Math.round(shortSide);
   return ffmpeg(
     [
       "-i", src,
       "-map", "0:v:0", "-map", "0:a:0?",
-      "-vf", "scale=w='if(gt(iw,ih),-2,min(540,iw))':h='if(gt(iw,ih),min(540,ih),-2)',fps=30,format=yuv420p",
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+      "-vf", `scale=w='if(gt(iw,ih),-2,min(${s},iw))':h='if(gt(iw,ih),min(${s},ih),-2)',fps=30,format=yuv420p`,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", String(crf),
       "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
       "-c:a", "aac", "-b:a", "64k", "-ac", "2",
       "-movflags", "+faststart",

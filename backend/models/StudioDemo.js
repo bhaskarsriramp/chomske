@@ -35,7 +35,8 @@ const RecordingSchema = new Schema(
 
     key: { type: String, default: "" },        // what the browser sent
     mp4_key: { type: String, default: "" },    // remuxed, with a real duration
-    proxy_key: { type: String, default: "" },  // the 540p copy the editor plays
+    proxy_key: { type: String, default: "" },  // the copy the editor plays
+    proxy_v: { type: Number, default: 0 },     // 2: full size (demoService PREVIEW_VERSION); 0: the old 540p one
     audio_key: { type: String, default: "" },  // the speech track captions read
     thumb_key: { type: String, default: "" },
 

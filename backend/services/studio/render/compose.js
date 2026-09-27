@@ -48,7 +48,7 @@ import { renderOverlay } from "./overlay.js";
 import { videoBox, radiusFor, drawBackground, drawCornerMask } from "./frame.js";
 import { loadBackgroundImage } from "../backgrounds.js";
 import { followedRegions } from "./followBlur.js";
-import { followFor } from "../../../../src/components/Studio/follow.mjs";
+import { followFor, blurCorner } from "../../../../src/components/Studio/follow.mjs";
 import { hideFilter } from "./hide.js";
 import { buildAss, buildSrt, missingFonts, FONTS_DIR } from "./ass.js";
 
@@ -278,6 +278,25 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
     // the order it runs.
     let carry = "bsrc";
 
+    // ── Rounded corners (follow.mjs blurCorner) ──
+    // Every patch, Solid included, is laid on with overlay through an alpha
+    // mask: a rounded white rectangle on black, drawn once per patch SIZE and
+    // looped as a still, the way the frame's own corners are (drawCornerMask).
+    // One input per size, split between the patches of that size: a followed
+    // blur is a handful of regions of the same few sizes.
+    const masks = new Map();
+    const cornered = (i, w, h) => {
+      const key = `${w}x${h}`;
+      let m = masks.get(key);
+      if (!m) {
+        m = { w, h, index: next++, uses: [] };
+        masks.set(key, m);
+      }
+      m.uses.push(`bk${i}`);
+      return `format=yuva420p[bq${i}]`;
+    };
+    const merged = (i) => `[bq${i}][bk${i}]alphamerge=shortest=1[bp${i}]`;
+
     // Followed: the same three filters, with x, y and the gate as expressions.
     for (let j = 0; j < regions.length; j++) {
       const i = blurs.length + j;
@@ -293,19 +312,22 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
         // at its last position for the whole export while the secret
         // scrolled out from under it. overlay evaluates x and y every frame.
         graph.push(
-          `[bm${i}]crop=w=${w}:h=${h}:x=0:y=0,drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill,setsar=1[bp${i}]`,
+          `[bm${i}]crop=w=${w}:h=${h}:x=0:y=0,drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill,setsar=1,${cornered(i, w, h)}`,
+          merged(i),
           `[${carry}][bp${i}]overlay=x=${X}:y=${Y}:${on}[bo${i}]`
         );
       } else if (b.kind === "pixelate") {
         const blocks = Math.max(4, Math.round(10 * b.strength));
         graph.push(
-          `[bm${i}]crop=w=${w}:h=${h}:x=${X}:y=${Y},scale=${Math.max(2, Math.round(w / blocks))}:${Math.max(2, Math.round(h / blocks))}:flags=neighbor,scale=${w}:${h}:flags=neighbor,setsar=1[bp${i}]`,
+          `[bm${i}]crop=w=${w}:h=${h}:x=${X}:y=${Y},scale=${Math.max(2, Math.round(w / blocks))}:${Math.max(2, Math.round(h / blocks))}:flags=neighbor,scale=${w}:${h}:flags=neighbor,setsar=1,${cornered(i, w, h)}`,
+          merged(i),
           `[${carry}][bp${i}]overlay=x=${X}:y=${Y}:${on}[bo${i}]`
         );
       } else {
         const rad = Math.max(2, Math.min(Math.floor(Math.min(w, h) / 2) - 1, Math.round(Math.min(w, h) * 0.12 * b.strength)));
         graph.push(
-          `[bm${i}]crop=w=${w}:h=${h}:x=${X}:y=${Y},boxblur=luma_radius=${rad}:luma_power=2:chroma_radius=${rad}:chroma_power=2,setsar=1[bp${i}]`,
+          `[bm${i}]crop=w=${w}:h=${h}:x=${X}:y=${Y},boxblur=luma_radius=${rad}:luma_power=2:chroma_radius=${rad}:chroma_power=2,setsar=1,${cornered(i, w, h)}`,
+          merged(i),
           `[${carry}][bp${i}]overlay=x=${X}:y=${Y}:${on}[bo${i}]`
         );
       }
@@ -321,9 +343,12 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
       const on = `enable='between(t,${b.start.toFixed(3)},${b.end.toFixed(3)})'`;
 
       if (b.kind === "box") {
-        // Its split branch is not needed; a branch left unconnected is an
-        // error in a filter graph, so it is sunk.
-        graph.push(`[bm${i}]nullsink`, `[${carry}]drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=black@1:t=fill:${on}[bo${i}]`);
+        // A black patch through the rounded mask, not drawbox (square only).
+        graph.push(
+          `[bm${i}]crop=${w}:${h}:${x}:${y},drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill,setsar=1,${cornered(i, w, h)}`,
+          merged(i),
+          `[${carry}][bp${i}]overlay=${x}:${y}:${on}[bo${i}]`
+        );
         carry = `bo${i}`;
         continue;
       }
@@ -334,7 +359,8 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
         // deliberate.
         const blocks = Math.max(4, Math.round(10 * b.strength));
         graph.push(
-          `[bm${i}]crop=${w}:${h}:${x}:${y},scale=${Math.max(2, Math.round(w / blocks))}:${Math.max(2, Math.round(h / blocks))}:flags=neighbor,scale=${w}:${h}:flags=neighbor,setsar=1[bp${i}]`,
+          `[bm${i}]crop=${w}:${h}:${x}:${y},scale=${Math.max(2, Math.round(w / blocks))}:${Math.max(2, Math.round(h / blocks))}:flags=neighbor,scale=${w}:${h}:flags=neighbor,setsar=1,${cornered(i, w, h)}`,
+          merged(i),
           `[${carry}][bp${i}]overlay=${x}:${y}:${on}[bo${i}]`
         );
       } else {
@@ -343,13 +369,22 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
         // the whole export.
         const r = Math.max(2, Math.min(Math.floor(Math.min(w, h) / 2) - 1, Math.round(Math.min(w, h) * 0.12 * b.strength)));
         graph.push(
-          `[bm${i}]crop=${w}:${h}:${x}:${y},boxblur=luma_radius=${r}:luma_power=2:chroma_radius=${r}:chroma_power=2,setsar=1[bp${i}]`,
+          `[bm${i}]crop=${w}:${h}:${x}:${y},boxblur=luma_radius=${r}:luma_power=2:chroma_radius=${r}:chroma_power=2,setsar=1,${cornered(i, w, h)}`,
+          merged(i),
           `[${carry}][bp${i}]overlay=${x}:${y}:${on}[bo${i}]`
         );
       }
       carry = `bo${i}`;
     }
     v = carry;
+
+    for (const m of masks.values()) {
+      const file = `blurmask_${m.w}x${m.h}.png`;
+      await drawCornerMask({ box: { w: m.w, h: m.h }, radius: blurCorner(m.w, m.h, sourceHeight), dest: path.join(workDir, file) });
+      inputs.push("-loop", "1", "-i", path.join(workDir, file));
+      const outs = m.uses.map((u) => `[${u}]`).join("");
+      graph.push(`[${m.index}:v]format=gray,setsar=1${m.uses.length > 1 ? `,split=${m.uses.length}` : ""}${outs}`);
+    }
   }
 
   // ── 3. Zoom, and the scale into the box ───────────────────────────────

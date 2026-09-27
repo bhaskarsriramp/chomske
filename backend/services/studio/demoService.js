@@ -116,6 +116,26 @@ export function publishProgress(demo, fields = {}) {
    a restart the cache is empty and a library page asks for every thumbnail
    together. */
 const URL_LIFE = 12 * 3600 * 1000;
+/**
+ * ── WHAT THE EDITOR PLAYS ────────────────────────────────────────────────────
+ * A copy of the recording at its own size, up to PREVIEW_LINES, with a
+ * keyframe every second so scrubbing lands where it is asked to (studioRunner
+ * prepare). It used to be 540p at CRF 30, and interface text in the preview
+ * was a smear while the export, made from the original, was sharp.
+ *
+ * Recordings prepared before that still have only the small copy. Theirs
+ * plays the original instead, which is as sharp as the export: slower to seek
+ * (a browser recording has a keyframe every four seconds or so), but only on
+ * those, and never on one too big for a preview to decode smoothly.
+ */
+export const PREVIEW_LINES = 1440;
+export const PREVIEW_VERSION = 2;
+function previewKey(r) {
+  if ((r.proxy_v || 0) >= PREVIEW_VERSION || !r.mp4_key) return r.proxy_key;
+  const lines = Math.min(r.width || 0, r.height || 0);
+  return lines > 0 && lines <= PREVIEW_LINES ? r.mp4_key : r.proxy_key;
+}
+
 const urlCache = new Map();
 const signing = new Map();
 export async function stableUrl(key, opts = {}) {
@@ -203,9 +223,7 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
       size: r.size || 0,
       has_audio: !!r.has_audio,
       error: r.error || "",
-      // The editor plays the 540p copy, never the original: a 4K screen
-      // recording is not something a scrubbing preview can seek in.
-      proxy_url: await stableUrl(r.proxy_key, { baseUrl }),
+      proxy_url: await stableUrl(previewKey(r), { baseUrl }),
       thumb_url: await stableUrl(r.thumb_key, { baseUrl, optional: true }),
     },
 

@@ -103,6 +103,12 @@ const round3 = (v) => Math.round(num(v) * 1000) / 1000;
 
 /** A model's [x,y,w,h] as a rect this product can render. Null when unusable. */
 function box(bbox) {
+  const r = rawBox(bbox);
+  return r && clampRect(r);
+}
+
+/** A model's [x,y,w,h], checked but not resized. Null when unusable. */
+function rawBox(bbox) {
   if (!Array.isArray(bbox) || bbox.length < 4) return null;
   let [x, y, w, h] = bbox.map((v) => num(v, NaN));
   if (![x, y, w, h].every(Number.isFinite)) return null;
@@ -112,7 +118,7 @@ function box(bbox) {
   // recover which, so it goes rather than lands somewhere arbitrary.
   if (Math.max(x, y, w, h) > 1.5) return null;
   if (w <= 0.001 || h <= 0.001) return null;
-  return clampRect({ x, y, w, h });
+  return { x, y, w, h };
 }
 
 /** One image, as a Gemini part. */
@@ -550,7 +556,7 @@ export function spaceZooms(zooms) {
  * between two sightings of it and a blur that flickers off for one frame is the
  * same as no blur at all.
  */
-export async function findSensitive(frames, { every = 2, duration = 0, events = [], spend = newSpend(), onProgress = () => {} } = {}) {
+export async function findSensitive(frames, { every = 2, duration = 0, spend = newSpend(), onProgress = () => {} } = {}) {
   const found = [];
   let done = 0;
 
@@ -562,7 +568,7 @@ export async function findSensitive(frames, { every = 2, duration = 0, events = 
       maxOutputTokens: 4096,
     });
     for (const r of json?.regions || []) {
-      const b = box(r.bbox);
+      const b = rawBox(r.bbox);
       if (!b) continue;
       found.push({
         t: f.t,
@@ -576,152 +582,117 @@ export async function findSensitive(frames, { every = 2, duration = 0, events = 
     onProgress(done / frames.length);
   });
 
-  return joinRegions(found, { every, duration, events });
+  return joinRegions(found, { every, duration });
 }
 
 /**
- * Per-frame findings, as the fewest spans that cover them.
+ * Per-frame findings, as one blur per THING, placed the way a creator places
+ * one: the thing's own box, on the frame it was seen best on (`at`), over the
+ * whole recording. Then it is applied (studioRunner applyFound, the same
+ * track job the editor's Apply button queues), which follows that thing
+ * wherever and whenever it is on screen. A blur the model found and a blur
+ * drawn by hand are then the same kind of object, and behave the same in the
+ * editor, the preview and the export.
  *
- * Two boxes are the same thing when they overlap by more than half and are on
- * consecutive samples. The joined span takes the UNION of the boxes, so a
- * dialog that drifts a few pixels between frames stays covered rather than
- * losing its edge.
+ * ── WHY NOT SPANS ANY MORE ───────────────────────────────────────────────────
+ * This used to join sightings into a time span over the UNION of their boxes,
+ * held until the pointer log said the screen changed. On a page that scrolls
+ * that is wrong twice over: the union of one line of text seen at three scroll
+ * positions is a tall box over whatever else was there, and the line that
+ * scrolled away was still "covered" by a box it had left. Where a thing is,
+ * and when, is now the tracker's answer, measured on every frame. The model's
+ * job is only to say WHAT, on a frame where it could see it.
  *
- * ── A BLUR ENDS WHEN THE SCREEN CHANGES, NOT WHEN THE MODEL BLINKS ───────────
- * The first version of this ended a span a fixed margin after the last frame
- * the model saw the region on, and it leaked. The failure is visible frame by
- * frame in a recording of a billing page: the card number is covered at 4.6s
- * and legible at 5.0s, because the sample at 6s happened to come back without
- * it. Nothing about the SCREEN changed — only the model's answer did.
- *
- * Detection is per-frame and probabilistic; the thing being detected is not. A
- * card number does not leave the screen between two samples and come back. So
- * the end of a span is now decided by the recording rather than by the model:
- * a region is held until the screen actually changes under it (the pointer
- * log's `nav` events, which are what a navigation, a dialog closing or a tab
- * switch look like), and only then released. Missing samples in the middle are
- * bridged for the same reason, and the same logic runs backwards from the first
- * sighting so a region is covered from the moment it appeared rather than from
- * whenever the sampler happened to catch it.
- *
- * The cost of being wrong is asymmetric and the defaults follow it: over-blur
- * is a rectangle the creator drags away in two seconds, under-blur is a
- * published secret. HOLD_MAX caps it so a single finding cannot blur the rest
- * of the demo.
+ * Sightings on nearby samples whose boxes overlap are one thing, chained on
+ * the latest sighting, so a thing that scrolls a little between samples stays
+ * one. A thing seen again after a gap, or scrolled a long way between two
+ * samples, comes out as two. Applying settles it: when one's follow lands on
+ * the other's box at the other's moment they are the same thing, and the
+ * later one is dropped (studioRunner dropFoundTwins). Two blurs on one thing
+ * for a minute is clutter; one blur stretched over two things is a secret
+ * published, so nothing is merged on a guess.
  */
-const HOLD_MAX = 12;
-/** Bridged across this many missed samples before a span is considered ended. */
+/** Bridged across this many missed samples before a thing is considered gone. */
 const BRIDGE_SAMPLES = 3;
 /** Two boxes are the same region at this IoU, or when one mostly contains the other. */
 const SAME_IOU = 0.28;
 const SAME_INSIDE = 0.6;
 
-function joinRegions(found, { every, duration, events = [] }) {
-  const pad = Math.max(0.15, every * 0.6);
+export function joinRegions(found, { every, duration }) {
   const bridge = every * BRIDGE_SAMPLES;
   const open = [];
-  const closed = [];
+  const things = [];
 
   for (const r of found.sort((a, b) => a.t - b.t)) {
-    const hit = open.find((o) => o.kind === r.kind && o.last >= r.t - bridge && same(o, r));
+    const hit = open.find((o) => o.kind === r.kind && o.last.t >= r.t - bridge && same(o.last, r));
     if (hit) {
-      const x = Math.min(hit.x, r.x);
-      const y = Math.min(hit.y, r.y);
-      hit.w = Math.max(hit.x + hit.w, r.x + r.w) - x;
-      hit.h = Math.max(hit.y + hit.h, r.y + r.h) - y;
-      hit.x = x;
-      hit.y = y;
-      hit.last = r.t;
-      hit.confidence = Math.max(hit.confidence, r.confidence);
-      if (!hit.label && r.label) hit.label = r.label;
+      hit.seen.push(r);
+      hit.last = r;
     } else {
-      open.push({ ...r, first: r.t, last: r.t });
+      open.push({ kind: r.kind, seen: [r], last: r });
     }
     for (let i = open.length - 1; i >= 0; i--) {
-      if (open[i].last < r.t - bridge) closed.push(open.splice(i, 1)[0]);
+      if (open[i].last.t < r.t - bridge) things.push(open.splice(i, 1)[0]);
     }
   }
-  closed.push(...open);
+  things.push(...open);
 
-  // Where the screen changed under the region. A navigation is the only honest
-  // evidence in the recording that what was on screen is no longer on screen.
-  const navs = (events || [])
-    .filter((e) => e.type === "nav")
-    .map((e) => e.t)
-    .sort((a, b) => a - b);
-  const nextNav = (t) => navs.find((n) => n > t + 0.15);
-  const prevNav = (t) => {
-    let out;
-    for (const n of navs) {
-      if (n < t - 0.15) out = n;
-      else break;
-    }
-    return out;
-  };
+  return things.map((o) => {
+    // Placed on the frame it was seen best on, the first of equals.
+    const best = o.seen.reduce((a, b) => (b.confidence > a.confidence ? b : a));
+    // The model draws a box a little differently every frame: tighter round
+    // the digits on one, taking in the card brand on the next. The sightings
+    // either side of the best that are the same box where it stands (not the
+    // thing scrolled somewhere else) are folded in, so a digit clipped on one
+    // frame is still under the blur.
+    const cx = best.x + best.w / 2;
+    const cy = best.y + best.h / 2;
+    const near = o.seen.filter(
+      (s) =>
+        Math.abs(s.t - best.t) <= every * 1.5 &&
+        same(best, s) &&
+        Math.abs(s.x + s.w / 2 - cx) < best.w / 2 &&
+        Math.abs(s.y + s.h / 2 - cy) < best.h / 2
+    );
+    const x0 = Math.min(...near.map((s) => s.x));
+    const y0 = Math.min(...near.map((s) => s.y));
+    const x1 = Math.max(...near.map((s) => s.x + s.w));
+    const y1 = Math.max(...near.map((s) => s.y + s.h));
 
-  const spans = closed.map((o) => {
-    // Held until the screen changes, and never past HOLD_MAX. With no
-    // navigation to release it, one full sample interval past the last
-    // sighting, so a single missed frame can never uncover anything.
-    const after = nextNav(o.last);
-    const floor = o.last + Math.max(pad, every * 1.5);
-    const end = Math.min(o.last + HOLD_MAX, after !== undefined ? Math.max(floor, Math.min(after, o.last + HOLD_MAX)) : floor);
-
-    // And covered from when it appeared: back to the navigation that put it
-    // there, or one sample earlier when nothing in the log says.
-    const before = prevNav(o.first);
-    const ceiling = o.first - Math.max(pad, every);
-    const start = Math.max(0, before !== undefined ? Math.max(before, Math.min(ceiling, o.first), o.first - HOLD_MAX) : ceiling);
-
-    const rect = clampRect({
+    const rect = fit({
       // Padded outward so no glyph sits on the boundary of the blur, and wider
-      // than it looks it needs to be: text reflows, a number gains a digit, and
-      // a box that fits exactly at one sample leaks at the next.
-      x: o.x - 0.012, y: o.y - 0.016, w: o.w + 0.024, h: o.h + 0.032,
+      // than it looks it needs to be: text reflows and a number gains a digit.
+      // Less above and below, where text does not grow: a line of text padded
+      // like its ends was blurred three lines tall, over its neighbours.
+      x: x0 - 0.012, y: y0 - 0.01, w: x1 - x0 + 0.024, h: y1 - y0 + 0.02,
     });
+    const last = o.seen[o.seen.length - 1];
     return {
       id: newId("b"),
-      start: round3(start),
-      end: round3(duration > 0 ? Math.min(duration, end) : end),
+      // Applied form (the editor's appliedForm): the whole recording, where it
+      // actually shows coming from its follow.
+      start: 0,
+      end: round3(duration > 0 ? duration : last.t + every * 1.5),
       ...rect,
+      at: round3(best.t),
       kind: o.kind,
       strength: o.kind === "box" ? 1 : 0.75,
-      label: o.label,
-      confidence: o.confidence,
+      label: o.seen.find((s) => s.label)?.label || "",
+      confidence: Math.max(...o.seen.map((s) => s.confidence)),
       auto: true,
     };
   });
-
-  return mergeSpans(spans);
 }
 
 /**
- * Two spans of the same region that now overlap in time are one span.
- *
- * Holding to the next navigation makes this common: the model finds the card
- * number at 4s and again at 10s, both are held, and without this the creator
- * gets two chips stacked on the ruler for one rectangle and has to delete both
- * to reveal it.
+ * A blur's box, kept the size the thing is. Not clampRect: that is the
+ * camera's, and its 5% floor made a box round one line of text three lines
+ * tall (timeline.js blurRect, which this matches).
  */
-function mergeSpans(spans) {
-  const out = [];
-  for (const s of spans.sort((a, b) => a.start - b.start)) {
-    const hit = out.find((o) => o.kind === s.kind && s.start <= o.end + 0.2 && same(o, s));
-    if (!hit) {
-      out.push(s);
-      continue;
-    }
-    const x = Math.min(hit.x, s.x);
-    const y = Math.min(hit.y, s.y);
-    hit.w = Math.max(hit.x + hit.w, s.x + s.w) - x;
-    hit.h = Math.max(hit.y + hit.h, s.y + s.h) - y;
-    hit.x = x;
-    hit.y = y;
-    hit.end = Math.max(hit.end, s.end);
-    hit.confidence = Math.max(hit.confidence, s.confidence);
-    if (!hit.label && s.label) hit.label = s.label;
-  }
-  return out;
+function fit(r) {
+  const w = clamp(r.w, 0.005, 1);
+  const h = clamp(r.h, 0.005, 1);
+  return { x: clamp(r.x, 0, 1 - w), y: clamp(r.y, 0, 1 - h), w, h };
 }
 
 /**

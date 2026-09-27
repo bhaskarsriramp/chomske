@@ -315,7 +315,7 @@ export function BlurPanel({
           <>
             {auto > 0 && (
               <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--ink-mute)", marginTop: -4 }}>
-                {auto} found automatically. Click one to see it on the picture, and check each before you export.
+                {auto} found automatically. Click one to see it on the picture.
               </div>
             )}
             <div style={{ display: "grid", gap: 2, margin: -6 }}>
@@ -343,11 +343,7 @@ export function BlurPanel({
                     sub={`${where} · ${KIND_LABEL[b.kind] || b.kind}`}
                     badge={
                       <>
-                        {b.auto ? (
-                          <Badge tone={b.confidence >= 0.65 ? "ai" : "warn"}>
-                            {b.confidence >= 0.65 ? "AI" : "Check"}
-                          </Badge>
-                        ) : null}
+                        {b.auto ? <Badge tone="ai">AI</Badge> : null}
                         {badge ? <Badge tone={badge.tone}>{badge.text}</Badge> : null}
                       </>
                     }

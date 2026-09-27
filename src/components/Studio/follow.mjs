@@ -39,6 +39,18 @@ const f3 = (v) => (v == null || !Number.isFinite(+v) ? "x" : (Math.round(+v * 1e
  */
 export const FOLLOW_VERSION = 4;
 
+/**
+ * How round a blur's corners are, in the same pixels as its w and h: 16 for
+ * every 1080 lines of the recording (about 14 in a 1080p export, once the
+ * frame's padding has shrunk the picture), never more than half its shorter
+ * side, so a blur over one line of text is a pill, not a lens. Every blur,
+ * Blur, Pixelate and Solid alike, and not a setting. The preview (Preview.js
+ * paintBlur) and the export (render/compose.js) both take it from here.
+ */
+export function blurCorner(w, h, srcH) {
+  return Math.max(0, Math.min((16 * srcH) / 1080, w / 2, h / 2));
+}
+
 /** Which exact blur a follow was made for. */
 export function blurSig(b) {
   return [f4(b.x), f4(b.y), f4(b.w), f4(b.h), f3(b.at), f3(b.start), f3(b.end)].join(",");
@@ -146,5 +158,5 @@ export function blurNames(blurs) {
   return new Map(order.map(({ b }, k) => [b.id, b.label || `Blur ${k + 1}`]));
 }
 
-const follow = { FOLLOW_VERSION, blurSig, followFor, followAt, heldAt, coverage, applyState, blurNames };
+const follow = { FOLLOW_VERSION, blurCorner, blurSig, followFor, followAt, heldAt, coverage, applyState, blurNames };
 export default follow;

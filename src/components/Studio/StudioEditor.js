@@ -637,6 +637,48 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     };
   }, [applyingIds, demoId]);
 
+  // Blurs being applied that this tab did not ask for. The ones the vision
+  // pass finds are applied by the server the moment it saves them, and a tab
+  // opened or reloaded after that missed the live "started" message, so it
+  // would offer "Apply" on a blur already being applied. Asked once each time
+  // the set of blurs showing as not applied changes.
+  const unappliedIds = useMemo(
+    () => (tl?.blurs || []).filter((b) => applyState(b, follows, following).kind === "unapplied").map((b) => b.id).join(","),
+    [tl, follows, following]
+  );
+  useEffect(() => {
+    if (!unappliedIds) return undefined;
+    let live = true;
+    getFollows(demoId)
+      .then((res) => {
+        if (!live) return;
+        if (res?.follows) setFollows((p) => mergeFollows(p, res.follows));
+        const jobs = res?.jobs || {};
+        const now = Date.now();
+        setFollowing((p) => {
+          let n = p;
+          for (const id of unappliedIds.split(",")) {
+            const job = jobs[id];
+            const b = (tlRef.current?.blurs || []).find((x) => x.id === id);
+            if (!job || !b || blurSig(b) !== job.sig || p[id]?.sig === job.sig) continue;
+            let run = null;
+            if (job.status === "failed") run = { sig: job.sig, failed: true, message: job.error || "We couldn't apply that blur" };
+            else if (job.status === "queued" || job.status === "running") {
+              run = { sig: job.sig, progress: 0, waiting: job.status === "queued", slow: false, since: now - (job.age || 0) * 1000, last: now };
+            }
+            if (!run) continue;
+            if (n === p) n = { ...p };
+            n[id] = run;
+          }
+          return n;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [unappliedIds, demoId]);
+
   // "Cut here" on the video lane: split the clip under that moment in two,
   // taking nothing out (clips.js). A moment too near a clip's edge is ignored.
   const addSplit = useCallback(
