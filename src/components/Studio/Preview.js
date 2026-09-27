@@ -30,9 +30,9 @@ import {
   layout, toSource, toOutputSnapped, cameraAt, cursorAt, drawnTrack, videoBox, backgroundCss,
   placedSpans, placedCues, captionPoint, captionLook, clamp, EASE,
 } from "./model";
-import { useBox } from "./ui";
+import { useBox, Icon } from "./ui";
 import Skeleton from "../Shell/Skeleton";
-import { followFor, followAt } from "./follow.mjs";
+import { followFor, followAt, applyState } from "./follow.mjs";
 
 /** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
@@ -57,6 +57,10 @@ export default function Preview({
   backgroundUrl = "",
   // Each blur's follow (follow.mjs): where it goes when what it covers moves.
   follows = null,
+  // What is being applied, and how to apply the selected blur, for the Apply
+  // button under its rectangle (RectHandle).
+  following = null,
+  onApplyBlur = null,
 }) {
   const wrapRef = useRef(null);
   // The background image, once loaded. A ref, not state: the frame loop below
@@ -306,7 +310,10 @@ export default function Preview({
 
         {/* ── Editing handles ───────────────────────────────────────── */}
         {selection && onChange && (
-          <RectHandle tl={tl} selection={selection} time={time} srcT={srcT} follows={follows} cam={cam} vb={vb} frame={{ w: fw, h: fh }} onChange={onChange} />
+          <RectHandle
+            tl={tl} selection={selection} time={time} srcT={srcT} follows={follows} following={following}
+            cam={cam} vb={vb} frame={{ w: fw, h: fh }} onChange={onChange} onApply={onApplyBlur}
+          />
         )}
 
         {/* The frame pulses while the video loads, rather than carrying the
@@ -727,11 +734,15 @@ function CaptionLine({ tl, cue, frame, onChange, selected, onSelect }) {
  * anybody decides that a rectangle covers an API key; dragging it over the key
  * and watching the key disappear is.
  */
-function RectHandle({ tl, selection, time, srcT, follows, cam, vb, frame, onChange }) {
+function RectHandle({ tl, selection, time, srcT, follows, following, cam, vb, frame, onChange, onApply }) {
   const list = selection.kind === "blur" ? tl.blurs : selection.kind === "zoom" ? tl.zooms : null;
   let item = list?.find((x) => x.id === selection.id);
   const drag = useRef(null);
   if (!item || !frame.w) return null;
+  // Where the selected blur is with being applied: the button under it asks
+  // for it right where it was just placed, and then shows it working.
+  const blur = selection.kind === "blur" ? item : null;
+  const st = blur ? applyState(blur, follows, following) : null;
   // A followed blur's handle sits where the blur is on this frame, so what is
   // dragged is what is seen. Letting go puts the blur there at this moment,
   // and it is followed again from here (StudioEditor changeItem).
@@ -788,7 +799,38 @@ function RectHandle({ tl, selection, time, srcT, follows, cam, vb, frame, onChan
     drag.current = null;
   };
 
+  // Under the rectangle, or above it when it sits low in the frame.
+  const low = y + h > 0.86;
+  const pill =
+    st && onApply && (st.kind === "unapplied" || st.kind === "failed" || st.kind === "applying") ? (
+      <button
+        type="button"
+        className={`st-apply-pill${low ? " is-above" : ""}${st.kind === "applying" ? " is-busy" : ""}`}
+        style={{ left: `${(x + w / 2) * 100}%`, top: `${(low ? y : y + h) * 100}%` }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (st.kind !== "applying") onApply(blur);
+        }}
+        aria-live="polite"
+      >
+        {st.kind === "applying" ? (
+          <>
+            <span className="st-spin is-light" aria-hidden="true" />
+            Applying blur…{st.progress > 0 ? ` ${Math.round(st.progress * 100)}%` : ""}
+          </>
+        ) : (
+          <>
+            <Icon name="blur" size={13} />
+            {st.kind === "failed" ? "Try again" : "Apply blur"}
+          </>
+        )}
+      </button>
+    ) : null;
+
   return (
+    <>
+    {pill}
     <div
       className="st-handle"
       onPointerDown={begin("move")}
@@ -815,6 +857,7 @@ function RectHandle({ tl, selection, time, srcT, follows, cam, vb, frame, onChan
         />
       ))}
     </div>
+    </>
   );
 }
 

@@ -47,9 +47,20 @@
  * ── THE VIDEO LANE ───────────────────────────────────────────────────────────
  * The recording itself, above the others, drawn as its clips (clips.js).
  * Pointing at a clip offers "Cut here" on a dashed line: a click splits the
- * clip in two there and takes nothing out. A clip's number selects it, which
- * opens the Video tab, where it can be deleted. The red marks between clips
- * are where time was taken out; a click on one puts it back.
+ * clip in two there and takes nothing out. A plain click on a clip selects it
+ * (and moves the playhead there), which opens the Video tab, where it can be
+ * deleted, and shows its edges for trimming. The red marks between clips are
+ * where time was taken out; a click on one puts it back.
+ *
+ * ── THE BLUR LANE: A BLUR IS WHERE ITS SECRET IS ─────────────────────────────
+ * A blur is not a stretch of time. It is put over one thing on the screen, at
+ * one moment, and once applied it covers that thing wherever and whenever it
+ * is on screen (follow.mjs, "Applying a blur"). So a blur here has no ends to
+ * drag: it is a tag at the moment it was placed, saying where it is with being
+ * applied (Apply, Applying… 40%, a tick), and once applied, the stretches it
+ * actually covers, drawn faint along the lane, amber where it lost sight of
+ * the thing and held still. Ctrl/⌘ + click on the lane places a new one at
+ * that moment, on one line rather than an outline, because it has no length.
  *
  * ── TRIMMING A CLIP BY ITS EDGES ─────────────────────────────────────────────
  * A selected clip grows a handle at each end. Dragging one inward shades what
@@ -64,8 +75,9 @@
  * wheel, a two-finger swipe on a trackpad and a pinch all do it. A sideways
  * swipe, or Shift with the wheel, is left alone, so it still pans.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { layout, placedSpans, activeZooms, toSource, mergedCuts, clamp, fmtTime } from "./model";
+import { applyState, coverage, blurNames } from "./follow.mjs";
 import { DEFAULT_LENGTH, MIN_LENGTH } from "./create";
 import { clipsOf, trimBounds, MIN_CLIP } from "./clips";
 import { Icon } from "./ui";
@@ -94,6 +106,11 @@ export default function Timeline({
   onAdd,
   onSplit,
   onTrim,
+  // Each blur's follow and what is being applied (follow.mjs applyState), and
+  // how to apply one from its tag.
+  follows = null,
+  following = null,
+  onApplyBlur,
   height = 30,
 }) {
   const railRef = useRef(null);
@@ -143,6 +160,25 @@ export default function Timeline({
     }
     return out;
   }, [tl, lay]);
+
+  // The blur lane: each blur's tag, where it was placed, and once applied the
+  // stretches it covers and any where it held still, all in output time.
+  const blurMarks = useMemo(() => {
+    const names = blurNames(tl.blurs);
+    const spans = (list) => placedSpans(list.map(([s, e]) => ({ start: s, end: e })), lay, { min: 0.005 });
+    return (tl.blurs || []).map((b) => {
+      const st = applyState(b, follows, following);
+      const f = st.kind === "applied" || st.kind === "check" ? follows?.[b.id] : null;
+      return {
+        b,
+        st,
+        name: names.get(b.id),
+        at: outOf(b.at ?? b.start, lay),
+        cover: spans(f ? coverage(f, b.end) : st.kind === "still" ? [[b.start, b.end]] : []),
+        held: spans(st.held || []),
+      };
+    });
+  }, [tl, lay, follows, following]);
 
   /** Where along the rail, as a fraction, a pointer event landed. */
   const fractionAt = useCallback((clientX) => {
@@ -352,6 +388,10 @@ export default function Timeline({
         return inClip ? { lane: laneKey, t, end: t, flip } : null;
       }
 
+      // On the blur lane, a moment: a blur has no length of its own (see THE
+      // BLUR LANE above), so there is no gap to fit and nothing is in the way.
+      if (laneKey === "blurs") return { lane: laneKey, t, end: total, flip, point: true };
+
       const kind = SINGULAR[laneKey];
       let gapEnd = total;
       for (const it of items[laneKey]) {
@@ -527,7 +567,7 @@ export default function Timeline({
                 className="st-lane"
                 style={{
                   height, marginBottom: 6, marginTop: 0,
-                  cursor: ghost?.lane === lane.key && armed ? (isVideo ? "pointer" : "copy") : undefined,
+                  cursor: ghost?.lane === lane.key && armed ? (isVideo ? "pointer" : "copy") : isVideo ? "pointer" : undefined,
                 }}
                 onPointerDown={(e) => {
                   if (e.target !== e.currentTarget) return;
@@ -536,7 +576,16 @@ export default function Timeline({
                   if (g) {
                     e.preventDefault();
                     addGhost(g);
-                  } else onSeek(fractionAt(e.clientX) * total);
+                    return;
+                  }
+                  const t = fractionAt(e.clientX) * total;
+                  // On the video, a plain click also selects the clip under it:
+                  // cutting has its own key now, so a click is free to mean this.
+                  if (isVideo) {
+                    const c = clips.find((k) => t >= k.out_start && t <= k.out_end);
+                    if (c) onSelect({ kind: "clip", id: c.id });
+                  }
+                  onSeek(t);
                 }}
                 onPointerMove={(e) => {
                   if (e.pointerType !== "touch") setArmed(addHeld(e));
@@ -548,9 +597,10 @@ export default function Timeline({
                 }}
                 onPointerLeave={() => setGhost(null)}
               >
-                {/* The clips. A clip's body never takes the pointer, so pointing
-                    at it reaches the lane and offers "Cut here"; only its
-                    number does, and that selects it. */}
+                {/* The clips. Nothing on a clip takes the pointer, its number
+                    included: pointing at one reaches the lane, which offers
+                    "Cut here" to Ctrl/⌘ + click and selects the clip on a
+                    plain click. Only the selected clip's edge handles take it. */}
                 {isVideo &&
                   clips.map((c) => {
                     const on = selection?.kind === "clip" && selection.id === c.id;
@@ -563,21 +613,9 @@ export default function Timeline({
                           width: `calc(${((c.out_end - c.out_start) / total) * 100}% - 2px)`,
                         }}
                       >
-                        <button
-                          type="button"
-                          className="st-clip-tag"
-                          title={`Clip ${c.n} · ${fmtTime(c.out_start, true)} – ${fmtTime(c.out_end, true)}. Click to select.`}
-                          aria-label={`Select clip ${c.n}`}
-                          aria-pressed={on}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelect({ kind: "clip", id: c.id });
-                            onSeek(c.out_start + 0.05);
-                          }}
-                        >
+                        <span className="st-clip-tag" aria-hidden="true">
                           {c.n}
-                        </button>
+                        </span>
                       </div>
                     );
                   })}
@@ -618,13 +656,15 @@ export default function Timeline({
 
                 {ghost?.lane === lane.key && (
                   <div
-                    className={`st-ghost${isVideo ? " is-cut" : ""}${armed ? " is-armed" : ""}`}
+                    className={`st-ghost${isVideo ? " is-cut" : ghost.point ? " is-point" : ""}${armed ? " is-armed" : ""}`}
                     aria-hidden="true"
                     style={{
                       left: `${(ghost.t / total) * 100}%`,
                       ...(isVideo
                         ? null
-                        : { width: `${((ghost.end - ghost.t) / total) * 100}%`, borderColor: lane.color, background: `${lane.color}1F` }),
+                        : ghost.point
+                          ? { borderColor: lane.color }
+                          : { width: `${((ghost.end - ghost.t) / total) * 100}%`, borderColor: lane.color, background: `${lane.color}1F` }),
                     }}
                   >
                     {/* The label is its own tag rather than text inside the
@@ -640,7 +680,57 @@ export default function Timeline({
                   </div>
                 )}
 
-                {(items[lane.key] || []).map((item, i) => {
+                {/* Blurs: what each covers, then the tags above all of them. */}
+                {lane.key === "blurs" &&
+                  blurMarks.map((m) => {
+                    const on = selection?.kind === "blur" && selection.id === m.b.id;
+                    const pick = (e) => {
+                      e.stopPropagation();
+                      onSelect({ kind: "blur", id: m.b.id });
+                      onSeek(fractionAt(e.clientX) * total);
+                    };
+                    return (
+                      <Fragment key={m.b.id}>
+                        {m.cover.map((s, k) => (
+                          <span
+                            key={`c${k}`}
+                            className={`st-cover${on ? " is-on" : ""}`}
+                            title={`${m.name} covers it here`}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={pick}
+                            style={{ left: `${(s.start / total) * 100}%`, width: `${((s.end - s.start) / total) * 100}%`, background: lane.color }}
+                          />
+                        ))}
+                        {m.held.map((s, k) => (
+                          <span
+                            key={`h${k}`}
+                            className="st-cover-held"
+                            title={`${m.name} lost sight of it here and held still. Play this part to check.`}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={pick}
+                            style={{ left: `${(s.start / total) * 100}%`, width: `${((s.end - s.start) / total) * 100}%` }}
+                          />
+                        ))}
+                      </Fragment>
+                    );
+                  })}
+                {lane.key === "blurs" &&
+                  blurMarks.map((m) => (
+                    <BlurTag
+                      key={m.b.id}
+                      mark={m}
+                      color={lane.color}
+                      left={(m.at / total) * 100}
+                      on={selection?.kind === "blur" && selection.id === m.b.id}
+                      onPick={() => {
+                        onSelect({ kind: "blur", id: m.b.id });
+                        onSeek(m.at + 0.02);
+                      }}
+                      onApply={onApplyBlur ? () => onApplyBlur(m.b) : null}
+                    />
+                  ))}
+
+                {lane.key !== "blurs" && (items[lane.key] || []).map((item, i) => {
                   const left = (item.start / total) * 100;
                   const width = Math.max(0.6 / zoom, ((item.end - item.start) / total) * 100);
                   const on = selection?.kind === SINGULAR[lane.key] && selection.id === item.id;
@@ -747,6 +837,71 @@ export default function Timeline({
         {/* "Cut here" lives with the play controls under the preview now
             (StudioEditor.js transport), beside full screen. */}
       </div>
+    </div>
+  );
+}
+
+/**
+ * A blur on its lane: a tag at the moment it was placed, saying where it is
+ * with being applied (follow.mjs applyState), with the Apply button on it
+ * while it needs one. It starts at the moment and runs right, or ends at the
+ * moment and runs left when that is near the end of the timeline.
+ */
+function BlurTag({ mark, color, left, on, onPick, onApply }) {
+  const { st, name } = mark;
+  const pct = st.kind === "applying" && st.progress > 0 ? ` ${Math.round(st.progress * 100)}%` : "";
+  const needs = st.kind === "unapplied" || st.kind === "failed";
+  const title = {
+    unapplied: `${name}: not applied yet. It stays where you put it until you apply it.`,
+    applying: `${name}: applying. Finding it through the whole recording.`,
+    applied: `${name}: applied. It covers this wherever it is on screen.`,
+    check: `${name}: applied, but it lost sight of it for a moment and held still. Check that part.`,
+    still: `${name}: applied. Nothing under it to recognise, so it stays where you put it.`,
+    failed: `${name}: couldn't be applied. Try again.`,
+  }[st.kind];
+  return (
+    <div
+      className={`st-btag is-${st.kind}${on ? " is-on" : ""}${left > 78 ? " is-flip" : ""}`}
+      role="button"
+      tabIndex={0}
+      title={title}
+      aria-label={title}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onPick();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPick();
+        }
+      }}
+      style={{ left: `${left}%`, "--lane": color }}
+    >
+      {st.kind === "applying" ? (
+        <span className="st-spin" aria-hidden="true" />
+      ) : st.kind === "applied" ? (
+        <Icon name="check" size={11} />
+      ) : st.kind === "check" || st.kind === "failed" ? (
+        <Icon name="alert" size={11} />
+      ) : (
+        <Icon name="blur" size={11} />
+      )}
+      <span className="st-btag-name">{st.kind === "applying" ? `Applying…${pct}` : name}</span>
+      {needs && onApply && (
+        <button
+          type="button"
+          className="st-btag-apply"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onApply();
+          }}
+        >
+          {st.kind === "failed" ? "Try again" : "Apply"}
+        </button>
+      )}
     </div>
   );
 }

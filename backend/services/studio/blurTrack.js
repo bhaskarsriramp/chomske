@@ -39,9 +39,20 @@
  *           edge — carrying a blur across the middle of the screen on a guess
  *           is how it ends up somewhere the secret is not.
  *   gone    entirely off the frame. Nothing to cover; not drawn.
- *   held    lost for any other reason: a page change, a dialog over it, it got
- *           highlighted. The blur stays exactly where it was — it fails closed —
- *           and the span is reported so the editor can ask for a look.
+ *   held    lost for any other reason: a dialog over it, it got highlighted,
+ *           a tooltip sat on it. The blur stays exactly where it was — it fails
+ *           closed — and the span is reported so the editor can ask for a look.
+ *
+ * Held has an end. A blur follows its secret for the whole recording, so when
+ * the creator goes to another page, holding would leave a box over that page
+ * for the rest of the video. It lets go (gone) once BOTH are true for LET_GO:
+ * the screen's layout is no longer the one it was seen on, and what is under
+ * the blur now is plainly not the secret. A highlight, a tooltip or a menu
+ * changes part of the layout, not all of it, so those still hold; a dimmed
+ * backdrop leaves the layout's shape alone (the measure ignores brightness),
+ * and the secret under it still matches and is simply found again. Letting go
+ * changes nothing about looking: it keeps being looked for, and found again
+ * the moment it comes back.
  *
  * Finding it again after gone or held is deliberately STRICT: the blurred text
  * itself must match almost exactly, and clearly better than any other place on
@@ -68,7 +79,7 @@
 import { spawn } from "child_process";
 import { FFMPEG_PATH } from "../media/ffmpeg.js";
 
-export const TRACK_VERSION = 2;
+export const TRACK_VERSION = 3;
 
 /** The working copy's width. A source pixel is ~3 of these at 1920. */
 const WORK_W = 640;
@@ -78,6 +89,14 @@ const HI = 2;
 const K = 4;
 /** Of a template's area that must be on screen for a partial match to count. */
 const MIN_VISIBLE = 0.35;
+/**
+ * ...and of its texture (variance). Area alone is not enough: a box drawn a
+ * little taller than its line is mostly blank padding, and with the line off
+ * the top of the frame the sliver still on screen is that padding, which
+ * matches any blank strip. Measured: such slivers scored 0.82-0.93 at the top
+ * edge of pages the secret was not on, and were taken for it.
+ */
+const MIN_VISIBLE_TEXTURE = 0.4;
 /** Below this a patch is too plain to recognise (a blank field). */
 const MIN_TEXTURE = 3.5;
 /** The band's match that counts as "it moved by this much". */
@@ -105,6 +124,19 @@ const VERIFY = 0.8;
 const STRICT_RECT = 0.82;
 const STRICT_MARGIN = 0.08;
 /**
+ * ...and, unless the text alone is unmistakable (STRICT_ALONE), its
+ * surroundings must not be something else entirely. A blur follows its secret
+ * through the WHOLE recording, so a find is tried on every other page too,
+ * and a box drawn loosely (half blank, or across two lines) is at identity
+ * size mostly "a dark band": the lower half of a bold heading on another page
+ * matched one at 0.93. Measured over four recordings: every true find had
+ * surroundings of 0.88 to 1, every false one 0 to 0.21. A low floor rather
+ * than a bar, because surroundings can be partly hidden (a toolbar over the
+ * line above), which is why they are not otherwise required.
+ */
+const STRICT_ALONE = 0.95;
+const STRICT_CONTEXT = 0.35;
+/**
  * How much the surroundings count beside the text when choosing between
  * places. Real ids made in the same second share most of their digits:
  * measured, the line above a Mongo ObjectId scored 0.935 against the id's own
@@ -130,6 +162,19 @@ const RELOOK = 0.5;
 /** ...and at most this often. What a find misses in between, the backfill
  *  walk from the find covers (BACKFILL is well beyond it). */
 const LOOK_EVERY = 0.1;
+/**
+ * Letting go of a held blur (see the header): after this long lost, when the
+ * layout of the whole screen correlates below PAGE_SAME with the frame it was
+ * last seen on, and the blurred text scores below GONE_ID where the blur is.
+ * Measured on real recordings: navigations (pricing page to editor, a site to
+ * a YouTube search and back) correlate -0.12 to -0.02; the same page scrolled,
+ * or with a large search menu open over it, 0.71 to 1. The secret's own text
+ * scored 0.08 on the page navigated to, against 0.82 for a match. A count of
+ * changed pixels does NOT work: two white pages share most of their pixels.
+ */
+const LET_GO = 0.5;
+const PAGE_SAME = 0.4;
+const GONE_ID = 0.5;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -300,6 +345,7 @@ function ncc(img, iw, ih, T, x, y) {
   const vi = si2 - (si * si) / n;
   const vt = st2 - (st * st) / n;
   if (vi < 1e-3 || vt < 1e-3) return 0;
+  if (n < T.w * T.h && vt < MIN_VISIBLE_TEXTURE * T.std * T.std * T.w * T.h) return -1;
   return (sit - (si * st) / n) / Math.sqrt(vi * vt);
 }
 
@@ -357,6 +403,30 @@ function meanDiff(a, b) {
   return s / a.length;
 }
 
+/** How alike two tiny thumbnails' layouts are: their correlation, -1 to 1 (0 if either is flat). */
+function layoutCorr(a, b) {
+  const n = a.length;
+  let sa = 0;
+  let sb = 0;
+  for (let i = 0; i < n; i++) {
+    sa += a[i];
+    sb += b[i];
+  }
+  const ma = sa / n;
+  const mb = sb / n;
+  let ab = 0;
+  let aa = 0;
+  let bb = 0;
+  for (let i = 0; i < n; i++) {
+    const u = a[i] - ma;
+    const v = b[i] - mb;
+    ab += u * v;
+    aa += u * u;
+    bb += v * v;
+  }
+  return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0;
+}
+
 /**
  * One direction of the walk from the anchor. `dir` is +1 walking forward in
  * time and -1 walking back. Feed it frames in that order with an increasing
@@ -375,6 +445,7 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
   let carry = null;           // { pos, t } where carrying began
   let thumb = null;
   let lookedT = null;         // when a lost search last ran
+  let lost = null;            // { t, tiny } the last frame it was seen on, once lost
   const recent = [];          // frames since the last seen one, for backfill
 
   const rectAt = (p) => ({ x: p.x + off.x, y: p.y + off.y });
@@ -455,8 +526,8 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
   function identityAt(f, p) {
     const id = search(f.hi, W * HI, H * HI, TrectHi, (p.x + off.x) * HI, (p.y + off.y) * HI, 4, 4);
     const pos = { x: id.x / HI - off.x, y: id.y / HI - off.y };
-    const ctx = ncc(f.img, W, H, T, Math.round(pos.x), Math.round(pos.y));
-    return { s: id.s, score: id.s + CONTEXT_WEIGHT * Math.max(0, ctx), pos };
+    const ctx = Math.max(0, ncc(f.img, W, H, T, Math.round(pos.x), Math.round(pos.y)));
+    return { s: id.s, ctx, score: id.s + CONTEXT_WEIGHT * ctx, pos };
   }
 
   /**
@@ -509,13 +580,14 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
     for (const q of pts) {
       const id = identityAt(f, q);
       if (!scored.some((o) => Math.abs(o.x - id.pos.x) < 2 && Math.abs(o.y - id.pos.y) < 2)) {
-        scored.push({ ...id.pos, rs: id.s, score: id.score });
+        scored.push({ ...id.pos, rs: id.s, ctx: id.ctx, score: id.score });
       }
     }
     scored.sort((a, b) => b.score - a.score);
-    debug?.({ at: f.t, find: scored.slice(0, 5).map((c) => [Math.round(c.x), Math.round(c.y), +c.rs.toFixed(3), +c.score.toFixed(3)]) });
+    debug?.({ at: f.t, find: scored.slice(0, 5).map((c) => [Math.round(c.x), Math.round(c.y), +c.rs.toFixed(3), +c.score.toFixed(3), +c.ctx.toFixed(2)]) });
     const best = scored[0];
     if (!best || best.rs < STRICT_RECT) return null;
+    if (best.rs < STRICT_ALONE && best.ctx < STRICT_CONTEXT) return null;
     const rival = scored.find((c) => Math.abs(c.y - best.y) > R.h || Math.abs(c.x - best.x) > R.w / 2);
     if (rival && rival.score > best.score - STRICT_MARGIN) return null;
     return { x: best.x, y: best.y };
@@ -558,6 +630,7 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
         state = onFrame(pos) ? "seen" : "gone";
       } else {
         // The neighbourhood is not where it was: the page changed, or it left.
+        lost = { t: lastT, tiny: shrink(prev.img, W, H, 8).data };
         const found = strictFind(f);
         if (found) {
           pos = found;
@@ -581,6 +654,16 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
         else if (Math.abs(t - carry.t) > CARRY_MAX) state = "held";
       }
       const tiny = shrink(img, W, H, 8).data;
+      // Held on a screen that is no longer the one it was on, over something
+      // that is not it: the page changed. Let go, and keep looking.
+      if (state === "held" && lost && Math.abs(t - lost.t) >= LET_GO) {
+        const same = layoutCorr(tiny, lost.tiny);
+        if (same < PAGE_SAME) {
+          const here = identityAt(f, pos).s;
+          debug?.({ at: t, letGo: [+same.toFixed(3), +here.toFixed(3)] });
+          if (here < GONE_ID) state = "gone";
+        }
+      }
       const since = lookedT === null ? Infinity : Math.abs(t - lookedT);
       if (since >= LOOK_EVERY && (!thumb || meanDiff(tiny, thumb) >= CHANGED || since >= RELOOK)) {
         thumb = tiny;
@@ -599,6 +682,7 @@ function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir
       recent.length = 0;
       thumb = null;
       lookedT = null;
+      lost = null;
     }
     // Kept, identity copy and all, only as long as a backfill could reach
     // back (BACKFILL): at 1280 wide a second of frames is tens of megabytes.

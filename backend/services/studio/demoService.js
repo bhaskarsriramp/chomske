@@ -123,7 +123,7 @@ export async function stableUrl(key, opts) {
 }
 
 /** The follows of the blurs the timeline still has; a deleted blur's go unsaid. */
-function followsFor(d) {
+export function followsFor(d) {
   const all = d.follows || {};
   const out = {};
   for (const b of d.timeline?.blurs || []) if (all[b.id]) out[b.id] = all[b.id];

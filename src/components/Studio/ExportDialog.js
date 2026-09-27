@@ -18,7 +18,12 @@ import { startRender, renderDownloadUrl, deleteRender } from "./studioApi";
 import { Btn, Segmented, Toggle, Icon, Badge } from "./ui";
 import { fmtTime, fmtBytes } from "./model";
 
-export default function ExportDialog({ demo, config, outputSeconds, onClose, onChanged, beforeExport, settling = 0 }) {
+export default function ExportDialog({
+  demo, config, outputSeconds, onClose, onChanged, beforeExport,
+  // How many blurs are not applied yet, and how many are applying
+  // (follow.mjs applyState), and how to apply the ones that are not.
+  blurs = { unapplied: 0, applying: 0 }, onApplyBlurs,
+}) {
   const closeRef = useRef(null);
   const [preset, setPreset] = useState(demo.renders?.[0]?.options?.preset || "youtube");
   const [advanced, setAdvanced] = useState(false);
@@ -76,6 +81,29 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
       setError(d?.message || "We couldn't start that export.");
       setBusy(false);
     }
+  };
+
+  /**
+   * ── BLURS FIRST ────────────────────────────────────────────────────────────
+   * A blur that is not applied is drawn standing still while what it covers
+   * scrolls away, which is how a secret ends up in the file. So when there are
+   * any, the export offers to apply them first and then starts by itself once
+   * they are done (`queued`). It never blocks: "Export without applying" is
+   * always there, and a blur that could not be applied stops the wait and
+   * says so rather than exporting it silently.
+   */
+  const [queued, setQueued] = useState(false);
+  const blocked = blurs.unapplied + blurs.applying;
+  const runRef = useRef(run);
+  runRef.current = run;
+  useEffect(() => {
+    if (!queued || busy || blurs.applying > 0) return;
+    setQueued(false);
+    if (blurs.unapplied === 0) runRef.current();
+  }, [queued, busy, blurs.applying, blurs.unapplied]);
+  const applyThenExport = () => {
+    if (blurs.unapplied > 0) onApplyBlurs?.();
+    setQueued(true);
   };
 
   const running = (demo.renders || []).filter((r) => r.status === "queued" || r.status === "rendering");
@@ -212,23 +240,64 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
             </div>
           )}
 
-          {settling > 0 && (
-            // Exporting now would draw these blurs standing still while what
-            // they cover scrolls away, so it waits the few seconds it takes.
-            <div style={{ padding: "11px 13px", borderRadius: 10, border: "1px solid var(--line)", background: "var(--made-tint)", color: "var(--ink-body)", fontSize: 12.5, lineHeight: 1.5 }}>
-              {settling === 1 ? "A blur is" : `${settling} blurs are`} still being set to follow what{" "}
-              {settling === 1 ? "it covers" : "they cover"}. Export will be ready in a moment.
+          {blocked > 0 && (
+            <div
+              role="status"
+              style={{
+                display: "flex", alignItems: "flex-start", gap: 9,
+                padding: "11px 13px", borderRadius: 10, fontSize: 12.5, lineHeight: 1.5, color: "var(--ink-body)",
+                border: `1px solid ${blurs.applying > 0 ? "var(--line)" : "#F1D6A8"}`,
+                background: blurs.applying > 0 ? "var(--made-tint)" : "#FFF7E8",
+              }}
+            >
+              {blurs.applying > 0 && <span className="st-spin" aria-hidden="true" style={{ marginTop: 2 }} />}
+              <span>
+                {blurs.applying > 0
+                  ? `Applying ${blurs.applying === 1 ? "a blur" : `${blurs.applying} blurs`}…` +
+                    (queued ? " The export starts by itself when it's done." : "")
+                  : `${blurs.unapplied === 1 ? "A blur isn't" : `${blurs.unapplied} blurs aren't`} applied yet, so ` +
+                    `${blurs.unapplied === 1 ? "it stays" : "they stay"} where you put ${blurs.unapplied === 1 ? "it" : "them"} ` +
+                    "and won't move with the page."}
+              </span>
             </div>
           )}
 
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <Btn kind="primary" size="l" onClick={run} disabled={busy || settling > 0} icon={<Icon name="download" size={15} />}>
-              {busy ? "Starting…" : `Export · ${cost} credits`}
-            </Btn>
+            {blocked > 0 ? (
+              <Btn
+                kind="primary"
+                size="l"
+                onClick={applyThenExport}
+                disabled={busy || queued}
+                icon={queued ? <span className="st-spin is-light" aria-hidden="true" /> : <Icon name="blur" size={15} />}
+              >
+                {queued ? "Applying blurs…" : blurs.unapplied > 0 ? `Apply blurs, then export · ${cost} credits` : `Export when ready · ${cost} credits`}
+              </Btn>
+            ) : (
+              <Btn kind="primary" size="l" onClick={run} disabled={busy} icon={<Icon name="download" size={15} />}>
+                {busy ? "Starting…" : `Export · ${cost} credits`}
+              </Btn>
+            )}
             <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>
               {fmtTime(outputSeconds, false)} · {options.resolution}p{options.fps >= 60 ? " 60fps" : ""}
             </span>
           </div>
+          {blocked > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setQueued(false);
+                run();
+              }}
+              disabled={busy}
+              style={{
+                justifySelf: "start", marginTop: -6, font: "inherit", fontSize: 12, fontWeight: 600, color: "var(--ink-mute)",
+                background: "none", border: 0, padding: 0, cursor: busy ? "default" : "pointer", textDecoration: "underline",
+              }}
+            >
+              {busy ? "Starting…" : "Export without applying"}
+            </button>
+          )}
 
           {(running.length > 0 || finished.length > 0) && (
             <div style={{ borderTop: "1px solid var(--line)", paddingTop: 16, display: "grid", gap: 9 }}>

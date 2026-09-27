@@ -15,10 +15,10 @@
  */
 import { useMemo } from "react";
 import { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Empty, Icon } from "./ui";
-import { fmtTime, clamp, layout, mergedCuts, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
+import { fmtTime, clamp, layout, mergedCuts, placedSpans, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
 import { create } from "./create";
 import { clipsOf } from "./clips";
-import { blurSig } from "./follow.mjs";
+import { applyState, coverage, blurNames } from "./follow.mjs";
 // Caption colour and size are the script editor's controls, not a second set.
 import { ColorPicker, SizePicker } from "../Edit/captionStyle";
 
@@ -83,8 +83,8 @@ export function VideoPanel({ tl, selection, onSelect, seek, onDeleteClip, onRest
         )}
       </div>
       <Hint>
-        Point at the video on the timeline and Ctrl + click (⌘ + click on a Mac) to cut it into clips. Select a clip by
-        its number to drag its edges and trim it, or delete it to take it out. Restore brings back anything taken out.
+        Point at the video on the timeline and Ctrl + click (⌘ + click on a Mac) to cut it into clips. Click a clip to
+        select it, then drag its edges to trim it, or delete it to take it out. Restore brings back anything taken out.
       </Hint>
     </Panel>
   );
@@ -246,37 +246,34 @@ function Unread({ icon, title, children, reading, onRead, readCost }) {
   );
 }
 
-/**
- * Where one blur is with following what it covers (follow.mjs): not placed
- * yet, being followed, followed, lost somewhere and held, nothing to follow,
- * or failed. One word for the list, a sentence for the card.
- */
-function followState(b, follows, following) {
-  if (b.at == null) return { kind: "unplaced" };
-  const sig = blurSig(b);
-  const f = follows?.[b.id];
-  if (f && f.sig === sig) {
-    if (!f.trackable) return { kind: "plain" };
-    return f.held?.length ? { kind: "held", held: f.held, keys: f.keys.length } : { kind: "following", keys: f.keys.length };
-  }
-  const run = following?.[b.id];
-  if (run?.failed && run.sig === sig) return { kind: "failed", message: run.message };
-  return { kind: "pending", progress: run?.sig === sig ? run.progress || 0 : 0 };
-}
-
-const FOLLOW_BADGE = {
-  pending: { tone: "mute", text: "Following…" },
-  following: { tone: "good", text: "Follows" },
-  held: { tone: "warn", text: "Check" },
-  plain: { tone: "mute", text: "Still" },
-  failed: { tone: "warn", text: "Still" },
+/** One word for where a blur is with being applied (follow.mjs applyState), for the list. */
+const APPLY_BADGE = {
+  unapplied: { tone: "warn", text: "Not applied" },
+  applying: { tone: "mute", text: "Applying…" },
+  applied: { tone: "good", text: "Applied" },
+  check: { tone: "warn", text: "Check" },
+  still: { tone: "mute", text: "Stays put" },
+  failed: { tone: "warn", text: "Not applied" },
 };
+
+/**
+ * Where an applied blur shows, in output time: [{ start, end }], the
+ * stretches it covers its secret, as the timeline draws them.
+ */
+function coveredSpans(b, follows, st, lay) {
+  const f = st.kind === "applied" || st.kind === "check" ? follows?.[b.id] : null;
+  const src = f ? coverage(f, b.end) : st.kind === "still" ? [[b.start, b.end]] : [];
+  return placedSpans(src.map(([s, e]) => ({ start: s, end: e })), lay, { min: 0.005 });
+}
 
 export function BlurPanel({
   tl, selection, onSelect, edit, time, seek, read = true, reading = false, onRead, readCost = 0,
-  follows = null, following = null, onRefollow,
+  follows = null, following = null, onApply,
 }) {
-  const blurs = [...(tl.blurs || [])].sort((a, b) => a.start - b.start);
+  // In the order they sit in the recording, where each was placed, numbered
+  // the same way as on the timeline (follow.mjs blurNames).
+  const blurs = [...(tl.blurs || [])].sort((a, b) => (a.at ?? a.start) - (b.at ?? b.start));
+  const names = useMemo(() => blurNames(tl.blurs), [tl.blurs]);
   const lay = useMemo(() => layout(tl), [tl]);
   const current = blurs.find((b) => b.id === selection?.id && selection.kind === "blur") || null;
   const auto = blurs.filter((b) => b.auto).length;
@@ -323,45 +320,55 @@ export function BlurPanel({
               </div>
             )}
             <div style={{ display: "grid", gap: 2, margin: -6 }}>
-              {blurs.map((b, i) => (
-                <Row
-                  key={b.id}
-                  accent="#FF9482"
-                  selected={current?.id === b.id}
-                  onClick={() => {
-                    onSelect({ kind: "blur", id: b.id });
-                    seek(b.start + 0.05);
-                  }}
-                  onRemove={() => edit({ blurs: tl.blurs.filter((x) => x.id !== b.id) }, "Remove blur")}
-                  title={b.label || `Region ${i + 1}`}
-                  sub={`${fmtTime(b.start, true)} – ${fmtTime(b.end, true)} · ${KIND_LABEL[b.kind] || b.kind}`}
-                  badge={
-                    <>
-                      {b.auto ? (
-                        <Badge tone={b.confidence >= 0.65 ? "ai" : "warn"}>
-                          {b.confidence >= 0.65 ? "AI" : "Check"}
-                        </Badge>
-                      ) : null}
-                      {(() => {
-                        const st = followState(b, follows, following);
-                        const badge = FOLLOW_BADGE[st.kind];
-                        return badge ? <Badge tone={badge.tone}>{badge.text}</Badge> : null;
-                      })()}
-                    </>
-                  }
-                />
-              ))}
+              {blurs.map((b) => {
+                const st = applyState(b, follows, following);
+                const badge = APPLY_BADGE[st.kind];
+                const spans = coveredSpans(b, follows, st, lay);
+                // Where it shows once applied; where it was placed until then.
+                const where = spans.length
+                  ? `On screen ${fmtTime(spans[0].start, true)} – ${fmtTime(spans[0].end, true)}${spans.length > 1 ? ` +${spans.length - 1}` : ""}`
+                  : st.kind === "applied" || st.kind === "check"
+                    ? "Not on screen after cuts"
+                    : `Placed at ${fmtTime(outOf(b.at ?? b.start, lay), true)}`;
+                return (
+                  <Row
+                    key={b.id}
+                    accent="#FF9482"
+                    selected={current?.id === b.id}
+                    onClick={() => {
+                      onSelect({ kind: "blur", id: b.id });
+                      seek(outOf(b.at ?? b.start, lay) + 0.02);
+                    }}
+                    onRemove={() => edit({ blurs: tl.blurs.filter((x) => x.id !== b.id) }, "Remove blur")}
+                    title={names.get(b.id)}
+                    sub={`${where} · ${KIND_LABEL[b.kind] || b.kind}`}
+                    badge={
+                      <>
+                        {b.auto ? (
+                          <Badge tone={b.confidence >= 0.65 ? "ai" : "warn"}>
+                            {b.confidence >= 0.65 ? "AI" : "Check"}
+                          </Badge>
+                        ) : null}
+                        {badge ? <Badge tone={badge.tone}>{badge.text}</Badge> : null}
+                      </>
+                    }
+                  />
+                );
+              })}
             </div>
           </>
         )}
       </Panel>
 
       {current && (
-        <Panel title="Selected region">
-          <FollowStatus
-            st={followState(current, follows, following)}
+        <Panel title={names.get(current.id) || "Selected blur"}>
+          <ApplyStatus
+            blur={current}
+            st={applyState(current, follows, following)}
+            spans={coveredSpans(current, follows, applyState(current, follows, following), lay)}
+            seekTo={(outT) => seek(outT + 0.02)}
             seekHeld={(t) => seek(outOf(t, lay) + 0.05)}
-            onRetry={() => onRefollow?.(current)}
+            onApply={() => onApply?.(current)}
           />
           <div>
             <Label>Cover it with</Label>
@@ -391,6 +398,9 @@ export function BlurPanel({
             />
           )}
 
+          {/* A blur's timing is not set by hand any more: once applied it
+              covers its secret wherever it is on screen (follow.mjs, "Applying
+              a blur"), so a span to drag only got in the way. Kept for later.
           <TimeRange
             tl={tl}
             item={current}
@@ -406,6 +416,7 @@ export function BlurPanel({
               </Btn>
             }
           />
+          */}
 
           <Field
             label="What is it"
@@ -416,7 +427,10 @@ export function BlurPanel({
             hint="Only for your own list. Never write the secret itself here."
           />
 
-          <Hint>Drag the rectangle on the preview to move it, and its corners to resize. Scrub through to check it stays over the thing the whole time.</Hint>
+          <Hint>
+            Drag the box on the preview over what it should hide, and its corners to fit it, then apply it. Moving it
+            afterwards means applying it again, from the moment on screen.
+          </Hint>
         </Panel>
       )}
     </>
@@ -1087,15 +1101,20 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
 }
 
 /**
- * The selected blur's following, in a sentence. The held case is the one that
- * matters most: the blur lost sight of what it covers and stayed put, which is
- * safe only if what it covered went away too, and only a person can check that.
+ * The selected blur's state (follow.mjs applyState) in a sentence, with the
+ * one thing to do about it. Applying shows its progress, and says so plainly
+ * when it is waiting to start or taking longer than it should, with a way to
+ * ask again: a spinner with no end is the failure this replaced. The held
+ * case matters most once applied: the blur lost sight of what it covers and
+ * stayed put, which is safe only if what it covered went away too, and only a
+ * person can check that.
  */
-function FollowStatus({ st, seekHeld, onRetry }) {
+function ApplyStatus({ blur, st, spans, seekTo, seekHeld, onApply }) {
   const box = (tone, children) => (
     <div
+      role="status"
       style={{
-        display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 12px", borderRadius: 10,
+        display: "grid", gap: 10, padding: "11px 12px", borderRadius: 10,
         fontSize: 12.5, lineHeight: 1.55,
         border: `1px solid ${tone === "warn" ? "#F1D6A8" : "var(--line)"}`,
         background: tone === "warn" ? "#FFF7E8" : "var(--paper)",
@@ -1105,54 +1124,102 @@ function FollowStatus({ st, seekHeld, onRetry }) {
       {children}
     </div>
   );
-  if (st.kind === "unplaced") {
-    return box("mute", <span>Drag the rectangle onto what it should hide. From that moment it follows it: when the page scrolls, the blur moves with it.</span>);
-  }
-  if (st.kind === "pending") {
+  const link = (label, onClick) => (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{ font: "inherit", fontWeight: 650, color: "var(--ink)", background: "none", border: 0, padding: 0, cursor: "pointer", textDecoration: "underline" }}
+    >
+      {label}
+    </button>
+  );
+  const applyBtn = (label) => (
+    <Btn kind="primary" size="s" full icon={<Icon name="blur" size={13} />} onClick={onApply}>
+      {label}
+    </Btn>
+  );
+  const where = spans.length
+    ? spans.length === 1
+      ? `from ${fmtTime(spans[0].start, true)} to ${fmtTime(spans[0].end, true)}`
+      : `${spans.length} times, first from ${fmtTime(spans[0].start, true)} to ${fmtTime(spans[0].end, true)}`
+    : "";
+
+  if (st.kind === "unapplied") {
     return box(
       "mute",
-      <span>
-        Following it through the recording{st.progress > 0 ? ` · ${Math.round(st.progress * 100)}%` : "…"} It will stay on it when
-        the page scrolls.
+      <>
+        <span>
+          {blur.at == null ? "Drag the box onto what it should hide, then apply it." : "Placed. Apply it when the box is right."}{" "}
+          Applying finds that thing through the whole recording and keeps it covered wherever it is on screen, as the page
+          scrolls or changes.
+        </span>
+        {applyBtn("Apply blur")}
+      </>
+    );
+  }
+  if (st.kind === "applying") {
+    const pct = Math.round((st.progress || 0) * 100);
+    return box(
+      st.slow ? "warn" : "mute",
+      <>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 650, color: "var(--ink)" }}>
+          <span className="st-spin" aria-hidden="true" />
+          Applying blur…{pct > 0 ? ` ${pct}%` : ""}
+        </span>
+        <div style={{ height: 4, borderRadius: 4, background: "var(--hover)", overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${Math.max(4, pct)}%`, background: "var(--primary)", transition: "width 400ms var(--ease-out)" }} />
+        </div>
+        <span style={{ color: "var(--ink-mute)", fontSize: 12 }}>
+          {st.slow ? (
+            <>This is taking longer than usual. {link("Try again", onApply)}</>
+          ) : st.waiting ? (
+            "Starting…"
+          ) : (
+            "Finding it through the recording. You can keep editing meanwhile."
+          )}
+        </span>
+      </>
+    );
+  }
+  if (st.kind === "applied") {
+    return box(
+      "mute",
+      <span style={{ display: "flex", gap: 8 }}>
+        <span style={{ color: "var(--ok)", marginTop: 3 }}><Icon name="check" size={13} /></span>
+        <span>
+          Applied. It covers this wherever it is on screen{where ? `: ${where}` : ""}, and steps aside while it is off the
+          screen.{spans.length ? <> {link("Play it", () => seekTo(Math.max(0, spans[0].start - 0.5)))}</> : null}
+        </span>
       </span>
     );
   }
-  if (st.kind === "following") {
-    return box("mute", <span>Follows what it covers when the page scrolls, and steps aside while it is off the screen.</span>);
-  }
-  if (st.kind === "held") {
+  if (st.kind === "check") {
     const [a, b] = st.held[0];
     return box(
       "warn",
-      <span style={{ flex: 1 }}>
-        Lost sight of it from {fmtTime(a, true)} to {fmtTime(b, true)}
+      <span>
+        Applied, but it lost sight of it from {fmtTime(a, true)} to {fmtTime(b, true)}
         {st.held.length > 1 ? ` (and ${st.held.length - 1} more time${st.held.length > 2 ? "s" : ""})` : ""}, so it stayed where it
-        was. Play that part to check nothing shows.{" "}
-        <button
-          type="button"
-          onClick={() => seekHeld(a)}
-          style={{ font: "inherit", fontWeight: 650, color: "var(--ink)", background: "none", border: 0, padding: 0, cursor: "pointer", textDecoration: "underline" }}
-        >
-          Show me
-        </button>
+        was. Play that part to check nothing shows. {link("Show me", () => seekHeld(a))}
       </span>
     );
   }
-  if (st.kind === "plain") {
-    return box("mute", <span>There is nothing distinctive under it to follow, so it stays where you put it.</span>);
+  if (st.kind === "still") {
+    return box(
+      "mute",
+      <span>
+        Applied, but there is nothing under the box to recognise at that moment (an empty field, a plain panel), so it stays
+        exactly where you put it for the whole video. To have it follow something, put the box on it at a moment it is
+        showing and apply again.
+      </span>
+    );
   }
   return box(
     "warn",
-    <span style={{ flex: 1 }}>
-      {st.message || "It couldn't be followed"}, so it stays where you put it.{" "}
-      <button
-        type="button"
-        onClick={onRetry}
-        style={{ font: "inherit", fontWeight: 650, color: "var(--ink)", background: "none", border: 0, padding: 0, cursor: "pointer", textDecoration: "underline" }}
-      >
-        Try again
-      </button>
-    </span>
+    <>
+      <span>{st.message || "We couldn't apply that blur"}. Until it is applied it stays where you put it.</span>
+      {applyBtn("Try again")}
+    </>
   );
 }
 

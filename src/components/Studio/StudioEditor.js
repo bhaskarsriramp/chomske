@@ -21,8 +21,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onLiveEvent } from "../../realtime/socket";
 // requestReview and resolveSuggestion are hidden with the Review tab (see TABS).
-import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds, followBlur } from "./studioApi";
-import { blurSig } from "./follow.mjs";
+import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds, followBlur, getFollows } from "./studioApi";
+import { blurSig, applyState } from "./follow.mjs";
 import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
@@ -60,8 +60,13 @@ const TABS = [
   // { id: "review", label: "Review", icon: "sparkle" },
 ];
 
-/** How long after the last change to a blur it is followed again. */
-const FOLLOW_DELAY = 800;
+/**
+ * While a blur is applying, how often the editor checks on it itself, beside
+ * the live messages (see the Apply section below), and how long without any
+ * sign of progress before it says it is taking longer than usual.
+ */
+const APPLY_POLL_MS = 3000;
+const APPLY_SLOW_MS = 25000;
 
 /** Two sets of follows, keeping for each blur whichever was asked for last. */
 function mergeFollows(a, b) {
@@ -146,8 +151,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   // ── Blurs that follow what they cover (follow.mjs, backend blurTrack.js) ──
   // `follows`: each blur's follow as the server has it, merged by when it was
   // asked for, so a late answer never replaces a newer one. `following`: the
-  // blurs being followed right now, { sig, progress } or { failed }, for the
-  // Blur panel and so Export can wait for them.
+  // blurs being applied right now, { sig, progress, waiting, slow, since,
+  // last } or { sig, failed, message }, for the timeline, the Blur panel, the
+  // picture and Export (follow.mjs applyState).
   const [follows, setFollows] = useState({});
   const [following, setFollowing] = useState({});
   useEffect(() => {
@@ -272,7 +278,24 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
             return n;
           });
         }
-        if (e.following) setFollowing((p) => ({ ...p, [e.following.id]: { ...(p[e.following.id] || {}), ...e.following } }));
+        if (e.following) {
+          setFollowing((p) => {
+            const was = p[e.following.id] || {};
+            const moved = (e.following.progress || 0) > (was.progress || 0);
+            return {
+              ...p,
+              [e.following.id]: {
+                ...was,
+                ...e.following,
+                // Started once there is any progress at all; "last" is when
+                // there last was, which is what "slow" is measured from.
+                waiting: !!was.waiting && !moved,
+                slow: moved ? false : !!was.slow,
+                last: moved ? Date.now() : was.last || Date.now(),
+              },
+            };
+          });
+        }
         if (e.notice) setNotice(e.notice);
         return;
       }
@@ -501,35 +524,118 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   }, [demo?.follows]);
 
   /**
-   * Ask for a blur to be followed. Once per version of it (its signature),
-   * and FOLLOW_DELAY after the last change, so dragging a rectangle across
-   * the picture asks once, when it is let go, not on every pixel.
+   * ── APPLY ──────────────────────────────────────────────────────────────────
+   * A blur is placed (dragged over the secret at one moment of the recording)
+   * and then applied, when the creator says so: it is followed through the
+   * WHOLE recording from that moment, and covers the secret wherever and
+   * whenever it is on screen. So applying also widens it to the whole
+   * recording; where it actually shows comes from the follow, not from a span
+   * anyone has to drag. Nothing is followed behind the creator's back any
+   * more: a blur that quietly stood still while the page scrolled, with
+   * nothing saying it was still being worked on, read as a blur that does not
+   * work. Each blur says where it is (follow.mjs applyState), and the editor
+   * checks on the ones applying itself every APPLY_POLL_MS rather than relying
+   * on live messages alone, so nothing can sit on "Applying…" for ever.
    */
-  const asked = useRef({});
-  const followTimers = useRef({});
   const requestFollow = useCallback(
     (b) => {
       const sig = blurSig(b);
-      asked.current[b.id] = sig;
-      setFollowing((p) => ({ ...p, [b.id]: { sig, progress: 0 } }));
+      const now = Date.now();
+      setFollowing((p) => ({ ...p, [b.id]: { sig, progress: 0, waiting: true, slow: false, since: now, last: now } }));
       followBlur(demoId, b).catch((err) => {
-        asked.current[b.id] = null;
-        setFollowing((p) => ({ ...p, [b.id]: { sig, failed: true, message: err?.response?.data?.message || "" } }));
+        setFollowing((p) =>
+          p[b.id]?.sig === sig
+            ? { ...p, [b.id]: { sig, failed: true, message: err?.response?.data?.message || "We couldn't apply that blur" } }
+            : p
+        );
       });
     },
     [demoId]
   );
+
+  /** The blur as it is applied: anchored where it was placed, over the whole recording. */
+  const appliedForm = useCallback((b) => {
+    const cur = tlRef.current;
+    const lay0 = layRef.current;
+    const whole = cur?.duration || b.end;
+    // Never placed by hand: it is applied as it is shown, at the moment on
+    // screen if that is inside it, or at its start.
+    const at = b.at ?? Math.round(clamp(lay0 ? toSource(timeRef.current, lay0) : b.start, b.start, b.end) * 1000) / 1000;
+    return { ...b, at, start: 0, end: Math.round(whole * 1000) / 1000 };
+  }, []);
+
+  /** Apply these blurs (ids), as one undo step. */
+  const applyBlurs = useCallback(
+    (ids) => {
+      const cur = tlRef.current;
+      if (!cur) return;
+      const want = new Set(ids);
+      const done = [];
+      const blurs = (cur.blurs || []).map((b) => {
+        if (!want.has(b.id)) return b;
+        const nb = appliedForm(b);
+        done.push(nb);
+        return nb;
+      });
+      if (!done.length) return;
+      edit({ blurs }, done.length === 1 ? "Apply blur" : "Apply blurs");
+      for (const b of done) requestFollow(b);
+    },
+    [appliedForm, edit, requestFollow]
+  );
+  const applyBlur = useCallback(
+    (b) => {
+      select({ kind: "blur", id: b.id });
+      applyBlurs([b.id]);
+    },
+    [applyBlurs, select]
+  );
+
+  // Checking on the blurs being applied. Only while there are any.
+  const applyingIds = useMemo(
+    () => (tl?.blurs || []).filter((b) => applyState(b, follows, following).kind === "applying").map((b) => b.id).join(","),
+    [tl, follows, following]
+  );
   useEffect(() => {
-    if (!tl) return;
-    for (const b of tl.blurs || []) {
-      if (b.at == null) continue;
-      const sig = blurSig(b);
-      if (follows[b.id]?.sig === sig || asked.current[b.id] === sig) continue;
-      clearTimeout(followTimers.current[b.id]);
-      followTimers.current[b.id] = setTimeout(() => requestFollow(b), FOLLOW_DELAY);
-    }
-  }, [tl, follows, requestFollow]);
-  useEffect(() => () => Object.values(followTimers.current).forEach(clearTimeout), []);
+    if (!applyingIds) return undefined;
+    let live = true;
+    const check = async () => {
+      let res = null;
+      try {
+        res = await getFollows(demoId);
+      } catch {
+        // A missed check is only a missed check; the next one, or a live
+        // message, catches up.
+      }
+      if (!live) return;
+      if (res?.follows) setFollows((p) => mergeFollows(p, res.follows));
+      const jobs = res?.jobs || {};
+      const now = Date.now();
+      setFollowing((p) => {
+        let n = p;
+        for (const [id, run] of Object.entries(p)) {
+          if (!run || run.failed) continue;
+          const job = jobs[id];
+          let next = run;
+          if (job && job.sig === run.sig) {
+            if (job.status === "failed") next = { sig: run.sig, failed: true, message: job.error || "We couldn't apply that blur" };
+            else if (job.status === "running" && run.waiting) next = { ...run, waiting: false, last: now };
+          }
+          if (!next.failed && !next.slow && now - (next.last || next.since || now) > APPLY_SLOW_MS) next = { ...next, slow: true };
+          if (next !== run) {
+            if (n === p) n = { ...p };
+            n[id] = next;
+          }
+        }
+        return n;
+      });
+    };
+    const timer = setInterval(check, APPLY_POLL_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [applyingIds, demoId]);
 
   // "Cut here" on the video lane: split the clip under that moment in two,
   // taking nothing out (clips.js). A moment too near a clip's edge is ignored.
@@ -795,12 +901,15 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const total = lay?.duration || 0;
   const panelProps = { tl, selection, onSelect: select, edit, time, seek };
 
-  // Placed blurs still waiting for their follow (asked for, running, or about
-  // to be asked): Export holds until they are settled, because exporting now
-  // would draw them standing still. A failed one does not hold it up.
-  const unsettled = (tl.blurs || []).filter(
-    (b) => b.at != null && follows[b.id]?.sig !== blurSig(b) && !following[b.id]?.failed
-  ).length;
+  // Where the blurs are with being applied, for Export: exporting one that is
+  // not applied draws it standing still while what it covers scrolls away.
+  const blurStates = (tl.blurs || []).map((b) => applyState(b, follows, following).kind);
+  const blurCounts = {
+    unapplied: blurStates.filter((k) => k === "unapplied" || k === "failed").length,
+    applying: blurStates.filter((k) => k === "applying").length,
+  };
+  const applyAll = () =>
+    applyBlurs((tl.blurs || []).filter((b) => ["unapplied", "failed"].includes(applyState(b, follows, following).kind)).map((b) => b.id));
 
   // The uploaded image the canvas names, if it names one and it is still there.
   const bgChoice = tl.canvas?.background;
@@ -917,6 +1026,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         align={full || narrow ? "center" : "top"}
         backgroundUrl={bgImageUrl}
         follows={follows}
+        following={following}
+        onApplyBlur={applyBlur}
       />
       {full && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 4px 0", color: "#fff" }}>
@@ -1051,7 +1162,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           readCost={readCost}
           follows={follows}
           following={following}
-          onRefollow={requestFollow}
+          onApply={applyBlur}
         />
       )}
       {tab === "captions" && (
@@ -1092,6 +1203,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       onSplit={addSplit}
       onTrim={trimClip}
       onDelete={removeSelected}
+      follows={follows}
+      following={following}
+      onApplyBlur={applyBlur}
       // Taller lanes on a desk: bigger chips to grab, drag and resize.
       height={narrow ? 30 : 42}
     />
@@ -1102,7 +1216,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       demo={demo}
       config={config}
       outputSeconds={total}
-      settling={unsettled}
+      blurs={blurCounts}
+      onApplyBlurs={applyAll}
       onClose={() => setExporting(false)}
       onChanged={() => load(true)}
       beforeExport={save}

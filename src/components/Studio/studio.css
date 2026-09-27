@@ -184,15 +184,16 @@
   pointer-events: none;
 }
 .st-clip.is-on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+/* The clip's number: a label only. The whole clip is what a click selects
+   (Timeline.js), so the number takes no pointer of its own. */
 .st-clip-tag {
   position: absolute; left: 5px; top: 50%; transform: translateY(-50%);
+  display: inline-grid; place-items: center;
   min-width: 20px; height: 20px; padding: 0 6px; border-radius: 6px;
   border: 1px solid rgba(58, 55, 51, .28); background: var(--card); color: var(--ink);
-  font: inherit; font-size: 10.5px; font-weight: 700; line-height: 1; cursor: pointer;
-  pointer-events: auto;
-  transition: border-color var(--dur-hover) var(--ease-out);
+  font-size: 10.5px; font-weight: 700; line-height: 1;
+  pointer-events: none;
 }
-.st-clip-tag:hover { border-color: var(--ink); }
 .st-clip.is-on .st-clip-tag { background: var(--ink); border-color: var(--ink); color: #fff; left: 15px; }
 
 /* A selected clip's two edges, to drag (Timeline.js). Solid ink bars with a
@@ -252,6 +253,84 @@
 /* From nothing to whatever opacity the outline has (faint, or armed), rather
    than to 1: a fill that held 1 would override the faint state. */
 @keyframes st-ghost-in { from { opacity: 0; } }
+
+/* On the blur lane the outline is a line too: a blur is placed at a moment
+   and has no length of its own (Timeline.js, THE BLUR LANE). */
+.st-ghost.is-point {
+  top: 0; bottom: 0; width: 0;
+  border: none; border-left: 2px dashed; border-radius: 0;
+  margin-left: -1px;
+}
+
+/* ── Blurs on their lane (Timeline.js BlurTag) ────────────────────────────
+   Where an applied blur covers its secret: faint, so the tags read over it,
+   and stronger for the selected blur. Amber hatching where it held still. */
+.st-cover {
+  position: absolute; top: 3px; bottom: 3px; border-radius: 4px;
+  opacity: .22; cursor: pointer;
+  transition: opacity var(--dur-hover) var(--ease-out);
+}
+.st-cover:hover { opacity: .34; }
+.st-cover.is-on { opacity: .5; }
+.st-cover-held {
+  position: absolute; top: 3px; bottom: 3px; border-radius: 4px; cursor: pointer;
+  background: repeating-linear-gradient(-45deg, rgba(214, 140, 20, .38) 0 5px, rgba(214, 140, 20, .12) 5px 10px);
+  border: 1px dashed rgba(214, 140, 20, .7);
+}
+
+/* The tag: at the moment the blur was placed, its left edge on that moment
+   (its right edge, flipped, near the end of the timeline). */
+.st-btag {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 4;
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: 220px; height: 26px; padding: 0 4px 0 7px; border-radius: 7px;
+  border: 1.5px solid var(--lane); background: var(--card); color: var(--ink);
+  font-size: 10.5px; font-weight: 700; white-space: nowrap; line-height: 1;
+  box-shadow: var(--shadow-xs); cursor: pointer;
+  transition: box-shadow var(--dur-hover) var(--ease-out);
+}
+.st-btag.is-flip { transform: translate(-100%, -50%); }
+.st-btag:not(:has(.st-btag-apply)) { padding-right: 8px; }
+.st-btag:hover { box-shadow: 0 0 0 3px rgba(255, 148, 130, .22); }
+.st-btag.is-on { box-shadow: 0 0 0 2px var(--card), 0 0 0 3.5px var(--ink); }
+.st-btag:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.st-btag > svg { color: var(--lane); }
+.st-btag-name { overflow: hidden; text-overflow: ellipsis; }
+/* Not applied: dashed, like something not finished. */
+.st-btag.is-unapplied, .st-btag.is-failed { border-style: dashed; }
+.st-btag.is-applied > svg { color: var(--ok); }
+.st-btag.is-check > svg, .st-btag.is-failed > svg { color: #C27C0E; }
+.st-btag.is-applying { color: var(--ink-body); font-variant-numeric: tabular-nums; }
+.st-btag-apply {
+  height: 20px; padding: 0 8px; border-radius: 5px; border: 0;
+  background: var(--primary); color: #fff;
+  font: inherit; font-size: 10.5px; font-weight: 750; cursor: pointer;
+  transition: filter var(--dur-hover) var(--ease-out);
+}
+.st-btag-apply:hover { filter: brightness(1.1); }
+
+/* A small spinner for "Applying…": a ring with one side missing, turning. */
+.st-spin {
+  display: inline-block; flex-shrink: 0; width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid rgba(58, 55, 51, .2); border-top-color: var(--ink);
+  animation: st-spin 700ms linear infinite;
+}
+.st-spin.is-light { border-color: rgba(255, 255, 255, .35); border-top-color: #fff; }
+@keyframes st-spin { to { transform: rotate(360deg); } }
+
+/* The Apply button under a blur being placed on the picture (Preview.js). */
+.st-apply-pill {
+  position: absolute; z-index: 8; transform: translate(-50%, 8px);
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 30px; padding: 0 12px; border-radius: 999px;
+  border: 0; background: var(--primary); color: #fff;
+  font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap;
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, .55);
+  cursor: pointer; touch-action: none;
+}
+.st-apply-pill.is-above { transform: translate(-50%, calc(-100% - 8px)); }
+.st-apply-pill.is-busy { background: rgba(20, 20, 24, .86); cursor: default; font-variant-numeric: tabular-nums; }
+.st-apply-pill:not(.is-busy):hover { filter: brightness(1.1); }
 
 /* ── The canvas controls under the preview (CanvasBar.js) ────────────────
    Short sliders with their name beside them. The value rises above a slider

@@ -284,7 +284,16 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
       const Y = `'${r.y}'`;
       const on = `enable='${r.on}'`;
       if (b.kind === "box") {
-        graph.push(`[bm${i}]nullsink`, `[${carry}]drawbox=x=${X}:y=${Y}:w=${w}:h=${h}:color=black@1:t=fill:${on}[bo${i}]`);
+        // A black patch the region's size, placed by overlay. NOT drawbox:
+        // drawbox works out x and y once, when the graph starts, and inside
+        // its expressions `t` is the box's THICKNESS, not the time, so every
+        // gte(t, …) step read as passed and a followed Solid blur sat frozen
+        // at its last position for the whole export while the secret
+        // scrolled out from under it. overlay evaluates x and y every frame.
+        graph.push(
+          `[bm${i}]crop=w=${w}:h=${h}:x=0:y=0,drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill,setsar=1[bp${i}]`,
+          `[${carry}][bp${i}]overlay=x=${X}:y=${Y}:${on}[bo${i}]`
+        );
       } else if (b.kind === "pixelate") {
         const blocks = Math.max(4, Math.round(10 * b.strength));
         graph.push(

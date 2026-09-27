@@ -606,6 +606,18 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     const r = clampRect({ x: num(o.x), y: num(o.y), w: num(o.w, 0.25), h: num(o.h, 0.25) });
     return { x: round4(r.x), y: round4(r.y), w: round4(r.w), h: round4(r.h) };
   };
+  // A blur is kept the size it was drawn. clampRect is the camera's, and its
+  // 5% floor is a zoom's: applied to a blur it made a box drawn over one line
+  // of text three lines tall once saved, so what was exported was not what
+  // was drawn, and its follow (signed with the box as drawn) no longer
+  // matched it. The editor's handles stop at 2%; this only keeps it sane.
+  const blurRect = (o) => {
+    const w = clamp(num(o.w, 0.25), 0.005, 1);
+    const h = clamp(num(o.h, 0.25), 0.005, 1);
+    const x = clamp(num(o.x), 0, 1 - w);
+    const y = clamp(num(o.y), 0, 1 - h);
+    return { x: round4(x), y: round4(y), w: round4(w), h: round4(h) };
+  };
   const text = (v, max = 240) => String(v == null ? "" : v).replace(/[ --]/g, "").slice(0, max);
 
   const out = emptyTimeline({
@@ -904,7 +916,7 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     .map((b) => ({
       id: text(b.id, 32) || newId("b"),
       ...span(b),
-      ...rect(b),
+      ...blurRect(b),
       kind: pick(b.kind, BLUR_KINDS, "blur"),
       strength: clamp(num(b.strength, 0.7), 0.1, 1),
       label: text(b.label, 60),

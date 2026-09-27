@@ -1120,13 +1120,14 @@ const track = {
   },
 
   async fail(job, err) {
-    const id = job.data?.blur?.id;
+    const blur = job.data?.blur;
     const demo = await StudioDemo.findById(job.demo).select("user").lean();
-    if (!demo || !id) return;
-    publishProgress(demo, {
-      following: { id, failed: true },
-      notice: err.userMessage || "We couldn't follow that blur. It stays where you put it.",
-    });
+    if (!demo || !blur?.id) return;
+    // Signed like a success: the editor only believes news about the blur as
+    // it is now, and a failure it cannot match to a blur is a blur it shows as
+    // "Applying…" for ever.
+    const message = err.userMessage || "We couldn't apply that blur";
+    publishProgress(demo, { following: { id: blur.id, sig: blurSig(blur), failed: true, message } });
   },
 };
 

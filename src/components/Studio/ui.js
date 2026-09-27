@@ -398,6 +398,7 @@ const PATHS = {
   film: <><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M3 9h18M3 15h18M8 4v16M16 4v16" /></>,
   eye: <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="3" /></>,
   wand: <><path d="M4 20L15 9M17 4l.9 2.1L20 7l-2.1.9L17 10l-.9-2.1L14 7l2.1-.9z" /></>,
+  alert: <><path d="M10.3 4.6L2.9 17.5A2 2 0 004.6 20.5h14.8a2 2 0 001.7-3L13.7 4.6a2 2 0 00-3.4 0z" /><path d="M12 9.5v4.2M12 17.1v.01" /></>,
 };
 
 export function Icon({ name, size = 16, style }) {

@@ -48,7 +48,7 @@ import { hasEncoder } from "../services/media/ffmpeg.js";
 import { enqueue } from "../services/studio/studioRunner.js";
 import {
   STUDIO_LIMITS, LEDGER_REASON, acceptable, ACCEPT_MIME, demoKey, demoPrefix, bumpExpiry,
-  studioCost, shapeDemo, shapeDemoCard, publishProgress,
+  studioCost, shapeDemo, shapeDemoCard, publishProgress, followsFor,
   STUDIO_ANALYSE_CREDITS_PER_MIN, STUDIO_EXPORT_CREDITS_PER_MIN,
 } from "../services/studio/demoService.js";
 import {
@@ -804,6 +804,38 @@ router.post("/demos/:id/follow", wrap(async (req, res) => {
   await enqueue({ demo: demo._id, user: req.user.id, type: "track", ref: id, data: { blur, seq: Date.now() } });
   publishProgress(demo, { following: { id, sig, progress: 0 } });
   res.json({ success: true, sig });
+}));
+
+/**
+ * GET /studio/demos/:id/follows
+ *
+ * Each blur's follow, and where the latest request to apply each blur is:
+ * { follows: { [id]: follow }, jobs: { [id]: { sig, status, error, age } } },
+ * `age` in seconds since it was asked for. The editor reads this every few
+ * seconds while a blur is applying, so a progress message lost on the way
+ * (a dropped socket, a worker that never picked the job up) shows as what it
+ * is instead of "Applying…" for ever.
+ */
+router.get("/demos/:id/follows", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  const rows = await StudioJob.find({ demo: demo._id, type: "track" })
+    .sort({ created_at: -1 })
+    .limit(60)
+    .select("ref status error data created_at")
+    .lean();
+  const jobs = {};
+  const now = Date.now();
+  for (const j of rows) {
+    if (jobs[j.ref] || !j.data?.blur) continue;
+    jobs[j.ref] = {
+      sig: blurSig(j.data.blur),
+      status: j.status,
+      error: j.status === "failed" ? "We couldn't apply that blur" : "",
+      age: Math.round((now - new Date(j.created_at).getTime()) / 1000),
+    };
+  }
+  res.json({ success: true, follows: followsFor(demo), jobs });
 }));
 
 /* ────────────────────────────────────────────────────────────────────────────

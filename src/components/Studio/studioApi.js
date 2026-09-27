@@ -68,14 +68,17 @@ export const resolveSuggestion = (id, sid, action) =>
   api.post(`/studio/demos/${id}/suggestions/${sid}`, { action }).then(data);
 
 /**
- * Follow one blur through the recording (backend blurTrack.js). Sent the blur
- * as the editor has it, because this is asked the moment the creator lets go
- * of the rectangle and the autosave may not have landed yet.
+ * Apply one blur: follow it through the recording (backend blurTrack.js). Sent
+ * the blur as the editor has it, because Apply is usually pressed right after
+ * the rectangle is let go and the autosave may not have landed yet.
  */
 export const followBlur = (id, b) =>
   api
     .post(`/studio/demos/${id}/follow`, { blur: { id: b.id, x: b.x, y: b.y, w: b.w, h: b.h, at: b.at, start: b.start, end: b.end } })
     .then((r) => r.data);
+
+/** Each blur's follow, and where each blur's latest Apply is: { follows, jobs }. */
+export const getFollows = (id) => api.get(`/studio/demos/${id}/follows`).then((r) => r.data);
 
 export const saveTimeline = (id, timeline, rev) =>
   api.put(`/studio/demos/${id}/timeline`, { timeline, rev }).then((r) => r.data);
@@ -123,6 +126,6 @@ const studioApi = {
   startUpload, resumeUpload, completeUpload,
   startAnalysis, readScreens, requestCaptions, captionsFromScript, requestReview, resolveSuggestion,
   saveTimeline, startRender, renderDownloadUrl, deleteRender,
-  listBackgrounds, uploadBackground, deleteBackground, followBlur,
+  listBackgrounds, uploadBackground, deleteBackground, followBlur, getFollows,
 }
 export default studioApi;
