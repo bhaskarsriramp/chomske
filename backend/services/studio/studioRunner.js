@@ -38,6 +38,8 @@ import { applyPatches } from "./audit.js";
 import { witnessPass, WITNESS_MODE } from "./witness.js";
 import { applySuggestion } from "./suggestions.js";
 import { renderTimeline } from "./render/compose.js";
+import { trackBlur } from "./blurTrack.js";
+import { blurSig } from "../../../src/components/Studio/follow.mjs";
 import { missingFonts, FONTS_DIR } from "./render/ass.js";
 import { sanitizeTimeline } from "./timeline.js";
 import { RENDER_ENGINE, cleanExportOptions } from "./exportOptions.js";
@@ -63,7 +65,7 @@ const AUTO_APPLY_PRESSES = String(process.env.STUDIO_AUTO_PRESS_ZOOMS || "1") !=
  * local and only the download or upload was at fault. An analysis gives up
  * sooner: every try pays for model calls again.
  */
-const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3 };
+const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3, track: 6 };
 
 const int = (v, d) => (parseInt(v, 10) > 0 ? parseInt(v, 10) : d);
 const LIMIT = {
@@ -73,14 +75,17 @@ const LIMIT = {
   captions: int(process.env.STUDIO_CAPTIONS_CONCURRENCY, 2),
   render: int(process.env.STUDIO_RENDER_CONCURRENCY, 1),
   review: int(process.env.STUDIO_REVIEW_CONCURRENCY, 2),
+  // Following a blur is a few seconds of frame matching per blur, and a
+  // creator adjusting several blurs in a row asks for several.
+  track: int(process.env.STUDIO_TRACK_CONCURRENCY, 2),
 };
-const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0 };
+const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0, track: 0 };
 
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
 
 /** Queue work. Returns at once; the job runs on the next tick. */
-export async function enqueue({ demo, user, type, ref = "" }) {
-  const job = await StudioJob.create({ demo, user, type, ref });
+export async function enqueue({ demo, user, type, ref = "", data = null }) {
+  const job = await StudioJob.create({ demo, user, type, ref, data });
   setImmediate(() => tick().catch(() => {}));
   return job;
 }
@@ -994,6 +999,8 @@ const render = {
       options,
       // Whose background images the timeline may name (backgrounds.js).
       user: demo.user,
+      // Where each blur goes when what it covers moves (follow.mjs).
+      follows: demo.follows || {},
       onProgress: (p, stage) => report({ stage, progress: Math.max(0.01, Math.min(0.99, p)) }),
     });
 
@@ -1060,7 +1067,70 @@ async function refundCharge(demo, charged, note) {
   ).catch((err) => console.error(`[studio] refund failed for ${demo._id}:`, err.message));
 }
 
-const HANDLERS = { prepare, analyse, vision, captions, render, review };
+/* ────────────────────────────────────────────────────────────────────────────
+   track: follow one blur through the recording
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The frames of the SAME file the export reads, so the positions are keyed to
+ * the frames the export will blur (blurTrack.js, "time is the video's own").
+ * Written to demo.follows[id] only if nothing newer for this blur landed first
+ * — two workers can each be following an older and a newer version of it —
+ * and never touching the timeline, so no save is in its way. The editor gets
+ * it over the live channel.
+ */
+const track = {
+  async run(job, workDir) {
+    const { blur, seq } = job.data || {};
+    if (!blur?.id) return;
+    const demo = await StudioDemo.findById(job.demo).select("user recording purged").lean();
+    if (!demo || demo.purged || !demo.recording?.mp4_key) return;
+
+    const sig = blurSig(blur);
+    const source = await materialize(demo.recording.mp4_key, workDir, "recording.mp4");
+    let told = 0;
+    const result = await trackBlur(source, {
+      rect: blur, at: blur.at, start: blur.start, end: blur.end,
+      sourceWidth: demo.recording.width || 1920,
+      sourceHeight: demo.recording.height || 1080,
+      onProgress: (p) => {
+        const now = Date.now();
+        if (now - told < 600) return;
+        told = now;
+        publishProgress(demo, { following: { id: blur.id, sig, progress: Math.round(p * 100) / 100 } });
+      },
+    });
+
+    const follow = {
+      v: result.version, sig, seq, at: result.at,
+      keys: result.keys, held: result.held, trackable: result.trackable,
+      made_at: new Date(),
+    };
+    const path = `follows.${blur.id}`;
+    await retryDb(`save follow ${demo._id}/${blur.id}`, () => StudioDemo.updateOne(
+      { _id: demo._id, $or: [{ [path]: { $exists: false } }, { [`${path}.seq`]: { $lt: seq } }] },
+      { $set: { [path]: follow } }
+    ));
+    console.log(
+      `[studio] followed ${demo._id}/${blur.id}: ${result.keys.length} keys over ${result.frames} frames` +
+        (result.trackable ? "" : " (nothing to recognise under it)") +
+        (result.held.length ? `, held ${result.held.length}x` : "")
+    );
+    publishProgress(demo, { follow: { id: blur.id, ...follow } });
+  },
+
+  async fail(job, err) {
+    const id = job.data?.blur?.id;
+    const demo = await StudioDemo.findById(job.demo).select("user").lean();
+    if (!demo || !id) return;
+    publishProgress(demo, {
+      following: { id, failed: true },
+      notice: err.userMessage || "We couldn't follow that blur. It stays where you put it.",
+    });
+  },
+};
+
+const HANDLERS = { prepare, analyse, vision, captions, render, review, track };
 
 /* ────────────────────────────────────────────────────────────────────────────
    Retention

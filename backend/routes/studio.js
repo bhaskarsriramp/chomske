@@ -62,6 +62,7 @@ import {
 import { GRADIENTS } from "../services/studio/render/frame.js";
 import { applySuggestion } from "../services/studio/suggestions.js";
 import { isDemoSlug, ensureDemoSlug } from "../services/studio/demoSlug.js";
+import { blurSig } from "../../src/components/Studio/follow.mjs";
 import StudioAsset from "../models/StudioAsset.js";
 import {
   BACKGROUND_LIMITS, BACKGROUND_TYPES, prepareBackground, saveBackground, deleteBackground, shapeBackground,
@@ -751,6 +752,58 @@ router.put("/demos/:id/timeline", wrap(async (req, res) => {
     rev: updated.rev,
     output_duration: Math.round(layout(timeline).duration * 100) / 100,
   });
+}));
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Following a blur
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * POST /studio/demos/:id/follow  { blur: { id, x, y, w, h, at, start, end } }
+ *
+ * Follow one blur through the recording, so it stays on what it covers when
+ * the page scrolls (services/studio/blurTrack.js). The blur comes in the body,
+ * exactly as the editor has it, because the editor asks the moment the
+ * creator lets go of the rectangle and its autosave may not have landed yet.
+ * The follow is signed with that blur (follow.mjs blurSig) and only ever used
+ * while the blur still matches.
+ *
+ * Free: it is a pass over frames on this server, no model call, and charging
+ * for the thing that keeps a secret covered would make leaving it uncovered
+ * the cheaper choice. A newer request for the same blur replaces a queued one.
+ */
+router.post("/demos/:id/follow", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  if (demo.purged) return fail(res, 410, "This recording's files have been deleted.");
+  if (!demo.recording?.mp4_key) return fail(res, 409, "This recording isn't ready yet.");
+
+  const b = req.body?.blur || {};
+  const id = String(b.id || "");
+  if (!/^[\w-]{1,40}$/.test(id)) return fail(res, 400, "Which blur?");
+  const total = Number(demo.recording?.duration || demo.timeline?.duration || 0);
+  const r4 = (v) => Math.round(Number(v) * 1e4) / 1e4;
+  const r3 = (v) => Math.round(Number(v) * 1e3) / 1e3;
+  const blur = {
+    id,
+    x: r4(b.x), y: r4(b.y), w: r4(b.w), h: r4(b.h),
+    at: r3(Math.min(total, Math.max(0, Number(b.at)))),
+    start: r3(Math.min(total, Math.max(0, Number(b.start)))),
+    end: r3(Math.min(total, Math.max(0, Number(b.end)))),
+  };
+  const ok = [blur.x, blur.y, blur.w, blur.h, blur.at, blur.start, blur.end].every(Number.isFinite);
+  if (!ok || blur.w <= 0 || blur.h <= 0 || blur.w > 1 || blur.h > 1 || blur.end - blur.start < 0.02) {
+    return fail(res, 400, "That blur can't be followed.");
+  }
+
+  await StudioJob.deleteMany({ demo: demo._id, type: "track", ref: id, status: "queued" });
+  const busy = await StudioJob.countDocuments({ demo: demo._id, type: "track", status: { $in: ["queued", "running"] } });
+  if (busy >= 24) return fail(res, 429, "Too many blurs are being followed at once. Try again in a moment.");
+
+  const sig = blurSig(blur);
+  await enqueue({ demo: demo._id, user: req.user.id, type: "track", ref: id, data: { blur, seq: Date.now() } });
+  publishProgress(demo, { following: { id, sig, progress: 0 } });
+  res.json({ success: true, sig });
 }));
 
 /* ────────────────────────────────────────────────────────────────────────────

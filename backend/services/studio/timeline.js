@@ -909,6 +909,10 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       strength: clamp(num(b.strength, 0.7), 0.1, 1),
       label: text(b.label, 60),
       auto: !!b.auto,
+      // The moment the rectangle was placed on (recording time): where it
+      // is exactly right, and where following it starts. Null until the
+      // creator has put it somewhere. See services/studio/blurTrack.js.
+      at: b.at == null || !Number.isFinite(Number(b.at)) ? null : round3(clamp(num(b.at), 0, total)),
     }))
     .filter((b) => b.end - b.start > 0.02);
 

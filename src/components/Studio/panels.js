@@ -18,6 +18,7 @@ import { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Emp
 import { fmtTime, clamp, layout, mergedCuts, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
 import { create } from "./create";
 import { clipsOf } from "./clips";
+import { blurSig } from "./follow.mjs";
 // Caption colour and size are the script editor's controls, not a second set.
 import { ColorPicker, SizePicker } from "../Edit/captionStyle";
 
@@ -82,8 +83,8 @@ export function VideoPanel({ tl, selection, onSelect, seek, onDeleteClip, onRest
         )}
       </div>
       <Hint>
-        Point at the video on the timeline and click to cut it into clips. Select a clip and delete it to take it out;
-        Restore brings back anything taken out.
+        Point at the video on the timeline and Ctrl + click (⌘ + click on a Mac) to cut it into clips. Select a clip by
+        its number to drag its edges and trim it, or delete it to take it out. Restore brings back anything taken out.
       </Hint>
     </Panel>
   );
@@ -245,8 +246,38 @@ function Unread({ icon, title, children, reading, onRead, readCost }) {
   );
 }
 
-export function BlurPanel({ tl, selection, onSelect, edit, time, seek, read = true, reading = false, onRead, readCost = 0 }) {
+/**
+ * Where one blur is with following what it covers (follow.mjs): not placed
+ * yet, being followed, followed, lost somewhere and held, nothing to follow,
+ * or failed. One word for the list, a sentence for the card.
+ */
+function followState(b, follows, following) {
+  if (b.at == null) return { kind: "unplaced" };
+  const sig = blurSig(b);
+  const f = follows?.[b.id];
+  if (f && f.sig === sig) {
+    if (!f.trackable) return { kind: "plain" };
+    return f.held?.length ? { kind: "held", held: f.held, keys: f.keys.length } : { kind: "following", keys: f.keys.length };
+  }
+  const run = following?.[b.id];
+  if (run?.failed && run.sig === sig) return { kind: "failed", message: run.message };
+  return { kind: "pending", progress: run?.sig === sig ? run.progress || 0 : 0 };
+}
+
+const FOLLOW_BADGE = {
+  pending: { tone: "mute", text: "Following…" },
+  following: { tone: "good", text: "Follows" },
+  held: { tone: "warn", text: "Check" },
+  plain: { tone: "mute", text: "Still" },
+  failed: { tone: "warn", text: "Still" },
+};
+
+export function BlurPanel({
+  tl, selection, onSelect, edit, time, seek, read = true, reading = false, onRead, readCost = 0,
+  follows = null, following = null, onRefollow,
+}) {
   const blurs = [...(tl.blurs || [])].sort((a, b) => a.start - b.start);
+  const lay = useMemo(() => layout(tl), [tl]);
   const current = blurs.find((b) => b.id === selection?.id && selection.kind === "blur") || null;
   const auto = blurs.filter((b) => b.auto).length;
 
@@ -305,11 +336,18 @@ export function BlurPanel({ tl, selection, onSelect, edit, time, seek, read = tr
                   title={b.label || `Region ${i + 1}`}
                   sub={`${fmtTime(b.start, true)} – ${fmtTime(b.end, true)} · ${KIND_LABEL[b.kind] || b.kind}`}
                   badge={
-                    b.auto ? (
-                      <Badge tone={b.confidence >= 0.65 ? "ai" : "warn"}>
-                        {b.confidence >= 0.65 ? "AI" : "Check"}
-                      </Badge>
-                    ) : null
+                    <>
+                      {b.auto ? (
+                        <Badge tone={b.confidence >= 0.65 ? "ai" : "warn"}>
+                          {b.confidence >= 0.65 ? "AI" : "Check"}
+                        </Badge>
+                      ) : null}
+                      {(() => {
+                        const st = followState(b, follows, following);
+                        const badge = FOLLOW_BADGE[st.kind];
+                        return badge ? <Badge tone={badge.tone}>{badge.text}</Badge> : null;
+                      })()}
+                    </>
                   }
                 />
               ))}
@@ -320,6 +358,11 @@ export function BlurPanel({ tl, selection, onSelect, edit, time, seek, read = tr
 
       {current && (
         <Panel title="Selected region">
+          <FollowStatus
+            st={followState(current, follows, following)}
+            seekHeld={(t) => seek(outOf(t, lay) + 0.05)}
+            onRetry={() => onRefollow?.(current)}
+          />
           <div>
             <Label>Cover it with</Label>
             <Segmented
@@ -1040,6 +1083,76 @@ export function SuggestionsPanel({ analysis, onApply, onDismiss, onRefresh, busy
         </Hint>
       )}
     </Panel>
+  );
+}
+
+/**
+ * The selected blur's following, in a sentence. The held case is the one that
+ * matters most: the blur lost sight of what it covers and stayed put, which is
+ * safe only if what it covered went away too, and only a person can check that.
+ */
+function FollowStatus({ st, seekHeld, onRetry }) {
+  const box = (tone, children) => (
+    <div
+      style={{
+        display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 12px", borderRadius: 10,
+        fontSize: 12.5, lineHeight: 1.55,
+        border: `1px solid ${tone === "warn" ? "#F1D6A8" : "var(--line)"}`,
+        background: tone === "warn" ? "#FFF7E8" : "var(--paper)",
+        color: "var(--ink-body)",
+      }}
+    >
+      {children}
+    </div>
+  );
+  if (st.kind === "unplaced") {
+    return box("mute", <span>Drag the rectangle onto what it should hide. From that moment it follows it: when the page scrolls, the blur moves with it.</span>);
+  }
+  if (st.kind === "pending") {
+    return box(
+      "mute",
+      <span>
+        Following it through the recording{st.progress > 0 ? ` · ${Math.round(st.progress * 100)}%` : "…"} It will stay on it when
+        the page scrolls.
+      </span>
+    );
+  }
+  if (st.kind === "following") {
+    return box("mute", <span>Follows what it covers when the page scrolls, and steps aside while it is off the screen.</span>);
+  }
+  if (st.kind === "held") {
+    const [a, b] = st.held[0];
+    return box(
+      "warn",
+      <span style={{ flex: 1 }}>
+        Lost sight of it from {fmtTime(a, true)} to {fmtTime(b, true)}
+        {st.held.length > 1 ? ` (and ${st.held.length - 1} more time${st.held.length > 2 ? "s" : ""})` : ""}, so it stayed where it
+        was. Play that part to check nothing shows.{" "}
+        <button
+          type="button"
+          onClick={() => seekHeld(a)}
+          style={{ font: "inherit", fontWeight: 650, color: "var(--ink)", background: "none", border: 0, padding: 0, cursor: "pointer", textDecoration: "underline" }}
+        >
+          Show me
+        </button>
+      </span>
+    );
+  }
+  if (st.kind === "plain") {
+    return box("mute", <span>There is nothing distinctive under it to follow, so it stays where you put it.</span>);
+  }
+  return box(
+    "warn",
+    <span style={{ flex: 1 }}>
+      {st.message || "It couldn't be followed"}, so it stays where you put it.{" "}
+      <button
+        type="button"
+        onClick={onRetry}
+        style={{ font: "inherit", fontWeight: 650, color: "var(--ink)", background: "none", border: 0, padding: 0, cursor: "pointer", textDecoration: "underline" }}
+      >
+        Try again
+      </button>
+    </span>
   );
 }
 

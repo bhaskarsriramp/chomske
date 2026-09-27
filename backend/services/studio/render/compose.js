@@ -47,6 +47,8 @@ import { zoomFilter, cameraKeys } from "./camera.js";
 import { renderOverlay } from "./overlay.js";
 import { videoBox, radiusFor, drawBackground, drawCornerMask } from "./frame.js";
 import { loadBackgroundImage } from "../backgrounds.js";
+import { followedRegions } from "./followBlur.js";
+import { followFor } from "../../../../src/components/Studio/follow.mjs";
 import { hideFilter } from "./hide.js";
 import { buildAss, buildSrt, missingFonts, FONTS_DIR } from "./ass.js";
 
@@ -64,7 +66,7 @@ const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
  * @param {Function} o.onProgress (fraction, stage)
  * @returns {Promise<{ width, height, duration, drew, srt }>}
  */
-export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null }) {
+export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null, follows = {} }) {
   const o = cleanExportOptions(options, { hevc: options?.codec === "hevc" });
   const lay = layout(timeline);
   if (!(lay.duration > 0.1)) {
@@ -100,6 +102,11 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   /* ── Passes 1 & 2: the cuts ──────────────────────────────────────────── */
   let base = source;
   const segments = lay.segments;
+  // Where each kept stretch really starts in the joined file. Each is encoded
+  // on its own and comes out a whole number of frames long, so the planned
+  // starts drift by up to a frame per cut; followed blurs are placed against
+  // these (followBlur.js), because a frame of drift is a frame of the secret.
+  const actualStarts = [];
   const cut = segments.length > 1 || (segments.length === 1 && (segments[0].src_start > 0.02 || segments[0].src_end < timeline.duration - 0.02));
 
   if (cut) {
@@ -133,6 +140,9 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
       });
       done += d;
       files.push(out);
+      const made = await probe(out).catch(() => null);
+      const prevEnd = actualStarts.length ? actualStarts[actualStarts.length - 1].end : 0;
+      actualStarts.push({ start: prevEnd, end: prevEnd + (made?.duration > 0 ? made.duration : d) });
     }
 
     onProgress(0.25, "Joining");
@@ -235,13 +245,62 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   }
 
   // ── 2. Blur ───────────────────────────────────────────────────────────
-  const blurs = placedSpans(timeline.blurs || [], lay);
-  if (blurs.length) {
-    graph.push(`[${v}]split=${blurs.length + 1}${blurs.map((_, i) => `[bm${i}]`).join("")}[bsrc]`);
+  // Followed blurs (their follow still matches them: follow.mjs) move with
+  // what they cover; every other blur is the fixed rectangle it always was.
+  const followed = [];
+  const fixed = [];
+  for (const b of timeline.blurs || []) {
+    const f = followFor(follows, b);
+    if (f) followed.push({ b, f });
+    else fixed.push(b);
+  }
+  const segs = segments.map((s, i) => ({
+    src_start: s.src_start,
+    src_end: s.src_end,
+    out_start: cut && actualStarts[i] ? actualStarts[i].start : s.out_start,
+  }));
+  const regions = [];
+  for (const { b, f } of followed) {
+    const w = Math.max(2, Math.round((b.w * sourceWidth) / 2) * 2);
+    const h = Math.max(2, Math.round((b.h * sourceHeight) / 2) * 2);
+    for (const r of followedRegions(b, f, segs, { FPS, W: sourceWidth, H: sourceHeight, w, h })) {
+      regions.push({ b, w, h, r });
+    }
+  }
+  const blurs = placedSpans(fixed, lay);
+  const total = blurs.length + regions.length;
+  if (total) {
+    graph.push(`[${v}]split=${total + 1}${Array.from({ length: total }, (_, i) => `[bm${i}]`).join("")}[bsrc]`);
     // The split's LAST output carries the picture forward; the others are each
     // cropped to one region. Named this way round so the chain below reads in
     // the order it runs.
     let carry = "bsrc";
+
+    // Followed: the same three filters, with x, y and the gate as expressions.
+    for (let j = 0; j < regions.length; j++) {
+      const i = blurs.length + j;
+      const { b, w, h, r } = regions[j];
+      const X = `'${r.x}'`;
+      const Y = `'${r.y}'`;
+      const on = `enable='${r.on}'`;
+      if (b.kind === "box") {
+        graph.push(`[bm${i}]nullsink`, `[${carry}]drawbox=x=${X}:y=${Y}:w=${w}:h=${h}:color=black@1:t=fill:${on}[bo${i}]`);
+      } else if (b.kind === "pixelate") {
+        const blocks = Math.max(4, Math.round(10 * b.strength));
+        graph.push(
+          `[bm${i}]crop=w=${w}:h=${h}:x=${X}:y=${Y},scale=${Math.max(2, Math.round(w / blocks))}:${Math.max(2, Math.round(h / blocks))}:flags=neighbor,scale=${w}:${h}:flags=neighbor,setsar=1[bp${i}]`,
+          `[${carry}][bp${i}]overlay=x=${X}:y=${Y}:${on}[bo${i}]`
+        );
+      } else {
+        const rad = Math.max(2, Math.min(Math.floor(Math.min(w, h) / 2) - 1, Math.round(Math.min(w, h) * 0.12 * b.strength)));
+        graph.push(
+          `[bm${i}]crop=w=${w}:h=${h}:x=${X}:y=${Y},boxblur=luma_radius=${rad}:luma_power=2:chroma_radius=${rad}:chroma_power=2,setsar=1[bp${i}]`,
+          `[${carry}][bp${i}]overlay=x=${X}:y=${Y}:${on}[bo${i}]`
+        );
+      }
+      carry = `bo${i}`;
+    }
+
     for (let i = 0; i < blurs.length; i++) {
       const b = blurs[i];
       const x = Math.round(b.x * sourceWidth / 2) * 2;
@@ -251,7 +310,9 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
       const on = `enable='between(t,${b.start.toFixed(3)},${b.end.toFixed(3)})'`;
 
       if (b.kind === "box") {
-        graph.push(`[${carry}]drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=black@1:t=fill:${on}[bo${i}]`);
+        // Its split branch is not needed; a branch left unconnected is an
+        // error in a filter graph, so it is sunk.
+        graph.push(`[bm${i}]nullsink`, `[${carry}]drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=black@1:t=fill:${on}[bo${i}]`);
         carry = `bo${i}`;
         continue;
       }

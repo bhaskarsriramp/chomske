@@ -15,12 +15,19 @@
  * (out_*) for drawing and for the times a creator reads, which are the
  * finished video's.
  */
-import { newId } from "./model";
+import { newId, clamp, mergedCuts } from "./model";
 
 /** No clip is made shorter than this, and no split goes closer to an edge. */
 export const MIN_CLIP = 0.2;
 
 const round3 = (v) => Math.round(v * 1000) / 1000;
+const EPS = 0.002;
+
+/**
+ * A clip's id: where it starts in the recording, which does not move when
+ * anything before it is cut or restored.
+ */
+export const clipIdAt = (srcStart) => `clip${Math.round(srcStart * 1000)}`;
 
 /**
  * The clips, in playing order, numbered from 1.
@@ -36,9 +43,7 @@ export function clipsOf(tl, lay) {
     for (const b of [...inner, s.src_end]) {
       if (b - a >= 0.05) {
         out.push({
-          // Named by where it starts in the recording, which does not move when
-          // anything before it is cut or restored.
-          id: `clip${Math.round(a * 1000)}`,
+          id: clipIdAt(a),
           src_start: a,
           src_end: b,
           out_start: s.out_start + (a - s.src_start),
@@ -60,6 +65,83 @@ export function splitPatch(tl, lay, srcT) {
   const clip = clipsOf(tl, lay).find((c) => at > c.src_start && at < c.src_end);
   if (!clip || at - clip.src_start < MIN_CLIP || clip.src_end - at < MIN_CLIP) return null;
   return { splits: [...(tl.splits || []), at].sort((a, b) => a - b) };
+}
+
+/**
+ * How far each edge of a clip can be dragged, in recording time.
+ *
+ * Inward, until the clip is MIN_CLIP long. Outward, only back over footage that
+ * was taken out right beside it: a clip cannot grow into its neighbour, whose
+ * footage it would then share, so an edge against another clip (a split) does
+ * not move outward at all, and neither does one at the start or end of the
+ * recording.
+ */
+export function trimBounds(tl, clip) {
+  const cuts = mergedCuts(tl);
+  const before = cuts.find((c) => Math.abs(c.end - clip.src_start) < EPS);
+  const after = cuts.find((c) => Math.abs(c.start - clip.src_end) < EPS);
+  return {
+    start: [before ? before.start : clip.src_start, clip.src_end - MIN_CLIP],
+    end: [clip.src_start + MIN_CLIP, after ? after.end : clip.src_end],
+  };
+}
+
+/** The stored cuts with [lo, hi] put back, splitting a cut that spans it. */
+function restore(cuts, lo, hi) {
+  const out = [];
+  for (const c of cuts) {
+    if (c.end <= lo + EPS || c.start >= hi - EPS) {
+      out.push(c);
+      continue;
+    }
+    if (c.start < lo - 0.02) out.push({ ...c, end: round3(lo) });
+    if (c.end > hi + 0.02) out.push({ ...c, id: newId("cut"), start: round3(hi) });
+  }
+  return out;
+}
+
+/**
+ * Move one edge of a clip to `to` (recording time, clamped to trimBounds).
+ *
+ *   inward   the stretch between the old edge and the new one is cut
+ *   outward  the stretch is restored, and a split marks the new edge so the
+ *            footage that came back belongs to THIS clip, not its neighbour
+ *
+ * Returns the patch and where the clip now starts (its id follows its start),
+ * or null when the edge did not really move.
+ */
+export function trimPatch(tl, clip, side, to) {
+  const [lo, hi] = trimBounds(tl, clip)[side];
+  const t = round3(clamp(to, lo, hi));
+  let cuts = tl.cuts || [];
+  let splits = tl.splits || [];
+
+  if (side === "end") {
+    const b = clip.src_end;
+    if (Math.abs(t - b) < 0.01) return null;
+    if (t < b) {
+      cuts = [...cuts, { id: newId("cut"), start: t, end: round3(b), reason: "manual", auto: false }];
+      splits = splits.filter((x) => !(x > t && x < b));
+    } else {
+      cuts = restore(cuts, b, t);
+      splits = [...splits.filter((x) => !(x >= b - EPS && x < t)), t];
+    }
+  } else {
+    const a = clip.src_start;
+    if (Math.abs(t - a) < 0.01) return null;
+    if (t > a) {
+      cuts = [...cuts, { id: newId("cut"), start: round3(a), end: t, reason: "manual", auto: false }];
+      splits = splits.filter((x) => !(x > a && x < t));
+    } else {
+      cuts = restore(cuts, t, a);
+      splits = [...splits.filter((x) => !(x > t && x <= a + EPS)), t];
+    }
+  }
+
+  return {
+    patch: { cuts, splits: [...new Set(splits.map(round3))].sort((x, y) => x - y) },
+    start: side === "start" ? t : clip.src_start,
+  };
 }
 
 /**

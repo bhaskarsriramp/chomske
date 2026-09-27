@@ -32,6 +32,7 @@ import {
 } from "./model";
 import { useBox } from "./ui";
 import Skeleton from "../Shell/Skeleton";
+import { followFor, followAt } from "./follow.mjs";
 
 /** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
@@ -54,6 +55,8 @@ export default function Preview({
   align = "center",
   // The signed URL of an uploaded background image, when the canvas uses one.
   backgroundUrl = "",
+  // Each blur's follow (follow.mjs): where it goes when what it covers moves.
+  follows = null,
 }) {
   const wrapRef = useRef(null);
   // The background image, once loaded. A ref, not state: the frame loop below
@@ -80,6 +83,9 @@ export default function Preview({
   const lay = useMemo(() => layout(tl), [tl]);
   const cues = useMemo(() => placedCues(tl, lay), [tl, lay]);
   const blurs = useMemo(() => placedSpans(tl.blurs || [], lay), [tl, lay]);
+  // The pieces above carry output times; a follow is signed with the blur's
+  // own (recording) times, so it is looked up against the original.
+  const blurById = useMemo(() => new Map((tl.blurs || []).map((b) => [b.id, b])), [tl]);
   const clicks = useMemo(() => clickMarks(tl, lay), [tl, lay]);
 
   const srcW = tl.source?.width || 1920;
@@ -202,7 +208,16 @@ export default function Preview({
       // ── Blur, on top of the picture and inside the clip ──────────────
       for (const b of blurs) {
         if (outT < b.start || outT > b.end) continue;
-        paintBlur(ctx, v, b, cam, { dx, dy, dw, dh });
+        // Followed: wherever the tracker found it on THIS frame of the
+        // recording, and not at all while it is off the screen.
+        const f = followFor(follows, blurById.get(b.id));
+        if (f) {
+          const p = followAt(f, srcT);
+          if (!p.on) continue;
+          paintBlur(ctx, v, { ...b, x: p.x, y: p.y }, cam, { dx, dy, dw, dh });
+        } else {
+          paintBlur(ctx, v, b, cam, { dx, dy, dw, dh });
+        }
       }
     } else {
       ctx.fillStyle = "#0B0D14";
@@ -235,7 +250,7 @@ export default function Preview({
         onPlayingChange?.(false);
       }
     }
-  }, [tl, lay, vb, blurs, clicks, srcW, srcH, onTime, onPlayingChange]);
+  }, [tl, lay, vb, blurs, blurById, follows, clicks, srcW, srcH, onTime, onPlayingChange]);
 
   useEffect(() => {
     let raf = 0;
@@ -291,7 +306,7 @@ export default function Preview({
 
         {/* ── Editing handles ───────────────────────────────────────── */}
         {selection && onChange && (
-          <RectHandle tl={tl} selection={selection} time={time} cam={cam} vb={vb} frame={{ w: fw, h: fh }} onChange={onChange} />
+          <RectHandle tl={tl} selection={selection} time={time} srcT={srcT} follows={follows} cam={cam} vb={vb} frame={{ w: fw, h: fh }} onChange={onChange} />
         )}
 
         {/* The frame pulses while the video loads, rather than carrying the
@@ -712,11 +727,22 @@ function CaptionLine({ tl, cue, frame, onChange, selected, onSelect }) {
  * anybody decides that a rectangle covers an API key; dragging it over the key
  * and watching the key disappear is.
  */
-function RectHandle({ tl, selection, time, cam, vb, frame, onChange }) {
+function RectHandle({ tl, selection, time, srcT, follows, cam, vb, frame, onChange }) {
   const list = selection.kind === "blur" ? tl.blurs : selection.kind === "zoom" ? tl.zooms : null;
-  const item = list?.find((x) => x.id === selection.id);
+  let item = list?.find((x) => x.id === selection.id);
   const drag = useRef(null);
   if (!item || !frame.w) return null;
+  // A followed blur's handle sits where the blur is on this frame, so what is
+  // dragged is what is seen. Letting go puts the blur there at this moment,
+  // and it is followed again from here (StudioEditor changeItem).
+  if (selection.kind === "blur") {
+    const f = followFor(follows, item);
+    if (f) {
+      const p = followAt(f, srcT);
+      if (!p.on) return null;
+      item = { ...item, x: p.x, y: p.y };
+    }
+  }
 
   // Only while it is actually on screen: a handle floating over a frame where
   // the thing it belongs to is not visible is a handle that moves the wrong

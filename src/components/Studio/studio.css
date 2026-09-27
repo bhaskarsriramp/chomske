@@ -161,7 +161,7 @@
   position: absolute; top: 2px; bottom: 2px; z-index: 3;
   border: 1.5px dashed; border-radius: 6px;
   pointer-events: none;
-  animation: st-ghost-in 120ms var(--ease-out) both;
+  animation: st-ghost-in 120ms var(--ease-out) backwards;
 }
 
 /* On the video lane the outline is a line, not a stretch: "Cut here" splits a
@@ -193,7 +193,30 @@
   transition: border-color var(--dur-hover) var(--ease-out);
 }
 .st-clip-tag:hover { border-color: var(--ink); }
-.st-clip.is-on .st-clip-tag { background: var(--ink); border-color: var(--ink); color: #fff; }
+.st-clip.is-on .st-clip-tag { background: var(--ink); border-color: var(--ink); color: #fff; left: 15px; }
+
+/* A selected clip's two edges, to drag (Timeline.js). Solid ink bars with a
+   grip line, inside the clip so they never sit on a neighbour. Above the
+   playhead's grab area (z-index 6): selecting a clip parks the playhead just
+   inside its start, right on top of the start handle, and the handle must win. */
+.st-trim {
+  position: absolute; top: 1px; bottom: 1px; width: 9px; z-index: 7;
+  display: grid; place-items: center;
+  background: var(--ink); cursor: ew-resize; touch-action: none; pointer-events: auto;
+  transition: box-shadow var(--dur-hover) var(--ease-out);
+}
+.st-trim.is-start { border-radius: 6px 2px 2px 6px; margin-left: 1px; }
+.st-trim.is-end { border-radius: 2px 6px 6px 2px; transform: translateX(-100%); margin-left: -1px; }
+.st-trim::after { content: ""; width: 2px; height: 42%; border-radius: 2px; background: rgba(255, 255, 255, .85); }
+.st-trim:hover, .st-trim.is-active { background: #000; box-shadow: 0 0 0 3px rgba(15, 15, 15, .14); }
+
+/* What a trim will take off (red, hatched like a cut) or bring back (green). */
+.st-trim-zone { position: absolute; top: 2px; bottom: 2px; border-radius: 4px; pointer-events: none; z-index: 3; }
+.st-trim-zone.is-cut {
+  border: 1px dashed rgba(197, 34, 31, .6);
+  background: repeating-linear-gradient(-45deg, rgba(197, 34, 31, .22) 0 5px, rgba(197, 34, 31, .08) 5px 10px);
+}
+.st-trim-zone.is-add { border: 1px dashed rgba(13, 138, 79, .6); background: rgba(13, 138, 79, .16); }
 
 /* A stretch taken out, in the Video panel's list between two clips. */
 .st-cutrow {
@@ -201,6 +224,18 @@
   font-size: 12px; color: var(--ink-mute);
 }
 .st-cutrow > svg { color: var(--bad); flex-shrink: 0; }
+
+/* Faint until the add key is held (Timeline.js): hovering shows what a
+   Ctrl/⌘ + click would do; holding the key shows it is ready to. */
+.st-ghost:not(.is-armed) { opacity: .6; }
+.st-ghost.is-armed { opacity: 1; }
+
+/* The key in the label. */
+.st-kbd {
+  display: inline-block; padding: 1px 5px; border-radius: 4px;
+  border: 1px solid var(--line-strong); border-bottom-width: 2px; background: var(--paper);
+  font: inherit; font-size: 10px; font-weight: 700; line-height: 1.2; color: var(--ink);
+}
 
 /* Its label: a solid tag, free to run past a short outline so the words are
    always whole. It starts clear of the arrow, whose tip sits on the outline's
@@ -214,7 +249,9 @@
   white-space: nowrap;
 }
 .st-ghost-tag.is-left { left: auto; right: calc(100% + 6px); }
-@keyframes st-ghost-in { from { opacity: 0; } to { opacity: 1; } }
+/* From nothing to whatever opacity the outline has (faint, or armed), rather
+   than to 1: a fill that held 1 would override the faint state. */
+@keyframes st-ghost-in { from { opacity: 0; } }
 
 /* ── The canvas controls under the preview (CanvasBar.js) ────────────────
    Short sliders with their name beside them. The value rises above a slider

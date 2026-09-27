@@ -21,13 +21,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onLiveEvent } from "../../realtime/socket";
 // requestReview and resolveSuggestion are hidden with the Review tab (see TABS).
-import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds } from "./studioApi";
+import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds, followBlur } from "./studioApi";
+import { blurSig } from "./follow.mjs";
 import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
 import { create } from "./create";
-import { clipsOf, splitPatch, deleteClipPatch } from "./clips";
+import { clipsOf, clipIdAt, splitPatch, deleteClipPatch, trimPatch } from "./clips";
 // StepsPanel is hidden for now with the Steps tab (see TABS); put it back in
 // this import when the tab returns.
 // CanvasPanel and SuggestionsPanel are hidden with their tabs (see TABS): the
@@ -36,7 +37,7 @@ import { VideoPanel, ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, /* Canvas
 import CanvasBar from "./CanvasBar";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon } from "./ui";
-import { layout, clamp, fmtTime } from "./model";
+import { layout, clamp, fmtTime, toSource } from "./model";
 import "./studio.css";
 
 /** The inspector tab each kind of selectable thing is edited in. */
@@ -58,6 +59,18 @@ const TABS = [
   // { id: "canvas", label: "Canvas", icon: "canvas" },
   // { id: "review", label: "Review", icon: "sparkle" },
 ];
+
+/** How long after the last change to a blur it is followed again. */
+const FOLLOW_DELAY = 800;
+
+/** Two sets of follows, keeping for each blur whichever was asked for last. */
+function mergeFollows(a, b) {
+  const out = { ...a };
+  for (const [id, f] of Object.entries(b || {})) {
+    if (!out[id] || (f.seq || 0) >= (out[id].seq || 0)) out[id] = f;
+  }
+  return out;
+}
 
 /** Changes closer together than this, to the same thing, are one undo step. */
 const COALESCE_MS = 700;
@@ -129,6 +142,14 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   // here so the preview can draw the one the canvas names, and handed to the
   // background picker, which adds to it when something new is uploaded.
   const [backgrounds, setBackgrounds] = useState(null);
+
+  // ── Blurs that follow what they cover (follow.mjs, backend blurTrack.js) ──
+  // `follows`: each blur's follow as the server has it, merged by when it was
+  // asked for, so a late answer never replaces a newer one. `following`: the
+  // blurs being followed right now, { sig, progress } or { failed }, for the
+  // Blur panel and so Export can wait for them.
+  const [follows, setFollows] = useState({});
+  const [following, setFollowing] = useState({});
   useEffect(() => {
     let live = true;
     listBackgrounds()
@@ -239,6 +260,22 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       // Events name the demo by its database id; `demoId` here is usually the
       // slug from the address bar, so the loaded demo's own id is the match.
       if (String(e?.demo) !== String(demoRef.current?.id || demoId)) return;
+      // A blur being followed, or its follow: applied here, without reading
+      // the whole demo again — these arrive twice a second while one runs.
+      if (e.follow || e.following) {
+        if (e.follow) {
+          setFollows((p) => mergeFollows(p, { [e.follow.id]: e.follow }));
+          setFollowing((p) => {
+            if (!p[e.follow.id]) return p;
+            const n = { ...p };
+            delete n[e.follow.id];
+            return n;
+          });
+        }
+        if (e.following) setFollowing((p) => ({ ...p, [e.following.id]: { ...(p[e.following.id] || {}), ...e.following } }));
+        if (e.notice) setNotice(e.notice);
+        return;
+      }
       if (e.notice) setNotice(e.notice);
       if (e.captioning === false) setCaptioning(false);
       if (e.reading === false || e.read) setReading(false);
@@ -387,12 +424,24 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   /* ── A change to one item, from a panel, the ruler or the picture ─────── */
 
+  // Read by changeItem at the moment of an edit, without re-creating it on
+  // every frame the playhead moves.
+  const timeRef = useRef(0);
+  timeRef.current = time;
+  const layRef = useRef(null);
+
   const changeItem = useCallback(
     ({ kind, id, patch }) => {
       const list = { zoom: "zooms", blur: "blurs", cue: "cues" }[kind];
       if (!list) return;
+      // A blur's rectangle moved or resized on the picture: it is now right
+      // at THIS moment of the recording, which is where following it starts.
+      const placed =
+        kind === "blur" && ("x" in patch || "y" in patch || "w" in patch || "h" in patch) && layRef.current
+          ? { at: Math.round(toSource(timeRef.current, layRef.current) * 1000) / 1000 }
+          : null;
       edit(
-        { [list]: (tlRef.current?.[list] || []).map((x) => (x.id === id ? { ...x, ...patch } : x)) },
+        { [list]: (tlRef.current?.[list] || []).map((x) => (x.id === id ? { ...x, ...patch, ...placed } : x)) },
         LABELS[kind] || "Edit"
       );
     },
@@ -444,6 +493,43 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   /* ── Clips and cuts ───────────────────────────────────────────────────── */
 
   const lay = useMemo(() => (tl ? layout(tl) : null), [tl]);
+  layRef.current = lay;
+
+  // Follows the server already has, whenever the demo is read.
+  useEffect(() => {
+    if (demo?.follows) setFollows((p) => mergeFollows(p, demo.follows));
+  }, [demo?.follows]);
+
+  /**
+   * Ask for a blur to be followed. Once per version of it (its signature),
+   * and FOLLOW_DELAY after the last change, so dragging a rectangle across
+   * the picture asks once, when it is let go, not on every pixel.
+   */
+  const asked = useRef({});
+  const followTimers = useRef({});
+  const requestFollow = useCallback(
+    (b) => {
+      const sig = blurSig(b);
+      asked.current[b.id] = sig;
+      setFollowing((p) => ({ ...p, [b.id]: { sig, progress: 0 } }));
+      followBlur(demoId, b).catch((err) => {
+        asked.current[b.id] = null;
+        setFollowing((p) => ({ ...p, [b.id]: { sig, failed: true, message: err?.response?.data?.message || "" } }));
+      });
+    },
+    [demoId]
+  );
+  useEffect(() => {
+    if (!tl) return;
+    for (const b of tl.blurs || []) {
+      if (b.at == null) continue;
+      const sig = blurSig(b);
+      if (follows[b.id]?.sig === sig || asked.current[b.id] === sig) continue;
+      clearTimeout(followTimers.current[b.id]);
+      followTimers.current[b.id] = setTimeout(() => requestFollow(b), FOLLOW_DELAY);
+    }
+  }, [tl, follows, requestFollow]);
+  useEffect(() => () => Object.values(followTimers.current).forEach(clearTimeout), []);
 
   // "Cut here" on the video lane: split the clip under that moment in two,
   // taking nothing out (clips.js). A moment too near a clip's edge is ignored.
@@ -455,6 +541,21 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       if (patch) edit(patch, "Cut");
     },
     [edit]
+  );
+
+  // A clip's edge let go of after a drag on the timeline (clips.js trimPatch).
+  // The clip stays selected: its id follows its start, so a trimmed start
+  // gives it a new one.
+  const trimClip = useCallback(
+    (clip, side, to) => {
+      const cur = tlRef.current;
+      if (!cur) return;
+      const r = trimPatch(cur, clip, side, to);
+      if (!r) return;
+      edit(r.patch, "Trim clip");
+      select({ kind: "clip", id: clipIdAt(r.start) });
+    },
+    [edit, select]
   );
 
   // Take a clip out: a cut over exactly its stretch. The last clip stays,
@@ -694,6 +795,13 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const total = lay?.duration || 0;
   const panelProps = { tl, selection, onSelect: select, edit, time, seek };
 
+  // Placed blurs still waiting for their follow (asked for, running, or about
+  // to be asked): Export holds until they are settled, because exporting now
+  // would draw them standing still. A failed one does not hold it up.
+  const unsettled = (tl.blurs || []).filter(
+    (b) => b.at != null && follows[b.id]?.sig !== blurSig(b) && !following[b.id]?.failed
+  ).length;
+
   // The uploaded image the canvas names, if it names one and it is still there.
   const bgChoice = tl.canvas?.background;
   const bgImageUrl =
@@ -808,6 +916,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         // timeline's side. Full screen and phones stay centred.
         align={full || narrow ? "center" : "top"}
         backgroundUrl={bgImageUrl}
+        follows={follows}
       />
       {full && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 4px 0", color: "#fff" }}>
@@ -933,7 +1042,18 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         />
       )}
       {tab === "zoom" && <ZoomPanel {...panelProps} />}
-      {tab === "blur" && <BlurPanel {...panelProps} read={blurChecked} reading={reading} onRead={onRead} readCost={readCost} />}
+      {tab === "blur" && (
+        <BlurPanel
+          {...panelProps}
+          read={blurChecked}
+          reading={reading}
+          onRead={onRead}
+          readCost={readCost}
+          follows={follows}
+          following={following}
+          onRefollow={requestFollow}
+        />
+      )}
       {tab === "captions" && (
         <CaptionsPanel
           {...panelProps}
@@ -970,6 +1090,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       onRemoveCut={removeCut}
       onAdd={addAt}
       onSplit={addSplit}
+      onTrim={trimClip}
       onDelete={removeSelected}
       // Taller lanes on a desk: bigger chips to grab, drag and resize.
       height={narrow ? 30 : 42}
@@ -981,6 +1102,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       demo={demo}
       config={config}
       outputSeconds={total}
+      settling={unsettled}
       onClose={() => setExporting(false)}
       onChanged={() => load(true)}
       beforeExport={save}

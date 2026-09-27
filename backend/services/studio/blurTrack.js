@@ -1,0 +1,765 @@
+/**
+ * blurTrack.js: making a blur follow what it covers.
+ *
+ * ── THE PROBLEM ──────────────────────────────────────────────────────────────
+ * A blur is a rectangle drawn over one moment: an API key, an email, a name.
+ * The moment the creator scrolls, the key moves and the rectangle does not, and
+ * a blur that stays put while the secret slides out from under it is worse than
+ * none: it looks safe and is not. So a blur has to STICK to what it covers,
+ * through scrolling, through the page jumping, through it leaving the screen
+ * and coming back.
+ *
+ * ── FOLLOW THE NEIGHBOURHOOD, NOT THE PATCH ──────────────────────────────────
+ * The first version searched each frame for the patch under the blur and took
+ * the best match. On a database explorer that is exactly wrong: every document
+ * has a `user: ObjectId('6aa…')` line, the hex differs in a few characters, and
+ * when the page scrolled and the line above the secret slid under the toolbar,
+ * the NEXT document's line scored higher than the real one. The blur jumped to
+ * it, lost it, and flew off the bottom of the screen while the real key sat in
+ * plain view for eight seconds. Measured, on a real recording.
+ *
+ * So each frame asks where the BAND around the blur (several lines tall) could
+ * have moved since the previous one, and keeps several answers, because on a
+ * page of repeating documents one document's band looks like the next one's
+ * too. Which answer is right is then decided by the one thing a lookalike does
+ * not share: the blurred text itself, compared with the ORIGINAL at twice the
+ * working size. Only when the text no longer looks like itself (highlighted,
+ * being edited) is motion alone trusted, and only strong motion. Always the
+ * original, never the last match, so error cannot build up frame by frame.
+ *
+ * ── NEVER TO REVEAL ──────────────────────────────────────────────────────────
+ * Every frame ends in one of four states, each chosen for what it does when the
+ * tracker is wrong:
+ *
+ *   seen    followed. The blur sits on it.
+ *   moving  the band was lost while moving towards an edge it would cross
+ *           within a fraction of a second: the page is scrolling it away. The
+ *           blur keeps going at that speed until it is off the frame, so the
+ *           half of a line still on screen stays covered. Only towards a near
+ *           edge — carrying a blur across the middle of the screen on a guess
+ *           is how it ends up somewhere the secret is not.
+ *   gone    entirely off the frame. Nothing to cover; not drawn.
+ *   held    lost for any other reason: a page change, a dialog over it, it got
+ *           highlighted. The blur stays exactly where it was — it fails closed —
+ *           and the span is reported so the editor can ask for a look.
+ *
+ * Finding it again after gone or held is deliberately STRICT: the blurred text
+ * itself must match almost exactly, and clearly better than any other place on
+ * the screen. A lookalike is worse than holding. That test runs on a copy TWICE
+ * the working size: at 640 wide a 24-character hex id is 85 pixels, three and a
+ * half per character, and one id looks like the next; at 1280 the characters
+ * are legible and a real match scores well clear of its neighbours. The same
+ * content back half a pixel lower (it happens: a list re-renders a pixel and a
+ * half off) is found by letting that test move a few pixels.
+ *
+ * When it is found again, the frames just before are walked BACKWARDS from
+ * there, following the band, so a line scrolling in from an edge is covered
+ * from its first visible row rather than from the frame it was recognised.
+ *
+ * ── TIME IS THE VIDEO'S OWN ──────────────────────────────────────────────────
+ * Screen recordings are variable frame rate — measured, 4 ms to 700 ms between
+ * frames on one recording. Every position is keyed to the real timestamp of the
+ * frame it was measured on, read from the decoder, never to an even sampling.
+ * The export turns those into the ticks its own frame-rate conversion lands
+ * each frame on (see render/compose.js), because in a fast scroll the page
+ * moves a hundred pixels a frame, and a blur one frame late has shown the
+ * secret.
+ */
+import { spawn } from "child_process";
+import { FFMPEG_PATH } from "../media/ffmpeg.js";
+
+export const TRACK_VERSION = 2;
+
+/** The working copy's width. A source pixel is ~3 of these at 1920. */
+const WORK_W = 640;
+/** The copy identity is judged on: twice the working size (see the header). */
+const HI = 2;
+/** Coarse search scale. */
+const K = 4;
+/** Of a template's area that must be on screen for a partial match to count. */
+const MIN_VISIBLE = 0.35;
+/** Below this a patch is too plain to recognise (a blank field). */
+const MIN_TEXTURE = 3.5;
+/** The band's match that counts as "it moved by this much". */
+const BAND_OK = 0.8;
+/** Motion trusted on its own, when the text itself cannot be matched. */
+const BAND_STRONG = 0.9;
+/**
+ * The blurred text matching its original: this is it. Not higher: the same
+ * text re-drawn half a pixel off after a scroll scores 0.87-0.88 (measured),
+ * while the nearest lookalike, a neighbouring document's id, scored 0.75. The
+ * margin below, not this number, is what keeps lookalikes out.
+ */
+const ID_OK = 0.82;
+/** The band unchanged: nothing moved (the common case, and the fast path). */
+const STATIC = 0.985;
+/** The original patch close enough to snap to. */
+const VERIFY = 0.8;
+/**
+ * Finding it again: how well the blurred text itself must match, and by how
+ * much it must beat the next best place on the screen. There is deliberately
+ * no requirement on the surroundings: when the page scrolls the line above the
+ * secret can slide under a toolbar, and a rule that the neighbourhood match
+ * too rejected the real secret (text 0.92, unique) at exactly that moment.
+ */
+const STRICT_RECT = 0.82;
+const STRICT_MARGIN = 0.08;
+/**
+ * How much the surroundings count beside the text when choosing between
+ * places. Real ids made in the same second share most of their digits:
+ * measured, the line above a Mongo ObjectId scored 0.935 against the id's own
+ * 0.999, three characters apart. Their surroundings differ (the real one sits
+ * between `_id` and `__v`, the other between the last document's `updated_at`
+ * and `user`), so they break the tie. When the surroundings are hidden, every
+ * candidate loses them alike and the text decides.
+ */
+const CONTEXT_WEIGHT = 0.5;
+/** Carried towards an edge only if it would be off the frame within this. */
+const EXIT_WINDOW = 0.45;
+/** Never carried longer than this. */
+const CARRY_MAX = 1.0;
+/** How far back a find is walked to cover the frames just before it. The
+ *  identity copy is kept for these frames, so this is also a memory budget. */
+const BACKFILL = 1.0;
+/** Seconds decoded at a time when walking the span backwards. */
+const BACK_CHUNK = 4;
+/** Mean change (0-255) in a tiny thumbnail that counts as "the screen changed". */
+const CHANGED = 0.6;
+/** While lost, look again at least this often even if the screen barely moved. */
+const RELOOK = 0.5;
+/** ...and at most this often. What a find misses in between, the backfill
+ *  walk from the find covers (BACKFILL is well beyond it). */
+const LOOK_EVERY = 0.1;
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Decoding, with the frames' own timestamps
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Decode [from, to] of a file to greyscale frames at W x H, each paired with
+ * its real presentation time (seconds, the file's clock). `onFrame(buf, t)`
+ * is awaited in order. `showinfo` reports each frame's pts on stderr; frames
+ * arrive on stdout; the two are paired by order.
+ */
+function decode(file, { from, to, W, H, onFrame }) {
+  const bytes = W * H;
+  const args = [
+    "-hide_banner", "-nostdin",
+    "-ss", String(Math.max(0, from)), "-to", String(to), "-copyts",
+    "-i", file,
+    "-an", "-sn", "-fps_mode", "passthrough",
+    "-vf", `scale=${W}:${H}:flags=area,showinfo`,
+    "-pix_fmt", "gray", "-f", "rawvideo", "pipe:1",
+  ];
+  return new Promise((resolve, reject) => {
+    const child = spawn(FFMPEG_PATH, args, { windowsHide: true });
+    const times = [];
+    const frames = [];
+    let held = [];
+    let heldBytes = 0;
+    let errTail = "";
+    let lineBuf = "";
+    let chain = Promise.resolve();
+    let settled = false;
+    const fail = (e) => { if (!settled) { settled = true; try { child.kill("SIGKILL"); } catch { /* gone */ } reject(e); } };
+
+    const pump = () => {
+      while (frames.length && times.length) {
+        const buf = frames.shift();
+        const t = times.shift();
+        chain = chain.then(() => onFrame(buf, t));
+      }
+      if (frames.length > 8) {
+        child.stdout.pause();
+        chain.then(() => { if (!settled) child.stdout.resume(); }, fail);
+      }
+    };
+
+    child.stderr.on("data", (d) => {
+      const s = d.toString();
+      errTail = (errTail + s).slice(-4000);
+      lineBuf += s;
+      const lines = lineBuf.split("\n");
+      lineBuf = lines.pop();
+      for (const line of lines) {
+        const m = line.includes("showinfo") && /\bpts_time:\s*(-?[\d.]+)/.exec(line);
+        if (m) times.push(Number(m[1]));
+      }
+      pump();
+    });
+    child.stdout.on("data", (chunk) => {
+      held.push(chunk);
+      heldBytes += chunk.length;
+      if (heldBytes < bytes) return;
+      const all = held.length === 1 ? held[0] : Buffer.concat(held, heldBytes);
+      const whole = Math.floor(all.length / bytes);
+      for (let i = 0; i < whole; i++) frames.push(Buffer.from(all.subarray(i * bytes, (i + 1) * bytes)));
+      const rest = all.subarray(whole * bytes);
+      held = rest.length ? [Buffer.from(rest)] : [];
+      heldBytes = rest.length;
+      pump();
+    });
+    child.on("error", fail);
+    child.on("close", (code) => {
+      if (lineBuf) {
+        const m = lineBuf.includes("showinfo") && /\bpts_time:\s*(-?[\d.]+)/.exec(lineBuf);
+        if (m) times.push(Number(m[1]));
+      }
+      pump();
+      chain.then(() => {
+        if (settled) return;
+        settled = true;
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited with ${code}: ${errTail.slice(-600)}`));
+      }, fail);
+    });
+  });
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Matching
+   ──────────────────────────────────────────────────────────────────────────── */
+
+function shrink(img, w, h, k) {
+  const ow = Math.floor(w / k);
+  const oh = Math.floor(h / k);
+  const out = new Float32Array(ow * oh);
+  const kk = k * k;
+  for (let y = 0; y < oh; y++) {
+    for (let x = 0; x < ow; x++) {
+      let s = 0;
+      for (let j = 0; j < k; j++) {
+        const row = (y * k + j) * w + x * k;
+        for (let i = 0; i < k; i++) s += img[row + i];
+      }
+      out[y * ow + x] = s / kk;
+    }
+  }
+  return { data: out, w: ow, h: oh };
+}
+
+/** A template: the patch at (x, y, w, h) of img, kept raw (NCC is computed per overlap). */
+/** Half size, as bytes: the working copy from the identity copy. */
+function half(img, w, h) {
+  const ow = w >> 1;
+  const oh = h >> 1;
+  const out = new Uint8Array(ow * oh);
+  for (let y = 0; y < oh; y++) {
+    const r0 = 2 * y * w;
+    const r1 = r0 + w;
+    for (let x = 0; x < ow; x++) {
+      const i = 2 * x;
+      out[y * ow + x] = (img[r0 + i] + img[r0 + i + 1] + img[r1 + i] + img[r1 + i + 1] + 2) >> 2;
+    }
+  }
+  return out;
+}
+
+function templateOf(img, iw, x, y, w, h) {
+  const t = new Float32Array(w * h);
+  let s = 0;
+  let s2 = 0;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const v = img[(y + j) * iw + x + i];
+      t[j * w + i] = v;
+      s += v;
+      s2 += v * v;
+    }
+  }
+  const n = w * h;
+  const std = Math.sqrt(Math.max(0, s2 / n - (s / n) ** 2));
+  return { t, w, h, std };
+}
+
+/**
+ * NCC of template T placed with its top-left at (x, y) in img, over the part
+ * of it that is on the image. Returns -1 when too little of it is on screen.
+ */
+function ncc(img, iw, ih, T, x, y) {
+  const x0 = Math.max(0, -x);
+  const y0 = Math.max(0, -y);
+  const x1 = Math.min(T.w, iw - x);
+  const y1 = Math.min(T.h, ih - y);
+  const cw = x1 - x0;
+  const ch = y1 - y0;
+  if (cw <= 2 || ch <= 1 || cw * ch < MIN_VISIBLE * T.w * T.h) return -1;
+  let si = 0, si2 = 0, st = 0, st2 = 0, sit = 0;
+  for (let j = y0; j < y1; j++) {
+    const irow = (y + j) * iw + x;
+    const trow = j * T.w;
+    for (let i = x0; i < x1; i++) {
+      const a = img[irow + i];
+      const b = T.t[trow + i];
+      si += a; si2 += a * a; st += b; st2 += b * b; sit += a * b;
+    }
+  }
+  const n = cw * ch;
+  const vi = si2 - (si * si) / n;
+  const vt = st2 - (st * st) / n;
+  if (vi < 1e-3 || vt < 1e-3) return 0;
+  return (sit - (si * st) / n) / Math.sqrt(vi * vt);
+}
+
+/** Best position within [cx±rx, cy±ry], allowing the patch partly off the frame. */
+function search(img, iw, ih, T, cx, cy, rx, ry, step = 1, keep = 1) {
+  const minX = -Math.floor(T.w * (1 - MIN_VISIBLE));
+  const minY = -Math.floor(T.h * (1 - MIN_VISIBLE));
+  const maxX = iw - Math.ceil(T.w * MIN_VISIBLE);
+  const maxY = ih - Math.ceil(T.h * MIN_VISIBLE);
+  const x0 = Math.max(minX, Math.round(cx - rx));
+  const x1 = Math.min(maxX, Math.round(cx + rx));
+  const y0 = Math.max(minY, Math.round(cy - ry));
+  const y1 = Math.min(maxY, Math.round(cy + ry));
+  if (keep === 1) {
+    let bx = cx;
+    let by = cy;
+    let bs = -1;
+    for (let y = y0; y <= y1; y += step) {
+      for (let x = x0; x <= x1; x += step) {
+        const s = ncc(img, iw, ih, T, x, y);
+        if (s > bs) { bs = s; bx = x; by = y; }
+      }
+    }
+    return { x: bx, y: by, s: bs };
+  }
+  // The best `keep`, kept in order by insertion: re-sorting the list on every
+  // hit made a whole-frame search a hundred times slower than the matching.
+  const best = [];
+  let floor = -Infinity;
+  for (let y = y0; y <= y1; y += step) {
+    for (let x = x0; x <= x1; x += step) {
+      const s = ncc(img, iw, ih, T, x, y);
+      if (s < -0.5 || (best.length >= keep && s <= floor)) continue;
+      let i = best.length;
+      best.push(null);
+      while (i > 0 && best[i - 1].s < s) {
+        best[i] = best[i - 1];
+        i--;
+      }
+      best[i] = { x, y, s };
+      if (best.length > keep) best.pop();
+      if (best.length >= keep) floor = best[best.length - 1].s;
+    }
+  }
+  return best;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Following, one direction at a time
+   ──────────────────────────────────────────────────────────────────────────── */
+
+function meanDiff(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
+  return s / a.length;
+}
+
+/**
+ * One direction of the walk from the anchor. `dir` is +1 walking forward in
+ * time and -1 walking back. Feed it frames in that order with an increasing
+ * `idx`; each call returns the patch's top-left and state for that frame, and,
+ * after a find, `fill`: earlier frames (by idx) whose positions it now knows.
+ */
+function follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start, R, off, dir, debug = null }) {
+  const bx = clamp(Math.round(R.w * 0.5), 24, 120);
+  const by = clamp(Math.round(R.h * 2), 24, 70);
+
+  let pos = { ...start };
+  let state = "seen";
+  let prev = null;
+  let lastT = null;
+  let vel = { x: 0, y: 0 };
+  let carry = null;           // { pos, t } where carrying began
+  let thumb = null;
+  let lookedT = null;         // when a lost search last ran
+  const recent = [];          // frames since the last seen one, for backfill
+
+  const rectAt = (p) => ({ x: p.x + off.x, y: p.y + off.y });
+  const onFrame = (p) => {
+    const r = rectAt(p);
+    return r.x + R.w > 0 && r.y + R.h > 0 && r.x < W && r.y < H;
+  };
+
+  /**
+   * Where the band around the rectangle at `p` in frame a could have gone in
+   * frame b: `still` if it did not move, otherwise up to four distinct shifts,
+   * best band match first. Null when there is no band to measure (off the
+   * frame, or a flat panel).
+   */
+  function bandShifts(a, b, p) {
+    const r = rectAt(p);
+    const x0 = Math.max(0, Math.round(r.x - bx));
+    const y0 = Math.max(0, Math.round(r.y - by));
+    const x1 = Math.min(W, Math.round(r.x + R.w + bx));
+    const y1 = Math.min(H, Math.round(r.y + R.h + by));
+    if (x1 - x0 < 12 || y1 - y0 < 12) return null;
+    const Tb = templateOf(a.img, W, x0, y0, x1 - x0, y1 - y0);
+    if (Tb.std < MIN_TEXTURE) return null;
+    const s0 = ncc(b.img, W, H, Tb, x0, y0);
+    if (s0 >= STATIC) return { still: true, list: [{ dx: 0, dy: 0, s: s0 }] };
+
+    const list = [];
+    const add = (m) => {
+      if (m.s < 0) return;
+      const dx = m.x - x0;
+      const dy = m.y - y0;
+      const same = list.find((q) => Math.abs(q.dx - dx) <= 2 && Math.abs(q.dy - dy) <= 2);
+      if (!same) list.push({ dx, dy, s: m.s });
+      else if (m.s > same.s) Object.assign(same, { dx, dy, s: m.s });
+    };
+    add(search(b.img, W, H, Tb, x0, y0, 6, 8));
+    if (list.length === 0 || list[0].s < 0.97) {
+      const Tbc = templateOf(a.small.data, a.small.w, Math.floor(x0 / K), Math.floor(y0 / K),
+        Math.max(2, Math.floor((x1 - x0) / K)), Math.max(2, Math.floor((y1 - y0) / K)));
+      if (Tbc.std >= MIN_TEXTURE / 2) {
+        for (const c of search(b.small.data, b.small.w, b.small.h, Tbc, x0 / K, y0 / K, b.small.w / 8, b.small.h, 1, 6)) {
+          add(search(b.img, W, H, Tb, c.x * K, c.y * K, K + 1, K + 1));
+        }
+      }
+    }
+    list.sort((u, v) => v.s - u.s);
+    return { still: false, list: list.slice(0, 4) };
+  }
+
+  /**
+   * The text alone, anywhere within (rx, ry) of the rectangle at `p` (or the
+   * whole frame), as up to `n` distinct patch positions. It proposes places
+   * the band cannot: the band depends on the surroundings, and it is the
+   * surroundings that change when a line slides under a toolbar.
+   */
+  function textCandidates(f, p, rx, ry, n) {
+    // Half size first (a whole-frame search at full working size cost half a
+    // second a frame), then each distinct hit refined at the working size.
+    const r = rectAt(p);
+    const hf = f.half || (f.half = shrink(f.img, W, H, 2));
+    const hits = search(hf.data, hf.w, hf.h, TrectHalf, r.x / 2, r.y / 2, rx / 2 + 1, ry / 2 + 1, 1, n * 4);
+    const out = [];
+    for (const h of hits) {
+      if (out.some((o) => Math.abs(o.x - h.x) < R.w / 6 && Math.abs(o.y - h.y) < Math.max(1, R.h / 4))) continue;
+      out.push(h);
+      if (out.length >= n) break;
+    }
+    return out.map((h) => {
+      const fine = search(f.img, W, H, TrectLo, h.x * 2, h.y * 2, 2, 2);
+      return { x: fine.x - off.x, y: fine.y - off.y };
+    });
+  }
+
+  /**
+   * How well the blurred text at `p` matches the original, at the identity
+   * size, and exactly where; `score` adds the surroundings (CONTEXT_WEIGHT).
+   */
+  function identityAt(f, p) {
+    const id = search(f.hi, W * HI, H * HI, TrectHi, (p.x + off.x) * HI, (p.y + off.y) * HI, 4, 4);
+    const pos = { x: id.x / HI - off.x, y: id.y / HI - off.y };
+    const ctx = ncc(f.img, W, H, T, Math.round(pos.x), Math.round(pos.y));
+    return { s: id.s, score: id.s + CONTEXT_WEIGHT * Math.max(0, ctx), pos };
+  }
+
+  /**
+   * One step of following, from frame a (rectangle at p) to frame b. Returns
+   * the new position, or null when it cannot be followed. The band proposes;
+   * the text decides; motion alone only when the text is not itself.
+   */
+  function advance(a, b, p, v, dt) {
+    const band = bandShifts(a, b, p);
+    if (band?.still) return verify(b.img, p);
+    const pts = (band?.list || []).map((m) => ({ x: p.x + m.dx, y: p.y + m.dy }));
+    if (dt && (v.x || v.y)) pts.push({ x: p.x + v.x * dt, y: p.y + v.y * dt });
+    let best = null;
+    if (b.hi) {
+      pts.push(...textCandidates(b, p, Math.max(8, R.w / 3), 90, 3));
+      for (const q of pts) {
+        const id = identityAt(b, q);
+        if (!best || id.score > best.score) best = id;
+      }
+    }
+    debug?.({ at: b.t, follow: (band?.list || []).map((m) => [m.dx, m.dy, +m.s.toFixed(3)]), id: best ? +best.s.toFixed(3) : null });
+    if (best && best.s >= ID_OK) return best.pos;
+    const top = band?.list?.[0];
+    if (top && top.s >= BAND_STRONG) return verify(b.img, { x: p.x + top.dx, y: p.y + top.dy });
+    return null;
+  }
+
+  /** Snap a moved position to the original patch, when it is there to snap to. */
+  function verify(img, p) {
+    const v = search(img, W, H, T, p.x, p.y, 3, 3);
+    return v.s >= VERIFY ? { x: v.x, y: v.y } : p;
+  }
+
+  /**
+   * Anywhere on the frame, strictly. Candidates come from the working copy;
+   * which of them is the blurred text is decided on the identity copy, with a
+   * few pixels of give, and the winner must beat every other place clearly.
+   */
+  function strictFind(f) {
+    // Candidates from the patch with its surroundings (coarse, fast) and from
+    // the text alone across the whole frame (what still works when the
+    // surroundings have changed). Identity decides between all of them.
+    const pts = [];
+    for (const c of search(f.small.data, f.small.w, f.small.h, Tc, f.small.w / 2, f.small.h / 2, f.small.w, f.small.h, 1, 8)) {
+      const r = search(f.img, W, H, T, c.x * K, c.y * K, K + 1, K + 1);
+      if (r.s >= 0) pts.push({ x: r.x, y: r.y });
+    }
+    pts.push(...textCandidates(f, { x: W / 2 - off.x - R.w / 2, y: H / 2 - off.y - R.h / 2 }, W, H, 8));
+    const scored = [];
+    for (const q of pts) {
+      const id = identityAt(f, q);
+      if (!scored.some((o) => Math.abs(o.x - id.pos.x) < 2 && Math.abs(o.y - id.pos.y) < 2)) {
+        scored.push({ ...id.pos, rs: id.s, score: id.score });
+      }
+    }
+    scored.sort((a, b) => b.score - a.score);
+    debug?.({ at: f.t, find: scored.slice(0, 5).map((c) => [Math.round(c.x), Math.round(c.y), +c.rs.toFixed(3), +c.score.toFixed(3)]) });
+    const best = scored[0];
+    if (!best || best.rs < STRICT_RECT) return null;
+    const rival = scored.find((c) => Math.abs(c.y - best.y) > R.h || Math.abs(c.x - best.x) > R.w / 2);
+    if (rival && rival.score > best.score - STRICT_MARGIN) return null;
+    return { x: best.x, y: best.y };
+  }
+
+  /** After a find at frame f (position p), walk the frames just before it back. */
+  function backfill(f, p) {
+    const fill = [];
+    let next = f;
+    let np = p;
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const g = recent[i];
+      if (Math.abs(f.t - g.t) > BACKFILL) break;
+      // The same step as following: the band proposes, the text decides.
+      const gp = advance(next, g, np, { x: 0, y: 0 }, 0);
+      if (!gp) break;
+      fill.push({ idx: g.idx, x: gp.x, y: gp.y, state: onFrame(gp) ? "seen" : "gone" });
+      next = g;
+      np = gp;
+    }
+    return fill;
+  }
+
+  return function step(hi, img, t, idx) {
+    const f = { img, hi, small: shrink(img, W, H, K), t, idx };
+    if (!prev) {
+      prev = f;
+      lastT = t;
+      return { ...pos, state };
+    }
+
+    let fill = null;
+
+    if (state === "seen") {
+      const dt = t - lastT;
+      const np = advance(prev, f, pos, vel, dt);
+      if (np) {
+        if (dt) vel = { x: (np.x - pos.x) / dt, y: (np.y - pos.y) / dt };
+        pos = np;
+        state = onFrame(pos) ? "seen" : "gone";
+      } else {
+        // The neighbourhood is not where it was: the page changed, or it left.
+        const found = strictFind(f);
+        if (found) {
+          pos = found;
+          vel = { x: 0, y: 0 };
+        } else {
+          const ahead = { x: pos.x + vel.x * EXIT_WINDOW * dir, y: pos.y + vel.y * EXIT_WINDOW * dir };
+          if (Math.hypot(vel.x, vel.y) > 1 && !onFrame(ahead)) {
+            carry = { pos: { ...pos }, t: lastT };
+            state = "moving";
+            pos = { x: carry.pos.x + vel.x * (t - carry.t), y: carry.pos.y + vel.y * (t - carry.t) };
+            if (!onFrame(pos)) state = "gone";
+          } else {
+            state = "held";
+          }
+        }
+      }
+    } else {
+      if (state === "moving") {
+        pos = { x: carry.pos.x + vel.x * (t - carry.t), y: carry.pos.y + vel.y * (t - carry.t) };
+        if (!onFrame(pos)) state = "gone";
+        else if (Math.abs(t - carry.t) > CARRY_MAX) state = "held";
+      }
+      const tiny = shrink(img, W, H, 8).data;
+      const since = lookedT === null ? Infinity : Math.abs(t - lookedT);
+      if (since >= LOOK_EVERY && (!thumb || meanDiff(tiny, thumb) >= CHANGED || since >= RELOOK)) {
+        thumb = tiny;
+        lookedT = t;
+        const found = strictFind(f);
+        if (found) {
+          pos = found;
+          vel = { x: 0, y: 0 };
+          state = "seen";
+          fill = backfill(f, pos);
+        }
+      }
+    }
+
+    if (state === "seen") {
+      recent.length = 0;
+      thumb = null;
+      lookedT = null;
+    }
+    // Kept, identity copy and all, only as long as a backfill could reach
+    // back (BACKFILL): at 1280 wide a second of frames is tens of megabytes.
+    recent.push(f);
+    while (recent.length && Math.abs(t - recent[0].t) > BACKFILL) recent.shift();
+    prev = f;
+    lastT = t;
+    return { ...pos, state, fill };
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   The whole job
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Follow one blur through its span.
+ *
+ * @param {string} file         the recording (the same file the export reads)
+ * @param {object} o
+ * @param {{x,y,w,h}} o.rect    fractions of the frame, where it is at `at`
+ * @param {number} o.at         the moment the rectangle was placed, seconds
+ * @param {number} o.start      the blur's span, seconds
+ * @param {number} o.end
+ * @param {number} o.sourceWidth, o.sourceHeight
+ * @returns {Promise<{ version, at, keys: Array<[t, x, y, on]>, held: Array<[t0, t1]>, trackable, frames }>}
+ *   keys: from time t (a real frame time) the rectangle's top-left is at
+ *   (x, y), fractions, and is drawn when on is 1, until the next key.
+ */
+export async function trackBlur(file, { rect, at, start, end, sourceWidth, sourceHeight, onProgress = () => {}, onDebug = null }) {
+  const W = WORK_W;
+  const H = Math.max(2, Math.round((W * sourceHeight) / sourceWidth / 2) * 2);
+  const R = {
+    x: Math.round(rect.x * W),
+    y: Math.round(rect.y * H),
+    w: Math.max(2, Math.round(rect.w * W)),
+    h: Math.max(2, Math.round(rect.h * H)),
+  };
+  // The patch recognised: the rectangle and a margin of what surrounds it.
+  const padY = Math.max(6, Math.round(R.h * 0.6));
+  const padX = Math.max(6, Math.round(R.w * 0.1));
+  const P = { x: clamp(R.x - padX, 0, W - 4), y: clamp(R.y - padY, 0, H - 4) };
+  P.w = Math.max(4, Math.min(W - P.x, R.w + 2 * padX));
+  P.h = Math.max(4, Math.min(H - P.y, R.h + 2 * padY));
+  const off = { x: R.x - P.x, y: R.y - P.y };
+
+  const W2 = W * HI;
+  const H2 = H * HI;
+
+  // ── The anchor frame: the one on screen at `at` ────────────────────────
+  let anchorHi = null;
+  let anchorT = null;
+  await decode(file, {
+    from: Math.max(0, at - 0.6), to: at + 0.05, W: W2, H: H2,
+    onFrame: (buf, t) => {
+      if (t <= at + 1e-3 || anchorHi === null) {
+        anchorHi = buf;
+        anchorT = t;
+      }
+    },
+  });
+  if (!anchorHi) throw new Error("no frame at the anchor");
+  const anchorImg = half(anchorHi, W2, H2);
+
+  const T = templateOf(anchorImg, W, P.x, P.y, P.w, P.h);
+  const rx = clamp(R.x, 0, W - 2);
+  const ry = clamp(R.y, 0, H - 2);
+  const TrectHi = templateOf(anchorHi, W2, rx * HI, ry * HI, Math.min(R.w, W - rx) * HI, Math.min(R.h, H - ry) * HI);
+  const TrectLo = templateOf(anchorImg, W, rx, ry, Math.min(R.w, W - rx), Math.min(R.h, H - ry));
+  const halfA = shrink(anchorImg, W, H, 2);
+  const TrectHalf = templateOf(halfA.data, halfA.w, Math.floor(rx / 2), Math.floor(ry / 2),
+    Math.max(2, Math.floor(Math.min(R.w, W - rx) / 2)), Math.max(1, Math.floor(Math.min(R.h, H - ry) / 2)));
+  const small = shrink(anchorImg, W, H, K);
+  const Tc = templateOf(small.data, small.w, Math.floor(P.x / K), Math.floor(P.y / K), Math.max(2, Math.floor(P.w / K)), Math.max(2, Math.floor(P.h / K)));
+  if (T.std < MIN_TEXTURE) {
+    // Nothing there to recognise (a blank field, a flat panel). Following it
+    // would mean following noise; the blur stays where it was drawn.
+    return { version: TRACK_VERSION, at: anchorT, keys: [], held: [], trackable: false, frames: 0 };
+  }
+
+  const all = [{ t: anchorT, x: P.x, y: P.y, state: "seen" }];
+  const span = Math.max(0.001, end - start);
+  let done = 0;
+
+  /** Run one direction; `feed(cb)` delivers (buf, t) in walking order. */
+  async function walk(dir, feed) {
+    const states = [];
+    const step = follower({ T, Tc, TrectLo, TrectHalf, TrectHi, W, H, start: P, R, off, dir, debug: onDebug });
+    step(anchorHi, anchorImg, anchorT, -1);
+    await feed((buf, t) => {
+      const idx = states.length;
+      const r = step(buf, half(buf, W2, H2), t, idx);
+      states.push({ t, x: r.x, y: r.y, state: r.state });
+      for (const u of r.fill || []) {
+        if (states[u.idx]) Object.assign(states[u.idx], { x: u.x, y: u.y, state: u.state });
+      }
+    });
+    all.push(...states);
+  }
+
+  // ── Forward, streamed ──────────────────────────────────────────────────
+  if (end > anchorT + 1e-3) {
+    await walk(1, (take) =>
+      decode(file, {
+        from: anchorT, to: end, W: W2, H: H2,
+        onFrame: (buf, t) => {
+          if (t <= anchorT + 1e-4) return;
+          take(buf, t);
+          done = t - anchorT;
+          onProgress(Math.min(0.98, done / span));
+        },
+      })
+    );
+  }
+
+  // ── Backward, a few seconds at a time ──────────────────────────────────
+  if (start < anchorT - 1e-3) {
+    await walk(-1, async (take) => {
+      let hi = anchorT;
+      while (hi > start + 1e-3) {
+        const lo = Math.max(start, hi - BACK_CHUNK);
+        const chunk = [];
+        await decode(file, {
+          from: lo, to: hi, W: W2, H: H2,
+          onFrame: (buf, t) => {
+            if (t < hi - 1e-4 && t >= lo - 1e-4) chunk.push({ buf, t });
+          },
+        });
+        for (let i = chunk.length - 1; i >= 0; i--) take(chunk[i].buf, chunk[i].t);
+        done += hi - lo;
+        onProgress(Math.min(0.98, done / span));
+        hi = lo;
+      }
+    });
+  }
+
+  all.sort((a, b) => a.t - b.t);
+
+  // ── Keys: only where something changes ────────────────────────────────
+  const keys = [];
+  const held = [];
+  let heldFrom = null;
+  for (const s of all) {
+    const x = +((s.x + off.x) / W).toFixed(5);
+    const y = +((s.y + off.y) / H).toFixed(5);
+    const on = s.state === "gone" ? 0 : 1;
+    const last = keys[keys.length - 1];
+    if (!last || last[3] !== on || Math.abs(last[1] - x) * W > 0.25 || Math.abs(last[2] - y) * H > 0.25) {
+      keys.push([+s.t.toFixed(4), x, y, on]);
+    }
+    if (s.state === "held") {
+      if (heldFrom === null) heldFrom = s.t;
+    } else if (heldFrom !== null) {
+      held.push([+heldFrom.toFixed(3), +s.t.toFixed(3)]);
+      heldFrom = null;
+    }
+  }
+  if (heldFrom !== null) held.push([+heldFrom.toFixed(3), +all[all.length - 1].t.toFixed(3)]);
+
+  onProgress(1);
+  return { version: TRACK_VERSION, at: anchorT, keys, held, trackable: true, frames: all.length };
+}
+
+export default { trackBlur, TRACK_VERSION };

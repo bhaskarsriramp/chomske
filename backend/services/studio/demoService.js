@@ -122,6 +122,14 @@ export async function stableUrl(key, opts) {
   return url;
 }
 
+/** The follows of the blurs the timeline still has; a deleted blur's go unsaid. */
+function followsFor(d) {
+  const all = d.follows || {};
+  const out = {};
+  for (const b of d.timeline?.blurs || []) if (all[b.id]) out[b.id] = all[b.id];
+  return out;
+}
+
 /**
  * What the browser is told about a demo.
  *
@@ -139,6 +147,8 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
     id: String(d._id),
     // The address-bar id (demoSlug.js). The browser opens a demo by this.
     slug: d.slug || "",
+    // Each blur's follow, for the blurs that still exist (follow.mjs).
+    follows: followsFor(d),
     title: d.title || "Untitled recording",
     status: d.status,
     stage: d.stage || "",

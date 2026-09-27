@@ -333,6 +333,17 @@ const StudioDemoSchema = new Schema({
 
   renders: { type: [RenderSchema], default: [] },
 
+  /**
+   * Each blur's FOLLOW, by blur id: where the tracker found what it covers,
+   * frame by frame (services/studio/blurTrack.js, src/components/Studio/
+   * follow.mjs). Beside the timeline rather than in it on purpose: the editor
+   * saves the whole timeline every few seconds and undo swaps whole timelines,
+   * and a follow landing from the worker must not be erased by either. Each
+   * one carries the signature of the exact blur it was made for, and is used
+   * only while that blur still matches it.
+   */
+  follows: { type: Schema.Types.Mixed, default: undefined },
+
   expires_at: { type: Date, default: null, index: true },
   purged: { type: Boolean, default: false },
 

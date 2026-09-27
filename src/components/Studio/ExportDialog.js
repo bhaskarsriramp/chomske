@@ -18,7 +18,7 @@ import { startRender, renderDownloadUrl, deleteRender } from "./studioApi";
 import { Btn, Segmented, Toggle, Icon, Badge } from "./ui";
 import { fmtTime, fmtBytes } from "./model";
 
-export default function ExportDialog({ demo, config, outputSeconds, onClose, onChanged, beforeExport }) {
+export default function ExportDialog({ demo, config, outputSeconds, onClose, onChanged, beforeExport, settling = 0 }) {
   const closeRef = useRef(null);
   const [preset, setPreset] = useState(demo.renders?.[0]?.options?.preset || "youtube");
   const [advanced, setAdvanced] = useState(false);
@@ -212,8 +212,17 @@ export default function ExportDialog({ demo, config, outputSeconds, onClose, onC
             </div>
           )}
 
+          {settling > 0 && (
+            // Exporting now would draw these blurs standing still while what
+            // they cover scrolls away, so it waits the few seconds it takes.
+            <div style={{ padding: "11px 13px", borderRadius: 10, border: "1px solid var(--line)", background: "var(--made-tint)", color: "var(--ink-body)", fontSize: 12.5, lineHeight: 1.5 }}>
+              {settling === 1 ? "A blur is" : `${settling} blurs are`} still being set to follow what{" "}
+              {settling === 1 ? "it covers" : "they cover"}. Export will be ready in a moment.
+            </div>
+          )}
+
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <Btn kind="primary" size="l" onClick={run} disabled={busy} icon={<Icon name="download" size={15} />}>
+            <Btn kind="primary" size="l" onClick={run} disabled={busy || settling > 0} icon={<Icon name="download" size={15} />}>
               {busy ? "Starting…" : `Export · ${cost} credits`}
             </Btn>
             <span style={{ fontSize: 12, color: "var(--ink-mute)" }}>

@@ -36,12 +36,28 @@
  * Mouse and pen only. A finger has no hover to preview with, and a tap that
  * silently created things would be worse than the panel's Add button.
  *
+ * ── IT TAKES Ctrl + CLICK (⌘ + CLICK ON A MAC) ───────────────────────────────
+ * A plain click on a lane only moves the playhead, as it always did. Adding,
+ * and cutting the video, need the modifier held, because a stray click while
+ * reaching for the playhead should never leave a zoom or a cut behind. The
+ * outline still appears on hover, faint and naming the shortcut, and turns
+ * solid while the key is down, so what a click would do is visible before it
+ * is done. On a Mac only ⌘ counts: Ctrl + click there is the right-click menu.
+ *
  * ── THE VIDEO LANE ───────────────────────────────────────────────────────────
  * The recording itself, above the others, drawn as its clips (clips.js).
  * Pointing at a clip offers "Cut here" on a dashed line: a click splits the
  * clip in two there and takes nothing out. A clip's number selects it, which
  * opens the Video tab, where it can be deleted. The red marks between clips
  * are where time was taken out; a click on one puts it back.
+ *
+ * ── TRIMMING A CLIP BY ITS EDGES ─────────────────────────────────────────────
+ * A selected clip grows a handle at each end. Dragging one inward shades what
+ * will come off, in red, and shows on the preview the frame the clip will now
+ * start or end on; dragging outward (only over footage taken out beside it,
+ * see clips.js trimBounds) shades what comes back, in green. Nothing changes
+ * until the handle is let go, so the lanes hold still under the pointer
+ * instead of rippling on every pixel, and the whole drag is one undo step.
  *
  * ── THE WHEEL ZOOMS ──────────────────────────────────────────────────────────
  * Up zooms in and down zooms out, around the moment under the pointer: a mouse
@@ -51,7 +67,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { layout, placedSpans, activeZooms, toSource, mergedCuts, clamp, fmtTime } from "./model";
 import { DEFAULT_LENGTH, MIN_LENGTH } from "./create";
-import { clipsOf, MIN_CLIP } from "./clips";
+import { clipsOf, trimBounds, MIN_CLIP } from "./clips";
 import { Icon } from "./ui";
 
 const LANES = [
@@ -77,6 +93,7 @@ export default function Timeline({
   onRemoveCut,
   onAdd,
   onSplit,
+  onTrim,
   height = 30,
 }) {
   const railRef = useRef(null);
@@ -85,6 +102,24 @@ export default function Timeline({
   // What a click on the empty lane under the pointer would add: { lane, t, end }
   // in output time, or null.
   const [ghost, setGhost] = useState(null);
+  // Whether the add modifier (Ctrl, or ⌘ on a Mac) is held right now, so the
+  // outline can show that a click would act. Read from pointer moves, and from
+  // the key itself so pressing it without moving the mouse arms it too.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Control" || e.key === "Meta") setArmed(e.type === "keydown" && addHeld(e));
+    };
+    const off = () => setArmed(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", off);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", off);
+    };
+  }, []);
   /**
    * ── ZOOM IS WIDTH ──────────────────────────────────────────────────────────
    * 1 fits the whole edit in the space there is. Past that the time area gets
@@ -254,6 +289,49 @@ export default function Timeline({
 
   const endDrag = useCallback(() => setDrag(null), []);
 
+  /* ── Trimming a clip by its edges ─────────────────────────────────────── */
+  // While an edge is held: { clip, side, x0, from, lo, hi, to }, with `from`
+  // the edge when the drag began and `to` where it is now, in recording time,
+  // and [lo, hi] how far it may go (clips.js trimBounds).
+  const [trim, setTrim] = useState(null);
+
+  const beginTrim = useCallback(
+    (clip, side) => (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      const [lo, hi] = trimBounds(tl, clip)[side];
+      const from = side === "start" ? clip.src_start : clip.src_end;
+      setGhost(null);
+      setTrim({ clip, side, x0: e.clientX, from, lo, hi, to: from });
+    },
+    [tl]
+  );
+
+  const moveTrim = useCallback(
+    (e) => {
+      if (!trim) return;
+      const r = railRef.current?.getBoundingClientRect();
+      if (!r?.width) return;
+      const to = clamp(trim.from + ((e.clientX - trim.x0) / r.width) * total, trim.lo, trim.hi);
+      setTrim((t) => (t ? { ...t, to } : t));
+      // Trimming inward, the preview shows the frame the clip will now start
+      // on, or the last one it will end on. Footage being brought back has no
+      // place on the finished video yet, so there is nothing to show for it.
+      const { clip, side } = trim;
+      if (side === "start" ? to >= clip.src_start : to <= clip.src_end) {
+        onSeek(Math.max(0, clip.out_start + (to - clip.src_start) - (side === "end" ? 0.03 : 0)));
+      }
+    },
+    [trim, total, onSeek]
+  );
+
+  const endTrim = useCallback(() => {
+    if (!trim) return;
+    if (Math.abs(trim.to - trim.from) >= 0.01) onTrim?.(trim.clip, trim.side, trim.to);
+    setTrim(null);
+  }, [trim, onTrim]);
+
   /* ── Adding by pointing ───────────────────────────────────────────────── */
   /**
    * Where a new item would go if `lane` were clicked here, or null where there
@@ -315,6 +393,14 @@ export default function Timeline({
 
   const playPct = (time / total) * 100;
 
+  // The selected clip, and where its held edge is on the ruler during a trim.
+  const selClip = selection?.kind === "clip" ? clips.find((c) => c.id === selection.id) || null : null;
+  const trimLive = trim && selClip && trim.clip.id === selClip.id;
+  const trimOrigin = trimLive ? (trim.side === "start" ? selClip.out_start : selClip.out_end) : null;
+  const trimEdge = trimLive ? trimOrigin + (trim.to - trim.from) : null;
+  // Inward makes the clip shorter: a later start, or an earlier end.
+  const trimInward = trimLive ? (trim.side === "start" ? trim.to > trim.from : trim.to < trim.from) : false;
+
   /* ── The playhead can be grabbed ──────────────────────────────────────── */
   const grabHead = useCallback(
     (e) => {
@@ -370,9 +456,9 @@ export default function Timeline({
           <div
             ref={railRef}
             style={{ position: "relative", width: `${zoom * 100}%`, minWidth: "100%" }}
-            onPointerMove={(e) => { moveDrag(e); dragHead(e); }}
-            onPointerUp={() => { endDrag(); dropHead(); }}
-            onPointerCancel={() => { endDrag(); dropHead(); }}
+            onPointerMove={(e) => { moveDrag(e); dragHead(e); moveTrim(e); }}
+            onPointerUp={() => { endDrag(); dropHead(); endTrim(); }}
+            onPointerCancel={() => { endDrag(); dropHead(); setTrim(null); }}
           >
             {/* Ruler */}
             <div
@@ -400,6 +486,20 @@ export default function Timeline({
               ))}
             </div>
 
+            {/* A trim in progress: where the edge is going, and by how much. */}
+            {trimEdge != null && (
+              <span
+                className="st-hover-time"
+                style={{
+                  left: `${(trimEdge / total) * 100}%`,
+                  transform: `translateX(${trimEdge / total < 0.04 ? 0 : trimEdge / total > 0.96 ? -100 : -50}%)`,
+                }}
+              >
+                {fmtTime(clamp(trimEdge, 0, total), true)} · {trimInward ? "−" : "+"}
+                {Math.abs(trim.to - trim.from).toFixed(1)}s
+              </span>
+            )}
+
             {/* Where the pointer is, while it is offering to add something. */}
             {ghost && (
               <>
@@ -425,17 +525,24 @@ export default function Timeline({
               <div
                 key={lane.key}
                 className="st-lane"
-                style={{ height, marginBottom: 6, marginTop: 0, cursor: ghost?.lane === lane.key ? (isVideo ? "pointer" : "copy") : undefined }}
+                style={{
+                  height, marginBottom: 6, marginTop: 0,
+                  cursor: ghost?.lane === lane.key && armed ? (isVideo ? "pointer" : "copy") : undefined,
+                }}
                 onPointerDown={(e) => {
                   if (e.target !== e.currentTarget) return;
-                  const g = canAdd && e.pointerType !== "touch" ? ghostAt(lane.key, e.clientX) : null;
-                  if (g) addGhost(g);
-                  else onSeek(fractionAt(e.clientX) * total);
+                  // Only with the modifier held; a plain click moves the playhead.
+                  const g = canAdd && e.pointerType !== "touch" && addHeld(e) ? ghostAt(lane.key, e.clientX) : null;
+                  if (g) {
+                    e.preventDefault();
+                    addGhost(g);
+                  } else onSeek(fractionAt(e.clientX) * total);
                 }}
                 onPointerMove={(e) => {
+                  if (e.pointerType !== "touch") setArmed(addHeld(e));
                   // Nothing is offered mid-drag, mid-scrub, to a finger, or over
                   // a chip or a cut (the event's target is then that, not the lane).
-                  const off = !canAdd || e.pointerType === "touch" || e.buttons || drag || scrubbing || e.target !== e.currentTarget;
+                  const off = !canAdd || e.pointerType === "touch" || e.buttons || drag || scrubbing || trim || e.target !== e.currentTarget;
                   const next = off ? null : ghostAt(lane.key, e.clientX);
                   setGhost((g) => (g === next || (g && next && g.lane === next.lane && g.t === next.t) ? g : next));
                 }}
@@ -475,9 +582,43 @@ export default function Timeline({
                     );
                   })}
 
+                {/* The selected clip's edges, to drag; and while one is held,
+                    the stretch it will take off (red) or bring back (green). */}
+                {isVideo && selClip && onTrim && (
+                  <>
+                    {trimEdge != null && Math.abs(trim.to - trim.from) >= 0.01 && (
+                      <span
+                        className={`st-trim-zone ${trimInward ? "is-cut" : "is-add"}`}
+                        style={{
+                          left: `${(Math.min(trimEdge, trimOrigin) / total) * 100}%`,
+                          width: `${(Math.abs(trimEdge - trimOrigin) / total) * 100}%`,
+                        }}
+                      />
+                    )}
+                    {["start", "end"].map((side) => {
+                      const held = trimEdge != null && trim.side === side;
+                      const at = held ? trimEdge : side === "start" ? selClip.out_start : selClip.out_end;
+                      return (
+                        <span
+                          key={side}
+                          role="slider"
+                          aria-label={`${side === "start" ? "Start" : "End"} of clip ${selClip.n}`}
+                          aria-valuemin={0}
+                          aria-valuemax={Math.round(total * 10) / 10}
+                          aria-valuenow={Math.round(at * 10) / 10}
+                          title="Drag to trim"
+                          className={`st-trim is-${side}${held ? " is-active" : ""}`}
+                          style={{ left: `${(at / total) * 100}%` }}
+                          onPointerDown={beginTrim(selClip, side)}
+                        />
+                      );
+                    })}
+                  </>
+                )}
+
                 {ghost?.lane === lane.key && (
                   <div
-                    className={`st-ghost${isVideo ? " is-cut" : ""}`}
+                    className={`st-ghost${isVideo ? " is-cut" : ""}${armed ? " is-armed" : ""}`}
                     aria-hidden="true"
                     style={{
                       left: `${(ghost.t / total) * 100}%`,
@@ -491,6 +632,8 @@ export default function Timeline({
                         often narrower than "Add caption", and the outline's
                         width is the promise, so it is not stretched to fit. */}
                     <span className={`st-ghost-tag${ghost.flip ? " is-left" : ""}`} style={{ borderColor: lane.color }}>
+                      <kbd className="st-kbd">{ADD_KEY}</kbd>
+                      <span style={{ color: "var(--ink-mute)", fontWeight: 600 }}>+ click</span>
                       <Icon name={isVideo ? "scissors" : "plus"} size={11} />
                       {isVideo ? "Cut here" : `Add ${NOUN[lane.key]}`}
                     </span>
@@ -623,7 +766,17 @@ const SINGULAR = { zooms: "zoom", blurs: "blur", cues: "cue" };
 const NOUN = { zooms: "zoom", blurs: "blur", cues: "caption" };
 
 /** Pixels the add label needs to the right of the pointer, or it flips left. */
-const TAG_ROOM = 118;
+const TAG_ROOM = 190;
+
+/**
+ * The key held to add or cut from the timeline. ⌘ on a Mac, because Ctrl +
+ * click there opens the right-click menu; Ctrl everywhere else.
+ */
+const IS_MAC =
+  typeof navigator !== "undefined" &&
+  /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || "");
+const ADD_KEY = IS_MAC ? "⌘" : "Ctrl";
+const addHeld = (e) => (IS_MAC ? !!e.metaKey : !!e.ctrlKey);
 
 /** Recording time → output time, snapping a moment inside a cut forward. */
 function outOf(srcT, lay) {
