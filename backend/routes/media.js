@@ -1,8 +1,10 @@
 /**
  * routes/media.js: the HTTP half of LOCAL media storage.
  *
- * Only live when MEDIA_BUCKET is empty. With a bucket, the browser talks to
- * Cloud Storage directly and these answer 404.
+ * Uploads only when MEDIA_BUCKET is empty; with a bucket the browser uploads
+ * to Cloud Storage directly and that route answers 404. Reads (/file/:token)
+ * work in both: with a bucket they are the fallback for when a URL cannot be
+ * signed (services/media/storage.js, "When Google will not sign").
  *
  * Mounted in server.js BEFORE the global rate limiter, on purpose. A 1 GB upload
  * is ~130 chunk requests and a <video> scrubbing through a preview issues a
@@ -20,8 +22,10 @@ const localOnly = (handler) => (req, res, next) => {
   return Promise.resolve(handler(req, res)).catch(next);
 };
 
+const anyStorage = (handler) => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
+
 router.put("/upload/:token", localOnly(handleLocalUpload));
-router.get("/file/:token", localOnly(handleLocalRead));
-router.head("/file/:token", localOnly(handleLocalRead));
+router.get("/file/:token", anyStorage(handleLocalRead));
+router.head("/file/:token", anyStorage(handleLocalRead));
 
 export default router;

@@ -5,7 +5,7 @@
  * exporting cost, and what the browser is told about a demo. Used by the routes
  * and by the job runner, which have to agree on all of it.
  */
-import { readUrl, KEY_ROOT } from "../media/storage.js";
+import { readUrl, isRelayUrl, KEY_ROOT } from "../media/storage.js";
 import { publishUserEvent } from "../newsEvents.js";
 import { layout, drewCounts } from "./timeline.js";
 import { RENDER_ENGINE } from "./exportOptions.js";
@@ -129,7 +129,10 @@ export async function stableUrl(key, opts = {}) {
     job = readUrl(key, { ...rest, expiresSec: URL_LIFE / 1000 })
       .then((url) => {
         const at = Date.now();
-        urlCache.set(key, { url, until: at + URL_LIFE / 2, valid: at + URL_LIFE - 30 * 60 * 1000 });
+        // Served through this server because signing failed: kept only a
+        // little while, so the bucket's own URL comes back once it signs again.
+        const keep = isRelayUrl(url) ? 20 * 60 * 1000 : URL_LIFE / 2;
+        urlCache.set(key, { url, until: at + keep, valid: at + URL_LIFE - 30 * 60 * 1000 });
         if (urlCache.size > 5000) {
           for (const k of urlCache.keys()) {
             urlCache.delete(k);

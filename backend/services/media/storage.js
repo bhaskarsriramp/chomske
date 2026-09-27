@@ -22,6 +22,18 @@
  *   lipi/edit/<user>/<project>/renders/<render>.mp4  exports
  * Everything a project owns shares one prefix, so deleting a project is one call.
  *
+ * ── WHEN GOOGLE WILL NOT SIGN, THIS SERVER SERVES ────────────────────────────
+ * The bucket is private (raw recordings are the unblurred originals), so a
+ * browser only ever reads it through a signed URL. On the VM there is no key
+ * file, and each signature is a call to IAM's signBlob, which can fail — it
+ * has failed for every request at once ("Premature close"). A failed signature
+ * must never become a broken library or editor, so readUrl then hands out the
+ * same kind of link local mode uses, /media/file/<token>, and handleLocalRead
+ * streams that file from the bucket itself, ranges and all. After a failure it
+ * stops asking IAM for SIGN_PAUSE, so a page of thumbnails does not wait on
+ * one doomed call each. Slower than the bucket direct (the bytes pass through
+ * this server), but working.
+ *
  * ── THE BUCKET IS SHARED ─────────────────────────────────────────────────────
  * solosaas-bucket also holds betaFounderProduction's files, the same way the
  * Redis node is shared and every key there carries `hg:`. So every key here
@@ -146,6 +158,12 @@ export async function putFile(localPath, key, contentType) {
 
 /** Tries at signing one URL before giving up (see readUrl). */
 const SIGN_TRIES = 3;
+/** After a signature fails, how long files are served here without asking IAM. */
+const SIGN_PAUSE = 60 * 1000;
+let signPausedUntil = 0;
+
+/** Whether a URL from readUrl is one this server serves (not the bucket direct). */
+export const isRelayUrl = (url) => /\/media\/file\//.test(String(url || ""));
 
 /** A signing failure worth trying again: anything but being told no. */
 function retryableSigning(err) {
@@ -175,19 +193,32 @@ export async function readUrl(key, { baseUrl, filename, contentType, expiresSec 
     // On the VM there is no key file, so every signature is a call to IAM's
     // signBlob over the network, and that call is sometimes cut off mid-reply
     // ("Invalid response body … Premature close"). A dropped connection is
-    // worth another try; a refusal (no permission to sign) is not.
-    for (let attempt = 1; ; attempt++) {
-      try {
-        const [url] = await file.getSignedUrl(opts);
-        return url;
-      } catch (err) {
-        if (attempt >= SIGN_TRIES || !retryableSigning(err)) throw err;
-        await new Promise((r) => setTimeout(r, 200 * 2 ** (attempt - 1) + Math.random() * 150));
+    // worth another try; a refusal (no permission to sign) is not. Either way,
+    // when it cannot be signed the file is served by this server instead
+    // (see the header), rather than the page that wanted it failing.
+    if (Date.now() >= signPausedUntil) {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          const [url] = await file.getSignedUrl(opts);
+          return url;
+        } catch (err) {
+          if (attempt < SIGN_TRIES && retryableSigning(err)) {
+            await new Promise((r) => setTimeout(r, 200 * 2 ** (attempt - 1) + Math.random() * 150));
+            continue;
+          }
+          if (Date.now() >= signPausedUntil) {
+            console.error(`[storage] signing failed, serving files through this server for ${SIGN_PAUSE / 1000}s:`, err.message);
+          }
+          signPausedUntil = Date.now() + SIGN_PAUSE;
+          break;
+        }
       }
     }
   }
   const token = jwt.sign({ k: key, op: "get", ct: contentType, fn: safeName }, secret(), { expiresIn: expiresSec });
-  return `${baseUrl}/media/file/${token}`;
+  // A path when there is no public address set: the browser puts its own API
+  // address in front (studioApi.js abs), which is right behind nginx's /api.
+  return `${baseUrl || ""}/media/file/${token}`;
 }
 
 /**
@@ -300,6 +331,10 @@ export async function handleLocalRead(req, res) {
   const claims = verify(req.params.token, "get");
   if (!claims) return res.status(403).end();
 
+  // With a bucket, only when signing failed (see the header), and only ever
+  // this project's own files: the bucket is shared.
+  if (storageKind() === "gcs") return relayFromBucket(req, res, claims);
+
   const file = localFile(claims.k);
   let size;
   try { size = (await fsp.stat(file)).size; } catch { return res.status(404).end(); }
@@ -327,6 +362,49 @@ export async function handleLocalRead(req, res) {
 
   res.setHeader("Content-Length", size);
   return fs.createReadStream(file).pipe(res);
+}
+
+/** One bucket file, streamed through this server, with ranges for a <video>. */
+async function relayFromBucket(req, res, claims) {
+  if (!String(claims.k || "").startsWith(`${KEY_ROOT}/`)) return res.status(403).end();
+  const file = (await bucket()).file(claims.k);
+  let meta;
+  try {
+    [meta] = await file.getMetadata();
+  } catch {
+    return res.status(404).end();
+  }
+  const size = Number(meta.size) || 0;
+
+  res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Content-Type", claims.ct || meta.contentType || "application/octet-stream");
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  if (claims.fn) res.setHeader("Content-Disposition", `attachment; filename="${claims.fn}"`);
+
+  let start = 0;
+  let end = size - 1;
+  const m = String(req.headers.range || "").match(/^bytes=(\d*)-(\d*)$/);
+  if (m && (m[1] || m[2])) {
+    start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+    end = Math.min(m[1] && m[2] ? Number(m[2]) : size - 1, size - 1);
+    if (start >= size || end < start) {
+      res.setHeader("Content-Range", `bytes */${size}`);
+      return res.status(416).end();
+    }
+    res.status(206);
+    res.setHeader("Content-Range", `bytes ${start}-${end}/${size}`);
+  }
+  res.setHeader("Content-Length", end - start + 1);
+  if (req.method === "HEAD" || size === 0) return res.end();
+
+  // Hash checks only work on whole files; a range is checked by its length.
+  const stream = file.createReadStream({ start, end, validation: false });
+  stream.on("error", (err) => {
+    console.error(`[storage] relay of ${claims.k} failed:`, err.message);
+    res.destroy(err);
+  });
+  req.on("close", () => stream.destroy());
+  return stream.pipe(res);
 }
 
 export default {
