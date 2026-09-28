@@ -21,7 +21,7 @@ import { clipsOf } from "./clips";
 import { applyState, coverage, blurNames } from "./follow.mjs";
 import { cursorLookName, isHex, cursorSize, CURSOR_SIZE_MIN, CURSOR_SIZE_MAX, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR } from "./cursorLook.mjs";
 // Caption colour and size are the script editor's controls, not a second set.
-import { ColorPicker, SizePicker } from "../Edit/captionStyle";
+import { ColorPicker, SizePicker, HexInput } from "../Edit/captionStyle";
 
 const pct = (v) => `${Math.round(v * 100)}%`;
 const secs = (v) => `${v.toFixed(1)}s`;
@@ -533,15 +533,19 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
           <>
             <div>
               <Label>Look</Label>
-              <CaptionLooks value={cap.style} color={cap.color || "#FFFFFF"} onChange={(v) => setCap({ style: v }, "Caption look")} />
+              <CaptionLooks value={cap.style} color={cap.color || "#FFFFFF"} strip={cap.bg} onChange={(v) => setCap({ style: v }, "Caption look")} />
             </div>
             <div>
-              <Label>Colour</Label>
+              <Label>Text colour</Label>
               <ColorPicker
                 value={cap.color || "#FFFFFF"}
                 keyId="all"
                 onChange={(hex, key) => setCap({ color: hex === "#FFFFFF" ? null : hex }, key || "Caption colour")}
               />
+            </div>
+            <div>
+              <Label>Background</Label>
+              <StripPicker value={cap.bg} keyId="all" onChange={(v, key) => setCap({ bg: v }, key || "Caption background")} />
             </div>
             <div>
               <Label>Size</Label>
@@ -634,12 +638,22 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
           <div>
             <Label>Just this line</Label>
             <div style={{ display: "grid", gap: 11, justifyItems: "start" }}>
-              <ColorPicker
-                compact
-                value={current.custom?.color || cap.color || "#FFFFFF"}
-                keyId={current.id}
-                onChange={(hex, key) => setOne({ color: hex }, key || "Line colour")}
-              />
+              <MiniLabel text="Text">
+                <ColorPicker
+                  compact
+                  value={current.custom?.color || cap.color || "#FFFFFF"}
+                  keyId={current.id}
+                  onChange={(hex, key) => setOne({ color: hex }, key || "Line colour")}
+                />
+              </MiniLabel>
+              <MiniLabel text="Background">
+                <StripPicker
+                  compact
+                  value={current.custom?.bg ?? cap.bg}
+                  keyId={current.id}
+                  onChange={(v, key) => setOne({ bg: v }, key || "Line background")}
+                />
+              </MiniLabel>
               <SizePicker
                 compact
                 size={lookOf(current).size}
@@ -653,6 +667,7 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
                 compact
                 value={current.custom?.style || cap.style}
                 color={current.custom?.color || cap.color || "#FFFFFF"}
+                strip={current.custom?.bg ?? cap.bg}
                 onChange={(v) => setOne({ style: v }, "Line look")}
               />
               <Toggle
@@ -679,7 +694,7 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
  * A named list of styles tells a creator nothing; seeing "Sale leak" in Hormozi
  * yellow tells them everything.
  */
-function CaptionLooks({ value, color, onChange, compact = false }) {
+function CaptionLooks({ value, color, strip = null, onChange, compact = false }) {
   return (
     <div
       role="group"
@@ -693,14 +708,15 @@ function CaptionLooks({ value, color, onChange, compact = false }) {
       {CAPTION_STYLES.map((name) => {
         const look = CAPTION_LOOKS[name] || CAPTION_LOOKS.trylipi;
         const on = value === name;
+        // The strip the creator chose, else the look's own (model.js captionStrip).
+        const band = strip === "none" ? null : /^#[0-9a-f]{6}$/i.test(strip || "") ? strip : look.box ? "rgba(0,0,0,.6)" : null;
         const text = {
           fontWeight: look.weight,
           color: look.color === "#fff" ? color : look.color,
           textTransform: look.caps ? "uppercase" : "none",
-          textShadow: look.shadow === "none" ? "none" : look.shadow,
-          background: look.box ? "rgba(0,0,0,.6)" : "transparent",
-          padding: look.box ? "1px 4px" : 0,
-          borderRadius: look.box ? 3 : 0,
+          textShadow: look.shadow === "none" || band ? "none" : look.shadow,
+          background: band || "transparent",
+          padding: band ? "1px 4px" : 0,
           ...(look.stroke ? { WebkitTextStroke: `0.4px ${look.stroke}` } : {}),
         };
         return (
@@ -734,6 +750,75 @@ function CaptionLooks({ value, color, onChange, compact = false }) {
 }
 
 const LOOK_TILE = "linear-gradient(135deg,#6B7F95,#C9A27A)";
+
+/** The strip colours offered first: the ones captions are usually set on. */
+const STRIP_COLORS = [
+  ["#000000", "Black"],
+  ["#3f3f46", "Dark grey"],
+  ["#ffffff", "White"],
+  ["#ffd400", "Yellow"],
+  ["#2563eb", "Blue"],
+  ["#e11d48", "Red"],
+];
+
+/**
+ * The strip behind the captions (model.js captionStrip, render/ass.js): none,
+ * one of a few colours, or any other by its code. `value` null is "the look's
+ * own" (Quiet has a dark one; the rest none), and nothing shows as chosen.
+ * Built like the text colour's picker beside it, so the two read as a pair.
+ */
+function StripPicker({ value, onChange, keyId = "all", compact = false }) {
+  const d = compact ? 16 : 30;
+  const v = String(value || "").toLowerCase();
+  const ring = (on) => (on ? `0 0 0 2px ${compact ? "var(--card)" : "var(--paper)"}, 0 0 0 ${compact ? 3.5 : 4}px var(--ink)` : "none");
+  const dot = { width: d, height: d, borderRadius: "50%", padding: 0, cursor: "pointer", flexShrink: 0, border: "1px solid rgba(0,0,0,.2)" };
+  return (
+    <div
+      role="group"
+      aria-label="Caption background"
+      style={{ display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: compact ? 6 : 10, flexShrink: 0 }}
+    >
+      <button
+        type="button"
+        aria-label="No background"
+        aria-pressed={v === "none"}
+        title="None"
+        onClick={() => onChange("none")}
+        style={{
+          ...dot,
+          background: "linear-gradient(135deg, transparent calc(50% - 1px), #E5484D calc(50% - 1px), #E5484D calc(50% + 1px), transparent calc(50% + 1px)), #fff",
+          boxShadow: ring(v === "none"),
+        }}
+      />
+      {STRIP_COLORS.map(([hex, name]) => (
+        <button
+          key={hex}
+          type="button"
+          aria-label={name}
+          aria-pressed={v === hex}
+          title={name}
+          onClick={() => onChange(hex)}
+          style={{ ...dot, background: hex, boxShadow: ring(v === hex) }}
+        />
+      ))}
+      <HexInput
+        value={/^#[0-9a-f]{6}$/i.test(v) ? v.toUpperCase() : "#000000"}
+        compact={compact}
+        onChange={(hex) => onChange(hex.toLowerCase(), `bg:${keyId}`)}
+      />
+    </div>
+  );
+}
+
+/** A small name over a compact control, where several share one heading. */
+function MiniLabel({ text, children }) {
+  return (
+    <div style={{ display: "grid", gap: 5 }}>
+      <span style={{ fontSize: 11, fontWeight: 650, color: "var(--ink-mute)" }}>{text}</span>
+      {children}
+    </div>
+  );
+}
 const STYLE_LABEL = { trylipi: "Clipo", hormozi: "Bold", apple: "Quiet", minimal: "Minimal", neon: "Neon" };
 /** Caption pixels are measured against a 1080-short-side frame. See render/ass.js. */
 const CAPTION_PX = { min: 12, max: 96 };

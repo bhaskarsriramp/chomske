@@ -284,6 +284,22 @@ export function captionPoint(tl, cue) {
   return { x: 0.5, y: 0.84 };
 }
 
+/** The box Quiet draws behind its text: render/ass.js's &H60000000, black at 62%. */
+const LOOK_BOX = "rgba(0,0,0,.62)";
+
+/**
+ * The strip behind a line's text, as a CSS colour, or null for none: the
+ * line's own (custom.bg), else the track's (captions.bg), else the look's.
+ * "none" takes it away, even from Quiet. The export draws the same
+ * (render/ass.js stripOf).
+ */
+function captionStrip(tl, cue, look) {
+  const v = cue?.custom?.bg ?? tl.captions?.bg ?? null;
+  if (v === "none") return null;
+  if (/^#[0-9a-f]{6}$/i.test(v || "")) return v;
+  return look.box ? LOOK_BOX : null;
+}
+
 /** The look one line is drawn with, after its own overrides. */
 export function captionLook(tl, cue) {
   const cap = tl.captions || {};
@@ -295,6 +311,7 @@ export function captionLook(tl, cue) {
     ...look,
     name,
     color: cue?.custom?.color || cap.color || look.color,
+    strip: captionStrip(tl, cue, look),
     // A fraction of the short side, or an absolute size against the 1080
     // reference the creator's slider is calibrated to.
     frac: px != null ? px / 1080 : (CAPTION_SIZES[sizeKey] || CAPTION_SIZES.m) * look.scale,

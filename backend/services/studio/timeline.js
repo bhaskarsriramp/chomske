@@ -32,7 +32,7 @@
  *   captured [{ t, x, y }]                               where the pointer really was
  *   events   [{ id, t, type, x, y, ... }]                clicks, scrolls, typing
  *   steps    [{ id, start, end, title, detail, importance, camera }]
- *   captions { enabled, style, position, size, px, color, x, y, lang }
+ *   captions { enabled, style, position, size, px, color, bg, x, y, lang }
  *   cues     [{ id, start, end, text, emphasis, custom }]  custom: one line styled alone
  *   blurs    [{ id, start, end, x, y, w, h, kind, strength, label, auto }]
  *   canvas   { aspect, background, padding, radius, shadow }
@@ -137,10 +137,19 @@ export const defaultCaptions = () => ({
   // products' caption controls are the same controls.
   px: null,
   color: null,
+  // The strip behind the text (captionStrip): null for the look's own, "none",
+  // or a colour.
+  bg: null,
   x: null,
   y: null,
   lang: "",
 });
+
+/**
+ * A caption strip setting as stored: "none", a "#rrggbb" colour, or null for
+ * "whatever the look has" (Quiet has a dark box; the others have none).
+ */
+const stripSetting = (v) => (v === "none" ? "none" : /^#[0-9a-f]{6}$/i.test(v || "") ? String(v).toLowerCase() : null);
 
 /**
  * ── NOTHING AROUND THE RECORDING UNLESS SOMEBODY ASKS ────────────────────────
@@ -579,6 +588,7 @@ function cueCustom(c) {
     size: ["s", "m", "l", "xl"].includes(c.size) ? c.size : null,
     px: c.px == null ? null : clamp(num(c.px, 0), 8, 96),
     color: /^#[0-9a-f]{6}$/i.test(c.color || "") ? c.color : null,
+    bg: stripSetting(c.bg),
     x: c.x == null ? null : round4(frac(c.x, 0.5)),
     y: c.y == null ? null : round4(frac(c.y, 0.84)),
     bold: c.bold == null ? null : !!c.bold,
@@ -902,6 +912,7 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     size: pick(cap.size, ["s", "m", "l", "xl"], "m"),
     px: cap.px == null ? null : clamp(num(cap.px, 0), 8, 96),
     color: /^#[0-9a-f]{6}$/i.test(cap.color || "") ? cap.color : null,
+    bg: stripSetting(cap.bg),
     x: cap.x == null ? null : round4(frac(cap.x, 0.5)),
     y: cap.y == null ? null : round4(frac(cap.y, 0.84)),
     lang: text(cap.lang, 12),

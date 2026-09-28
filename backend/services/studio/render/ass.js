@@ -134,6 +134,26 @@ const assColor = (hex) => {
   const h = (m ? m[1] : "FFFFFF").toUpperCase();
   return `&H${h.slice(4, 6)}${h.slice(2, 4)}${h.slice(0, 2)}&`;
 };
+/** ...and as a style row writes it, &HAABBGGRR, opaque. */
+const rowColor = (hex) => `&H00${assColor(hex).slice(2, -1)}`;
+
+/**
+ * ── THE STRIP BEHIND THE TEXT ────────────────────────────────────────────────
+ * A band of solid colour behind a caption, so it reads over whatever the video
+ * is showing: the line's own (cue.custom.bg), else the track's (captions.bg),
+ * else the look's. "none" takes the band away, even from Quiet, which has one
+ * of its own. The same choice as the editor's preview (model.js captionLook).
+ *
+ * libass draws it as BorderStyle 3, an opaque box in the outline colour, the
+ * outline's width out from the text all round. BorderStyle is a property of
+ * the style row, so each look-and-strip in use gets a row of its own.
+ */
+const stripOf = (cap, custom) => {
+  const v = custom?.bg ?? cap.bg ?? null;
+  return v === "none" || (v && HEX.test(v)) ? v : null;
+};
+/** How far the strip reaches past the text, as a fraction of the size. */
+const STRIP_PAD = 0.26;
 
 function familyFor(word) {
   for (const [re, family] of SCRIPT_FONTS) if (re.test(word)) return family;
@@ -155,7 +175,7 @@ function fontsFor(text) {
  * because a per-glyph fallback shapes without the neighbouring letters. Speech
  * switches language at word boundaries, so the face does too.
  */
-function cueText(cue, style, px, custom = null) {
+function cueText(cue, style, px, custom = null, base = "&HFFFFFF&") {
   const hits = new Set(
     (cue.emphasis || []).flatMap((e) => String(e).toLowerCase().split(/\s+/)).filter(Boolean)
   );
@@ -183,7 +203,10 @@ function cueText(cue, style, px, custom = null) {
 
     if (bare && hits.has(bare)) {
       const big = style.emphasisScale !== 1 ? `\\fs${Math.round(px * style.emphasisScale)}` : "";
-      out += `{\\c${accent}${big}}${escape(word)}{\\c&HFFFFFF&${style.emphasisScale !== 1 ? `\\fs${px}` : ""}}`;
+      // Back to the line's own colour after it, not to white: a line set in
+      // dark text on a yellow strip went white after its first emphasised
+      // word and vanished into the strip.
+      out += `{\\c${accent}${big}}${escape(word)}{\\c${base}${style.emphasisScale !== 1 ? `\\fs${px}` : ""}}`;
     } else {
       out += escape(word);
     }
@@ -226,10 +249,15 @@ export function buildAss(tl, { width, height }) {
   // ── ONE ASS STYLE PER LOOK IN USE ────────────────────────────────────────
   // Font size, colour and position are all settable per line with an inline
   // tag. BorderStyle is NOT — an opaque box behind the text versus an outline
-  // is a property of the style row — so a line that overrides its look needs a
-  // style row of its own. Only the looks actually used are emitted.
-  const looks = new Set([trackStyle]);
-  for (const c of cues) if (c.custom?.style && STYLES[c.custom.style]) looks.add(c.custom.style);
+  // is a property of the style row — so a line that overrides its look, or
+  // its strip, needs a style row of its own. Only the ones used are emitted.
+  const rowName = (name, strip) => `Cap_${name}${strip ? `_${strip === "none" ? "none" : strip.slice(1).toLowerCase()}` : ""}`;
+  const rows = new Map([[rowName(trackStyle, stripOf(cap, null)), [trackStyle, stripOf(cap, null)]]]);
+  for (const c of cues) {
+    const name = c.custom?.style && STYLES[c.custom.style] ? c.custom.style : trackStyle;
+    const strip = stripOf(cap, c.custom);
+    rows.set(rowName(name, strip), [name, strip]);
+  }
 
   const lines = [
     "[Script Info]",
@@ -243,11 +271,28 @@ export function buildAss(tl, { width, height }) {
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
   ];
-  for (const name of looks) {
+  for (const [row, [name, strip]] of rows) {
     const st = STYLES[name];
     const px = name === trackStyle ? trackPx : sizeOf(name, cap.size, cap.px);
+    let { colours, border, outline, shadow } = st;
+    if (strip && strip !== "none") {
+      // The strip: a box in its colour (the outline colour), and no shadow.
+      const [primary, secondary] = colours.split(",");
+      colours = [primary, secondary, rowColor(strip), rowColor(strip)].join(",");
+      border = 3;
+      outline = STRIP_PAD;
+      shadow = 0;
+    } else if (strip === "none" && st.border === 3) {
+      // A boxed look with its box taken away: a thin dark edge, as Minimal has,
+      // so white text still has something to stand on.
+      const [primary, secondary] = colours.split(",");
+      colours = [primary, secondary, STYLES.minimal.colours.split(",")[2], STYLES.minimal.colours.split(",")[3]].join(",");
+      border = 1;
+      outline = STYLES.minimal.outline;
+      shadow = STYLES.minimal.shadow;
+    }
     lines.push(
-      `Style: Cap_${name},${LATIN[0]},${px},${st.colours},-1,0,0,0,100,100,${st.caps ? 1 : 0},0,${st.border},${Math.max(1, Math.round(px * st.outline))},${Math.round(px * st.shadow)},5,${edge},${edge},0,1`
+      `Style: ${row},${LATIN[0]},${px},${colours},-1,0,0,0,100,100,${st.caps ? 1 : 0},0,${border},${Math.max(1, Math.round(px * outline))},${Math.round(px * shadow)},5,${edge},${edge},0,1`
     );
   }
   lines.push("", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
@@ -281,7 +326,7 @@ export function buildAss(tl, { width, height }) {
     // as a burned-in timecode; 90 milliseconds is enough to look placed and
     // short enough that nobody waits for it.
     lines.push(
-      `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},Cap_${styleName},,0,0,0,,{\\fad(90,90)}{\\an5\\pos(${pos.x},${pos.y})${over.join("")}}${cueText(cue, style, px, custom)}`
+      `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},${rowName(styleName, stripOf(cap, custom))},,0,0,0,,{\\fad(90,90)}{\\an5\\pos(${pos.x},${pos.y})${over.join("")}}${cueText(cue, style, px, custom, assColor(custom?.color || cap.color || "#FFFFFF"))}`
     );
   }
 

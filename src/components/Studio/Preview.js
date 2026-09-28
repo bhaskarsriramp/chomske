@@ -646,9 +646,11 @@ function CaptionLine({ tl, cue, frame, onChange, selected, onSelect }) {
         top: `${pt.y * 100}%`,
         transform: "translate(-50%,-50%)",
         maxWidth: "84%",
-        padding: look.box ? `${size * 0.26}px ${size * 0.5}px` : 0,
-        borderRadius: look.box ? size * 0.3 : 0,
-        background: look.box ? "rgba(0,0,0,.42)" : "transparent",
+        // The strip, drawn the way libass draws it in the export: square, the
+        // text's line box and about a quarter of the size either side.
+        padding: look.strip ? `${size * 0.08}px ${size * 0.27}px` : 0,
+        borderRadius: 0,
+        background: look.strip || "transparent",
         fontSize: size,
         fontWeight: look.weight,
         lineHeight: 1.22,
@@ -656,8 +658,9 @@ function CaptionLine({ tl, cue, frame, onChange, selected, onSelect }) {
         textAlign: "center",
         color: look.color,
         textTransform: look.caps ? "uppercase" : "none",
-        textShadow: look.shadow === "none" ? "none" : look.shadow,
-        WebkitTextStroke: look.stroke ? `${Math.max(1, size * 0.045)}px ${look.stroke}` : undefined,
+        // On a strip the export draws no outline and no shadow: the strip is them.
+        textShadow: look.strip || look.shadow === "none" ? "none" : look.shadow,
+        WebkitTextStroke: look.stroke && !look.strip ? `${Math.max(1, size * 0.045)}px ${look.stroke}` : undefined,
         paintOrder: "stroke fill",
         cursor: onChange ? "move" : "default",
         outline: selected ? "1.5px dashed rgba(255,255,255,.55)" : "none",
