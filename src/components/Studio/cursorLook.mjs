@@ -6,7 +6,10 @@
  * file is an export nobody previewed.
  *
  * Three looks: Dark, the default; Light; and the creator's own colour
- * (`color`), outlined in whichever of white or near-black stands out from it.
+ * (`color`), all of it that colour, outline included (the creator's call:
+ * an orange pointer with a black border read as not quite the colour picked).
+ * Only the lines between the hand's fingers differ, a deeper shade of it, or
+ * the hand would be a flat blob.
  * A demo may still carry a look that no longer exists: "system" was the light
  * arrow, and ring, dot and none draw as the default.
  *
@@ -16,6 +19,13 @@
 export const CURSOR_LOOKS = ["dark", "light", "custom"];
 export const DEFAULT_CURSOR_COLOR = "#3b82f6";
 export const DEFAULT_RIPPLE_COLOR = "#ffffff";
+/**
+ * How big the drawn pointer is, as a multiple of the one in the recording,
+ * when the creator has not chosen: 1.8 (the creator's call, 2026-09-28; it
+ * was 1.35). Larger than 1 on purpose: ours has to cover the one burnt into
+ * the recording.
+ */
+export const DEFAULT_CURSOR_SIZE = 1.8;
 
 const INK = "#18181b";
 const WHITE = "#ffffff";
@@ -36,6 +46,13 @@ function luminance(hex) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+/** The colour moved `k` of the way towards black (k > 0) or white (k < 0). */
+function shade(hex, k) {
+  const to = k > 0 ? 0 : 255;
+  const a = Math.abs(k);
+  return "#" + rgbOf(hex).map((c) => Math.round(c + (to - c) * a).toString(16).padStart(2, "0")).join("");
+}
+
 /** Which of the three looks a cursor's `theme` means. */
 export function cursorLookName(theme) {
   if (theme === "light" || theme === "system") return "light";
@@ -43,15 +60,19 @@ export function cursorLookName(theme) {
   return "dark";
 }
 
-/** The pointer's { fill, line }. */
+/**
+ * The pointer's { fill, line, detail }: its body, its outline, and the lines
+ * between the hand's fingers.
+ */
 export function cursorColors(cur) {
   const look = cursorLookName(cur?.theme);
-  if (look === "light") return { fill: WHITE, line: INK };
+  if (look === "light") return { fill: WHITE, line: INK, detail: INK };
   if (look === "custom") {
-    const fill = isHex(cur?.color) ? cur.color : DEFAULT_CURSOR_COLOR;
-    return { fill, line: luminance(fill) > 0.5 ? INK : WHITE };
+    const fill = isHex(cur?.color) ? cur.color.toLowerCase() : DEFAULT_CURSOR_COLOR;
+    // Deeper for most colours; lighter for one too dark to go deeper.
+    return { fill, line: fill, detail: luminance(fill) < 0.04 ? shade(fill, -0.45) : shade(fill, 0.45) };
   }
-  return { fill: INK, line: WHITE };
+  return { fill: INK, line: WHITE, detail: WHITE };
 }
 
 /** The ripple's colour as "r, g, b", for an rgba() carrying the ripple's own fade. */
@@ -119,7 +140,7 @@ export function traceHandDetail(ctx, s) {
 }
 
 const cursorLook = {
-  CURSOR_LOOKS, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR,
+  CURSOR_LOOKS, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR, DEFAULT_CURSOR_SIZE,
   isHex, cursorLookName, cursorColors, rippleRgb, traceHand, traceHandDetail,
 };
 export default cursorLook;

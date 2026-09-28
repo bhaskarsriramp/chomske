@@ -41,7 +41,7 @@ import { createCanvas } from "@napi-rs/canvas";
 import { ffmpegFromFrames } from "../../media/ffmpeg.js";
 import { cursorAt, layout, drawnTrack, EASE } from "../timeline.js";
 import { cameraAtOutput } from "./camera.js";
-import { cursorColors, rippleRgb, traceHand, traceHandDetail } from "../../../../src/components/Studio/cursorLook.mjs";
+import { cursorColors, rippleRgb, traceHand, traceHandDetail, DEFAULT_CURSOR_SIZE } from "../../../../src/components/Studio/cursorLook.mjs";
 
 /** How long a click ripple lives. */
 const RIPPLE = 0.5;
@@ -207,7 +207,7 @@ function drawCursor(ctx, pt, cam, cur, look, basePx, shape) {
   // held at a constant size inside a 2× zoom sits in the middle of a pointer
   // twice its size, which looks exactly like the bug it is.
   const zoom = clamp(1 / cam.w, 1, 3);
-  const size = basePx * (cur.size || 1.35) * Math.min(zoom, 2.2);
+  const size = basePx * (cur.size || DEFAULT_CURSOR_SIZE) * Math.min(zoom, 2.2);
 
   ctx.save();
   ctx.translate(pt.x, pt.y);
@@ -300,6 +300,7 @@ function drawHand(ctx, s, look) {
   ctx.lineWidth = Math.max(1, s * 0.055);
   ctx.stroke();
   // The lines between the fingers, a little finer than the outline.
+  ctx.strokeStyle = look.detail;
   ctx.lineWidth = Math.max(0.8, s * 0.04);
   traceHandDetail(ctx, s);
 }

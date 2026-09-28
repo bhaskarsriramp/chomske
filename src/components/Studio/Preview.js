@@ -33,7 +33,7 @@ import {
 import { useBox, Icon } from "./ui";
 import Skeleton from "../Shell/Skeleton";
 import { followFor, followAt, applyState, blurCorner } from "./follow.mjs";
-import { cursorColors, rippleRgb, traceHand, traceHandDetail } from "./cursorLook.mjs";
+import { cursorColors, rippleRgb, traceHand, traceHandDetail, DEFAULT_CURSOR_SIZE } from "./cursorLook.mjs";
 
 /** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
@@ -500,9 +500,9 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
   if (x < d.dx - 60 || y < d.dy - 60 || x > d.dx + d.dw + 60 || y > d.dy + d.dh + 60) return;
 
   const zoom = clamp(1 / cam.w, 1, 3);
-  const s = Math.max(22, Number(cur?.captured_px) || 22) * (d.dw / srcW) * (cur?.size || 1.35) * Math.min(zoom, 2.2);
+  const s = Math.max(22, Number(cur?.captured_px) || 22) * (d.dw / srcW) * (cur?.size || DEFAULT_CURSOR_SIZE) * Math.min(zoom, 2.2);
   // Dark, Light or the creator's colour, as the export draws it.
-  const { fill, line } = cursorColors(cur);
+  const { fill, line, detail } = cursorColors(cur);
 
   ctx.save();
   ctx.translate(x, y);
@@ -538,6 +538,7 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     ctx.strokeStyle = line;
     ctx.stroke();
     ctx.lineCap = "round";
+    ctx.strokeStyle = detail;
     ctx.lineWidth = Math.max(0.8, s * 0.04);
     traceHandDetail(ctx, s);
   } else {
