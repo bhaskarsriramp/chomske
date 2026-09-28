@@ -574,12 +574,26 @@ const _levelFor = new Map();
 const LEVELS = ["MINIMAL", "LOW"]; // as the SDK spells them (ThinkingLevel)
 const THINK_ROOM = 4096;
 
+/**
+ * ── WHAT IS ALREADY KNOWN IS NOT LEARNED AGAIN ON EVERY START ────────────────
+ * Learning the above cost a wasted request and two warnings after every
+ * restart. The model production runs on is known, measured against AI Studio
+ * on 2026-09-28: gemini-3.8-flash takes thinkingBudget 0 and thinks anyway
+ * (93 tokens on a one-line question), refuses thinkingLevel MINIMAL (400
+ * "Thinking level MINIMAL is not supported for this model"), and thinks least
+ * at LOW (65 tokens). So the gemini-3 family starts at LOW, with the room. A
+ * member that turns out to differ is still caught by the learning below.
+ */
+const GEMINI_3 = /^gemini-3/i;
+const thinksAnyway = (model) => _thinksAnyway.has(model) || GEMINI_3.test(model);
+const levelFor = (model) => (_levelFor.has(model) ? _levelFor.get(model) : GEMINI_3.test(model) ? "LOW" : LEVELS[0]);
+
 function configFor(model, config) {
   if (config.thinkingConfig?.thinkingBudget !== 0) return config;
-  if (!_noZeroThinking.has(model) && !_thinksAnyway.has(model)) return config;
+  if (!_noZeroThinking.has(model) && !thinksAnyway(model)) return config;
   const { thinkingConfig, ...rest } = config;
   const out = { ...rest, maxOutputTokens: num(rest.maxOutputTokens, 8192) + THINK_ROOM };
-  const level = _levelFor.has(model) ? _levelFor.get(model) : LEVELS[0];
+  const level = levelFor(model);
   if (level) out.thinkingConfig = { thinkingLevel: level };
   return out;
 }
@@ -621,7 +635,7 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
       use = configFor(model, config);
       const res = await client.models.generateContent({ model, contents, config: use });
       const u = res?.usageMetadata || {};
-      if (config.thinkingConfig?.thinkingBudget === 0 && !_thinksAnyway.has(model) && num(u.thoughtsTokenCount) > 0) {
+      if (config.thinkingConfig?.thinkingBudget === 0 && !thinksAnyway(model) && num(u.thoughtsTokenCount) > 0) {
         _thinksAnyway.add(model);
         console.warn(`[ai] ${model} thinks even when asked not to (${num(u.thoughtsTokenCount)} tokens); from now on it gets the least thinking it allows and ${THINK_ROOM} more tokens of room`);
       }
@@ -655,7 +669,7 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
      */
     const tried = use?.thinkingConfig?.thinkingLevel;
     if (tried && refusesLevel(failed)) {
-      const current = _levelFor.has(model) ? _levelFor.get(model) : LEVELS[0];
+      const current = levelFor(model);
       if (current === tried) {
         const i = LEVELS.indexOf(tried);
         const after = i >= 0 && i + 1 < LEVELS.length ? LEVELS[i + 1] : null;

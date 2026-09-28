@@ -34,10 +34,13 @@ const f3 = (v) => (v == null || !Number.isFinite(+v) ? "x" : (Math.round(+v * 1e
  * The tracker a follow must come from to be used. Raised when the tracker
  * changes what it gets right, so a blur applied by an older one shows as not
  * applied (one click to apply again) instead of carrying its mistakes on:
- * 4 follows zoom, and never moves to a different copy of the same text.
+ * 4 follows zoom, and never moves to a different copy of the same text;
+ * 5 lets go of a lost blur the moment what is under it is not the secret (a
+ * fast scroll, a page still loading or navigated away from used to leave it
+ * sitting over whatever was there).
  * The backend's tracker stamps its follows with this same number.
  */
-export const FOLLOW_VERSION = 4;
+export const FOLLOW_VERSION = 5;
 
 /**
  * How round a blur's corners are, in the same pixels as its w and h: 16 for

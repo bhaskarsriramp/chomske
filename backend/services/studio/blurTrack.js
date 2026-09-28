@@ -39,9 +39,14 @@
  *           edge — carrying a blur across the middle of the screen on a guess
  *           is how it ends up somewhere the secret is not.
  *   gone    entirely off the frame. Nothing to cover; not drawn.
- *   held    lost for any other reason: a dialog over it, it got highlighted,
- *           a tooltip sat on it. The blur stays exactly where it was — it fails
- *           closed — and the span is reported so the editor can ask for a look.
+ *   held    lost, but still there: a menu over half of it, the pointer on it,
+ *           selected for copying, a page fading out. The blur stays exactly
+ *           where it was, for as long as what is under it is still the secret
+ *           (HOLD_PRESENT) — and not a frame longer. It used to hold on
+ *           regardless, and a page scrolled fast (a whole screen between two
+ *           frames 0.08 s apart), one still loading, or one navigated away
+ *           from had the blur sitting over whatever was there instead, while
+ *           the secret itself was off the screen or not drawn yet.
  *
  * Held has an end. A blur follows its secret for the whole recording, so when
  * the creator goes to another page, holding would leave a box over that page
@@ -211,6 +216,15 @@ const PAGE_SAME = 0.4;
  */
 const NEAR_SAME = 0.6;
 const GONE_ID = 0.5;
+/**
+ * Held only while the secret is still under the blur: the best of the whole
+ * of its text and each half alone, either way round (see presence). Measured
+ * over six recordings, 2026-09-28: every hold over something else scored
+ * 0.52 or less (a page scrolled away 0.40-0.52, pages loading or navigated
+ * to 0-0.35), every hold over the secret 0.89 or more (a page crossfading
+ * out with the card number still showing: its left half 0.96, 0.89).
+ */
+const HOLD_PRESENT = 0.65;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -516,6 +530,18 @@ function resample(img, iw, ih, x0, y0, rw, rh, ow, oh) {
   return out;
 }
 
+/** A template's left and right halves, each null when too plain to recognise. */
+function halvesOf(T) {
+  const lw = Math.floor(T.w / 2);
+  return [templateOf(T.t, T.w, 0, 0, lw, T.h), templateOf(T.t, T.w, lw, 0, T.w - lw, T.h)]
+    .map((p) => (p.w > 2 && p.std >= MIN_TEXTURE ? p : null));
+}
+
+/** The same template with light and dark swapped: selected text, white on blue. */
+function inverted(T) {
+  return T && { ...T, t: T.t.map((v) => 255 - v) };
+}
+
 /** A template from resampled pixels: the same shape templateOf makes. */
 function asTemplate(t, w, h) {
   let s = 0;
@@ -737,6 +763,36 @@ function follower({ tplAt, W, H, c0, dir, debug = null }) {
     return null;
   }
 
+  /**
+   * How much of the blurred text is still where the blur is (HOLD_PRESENT), at
+   * the identity size with a few pixels of give: the best of the whole of it
+   * and each half on its own, since a menu or a tooltip over half of it
+   * leaves the other half plainly itself; and either way round, since text
+   * selected to be copied is light on dark and scores as strongly negative.
+   */
+  function presence(f, cc, kk) {
+    const S = tplAt(kk);
+    if (!S.hold) {
+      const [l, r] = halvesOf(S.TrectHi);
+      const lw = Math.floor(S.TrectHi.w / 2);
+      S.hold = [[S.TrectHi, 0], [l, 0], [r, lw]]
+        .filter(([T]) => T)
+        .flatMap(([T, dx]) => [[T, dx], [inverted(T), dx]]);
+    }
+    const x = (cc.x - S.rw / 2) * HI;
+    const y = (cc.y - S.rh / 2) * HI;
+    let best = -1;
+    for (const [T, dx] of S.hold) best = Math.max(best, search(f.hi, W * HI, H * HI, T, x + dx, y, 4, 4).s);
+    return best;
+  }
+
+  /** Held where it is, or gone: whether the secret is still under the blur. */
+  function holdOrGone(f) {
+    const p = presence(f, c, k);
+    debug?.({ at: f.t, hold: +p.toFixed(3) });
+    return p >= HOLD_PRESENT ? "held" : "gone";
+  }
+
   /** Snap a moved centre to the original patch, when it is there to snap to. */
   function verify(img, cc, kk) {
     const S = tplAt(kk);
@@ -832,7 +888,7 @@ function follower({ tplAt, W, H, c0, dir, debug = null }) {
             c = { x: carry.c.x + vel.x * (t - carry.t), y: carry.c.y + vel.y * (t - carry.t) };
             if (!onFrame(c, k)) state = "gone";
           } else {
-            state = "held";
+            state = holdOrGone(f);
           }
         }
       }
@@ -842,6 +898,8 @@ function follower({ tplAt, W, H, c0, dir, debug = null }) {
         if (!onFrame(c, k)) state = "gone";
         else if (Math.abs(t - carry.t) > CARRY_MAX) state = "held";
       }
+      // Held only while it is still there, checked on every frame.
+      if (state === "held") state = holdOrGone(f);
       const tiny = shrink(img, W, H, 8).data;
       // Held on a screen that is no longer the one it was on, over something
       // that is not it: the page changed. Let go, and keep looking. The
@@ -1030,7 +1088,10 @@ export async function trackBlur(file, { rect, at, start, end, sourceWidth, sourc
     const on = st.state === "gone" ? 0 : 1;
     const last = keys[keys.length - 1];
     if (!last || last[3] !== on || last[4] !== sc || Math.abs(last[1] - x) * W > 0.25 || Math.abs(last[2] - y) * H > 0.25) {
-      keys.push([+st.t.toFixed(4), x, y, on, sc]);
+      // Rounded down: a key a fraction of a millisecond after its own frame
+      // would leave that frame showing the step before (0.58 s of it, on a
+      // recording whose next frame came that late).
+      keys.push([Math.floor(st.t * 1e4) / 1e4, x, y, on, sc]);
     }
     if (st.state === "held") {
       if (heldFrom === null) heldFrom = st.t;
