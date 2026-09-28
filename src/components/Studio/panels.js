@@ -13,12 +13,13 @@
  * from a panel, from a drag on the preview, from the timeline, or from applying
  * one of the reviewer's suggestions, without four code paths.
  */
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Empty, Icon } from "./ui";
 import { fmtTime, clamp, layout, mergedCuts, placedSpans, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
 import { create } from "./create";
 import { clipsOf } from "./clips";
 import { applyState, coverage, blurNames } from "./follow.mjs";
+import { cursorLookName, isHex, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR } from "./cursorLook.mjs";
 // Caption colour and size are the script editor's controls, not a second set.
 import { ColorPicker, SizePicker } from "../Edit/captionStyle";
 
@@ -741,111 +742,169 @@ const CAPTION_PX = { min: 12, max: 96 };
    Cursor
    ──────────────────────────────────────────────────────────────────────────── */
 
-const CURSOR_MODE_HINT = {
-  intent: "Built from the clicks in the recording: it rests on each control, travels to the next and arrives just before the press. Steadier than a real hand, and the pointer in the recording is reconstructed away underneath it.",
-  recorded: "The pointer path recovered from the recording, smoothed. Use this when a demo is mostly scrolling or dragging, which a composed path does not describe.",
-};
-
+/**
+ * The drawn pointer, its click ripple and the path as recorded are not
+ * choices (2026-09-28): every demo has all three, so what is left here is how
+ * they look. The same colours are drawn in the preview and the export
+ * (cursorLook.mjs).
+ */
 export function CursorPanel({ tl, edit }) {
   const cur = tl.cursor || {};
   const points = tl.track?.length || 0;
-  const clicks = (tl.events || []).filter((e) => e.type === "click" || e.type === "dblclick").length;
+  const set = (patch, label) => edit({ cursor: { ...cur, ...patch } }, label);
+  const ripple = (
+    <div>
+      <Label>Click ripple</Label>
+      <ColorRow
+        label="Ripple"
+        value={isHex(cur.ripple_color) ? cur.ripple_color : DEFAULT_RIPPLE_COLOR}
+        presets={RIPPLE_COLORS}
+        onChange={(c) => set({ ripple_color: c }, "Ripple colour")}
+      />
+    </div>
+  );
 
   return (
     <Panel title="Cursor">
       {points === 0 ? (
-        <Empty icon="cursor" title="No pointer was recovered">
-          The pointer is read back out of the recording's own pixels, and this one was too busy to read — a full-screen
-          video or a constantly repainting page. Zooms and annotations still work.
-        </Empty>
+        <>
+          <Empty icon="cursor" title="No pointer was recovered">
+            The pointer is read back out of the recording's own pixels, and this one was too busy to read — a full-screen
+            video or a constantly repainting page. Zooms and annotations still work.
+          </Empty>
+          {ripple}
+        </>
       ) : (
         <>
-          <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--ink-mute)", marginTop: -4 }}>
-            {clicks} click{clicks === 1 ? "" : "s"} detected, {points.toLocaleString()} points in the path.
-          </div>
           <div>
-            <Label>Path</Label>
-            <Segmented
-              full
-              size="xs"
-              value={cur.mode === "intent" ? "intent" : "recorded"}
-              onChange={(v) => edit({ cursor: { ...cur, mode: v } }, v === "intent" ? "Composed pointer" : "Recorded pointer")}
-              options={[
-                { value: "intent", label: "Composed" },
-                { value: "recorded", label: "As recorded" },
-              ]}
-            />
-            <div style={{ fontSize: 11.5, lineHeight: 1.5, color: "var(--ink-mute)", marginTop: 6 }}>
-              {CURSOR_MODE_HINT[cur.mode === "intent" ? "intent" : "recorded"]}
-            </div>
+            <Label>Look</Label>
+            <CursorLook cur={cur} onChange={set} />
           </div>
-          <Toggle
-            label="Draw a clean cursor"
-            hint="A drawn pointer over the captured one, so it stays sharp inside a zoom."
-            checked={cur.enabled !== false}
-            onChange={(v) => edit({ cursor: { ...cur, enabled: v } }, v ? "Cursor on" : "Cursor off")}
+          <Slider
+            label="Size"
+            min={0.8}
+            max={2.2}
+            step={0.05}
+            value={cur.size ?? 1.35}
+            onChange={(v) => set({ size: v }, "Cursor size")}
+            format={(v) => `${v.toFixed(2)}×`}
+            hint={
+              (cur.size ?? 1.35) < 1.15
+                ? "Below about 1.2× the captured pointer shows from underneath the drawn one. It cannot be erased from the recording."
+                : undefined
+            }
           />
-          {cur.enabled !== false && (
-            <>
-              <div>
-                <Label>Look</Label>
-                <Segmented
-                  full
-                  size="xs"
-                  value={cur.theme}
-                  onChange={(v) => edit({ cursor: { ...cur, theme: v } }, "Cursor look")}
-                  options={[
-                    { value: "light", label: "Light" },
-                    { value: "dark", label: "Dark" },
-                    { value: "ring", label: "Ring" },
-                    { value: "dot", label: "Dot" },
-                  ]}
-                />
-              </div>
-              <Slider
-                label="Size"
-                min={0.8}
-                max={2.2}
-                step={0.05}
-                value={cur.size ?? 1.35}
-                onChange={(v) => edit({ cursor: { ...cur, size: v } }, "Cursor size")}
-                format={(v) => `${v.toFixed(2)}×`}
-                hint={
-                  (cur.size ?? 1.35) < 1.15
-                    ? "Below about 1.2× the captured pointer shows from underneath the drawn one. It cannot be erased from the recording."
-                    : undefined
-                }
-              />
-              <Slider
-                label="Glow"
-                min={0}
-                max={1}
-                step={0.05}
-                value={cur.glow ?? 0.35}
-                onChange={(v) => edit({ cursor: { ...cur, glow: v } }, "Cursor glow")}
-                format={pct}
-              />
-              <Slider
-                label="Trail"
-                min={0}
-                max={1}
-                step={0.05}
-                value={cur.trail ?? 0}
-                onChange={(v) => edit({ cursor: { ...cur, trail: v } }, "Cursor trail")}
-                format={(v) => (v === 0 ? "Off" : pct(v))}
-                hint="Reads as speed on a fast move and as a mess on a slow one. Most demos are slow moves."
-              />
-              <Toggle
-                label="Ripple on click"
-                hint="A click is invisible in a screen recording — the button changes for eighty milliseconds and the viewer misses it."
-                checked={cur.ripple !== false}
-                onChange={(v) => edit({ cursor: { ...cur, ripple: v } }, "Click ripple")}
-              />
-            </>
-          )}
+          <Slider
+            label="Glow"
+            min={0}
+            max={1}
+            step={0.05}
+            value={cur.glow ?? 0.35}
+            onChange={(v) => set({ glow: v }, "Cursor glow")}
+            format={pct}
+          />
+          {ripple}
         </>
       )}
     </Panel>
+  );
+}
+
+const RIPPLE_COLORS = ["#ffffff", "#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7"];
+/** The colour wheel's face: any colour, from the system's own picker. */
+const WHEEL = "conic-gradient(#f5484d, #f5c542, #4cd07d, #3ba7f5, #a064f5, #f5484d)";
+/** An invisible colour input laid over its tile, so a click on the tile opens the picker. */
+const PICKER_INPUT = { position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", padding: 0, border: 0 };
+
+/**
+ * Dark (the default), Light, or any colour. Styled as Segmented, which it
+ * cannot be: its third choice is the system colour picker, opened by a click
+ * on it.
+ */
+function CursorLook({ cur, onChange }) {
+  const id = useId();
+  const look = cursorLookName(cur.theme);
+  const color = isHex(cur.color) ? cur.color : DEFAULT_CURSOR_COLOR;
+  const item = (on) => ({
+    flex: "1 1 0", position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+    fontSize: 11, fontWeight: 650, lineHeight: 1.3, padding: "3px 7px", minHeight: 22, borderRadius: 8,
+    border: "none", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit",
+    background: on ? "var(--ink)" : "transparent",
+    color: on ? "#fff" : "var(--ink-mute)",
+    transition: "background var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out)",
+  });
+  return (
+    <div
+      role="group"
+      aria-label="Cursor look"
+      style={{ display: "flex", gap: 2, padding: 2, borderRadius: 10, background: "var(--paper)", border: "1px solid var(--line)" }}
+    >
+      <button type="button" aria-pressed={look === "dark"} onClick={() => onChange({ theme: "dark" }, "Cursor look")} style={item(look === "dark")}>
+        Dark
+      </button>
+      <button type="button" aria-pressed={look === "light"} onClick={() => onChange({ theme: "light" }, "Cursor look")} style={item(look === "light")}>
+        Light
+      </button>
+      {/* Choosing it switches to it in the colour it last had; the picker it
+          opens changes the colour. */}
+      <label
+        htmlFor={id}
+        title="Any colour"
+        onClick={() => {
+          if (look !== "custom") onChange({ theme: "custom", color }, "Cursor colour");
+        }}
+        style={item(look === "custom")}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 12, height: 12, borderRadius: 99, flexShrink: 0,
+            background: look === "custom" ? color : WHEEL,
+            boxShadow: "0 0 0 1px rgba(255,255,255,.7), 0 0 0 2px rgba(0,0,0,.12)",
+          }}
+        />
+        Custom
+        <input
+          id={id}
+          type="color"
+          aria-label="Cursor colour"
+          value={color}
+          onChange={(e) => onChange({ theme: "custom", color: e.target.value }, "Cursor colour")}
+          style={PICKER_INPUT}
+        />
+      </label>
+    </div>
+  );
+}
+
+/** A row of colour swatches, and a colour wheel for any other. */
+function ColorRow({ label, value, presets, onChange }) {
+  const id = useId();
+  const v = String(value).toLowerCase();
+  const custom = !presets.includes(v);
+  const tile = (on) => ({
+    width: 26, height: 26, borderRadius: 99, padding: 0, cursor: "pointer", flexShrink: 0,
+    border: "1px solid var(--line)",
+    boxShadow: on ? "0 0 0 2px var(--card), 0 0 0 4px var(--ink)" : "none",
+  });
+  return (
+    <div role="group" aria-label={`${label} colour`} style={{ display: "flex", flexWrap: "wrap", gap: 9, alignItems: "center", padding: "2px 2px 0" }}>
+      {presets.map((c) => (
+        <button
+          key={c}
+          type="button"
+          title={c}
+          aria-label={`${label} ${c}`}
+          aria-pressed={!custom && v === c}
+          onClick={() => onChange(c)}
+          style={{ ...tile(!custom && v === c), background: c }}
+        />
+      ))}
+      <label htmlFor={id} title="Any colour" style={{ ...tile(custom), position: "relative", display: "grid", placeItems: "center", background: WHEEL }}>
+        {custom && <span aria-hidden style={{ width: 12, height: 12, borderRadius: 99, background: v, boxShadow: "0 0 0 2px #fff" }} />}
+        <input id={id} type="color" aria-label={`${label}: any colour`} value={v} onChange={(e) => onChange(e.target.value)} style={PICKER_INPUT} />
+      </label>
+    </div>
   );
 }
 

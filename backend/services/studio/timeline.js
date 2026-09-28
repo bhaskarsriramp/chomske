@@ -27,7 +27,7 @@
  *
  *   cuts     [{ id, start, end, reason, auto }]          removed from the output
  *   zooms    [{ id, start, end, x, y, w, h, level, easing, follow, auto }]
- *   cursor   { enabled, theme, size, smoothing, glow, trail, ripple, hide_real }
+ *   cursor   { enabled, theme, color, size, smoothing, glow, ripple, ripple_color, hide_real }
  *   track    [{ t, x, y, shape }]                        the path that is DRAWN
  *   captured [{ t, x, y }]                               where the pointer really was
  *   events   [{ id, t, type, x, y, ... }]                clicks, scrolls, typing
@@ -50,6 +50,9 @@ import {
   cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS,
   zoomRect, cameraAt,
 } from "../../../src/components/Studio/camera.mjs";
+import {
+  CURSOR_LOOKS, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR, isHex, cursorLookName,
+} from "../../../src/components/Studio/cursorLook.mjs";
 
 /** Output frame shapes. Keyed the way a creator names them, not W:H maths. */
 /**
@@ -73,7 +76,8 @@ export const ASPECTS = {
 /** Aspect choices including "source". ASPECTS holds only the fixed shapes. */
 export const ASPECT_KEYS = ["source", ...Object.keys(ASPECTS)];
 
-export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
+/** Dark (the default), Light, or the creator's own colour. See cursorLook.mjs. */
+export const CURSOR_THEMES = CURSOR_LOOKS;
 export const CAPTION_STYLES = ["trylipi", "hormozi", "apple", "minimal", "neon"];
 export const BLUR_KINDS = ["blur", "pixelate", "box"];
 
@@ -108,15 +112,17 @@ export const defaultCursor = () => ({
   // demo is about.
   mode: "recorded",
   enabled: true,
-  theme: "light",
+  theme: "dark",
+  // Used when theme is "custom".
+  color: DEFAULT_CURSOR_COLOR,
   // Drawn larger than the captured pointer on purpose. The real cursor is burnt
   // into the recording and cannot be removed, so ours has to COVER it; at 1.0
   // the original peeks out from under the synthetic one on every fast move.
   size: 1.35,
   smoothing: 0.65,
   glow: 0.35,
-  trail: 0,
   ripple: true,
+  ripple_color: DEFAULT_RIPPLE_COLOR,
   hide_real: true,
   captured_px: 22,
 });
@@ -732,15 +738,19 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
   // ── Cursor ────────────────────────────────────────────────────────────────
   const cur = src.cursor || {};
   out.cursor = {
-    enabled: cur.enabled !== false,
-    theme: pick(cur.theme, CURSOR_THEMES, "light"),
+    // The drawn pointer, the click ripple and the path as recorded are not
+    // choices any more (2026-09-28): every demo gets all three. A look that no
+    // longer exists maps onto one that does (cursorLook.mjs).
+    enabled: true,
+    theme: cursorLookName(cur.theme),
+    color: isHex(cur.color) ? cur.color.toLowerCase() : DEFAULT_CURSOR_COLOR,
     size: clamp(num(cur.size, 1.35), 0.5, 3),
     smoothing: clamp(num(cur.smoothing, 0.65), 0, 1),
     glow: clamp(num(cur.glow, 0.35), 0, 1),
-    trail: clamp(num(cur.trail, 0), 0, 1),
-    ripple: cur.ripple !== false,
+    ripple: true,
+    ripple_color: isHex(cur.ripple_color) ? cur.ripple_color.toLowerCase() : DEFAULT_RIPPLE_COLOR,
     hide_real: cur.hide_real !== false,
-    mode: pick(cur.mode, CURSOR_MODES, "recorded"),
+    mode: "recorded",
     // How big the captured pointer actually measured, in source pixels. The
     // creator's display scaling decides it and nothing in the recording says,
     // so sync.js measures it and the erase patch is sized from it.

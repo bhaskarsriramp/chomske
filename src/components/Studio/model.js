@@ -23,6 +23,7 @@ import {
   clampRect, lerpRect, soften, resist, activeZooms, rampsOf, project, CAMERA_TUNING,
   cursorAt, drawnTrack, GAP_HOLD, EDGE_GRACE, EASINGS, zoomRect, cameraAt,
 } from "./camera.mjs";
+import { CURSOR_LOOKS } from "./cursorLook.mjs";
 
 export const ASPECTS = {
   "16:9": [1920, 1080],
@@ -32,7 +33,8 @@ export const ASPECTS = {
 };
 
 export const CURSOR_MODES = ["intent", "recorded"];
-export const CURSOR_THEMES = ["system", "light", "dark", "ring", "dot", "none"];
+/** Dark (the default), Light, or the creator's own colour. See cursorLook.mjs. */
+export const CURSOR_THEMES = CURSOR_LOOKS;
 /**
  * "trylipi" is the house style's stored id, from before the product was named
  * Clipo. Saved timelines hold it (captions.style) and the renderer looks it up
@@ -190,7 +192,7 @@ export {
  */
 export function cameraAtOutput(tl, outT, lay = layout(tl)) {
   const srcT = toSource(outT, lay);
-  return cameraAt(tl, srcT, { track: tl.cursor?.enabled === false ? null : tl.track });
+  return cameraAt(tl, srcT, { track: tl.track });
 }
 
 /** A rect of the source frame, as a rect of the output frame. */

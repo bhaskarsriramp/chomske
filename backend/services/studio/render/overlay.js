@@ -2,7 +2,7 @@
  * overlay.js: the cursor layer, rendered frame by frame.
  *
  * ── WHY A CANVAS AND NOT MORE FFMPEG FILTERS ─────────────────────────────────
- * The cursor, its outline, its glow, its trail and the click ripples are vector
+ * The cursor, its outline, its glow and the click ripples are vector
  * drawing. FFmpeg can draw a box and it can draw a string; a soft-edged pointer
  * with an outline, following a path and scaling with a zoom, is either
  * impossible in a filter graph or a `geq` expression nobody will ever be able
@@ -41,24 +41,13 @@ import { createCanvas } from "@napi-rs/canvas";
 import { ffmpegFromFrames } from "../../media/ffmpeg.js";
 import { cursorAt, layout, drawnTrack, EASE } from "../timeline.js";
 import { cameraAtOutput } from "./camera.js";
+import { cursorColors, rippleRgb, traceHand, traceHandDetail } from "../../../../src/components/Studio/cursorLook.mjs";
 
 /** How long a click ripple lives. */
 const RIPPLE = 0.5;
-/** Trail samples kept behind the pointer, at full rate. */
-const TRAIL_STEPS = 14;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const ease = EASE.smooth;
-
-/** Cursor themes: fill, outline, and whether to draw the arrow at all. */
-const THEMES = {
-  system: { fill: "#ffffff", line: "#1a1a1a", arrow: true },
-  light: { fill: "#ffffff", line: "#18181b", arrow: true },
-  dark: { fill: "#18181b", line: "#ffffff", arrow: true },
-  ring: { fill: "rgba(255,255,255,0.14)", line: "#ffffff", arrow: false },
-  dot: { fill: "#ffffff", line: "rgba(0,0,0,0.45)", arrow: false },
-  none: null,
-};
 
 /* ────────────────────────────────────────────────────────────────────────────
    The animated layer
@@ -79,9 +68,12 @@ const THEMES = {
  */
 export async function renderOverlay({ timeline, keys, width, height, fps, duration, dest, onProgress = () => {} }) {
   const lay = layout(timeline);
-  const theme = THEMES[timeline.cursor?.theme || "light"];
+  // Dark, Light or the creator's colour, and the ripple's: the same as the
+  // editor draws them (cursorLook.mjs).
+  const look = cursorColors(timeline.cursor);
+  const rippleColor = rippleRgb(timeline.cursor);
   const path = drawnTrack(timeline);
-  const wantCursor = !!theme && !!path && path.length > 0;
+  const wantCursor = !!path && path.length > 0;
 
   const clicks = clickMarks(timeline, lay);
   if (!wantCursor && !clicks.length) return null;
@@ -126,8 +118,8 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
           let any = false;
 
           for (const c of clicks) {
-            if (t >= c.t && t <= c.t + RIPPLE && cur.ripple !== false) {
-              drawRipple(ctx, c, t, cam, width, height, baseCursorPx);
+            if (t >= c.t && t <= c.t + RIPPLE) {
+              drawRipple(ctx, c, t, cam, width, height, baseCursorPx, rippleColor);
               any = true;
             }
           }
@@ -139,8 +131,7 @@ export async function renderOverlay({ timeline, keys, width, height, fps, durati
               // Off the edge of the camera: there is nothing to cover and
               // nothing to point at, so nothing is drawn.
               if (pt.x > -80 && pt.y > -80 && pt.x < width + 80 && pt.y < height + 80) {
-                if (cur.trail > 0) drawTrail(ctx, path, srcT, cam, width, height, cur, theme);
-                drawCursor(ctx, pt, cam, cur, theme, baseCursorPx, p.shape);
+                drawCursor(ctx, pt, cam, cur, look, baseCursorPx, p.shape);
                 any = true;
               }
             }
@@ -211,7 +202,7 @@ function projectPoint(p, cam, W, H) {
    The pointer
    ──────────────────────────────────────────────────────────────────────────── */
 
-function drawCursor(ctx, pt, cam, cur, theme, basePx, shape) {
+function drawCursor(ctx, pt, cam, cur, look, basePx, shape) {
   // Scales with the zoom because the captured pointer does. A synthetic cursor
   // held at a constant size inside a 2× zoom sits in the middle of a pointer
   // twice its size, which looks exactly like the bug it is.
@@ -248,24 +239,15 @@ function drawCursor(ctx, pt, cam, cur, theme, basePx, shape) {
    *
    * What it is NOT is the operating system's set. The OS draws four or five
    * shapes and swaps between them per frame, and the captured one is twenty
-   * pixels of unstyleable bitmap. Both of these are drawn here, in the theme
+   * pixels of unstyleable bitmap. Both of these are drawn here, in the look
    * the creator chose, at the size they chose, from matching paths — and the
    * shape they follow has already been decided over a window in timeline.js
    * smoothTrack, so a steady hover cannot flicker between the two.
    */
-  if (!theme.arrow) {
-    ctx.beginPath();
-    ctx.arc(0, 0, size * 0.42, 0, Math.PI * 2);
-    ctx.fillStyle = theme.fill;
-    ctx.fill();
-    ctx.shadowColor = "transparent";
-    ctx.lineWidth = Math.max(1.5, size * 0.09);
-    ctx.strokeStyle = theme.line;
-    ctx.stroke();
-  } else if (shape === "pointer" || shape === "hand") {
-    drawHand(ctx, size, theme);
+  if (shape === "pointer" || shape === "hand") {
+    drawHand(ctx, size, look);
   } else {
-    drawArrow(ctx, size, theme);
+    drawArrow(ctx, size, look);
   }
 
   ctx.restore();
@@ -278,7 +260,7 @@ function drawCursor(ctx, pt, cam, cur, theme, basePx, shape) {
  * every resolution. The proportions are the standard pointer everyone's eye
  * already knows; a "designed" cursor reads as a watermark.
  */
-function drawArrow(ctx, s, theme) {
+function drawArrow(ctx, s, look) {
   // The tip sits a hair up and left of the hotspot. A point placed exactly on
   // it leaves the real arrow’s own corner pixel showing; this is under a pixel
   // at any size a demo is drawn at, and it closes that gap.
@@ -292,104 +274,34 @@ function drawArrow(ctx, s, theme) {
   ctx.lineTo(s * 0.40, s * 0.72);
   ctx.lineTo(s * 0.70, s * 0.70);
   ctx.closePath();
-  ctx.fillStyle = theme.fill;
+  ctx.fillStyle = look.fill;
   ctx.fill();
   ctx.shadowColor = "transparent";
   ctx.lineWidth = Math.max(1, s * 0.055);
   ctx.lineJoin = "round";
-  ctx.strokeStyle = theme.line;
+  ctx.strokeStyle = look.line;
   ctx.stroke();
 }
 
 /**
- * ── THE HAND: A POINTING HAND FIRST, AND ONE THAT COVERS THE REAL ONE ───────
- * Two earlier outlines failed in opposite ways. The first read nicely and let
- * the operating system's hand show around it. The second covered it and, as
- * one tall finger rising from the middle of a smooth fist, read as a rude
- * gesture — which is how a creator described it.
- *
- * What makes a hand read as POINTING is structure, not size: the finger sits
- * on the left of the hand, the thumb stands out on its own further left, and
- * the curled fingers show as separate knuckles with lines between them. This
- * outline has all three, is laid out from the fingertip (the hotspot) so no
- * offset is needed, and still contains a Windows hand drawn at 1/1.35 of it
- * from the same point.
+ * The hand: the classic pointing hand, from the fingertip (the hotspot). Its
+ * outline and the lines between its fingers are cursorLook.mjs traceHand and
+ * traceHandDetail, shared with the editor's preview, which says why the
+ * knuckles sit where they do.
  */
-function drawHand(ctx, s, theme) {
-  ctx.beginPath();
-  ctx.moveTo(s * -0.15, s * 0.34);
-  ctx.lineTo(s * -0.15, s * 0.02);
-  ctx.quadraticCurveTo(s * -0.15, s * -0.08, s * 0.005, s * -0.08);
-  ctx.quadraticCurveTo(s * 0.16, s * -0.08, s * 0.16, s * 0.02);
-  ctx.lineTo(s * 0.16, s * 0.27);
-  ctx.quadraticCurveTo(s * 0.17, s * 0.19, s * 0.235, s * 0.19);
-  ctx.quadraticCurveTo(s * 0.31, s * 0.19, s * 0.31, s * 0.28);
-  ctx.quadraticCurveTo(s * 0.32, s * 0.24, s * 0.38, s * 0.24);
-  ctx.quadraticCurveTo(s * 0.45, s * 0.24, s * 0.45, s * 0.33);
-  ctx.quadraticCurveTo(s * 0.46, s * 0.3, s * 0.515, s * 0.3);
-  ctx.quadraticCurveTo(s * 0.58, s * 0.3, s * 0.58, s * 0.4);
-  ctx.lineTo(s * 0.58, s * 0.7);
-  ctx.quadraticCurveTo(s * 0.58, s * 0.86, s * 0.47, s * 0.95);
-  ctx.lineTo(s * 0.47, s * 1.04);
-  ctx.lineTo(s * -0.06, s * 1.04);
-  ctx.lineTo(s * -0.06, s * 0.93);
-  ctx.quadraticCurveTo(s * -0.2, s * 0.84, s * -0.3, s * 0.66);
-  ctx.quadraticCurveTo(s * -0.37, s * 0.5, s * -0.3, s * 0.38);
-  ctx.quadraticCurveTo(s * -0.24, s * 0.31, s * -0.15, s * 0.34);
-  ctx.closePath();
-
-  ctx.fillStyle = theme.fill;
+function drawHand(ctx, s, look) {
+  traceHand(ctx, s);
+  ctx.fillStyle = look.fill;
   ctx.fill();
   ctx.shadowColor = "transparent";
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  ctx.strokeStyle = theme.line;
+  ctx.strokeStyle = look.line;
   ctx.lineWidth = Math.max(1, s * 0.055);
   ctx.stroke();
-
-  // The knuckle lines and the thumb's crease, a little finer than the outline.
+  // The lines between the fingers, a little finer than the outline.
   ctx.lineWidth = Math.max(0.8, s * 0.04);
-  ctx.beginPath();
-  ctx.moveTo(s * 0.16, s * 0.27);
-  ctx.lineTo(s * 0.16, s * 0.44);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(s * 0.31, s * 0.28);
-  ctx.lineTo(s * 0.31, s * 0.46);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(s * 0.45, s * 0.33);
-  ctx.lineTo(s * 0.45, s * 0.48);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(s * -0.15, s * 0.4);
-  ctx.quadraticCurveTo(s * -0.12, s * 0.52, s * 0, s * 0.6);
-  ctx.stroke();
-}
-
-
-/**
- * The trail: where the pointer has just been, fading out behind it.
- *
- * Off by default. It reads as speed on a fast move and as a mess on a slow one,
- * and most demos are slow moves, so it is something a creator turns on for a
- * particular recording rather than something every demo gets.
- */
-function drawTrail(ctx, track, srcT, cam, W, H, cur, theme) {
-  const step = 0.016;
-  ctx.save();
-  for (let k = TRAIL_STEPS; k > 0; k--) {
-    const p = cursorAt(track, srcT - k * step);
-    if (!p) continue;
-    const pt = projectPoint(p, cam, W, H);
-    const a = (1 - k / TRAIL_STEPS) * 0.35 * cur.trail;
-    ctx.globalAlpha = a;
-    ctx.beginPath();
-    ctx.arc(pt.x, pt.y, Math.max(1.5, 5 * (1 - k / TRAIL_STEPS) * clamp(1 / cam.w, 1, 2.2)), 0, Math.PI * 2);
-    ctx.fillStyle = theme.fill;
-    ctx.fill();
-  }
-  ctx.restore();
+  traceHandDetail(ctx, s);
 }
 
 /**
@@ -400,7 +312,7 @@ function drawTrail(ctx, track, srcT, cam, W, H, cur, theme) {
  * milliseconds and the viewer misses it — and the ripple is what tells them
  * something was pressed, and where.
  */
-function drawRipple(ctx, c, t, cam, W, H, basePx) {
+function drawRipple(ctx, c, t, cam, W, H, basePx, rgb) {
   const k = clamp((t - c.t) / RIPPLE, 0, 1);
   const pt = projectPoint(c, cam, W, H);
   const zoom = clamp(1 / cam.w, 1, 3);
@@ -411,7 +323,7 @@ function drawRipple(ctx, c, t, cam, W, H, basePx) {
   ctx.beginPath();
   ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
   ctx.lineWidth = Math.max(2, basePx * 0.16 * (1 - k * 0.6));
-  ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+  ctx.strokeStyle = `rgba(${rgb},${alpha})`;
   ctx.shadowColor = `rgba(0,0,0,${alpha * 0.5})`;
   ctx.shadowBlur = 6;
   ctx.stroke();
@@ -420,7 +332,7 @@ function drawRipple(ctx, c, t, cam, W, H, basePx) {
   if (k < 0.3) {
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, basePx * 0.55 * (1 - k / 0.3), 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255,255,255,${(1 - k / 0.3) * 0.4})`;
+    ctx.fillStyle = `rgba(${rgb},${(1 - k / 0.3) * 0.4})`;
     ctx.fill();
   }
   ctx.restore();
@@ -432,7 +344,7 @@ function drawRipple(ctx, c, t, cam, W, H, basePx) {
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, basePx * (0.5 + ease(k2) * 2.6) * Math.min(zoom, 2.2), 0, Math.PI * 2);
       ctx.lineWidth = Math.max(1.5, basePx * 0.12);
-      ctx.strokeStyle = `rgba(255,255,255,${(1 - k2) * 0.5})`;
+      ctx.strokeStyle = `rgba(${rgb},${(1 - k2) * 0.5})`;
       ctx.stroke();
       ctx.restore();
     }

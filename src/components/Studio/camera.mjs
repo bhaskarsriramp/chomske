@@ -140,23 +140,20 @@ export const GAP_HOLD = 0.2;
 export const EDGE_GRACE = 0.1;
 
 /**
- * The path that gets drawn: the composed one when the creator asked for it, the
- * recovered one otherwise.
+ * The path that gets drawn: the one recovered from the recording, always.
  *
- * ── WHY "recorded" IS THE DEFAULT ────────────────────────────────────────────
- * Both paths are kept on the timeline so the mode can be switched without
- * re-analysing. The composed path is the pointer tidied into what the creator
+ * ── WHY NOT THE COMPOSED ONE ─────────────────────────────────────────────────
+ * The composed path (tl.composed) is the pointer tidied into what the creator
  * MEANT — overshoot removed, tremor smoothed, rests settled — and it is lovely
  * when the recovery was good and a confident lie when it was not. The recovered
  * path is what was actually seen. A demo whose drawn pointer is somewhere the
- * real one never went is worse than one whose pointer is a little untidy, so
- * the honest path is the default and the tidy one is asked for.
+ * real one never went is worse than one whose pointer is a little untidy. It
+ * was a choice ("Composed" / "As recorded") until 2026-09-28; now every demo
+ * is drawn as recorded, and so is one whose timeline still says otherwise.
+ * The drawn pointer is not optional either, whatever `enabled` says.
  */
 export function drawnTrack(tl) {
-  if (!tl || tl.cursor?.enabled === false) return null;
-  const composed = tl.composed;
-  if (tl.cursor?.mode === "intent" && composed && composed.length > 1) return composed;
-  return tl.track || null;
+  return tl?.track || null;
 }
 
 /**

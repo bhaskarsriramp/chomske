@@ -33,6 +33,7 @@ import {
 import { useBox, Icon } from "./ui";
 import Skeleton from "../Shell/Skeleton";
 import { followFor, followAt, applyState, blurCorner } from "./follow.mjs";
+import { cursorColors, rippleRgb, traceHand, traceHandDetail } from "./cursorLook.mjs";
 
 /** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
@@ -236,12 +237,12 @@ export default function Preview({
 
     // ── The cursor and its ripples ──────────────────────────────────────
     for (const c of clicks) {
-      if (outT >= c.t && outT <= c.t + RIPPLE && tl.cursor?.ripple !== false) {
+      if (outT >= c.t && outT <= c.t + RIPPLE) {
         paintRipple(ctx, c, outT, cam, { dx, dy, dw, dh }, srcW, tl.cursor);
       }
     }
     const drawnPath = drawnTrack(tl);
-    if (tl.cursor?.theme !== "none" && drawnPath?.length) {
+    if (drawnPath?.length) {
       const p = cursorAt(drawnPath, srcT);
       if (p) paintCursor(ctx, p, cam, tl.cursor, { dx, dy, dw, dh }, srcW);
     }
@@ -500,9 +501,8 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
 
   const zoom = clamp(1 / cam.w, 1, 3);
   const s = Math.max(22, Number(cur?.captured_px) || 22) * (d.dw / srcW) * (cur?.size || 1.35) * Math.min(zoom, 2.2);
-  const dark = cur?.theme === "dark";
-  const fill = dark ? "#18181b" : "#fff";
-  const line = dark ? "#fff" : "#18181b";
+  // Dark, Light or the creator's colour, as the export draws it.
+  const { fill, line } = cursorColors(cur);
 
   ctx.save();
   ctx.translate(x, y);
@@ -521,24 +521,15 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
   ctx.shadowBlur = s * 0.36;
   ctx.shadowOffsetY = s * 0.08;
 
-  if (cur?.theme === "ring" || cur?.theme === "dot") {
-    ctx.beginPath();
-    ctx.arc(0, 0, s * 0.42, 0, Math.PI * 2);
-    ctx.fillStyle = cur.theme === "ring" ? "rgba(255,255,255,.14)" : fill;
-    ctx.fill();
-    ctx.shadowColor = "transparent";
-    ctx.lineWidth = Math.max(1.5, s * 0.09);
-    ctx.strokeStyle = "#fff";
-    ctx.stroke();
-    // ── TWO POINTERS, BOTH OURS ─────────────────────────────────────────────
-    // Hand over anything clickable, arrow everywhere else — the gesture people
-    // already read. Neither is the system's: those are twenty unstyleable
-    // pixels and there are four of them. The shape was settled over a window in
-    // timeline.js smoothTrack, so a steady hover cannot flicker between the
-    // two. Mirrors render/overlay.js drawCursor.
-  } else if (p.shape === "pointer" || p.shape === "hand") {
+  // ── TWO POINTERS, BOTH OURS ───────────────────────────────────────────────
+  // Hand over anything clickable, arrow everywhere else — the gesture people
+  // already read. Neither is the system's: those are twenty unstyleable pixels
+  // and there are four of them. The shape was settled over a window in
+  // timeline.js smoothTrack, so a steady hover cannot flicker between the two.
+  // Mirrors render/overlay.js drawCursor.
+  if (p.shape === "pointer" || p.shape === "hand") {
     // Laid out from the fingertip, which is the hotspot: no offset needed.
-    handPath(ctx, s);
+    traceHand(ctx, s);
     ctx.fillStyle = fill;
     ctx.fill();
     ctx.shadowColor = "transparent";
@@ -548,7 +539,7 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     ctx.stroke();
     ctx.lineCap = "round";
     ctx.lineWidth = Math.max(0.8, s * 0.04);
-    handDetail(ctx, s);
+    traceHandDetail(ctx, s);
   } else {
     // Same sub-pixel tip margin as overlay.js drawArrow.
     ctx.translate(-s * 0.03, -s * 0.03);
@@ -576,71 +567,29 @@ function arrowPath(ctx, s) {
   ctx.closePath();
 }
 
-/** The hand, matching render/overlay.js drawHand. Laid out from its box; the
- *  caller shifts it so the fingertip lands on the pointer's real position. */
-/** A pointing hand. Mirrors render/overlay.js drawHand exactly. */
-// Same outline and detail as overlay.js drawHand — see the note there.
-function handPath(ctx, s) {
-  ctx.beginPath();
-  ctx.moveTo(s * -0.15, s * 0.34);
-  ctx.lineTo(s * -0.15, s * 0.02);
-  ctx.quadraticCurveTo(s * -0.15, s * -0.08, s * 0.005, s * -0.08);
-  ctx.quadraticCurveTo(s * 0.16, s * -0.08, s * 0.16, s * 0.02);
-  ctx.lineTo(s * 0.16, s * 0.27);
-  ctx.quadraticCurveTo(s * 0.17, s * 0.19, s * 0.235, s * 0.19);
-  ctx.quadraticCurveTo(s * 0.31, s * 0.19, s * 0.31, s * 0.28);
-  ctx.quadraticCurveTo(s * 0.32, s * 0.24, s * 0.38, s * 0.24);
-  ctx.quadraticCurveTo(s * 0.45, s * 0.24, s * 0.45, s * 0.33);
-  ctx.quadraticCurveTo(s * 0.46, s * 0.3, s * 0.515, s * 0.3);
-  ctx.quadraticCurveTo(s * 0.58, s * 0.3, s * 0.58, s * 0.4);
-  ctx.lineTo(s * 0.58, s * 0.7);
-  ctx.quadraticCurveTo(s * 0.58, s * 0.86, s * 0.47, s * 0.95);
-  ctx.lineTo(s * 0.47, s * 1.04);
-  ctx.lineTo(s * -0.06, s * 1.04);
-  ctx.lineTo(s * -0.06, s * 0.93);
-  ctx.quadraticCurveTo(s * -0.2, s * 0.84, s * -0.3, s * 0.66);
-  ctx.quadraticCurveTo(s * -0.37, s * 0.5, s * -0.3, s * 0.38);
-  ctx.quadraticCurveTo(s * -0.24, s * 0.31, s * -0.15, s * 0.34);
-  ctx.closePath();
-}
-
-function handDetail(ctx, s) {
-  ctx.beginPath();
-  ctx.moveTo(s * 0.16, s * 0.27);
-  ctx.lineTo(s * 0.16, s * 0.44);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(s * 0.31, s * 0.28);
-  ctx.lineTo(s * 0.31, s * 0.46);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(s * 0.45, s * 0.33);
-  ctx.lineTo(s * 0.45, s * 0.48);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(s * -0.15, s * 0.4);
-  ctx.quadraticCurveTo(s * -0.12, s * 0.52, s * 0, s * 0.6);
-  ctx.stroke();
-}
-
-
 function paintRipple(ctx, c, t, cam, d, srcW, cur) {
   const k = clamp((t - c.t) / RIPPLE, 0, 1);
   const x = ((c.x - cam.x) / cam.w) * d.dw + d.dx;
   const y = ((c.y - cam.y) / cam.h) * d.dh + d.dy;
   const base = Math.max(22, Number(cur?.captured_px) || 22) * (d.dw / srcW) * Math.min(clamp(1 / cam.w, 1, 3), 2.2);
   const r = base * (0.5 + EASE.smooth(k) * 2.6);
+  const alpha = (1 - k) * 0.75;
+  // The creator's ripple colour (cursorLook.mjs), and the same soft shadow as
+  // the export's, which is what keeps a white ripple visible on a white page.
+  const rgb = rippleRgb(cur);
 
   ctx.save();
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.lineWidth = Math.max(2, base * 0.16 * (1 - k * 0.6));
-  ctx.strokeStyle = `rgba(255,255,255,${(1 - k) * 0.75})`;
+  ctx.strokeStyle = `rgba(${rgb},${alpha})`;
+  ctx.shadowColor = `rgba(0,0,0,${alpha * 0.5})`;
+  ctx.shadowBlur = 6 * (d.dw / srcW);
   ctx.stroke();
   if (k < 0.3) {
     ctx.beginPath();
     ctx.arc(x, y, base * 0.55 * (1 - k / 0.3), 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255,255,255,${(1 - k / 0.3) * 0.4})`;
+    ctx.fillStyle = `rgba(${rgb},${(1 - k / 0.3) * 0.4})`;
     ctx.fill();
   }
   ctx.restore();
