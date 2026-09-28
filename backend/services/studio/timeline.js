@@ -51,7 +51,7 @@ import {
   zoomRect, cameraAt,
 } from "../../../src/components/Studio/camera.mjs";
 import {
-  CURSOR_LOOKS, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR, DEFAULT_CURSOR_SIZE, isHex, cursorLookName,
+  CURSOR_LOOKS, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR, DEFAULT_CURSOR_SIZE, cursorSize, isHex, cursorLookName,
 } from "../../../src/components/Studio/cursorLook.mjs";
 
 /** Output frame shapes. Keyed the way a creator names them, not W:H maths. */
@@ -744,7 +744,7 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     enabled: true,
     theme: cursorLookName(cur.theme),
     color: isHex(cur.color) ? cur.color.toLowerCase() : DEFAULT_CURSOR_COLOR,
-    size: clamp(num(cur.size, DEFAULT_CURSOR_SIZE), 0.5, 3),
+    size: cursorSize(cur),
     smoothing: clamp(num(cur.smoothing, 0.65), 0, 1),
     glow: clamp(num(cur.glow, 0.35), 0, 1),
     ripple: true,

@@ -41,7 +41,7 @@ import { createCanvas } from "@napi-rs/canvas";
 import { ffmpegFromFrames } from "../../media/ffmpeg.js";
 import { cursorAt, layout, drawnTrack, EASE } from "../timeline.js";
 import { cameraAtOutput } from "./camera.js";
-import { cursorColors, rippleRgb, traceHand, traceHandDetail, DEFAULT_CURSOR_SIZE } from "../../../../src/components/Studio/cursorLook.mjs";
+import { cursorColors, rippleRgb, traceHand, strokeOutline, strokeHandDetail, cursorSize } from "../../../../src/components/Studio/cursorLook.mjs";
 
 /** How long a click ripple lives. */
 const RIPPLE = 0.5;
@@ -207,7 +207,7 @@ function drawCursor(ctx, pt, cam, cur, look, basePx, shape) {
   // held at a constant size inside a 2× zoom sits in the middle of a pointer
   // twice its size, which looks exactly like the bug it is.
   const zoom = clamp(1 / cam.w, 1, 3);
-  const size = basePx * (cur.size || DEFAULT_CURSOR_SIZE) * Math.min(zoom, 2.2);
+  const size = basePx * cursorSize(cur) * Math.min(zoom, 2.2);
 
   ctx.save();
   ctx.translate(pt.x, pt.y);
@@ -277,32 +277,22 @@ function drawArrow(ctx, s, look) {
   ctx.fillStyle = look.fill;
   ctx.fill();
   ctx.shadowColor = "transparent";
-  ctx.lineWidth = Math.max(look.lineMin, s * look.lineW);
-  ctx.lineJoin = "round";
-  ctx.strokeStyle = look.line;
-  ctx.stroke();
+  strokeOutline(ctx, look, s);
 }
 
 /**
  * The hand: the classic pointing hand, from the fingertip (the hotspot). Its
- * outline and the lines between its fingers are cursorLook.mjs traceHand and
- * traceHandDetail, shared with the editor's preview, which says why the
- * knuckles sit where they do.
+ * shape, its outline and the lines between its fingers are cursorLook.mjs's
+ * (traceHand, strokeOutline, strokeHandDetail), shared with the editor's
+ * preview, which says why the knuckles sit where they do.
  */
 function drawHand(ctx, s, look) {
   traceHand(ctx, s);
   ctx.fillStyle = look.fill;
   ctx.fill();
   ctx.shadowColor = "transparent";
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  ctx.strokeStyle = look.line;
-  ctx.lineWidth = Math.max(look.lineMin, s * look.lineW);
-  ctx.stroke();
-  // The lines between the fingers, a little finer than the outline.
-  ctx.strokeStyle = look.detail;
-  ctx.lineWidth = Math.max(look.detailMin, s * look.detailW);
-  traceHandDetail(ctx, s);
+  strokeOutline(ctx, look, s);
+  strokeHandDetail(ctx, look, s);
 }
 
 /**

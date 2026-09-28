@@ -19,7 +19,7 @@ import { fmtTime, clamp, layout, mergedCuts, placedSpans, GRADIENTS, CAPTION_STY
 import { create } from "./create";
 import { clipsOf } from "./clips";
 import { applyState, coverage, blurNames } from "./follow.mjs";
-import { cursorLookName, isHex, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR, DEFAULT_CURSOR_SIZE } from "./cursorLook.mjs";
+import { cursorLookName, isHex, cursorSize, CURSOR_SIZE_MIN, CURSOR_SIZE_MAX, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR } from "./cursorLook.mjs";
 // Caption colour and size are the script editor's controls, not a second set.
 import { ColorPicker, SizePicker } from "../Edit/captionStyle";
 
@@ -782,17 +782,12 @@ export function CursorPanel({ tl, edit }) {
           </div>
           <Slider
             label="Size"
-            min={0.8}
-            max={2.2}
+            min={CURSOR_SIZE_MIN}
+            max={CURSOR_SIZE_MAX}
             step={0.05}
-            value={cur.size ?? DEFAULT_CURSOR_SIZE}
+            value={cursorSize(cur)}
             onChange={(v) => set({ size: v }, "Cursor size")}
             format={(v) => `${v.toFixed(2)}×`}
-            hint={
-              (cur.size ?? DEFAULT_CURSOR_SIZE) < 1.15
-                ? "Below about 1.2× the captured pointer shows from underneath the drawn one. It cannot be erased from the recording."
-                : undefined
-            }
           />
           <Slider
             label="Glow"

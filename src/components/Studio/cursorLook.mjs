@@ -26,6 +26,19 @@ export const DEFAULT_RIPPLE_COLOR = "#ffffff";
  * the recording.
  */
 export const DEFAULT_CURSOR_SIZE = 1.8;
+/**
+ * ...and the range it can be chosen in (the creator's call, 2026-09-28).
+ * Nothing smaller than 1.25: below about 1.2 the pointer in the recording
+ * shows from underneath ours, and it cannot be erased.
+ */
+export const CURSOR_SIZE_MIN = 1.25;
+export const CURSOR_SIZE_MAX = 2.2;
+
+/** The size a cursor is drawn at: its own, kept inside the range, or the default. */
+export function cursorSize(cur) {
+  const v = Number(cur?.size);
+  return Number.isFinite(v) && v > 0 ? Math.min(CURSOR_SIZE_MAX, Math.max(CURSOR_SIZE_MIN, v)) : DEFAULT_CURSOR_SIZE;
+}
 
 const INK = "#18181b";
 const WHITE = "#ffffff";
@@ -53,26 +66,66 @@ export function cursorLookName(theme) {
   return "dark";
 }
 
-/** The outline and finger lines of Dark and Light, as fractions of the size. */
-const EDGE = { lineW: 0.055, lineMin: 1, detailW: 0.04, detailMin: 0.8 };
-/** ...and the hairline a colour gets. */
-const HAIRLINE = { lineW: 0.02, lineMin: 0.6, detailW: 0.018, detailMin: 0.5 };
-
 /**
  * The pointer's colours: `fill` its body, `line` its outline and `detail` the
- * lines between the hand's fingers; and how thick those two are drawn, at
- * size s, Math.max(lineMin, s * lineW) and Math.max(detailMin, s * detailW).
+ * lines between the hand's fingers; `hairline` when the outline is the thin
+ * one a colour gets (strokeOutline).
  */
 export function cursorColors(cur) {
   const look = cursorLookName(cur?.theme);
-  if (look === "light") return { fill: WHITE, line: INK, detail: INK, ...EDGE };
+  if (look === "light") return { fill: WHITE, line: INK, detail: INK, hairline: false };
   if (look === "custom") {
     const fill = isHex(cur?.color) ? cur.color.toLowerCase() : DEFAULT_CURSOR_COLOR;
     // A near-black colour against a black hairline would have no edge.
     const line = luminance(fill) < 0.04 ? WHITE : "#000000";
-    return { fill, line, detail: line, ...HAIRLINE };
+    return { fill, line, detail: line, hairline: true };
   }
-  return { fill: INK, line: WHITE, detail: WHITE, ...EDGE };
+  return { fill: INK, line: WHITE, detail: WHITE, hairline: false };
+}
+
+/** The outline's width at size s: what covers the pointer in the recording. */
+const edgeOf = (s) => Math.max(1, s * 0.055);
+/** The hairline's. */
+const hairOf = (s) => Math.max(0.6, s * 0.02);
+
+/**
+ * Stroke the pointer's outline (the path just traced and filled), at size s.
+ *
+ * ── A HAIRLINE THAT STILL COVERS ────────────────────────────────────────────
+ * The outline is half the job of covering the pointer burnt into the
+ * recording: it reaches past the path by half its width. A colour's hairline
+ * on its own reached less far, and the real arrow's edge showed by a pixel in
+ * 17 frames of 240 (measured, 1.8x) where the full outline showed it in none.
+ * So a colour is edged with a band of itself as wide as the full outline and
+ * a hairline of black outside that: the same reach, and what shows is the
+ * colour with a thin black line round it. A stroke straddles its path, so
+ * the black is filled over again from the inside, or it shows there too as a
+ * second line.
+ */
+export function strokeOutline(ctx, look, s) {
+  ctx.lineJoin = "round";
+  if (look.hairline) {
+    ctx.strokeStyle = look.line;
+    ctx.lineWidth = edgeOf(s) + 2 * hairOf(s);
+    ctx.stroke();
+    ctx.fillStyle = look.fill;
+    ctx.fill();
+    ctx.strokeStyle = look.fill;
+    ctx.lineWidth = edgeOf(s);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = look.line;
+    ctx.lineWidth = edgeOf(s);
+    ctx.stroke();
+  }
+}
+
+/** Stroke the lines between the hand's fingers, a little finer than its outline. */
+export function strokeHandDetail(ctx, look, s) {
+  ctx.lineCap = "round";
+  ctx.strokeStyle = look.detail;
+  ctx.lineWidth = look.hairline ? Math.max(0.5, s * 0.018) : Math.max(0.8, s * 0.04);
+  traceHandDetail(ctx, s);
 }
 
 /** The ripple's colour as "r, g, b", for an rgba() carrying the ripple's own fade. */
@@ -138,7 +191,7 @@ export function traceHandDetail(ctx, s) {
 }
 
 const cursorLook = {
-  CURSOR_LOOKS, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR, DEFAULT_CURSOR_SIZE,
-  isHex, cursorLookName, cursorColors, rippleRgb, traceHand, traceHandDetail,
+  CURSOR_LOOKS, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR, DEFAULT_CURSOR_SIZE, CURSOR_SIZE_MIN, CURSOR_SIZE_MAX,
+  cursorSize, isHex, cursorLookName, cursorColors, rippleRgb, traceHand, traceHandDetail, strokeOutline, strokeHandDetail,
 };
 export default cursorLook;
