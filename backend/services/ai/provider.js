@@ -583,8 +583,9 @@ function configFor(model, config) {
   if (level) out.thinkingConfig = { thinkingLevel: level };
   return out;
 }
+// Google spells it "Thinking level MINIMAL is not supported for this model" — with a space.
 const refusesLevel = (err) =>
-  statusOf(err) === 400 && /thinking_?level|thinkingLevel/i.test(String(err?.message || ""));
+  statusOf(err) === 400 && /thinking[\s_]?level/i.test(String(err?.message || ""));
 
 /**
  * ── A MODEL GOOGLE HAS RETIRED IS REPLACED WITH THE ONE GOOGLE NAMES ─────────
@@ -615,8 +616,9 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
     await budget(bucket, deadline, onWait);
     await enter();
     let failed = null;
+    let use = null;
     try {
-      const use = configFor(model, config);
+      use = configFor(model, config);
       const res = await client.models.generateContent({ model, contents, config: use });
       const u = res?.usageMetadata || {};
       if (config.thinkingConfig?.thinkingBudget === 0 && !_thinksAnyway.has(model) && num(u.thoughtsTokenCount) > 0) {
@@ -645,13 +647,21 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
       continue;
     }
 
-    // A thinking level the model does not take: the next one down the list, then none.
-    if (refusesLevel(failed)) {
-      const tried = _levelFor.has(model) ? _levelFor.get(model) : LEVELS[0];
-      const i = LEVELS.indexOf(tried);
-      const after = i >= 0 && i + 1 < LEVELS.length ? LEVELS[i + 1] : null;
-      _levelFor.set(model, after);
-      console.warn(`[ai] ${model} will not take thinkingLevel "${tried}"; ${after ? 'trying "' + after + '"' : "sending no thinking setting"}`);
+    /**
+     * A thinking level the model does not take: the next one down the list, then
+     * none. Judged by the level this request actually sent, not the one now on
+     * record — an audit has a dozen looks in flight, all refused for MINIMAL, and
+     * only the first of them may step the model down; the rest just go again.
+     */
+    const tried = use?.thinkingConfig?.thinkingLevel;
+    if (tried && refusesLevel(failed)) {
+      const current = _levelFor.has(model) ? _levelFor.get(model) : LEVELS[0];
+      if (current === tried) {
+        const i = LEVELS.indexOf(tried);
+        const after = i >= 0 && i + 1 < LEVELS.length ? LEVELS[i + 1] : null;
+        _levelFor.set(model, after);
+        console.warn(`[ai] ${model} will not take thinkingLevel "${tried}"; ${after ? 'trying "' + after + '"' : "sending no thinking setting"}`);
+      }
       attempt--;
       continue;
     }
