@@ -516,3 +516,47 @@
    be watched. The editor's own chrome is outside this element and so is gone. */
 .st-fullscreen:fullscreen { background: #0B0D14; padding: 24px 28px 20px; box-sizing: border-box; }
 .st-fullscreen:-webkit-full-screen { background: #0B0D14; padding: 24px 28px 20px; box-sizing: border-box; }
+
+/* ── The drawer over the inspector (ui.js Drawer) ─────────────────────────────
+   Slides in from the inspector's right edge and back out the same way, on the
+   design system's drawer curve. The shadow falls on the side it opened over. */
+.st-drawer {
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; flex-direction: column;
+  background: var(--paper);
+  border-left: 1px solid var(--line);
+  box-shadow: -28px 0 48px -30px rgba(15, 15, 15, .38);
+  animation: st-drawer-in var(--dur-drawer) var(--ease-drawer) both;
+}
+.st-drawer.is-leaving { animation: st-drawer-out 240ms var(--ease-drawer) both; pointer-events: none; }
+@keyframes st-drawer-in { from { transform: translateX(100%); } }
+@keyframes st-drawer-out { to { transform: translateX(100%); } }
+.st-drawer-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px 12px; border-bottom: 1px solid var(--line); background: var(--card);
+}
+.st-drawer-head h3 {
+  margin: 0; font-size: 11px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-mute);
+}
+.st-drawer-sub {
+  margin-top: 3px; font-size: 13px; font-weight: 620; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.st-drawer-close {
+  width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink-body); cursor: pointer;
+  transition: background var(--dur-hover) var(--ease-out);
+}
+.st-drawer-close:hover { background: var(--paper); }
+.st-drawer-close:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.st-drawer-body {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: grid; gap: 16px; align-content: start; grid-auto-rows: max-content;
+  padding: 16px 16px 28px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-drawer { animation: st-drawer-fade var(--dur-pop) var(--ease-out) both; }
+  .st-drawer.is-leaving { animation: st-drawer-fade-out 160ms var(--ease-out) both; }
+}
+@keyframes st-drawer-fade { from { opacity: 0; } }
+@keyframes st-drawer-fade-out { to { opacity: 0; } }

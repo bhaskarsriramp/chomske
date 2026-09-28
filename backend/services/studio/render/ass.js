@@ -152,8 +152,14 @@ const stripOf = (cap, custom) => {
   const v = custom?.bg ?? cap.bg ?? null;
   return v === "none" || (v && HEX.test(v)) ? v : null;
 };
-/** How far the strip reaches past the text, as a fraction of the size. */
+/**
+ * How far the strip reaches past the text, as fractions of the size: a
+ * little above and below, and more at the two ends, where a band stopping
+ * right at the first and last letters read as cut off (the creator's call).
+ * The row's outline is the first; each line widens its box with \xbord.
+ */
 const STRIP_PAD = 0.26;
+const STRIP_ENDS = 0.6;
 
 function familyFor(word) {
   for (const [re, family] of SCRIPT_FONTS) if (re.test(word)) return family;
@@ -179,11 +185,12 @@ function cueText(cue, style, px, custom = null, base = "&HFFFFFF&") {
   const hits = new Set(
     (cue.emphasis || []).flatMap((e) => String(e).toLowerCase().split(/\s+/)).filter(Boolean)
   );
-  // The look's accent, NOT the line's own colour. When a creator recolours one
-  // line, the emphasised words inside it still have to stand out from the rest
-  // of that line; taking the accent from the override made them identical to
-  // their neighbours and the emphasis silently disappeared.
-  const accent = assColor(style.accent);
+  // The line's own highlight colour, else the look's accent; NOT the line's
+  // text colour. When a creator recolours one line, the highlighted words in
+  // it still have to stand out from the rest of it; taking the accent from
+  // the text colour made them identical to their neighbours and the
+  // highlight silently disappeared.
+  const accent = assColor(custom?.accent || style.accent);
   let out = "";
   let face = null;
 
@@ -321,12 +328,14 @@ export function buildAss(tl, { width, height }) {
     if (custom?.color) over.push(`\\c${assColor(custom.color)}`);
     else if (cap.color) over.push(`\\c${assColor(cap.color)}`);
     if (custom?.bold === false) over.push("\\b0");
+    const strip = stripOf(cap, custom);
+    if (strip && strip !== "none") over.push(`\\xbord${Math.round(px * STRIP_ENDS)}\\ybord${Math.max(1, Math.round(px * STRIP_PAD))}`);
 
     // A short rise and fade on every cue. Captions that appear instantly read
     // as a burned-in timecode; 90 milliseconds is enough to look placed and
     // short enough that nobody waits for it.
     lines.push(
-      `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},${rowName(styleName, stripOf(cap, custom))},,0,0,0,,{\\fad(90,90)}{\\an5\\pos(${pos.x},${pos.y})${over.join("")}}${cueText(cue, style, px, custom, assColor(custom?.color || cap.color || "#FFFFFF"))}`
+      `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},${rowName(styleName, strip)},,0,0,0,,{\\fad(90,90)}{\\an5\\pos(${pos.x},${pos.y})${over.join("")}}${cueText(cue, style, px, custom, assColor(custom?.color || cap.color || "#FFFFFF"))}`
     );
   }
 

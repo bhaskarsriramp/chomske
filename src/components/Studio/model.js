@@ -311,6 +311,8 @@ export function captionLook(tl, cue) {
     ...look,
     name,
     color: cue?.custom?.color || cap.color || look.color,
+    // The highlighted words' colour: the line's own, else the look's accent.
+    accent: cue?.custom?.accent || look.accent,
     strip: captionStrip(tl, cue, look),
     // A fraction of the short side, or an absolute size against the 1080
     // reference the creator's slider is calibrated to.

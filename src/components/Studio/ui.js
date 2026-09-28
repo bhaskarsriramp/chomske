@@ -267,6 +267,67 @@ export function Swatches({ value, options, onChange, size = 26 }) {
    Structure
    ──────────────────────────────────────────────────────────────────────────── */
 
+/** How long the drawer takes to slide back out (studio.css st-drawer-out). */
+const DRAWER_LEAVE_MS = 240;
+
+/**
+ * A panel that slides in over the inspector from its right edge, to work on
+ * one thing without losing the list it came from. Not modal: the picture and
+ * the timeline stay live beside it, and choosing something else there changes
+ * what it shows without it sliding again. `open` false slides it back out,
+ * still showing what it showed, before it goes. The parent must be
+ * position: relative; it covers that.
+ */
+export function Drawer({ open, title, sub, onClose, children }) {
+  const [mounted, setMounted] = useState(open);
+  const [leaving, setLeaving] = useState(false);
+  const kept = useRef(null);
+  if (open) kept.current = { title, sub, children };
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      setLeaving(false);
+      return undefined;
+    }
+    setLeaving(true);
+    const t = setTimeout(() => {
+      setMounted(false);
+      setLeaving(false);
+    }, DRAWER_LEAVE_MS);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  if (!open && !mounted) return null;
+  const c = kept.current || { title, sub, children };
+  return (
+    <section
+      role="dialog"
+      aria-modal="false"
+      aria-label={c.title}
+      className={`st-drawer${leaving ? " is-leaving" : ""}`}
+      onKeyDown={(e) => {
+        // Also from inside its own fields, where the editor's Escape does not reach.
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onClose?.();
+        }
+      }}
+    >
+      <header className="st-drawer-head">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3>{c.title}</h3>
+          {c.sub && <div className="st-drawer-sub">{c.sub}</div>}
+        </div>
+        <button type="button" className="st-drawer-close" aria-label="Close" onClick={onClose}>
+          <Icon name="close" size={14} />
+        </button>
+      </header>
+      <div className="st-drawer-body st-scroll">{c.children}</div>
+    </section>
+  );
+}
+
 export function Panel({ title, action, children, style }) {
   return (
     <section
@@ -500,5 +561,5 @@ export function useBox(ref) {
   return box;
 }
 
-const ui = { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Empty, Icon, useDrag, useBox }
+const ui = { Btn, Segmented, Slider, Toggle, Field, Swatches, Drawer, Panel, Row, Badge, Empty, Icon, useDrag, useBox }
 export default ui;

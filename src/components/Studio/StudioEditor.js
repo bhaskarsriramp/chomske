@@ -33,10 +33,10 @@ import { clipsOf, clipIdAt, splitPatch, deleteClipPatch, trimPatch } from "./cli
 // this import when the tab returns.
 // CanvasPanel and SuggestionsPanel are hidden with their tabs (see TABS): the
 // canvas controls moved under the preview (CanvasBar.js).
-import { VideoPanel, ZoomPanel, BlurPanel, CaptionsPanel, CursorPanel, /* CanvasPanel, StepsPanel, SuggestionsPanel */ } from "./panels";
+import { VideoPanel, ZoomPanel, BlurPanel, CaptionsPanel, CaptionLine, CursorPanel, /* CanvasPanel, StepsPanel, SuggestionsPanel */ } from "./panels";
 import CanvasBar from "./CanvasBar";
 import Skeleton from "../Shell/Skeleton";
-import { Btn, Icon } from "./ui";
+import { Btn, Icon, Drawer } from "./ui";
 import { layout, clamp, fmtTime, toSource } from "./model";
 import "./studio.css";
 
@@ -1232,6 +1232,25 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     </>
   );
 
+  // ── One caption line, in a drawer over the inspector ─────────────────────
+  // It used to open as a card under the list of lines, below the fold of a
+  // column that was already long; a drawer puts it in front of the creator
+  // the moment they pick a line, and closing it (x, Escape, or picking
+  // nothing) leaves the list exactly as it was.
+  const cues = tl.cues || [];
+  const cueSel = tab === "captions" && selection?.kind === "cue" ? cues.find((c) => c.id === selection.id) || null : null;
+  const cueNo = cueSel ? [...cues].sort((a, b) => a.start - b.start).findIndex((c) => c.id === cueSel.id) + 1 : 0;
+  const lineDrawer = (
+    <Drawer
+      open={!!cueSel}
+      title="This line"
+      sub={cueSel ? `Line ${cueNo} of ${cues.length} · ${fmtTime(cueSel.start, true)}` : ""}
+      onClose={() => select(null)}
+    >
+      {cueSel && <CaptionLine tl={tl} cue={cueSel} edit={edit} />}
+    </Drawer>
+  );
+
   const ruler = (
     <Timeline
       tl={tl}
@@ -1297,8 +1316,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         </div>
         {transport}
         {tabs}
-        <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "12px 14px 28px", background: "var(--paper)" }}>
-          {panel}
+        <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
+          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "12px 14px 28px", background: "var(--paper)" }}>
+            {panel}
+          </div>
+          {lineDrawer}
         </div>
         <div style={{ flexShrink: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "10px 12px 12px", overflowX: "auto" }}>
           {ruler}
@@ -1324,11 +1346,12 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           {preview}
           {transport}
         </div>
-        <aside style={{ gridColumn: 2, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
+        <aside style={{ gridColumn: 2, gridRow: 1, minHeight: 0, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
           {tabs}
           <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "14px 16px 28px" }}>
             {panel}
           </div>
+          {lineDrawer}
         </aside>
         <div style={{ gridColumn: "1 / -1", gridRow: 2, minWidth: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "12px 16px 14px" }}>
           {ruler}

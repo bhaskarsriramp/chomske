@@ -647,8 +647,9 @@ function CaptionLine({ tl, cue, frame, onChange, selected, onSelect }) {
         transform: "translate(-50%,-50%)",
         maxWidth: "84%",
         // The strip, drawn the way libass draws it in the export: square, the
-        // text's line box and about a quarter of the size either side.
-        padding: look.strip ? `${size * 0.08}px ${size * 0.27}px` : 0,
+        // text's line box, and more than half the size again at each end
+        // (render/ass.js STRIP_ENDS), so the text does not look cut off.
+        padding: look.strip ? `${size * 0.08}px ${size * 0.6}px` : 0,
         borderRadius: 0,
         background: look.strip || "transparent",
         fontSize: size,

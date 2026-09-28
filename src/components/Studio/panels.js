@@ -13,7 +13,7 @@
  * from a panel, from a drag on the preview, from the timeline, or from applying
  * one of the reviewer's suggestions, without four code paths.
  */
-import { useId, useMemo } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Empty, Icon } from "./ui";
 import { fmtTime, clamp, layout, mergedCuts, placedSpans, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
 import { create } from "./create";
@@ -473,17 +473,7 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
   };
 
   const setCap = (fields, label) => edit({ captions: { ...cap, ...fields } }, label);
-  const setOne = (fields, label) =>
-    edit(patch(tl, "cues", current.id, { custom: { ...(current.custom || {}), ...fields } }), label);
-
-  // What one line is actually drawn at, whether it was given a size of its own
-  // or is following the track. The pixel field must never go blank.
-  const lookOf = (cue) => {
-    const size = cue?.custom?.size || cap.size || "m";
-    const px = cue?.custom?.px ?? cap.px ?? null;
-    return { size, px, shown: px != null ? px : Math.round((CAPTION_SIZES[size] || CAPTION_SIZES.m) * 1080) };
-  };
-  const track = lookOf(null);
+  const track = lineSize(cap, null);
 
   return (
     <>
@@ -612,78 +602,143 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
         </Panel>
       )}
 
-      {current && (
-        <Panel title="This line">
-          <Field
-            label="Text"
-            multiline
-            value={current.text}
-            maxLength={300}
-            onChange={(v) => edit(patch(tl, "cues", current.id, { text: v }), "Caption text")}
-          />
-          <Field
-            label="Emphasise"
-            value={(current.emphasis || []).join(", ")}
-            placeholder="words that carry the meaning"
-            onChange={(v) =>
-              edit(
-                patch(tl, "cues", current.id, { emphasis: v.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6) }),
-                "Caption emphasis"
-              )
-            }
-            hint="Drawn in the look's accent colour. Usually the product name or the action."
-          />
-          <TimeRange tl={tl} item={current} time={time} onChange={(p) => edit(patch(tl, "cues", current.id, p), "Caption timing")} />
+    </>
+  );
+}
 
-          <div>
-            <Label>Just this line</Label>
-            <div style={{ display: "grid", gap: 11, justifyItems: "start" }}>
-              <MiniLabel text="Text">
-                <ColorPicker
-                  compact
-                  value={current.custom?.color || cap.color || "#FFFFFF"}
-                  keyId={current.id}
-                  onChange={(hex, key) => setOne({ color: hex }, key || "Line colour")}
-                />
-              </MiniLabel>
-              <MiniLabel text="Background">
-                <StripPicker
-                  compact
-                  value={current.custom?.bg ?? cap.bg}
-                  keyId={current.id}
-                  onChange={(v, key) => setOne({ bg: v }, key || "Line background")}
-                />
-              </MiniLabel>
-              <SizePicker
-                compact
-                size={lookOf(current).size}
-                px={lookOf(current).shown}
-                min={CAPTION_PX.min}
-                max={CAPTION_PX.max}
-                onPreset={(v) => setOne({ size: v, px: null }, "Line size")}
-                onPx={(px) => setOne({ px }, `px:${current.id}`)}
-              />
-              <CaptionLooks
-                compact
-                value={current.custom?.style || cap.style}
-                color={current.custom?.color || cap.color || "#FFFFFF"}
-                strip={current.custom?.bg ?? cap.bg}
-                onChange={(v) => setOne({ style: v }, "Line look")}
-              />
-              <Toggle
-                label="Bold"
-                checked={current.custom?.bold !== false}
-                onChange={(v) => setOne({ bold: v ? null : false }, "Line weight")}
-              />
-              {current.custom && (
-                <Btn size="xs" icon={<Icon name="reset" size={12} />} onClick={() => edit(patch(tl, "cues", current.id, { custom: null }), "Reset line style")}>
-                  Match the rest
-                </Btn>
-              )}
-            </div>
-          </div>
-        </Panel>
-      )}
+/**
+ * What one caption line is drawn at, whether it was given a size of its own or
+ * follows the track (cue null: the track itself). The pixel field must never
+ * go blank.
+ */
+/** "#fff" as "#FFFFFF": the colour pickers compare full six-digit codes. */
+const fullHex = (h) => (/^#[0-9a-f]{3}$/i.test(h) ? `#${h.slice(1).split("").map((c) => c + c).join("")}` : String(h)).toUpperCase();
+
+/**
+ * The words of a line to highlight, typed as "Billing, Settings". Kept as
+ * typed while it has focus: the list it is saved as has no room for a comma
+ * that has no word after it yet, and writing the list back into the box on
+ * every key swallowed each comma the moment it was typed, so a second word
+ * could never be entered.
+ */
+function HighlightField({ cue, onChange }) {
+  const joined = (cue.emphasis || []).join(", ");
+  const [draft, setDraft] = useState(joined);
+  const [focus, setFocus] = useState(false);
+  useEffect(() => {
+    if (!focus) setDraft(joined);
+  }, [joined, focus, cue.id]);
+  return (
+    <div onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}>
+      <Field
+        label="Highlight"
+        value={draft}
+        maxLength={200}
+        placeholder="e.g. Billing, Settings"
+        onChange={(v) => {
+          setDraft(v);
+          onChange(v.split(",").map((w) => w.trim()).filter(Boolean).slice(0, 6));
+        }}
+        hint="Type words from this line to make them stand out, separated by commas. They are drawn in the highlight colour below."
+      />
+    </div>
+  );
+}
+
+function lineSize(cap, cue) {
+  const size = cue?.custom?.size || cap.size || "m";
+  const px = cue?.custom?.px ?? cap.px ?? null;
+  return { size, px, shown: px != null ? px : Math.round((CAPTION_SIZES[size] || CAPTION_SIZES.m) * 1080) };
+}
+
+/**
+ * One caption line on its own: its words, which of them are highlighted and
+ * in what colour, and how it is styled apart from the rest. Not its timing:
+ * that is dragged on the timeline, where it can be seen against everything
+ * else. Shown in a drawer over the
+ * inspector while the line is selected (StudioEditor), so the list of lines
+ * and the track's settings stay where they were underneath.
+ */
+export function CaptionLine({ tl, cue, edit }) {
+  const cap = tl.captions || {};
+  const setOne = (fields, label) => edit(patch(tl, "cues", cue.id, { custom: { ...(cue.custom || {}), ...fields } }), label);
+  const size = lineSize(cap, cue);
+
+  return (
+    <>
+      <Field
+        label="Text"
+        multiline
+        value={cue.text}
+        maxLength={300}
+        onChange={(v) => edit(patch(tl, "cues", cue.id, { text: v }), "Caption text")}
+      />
+      <div style={{ display: "grid", gap: 10 }}>
+        <HighlightField
+          cue={cue}
+          onChange={(words) => edit(patch(tl, "cues", cue.id, { emphasis: words }), "Caption highlight")}
+        />
+        <MiniLabel text="Highlight colour">
+          <ColorPicker
+            compact
+            value={cue.custom?.accent || fullHex((CAPTION_LOOKS[cue.custom?.style || cap.style] || CAPTION_LOOKS.trylipi).accent)}
+            keyId={`hl:${cue.id}`}
+            onChange={(hex, key) => setOne({ accent: hex }, key || "Highlight colour")}
+          />
+        </MiniLabel>
+      </div>
+
+      <div>
+        <Label>Just this line</Label>
+        <div style={{ display: "grid", gap: 13, justifyItems: "start" }}>
+          <MiniLabel text="Text colour">
+            <ColorPicker
+              compact
+              value={cue.custom?.color || cap.color || "#FFFFFF"}
+              keyId={cue.id}
+              onChange={(hex, key) => setOne({ color: hex }, key || "Line colour")}
+            />
+          </MiniLabel>
+          <MiniLabel text="Background">
+            <StripPicker
+              compact
+              value={cue.custom?.bg ?? cap.bg}
+              keyId={cue.id}
+              onChange={(v, key) => setOne({ bg: v }, key || "Line background")}
+            />
+          </MiniLabel>
+          <MiniLabel text="Size">
+            <SizePicker
+              compact
+              size={size.size}
+              px={size.shown}
+              min={CAPTION_PX.min}
+              max={CAPTION_PX.max}
+              onPreset={(v) => setOne({ size: v, px: null }, "Line size")}
+              onPx={(px) => setOne({ px }, `px:${cue.id}`)}
+            />
+          </MiniLabel>
+          <MiniLabel text="Look">
+            <CaptionLooks
+              compact
+              value={cue.custom?.style || cap.style}
+              color={cue.custom?.color || cap.color || "#FFFFFF"}
+              strip={cue.custom?.bg ?? cap.bg}
+              onChange={(v) => setOne({ style: v }, "Line look")}
+            />
+          </MiniLabel>
+          <Toggle
+            label="Bold"
+            checked={cue.custom?.bold !== false}
+            onChange={(v) => setOne({ bold: v ? null : false }, "Line weight")}
+          />
+          {cue.custom && (
+            <Btn size="xs" icon={<Icon name="reset" size={12} />} onClick={() => edit(patch(tl, "cues", cue.id, { custom: null }), "Reset line style")}>
+              Match the rest
+            </Btn>
+          )}
+        </div>
+      </div>
     </>
   );
 }
@@ -751,13 +806,10 @@ function CaptionLooks({ value, color, strip = null, onChange, compact = false })
 
 const LOOK_TILE = "linear-gradient(135deg,#6B7F95,#C9A27A)";
 
-/** The strip colours offered first: the ones captions are usually set on. */
+/** The strip colours offered (the creator's pick); any other is a hex code away. */
 const STRIP_COLORS = [
   ["#000000", "Black"],
-  ["#3f3f46", "Dark grey"],
-  ["#ffffff", "White"],
-  ["#ffd400", "Yellow"],
-  ["#2563eb", "Blue"],
+  ["#3f3f46", "Grey"],
   ["#e11d48", "Red"],
 ];
 
@@ -1353,7 +1405,11 @@ function ApplyStatus({ blur, st, spans, seekTo, onApply }) {
  * on the frame where a dialog opened is exact and takes one click; finding the
  * same moment by nudging a number is how people give up and leave a blur two
  * seconds late.
+ *
+ * Parked: nothing uses it since caption lines left it too (2026-09-28). Timing
+ * is dragged on the timeline, where it can be seen against everything else.
  */
+// eslint-disable-next-line no-unused-vars
 function TimeRange({ tl, item, time, onChange, extra }) {
   const lay = useMemo(() => layout(tl), [tl]);
   const srcNow = sourceOf(time, lay);

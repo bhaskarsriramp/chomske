@@ -589,6 +589,8 @@ function cueCustom(c) {
     px: c.px == null ? null : clamp(num(c.px, 0), 8, 96),
     color: /^#[0-9a-f]{6}$/i.test(c.color || "") ? c.color : null,
     bg: stripSetting(c.bg),
+    // The colour of the highlighted words (cue.emphasis); null is the look's accent.
+    accent: /^#[0-9a-f]{6}$/i.test(c.accent || "") ? c.accent : null,
     x: c.x == null ? null : round4(frac(c.x, 0.5)),
     y: c.y == null ? null : round4(frac(c.y, 0.84)),
     bold: c.bold == null ? null : !!c.bold,
