@@ -652,17 +652,23 @@ function lineSize(cap, cue) {
 }
 
 /**
- * One caption line on its own: its words, which of them are highlighted and
- * in what colour, and how it is styled apart from the rest. Not its timing:
- * that is dragged on the timeline, where it can be seen against everything
- * else. Shown in a drawer over the
- * inspector while the line is selected (StudioEditor), so the list of lines
- * and the track's settings stay where they were underneath.
+ * One caption line on its own, in the drawer over the inspector while the line
+ * is selected (StudioEditor), so the list of lines and the track's settings
+ * stay where they were underneath. Its words and how they are drawn first;
+ * then, apart, which of them are highlighted and in what colour, which is
+ * about those words and not about the line's text, and was read as part of
+ * its styling when it sat between the two. Not its timing: that is dragged on
+ * the timeline, where it can be seen against everything else. Full-size
+ * controls: the editor is made for a large screen.
  */
 export function CaptionLine({ tl, cue, edit }) {
   const cap = tl.captions || {};
   const setOne = (fields, label) => edit(patch(tl, "cues", cue.id, { custom: { ...(cue.custom || {}), ...fields } }), label);
   const size = lineSize(cap, cue);
+  const own = cue.custom || {};
+  // Styled apart from the rest: anything of its own but the highlight colour,
+  // which "Match the rest" leaves alone (it sits in its own section below).
+  const styled = ["style", "size", "px", "color", "bg", "bold", "x", "y"].some((k) => own[k] != null);
 
   return (
     <>
@@ -673,70 +679,60 @@ export function CaptionLine({ tl, cue, edit }) {
         maxLength={300}
         onChange={(v) => edit(patch(tl, "cues", cue.id, { text: v }), "Caption text")}
       />
-      <div style={{ display: "grid", gap: 10 }}>
-        <HighlightField
-          cue={cue}
-          onChange={(words) => edit(patch(tl, "cues", cue.id, { emphasis: words }), "Caption highlight")}
+      <div>
+        <Label>Text colour</Label>
+        <ColorPicker
+          value={own.color || cap.color || "#FFFFFF"}
+          keyId={cue.id}
+          onChange={(hex, key) => setOne({ color: hex }, key || "Line colour")}
         />
-        <MiniLabel text="Highlight colour">
+      </div>
+      <div>
+        <Label>Background</Label>
+        <StripPicker value={own.bg ?? cap.bg} keyId={cue.id} onChange={(v, key) => setOne({ bg: v }, key || "Line background")} />
+      </div>
+      <div>
+        <Label>Size</Label>
+        <SizePicker
+          size={size.size}
+          px={size.shown}
+          min={CAPTION_PX.min}
+          max={CAPTION_PX.max}
+          onPreset={(v) => setOne({ size: v, px: null }, "Line size")}
+          onPx={(px) => setOne({ px }, `px:${cue.id}`)}
+        />
+      </div>
+      <div>
+        <Label>Look</Label>
+        <CaptionLooks
+          value={own.style || cap.style}
+          color={own.color || cap.color || "#FFFFFF"}
+          strip={own.bg ?? cap.bg}
+          onChange={(v) => setOne({ style: v }, "Line look")}
+        />
+      </div>
+      <Toggle label="Bold" checked={own.bold !== false} onChange={(v) => setOne({ bold: v ? null : false }, "Line weight")} />
+      {styled && (
+        <div>
+          <Btn
+            size="s"
+            icon={<Icon name="reset" size={13} />}
+            onClick={() => edit(patch(tl, "cues", cue.id, { custom: own.accent ? { accent: own.accent } : null }), "Reset line style")}
+          >
+            Match the rest
+          </Btn>
+        </div>
+      )}
+
+      <div style={{ borderTop: "1px solid var(--line)", margin: "4px -16px 0", padding: "18px 16px 0", display: "grid", gap: 16 }}>
+        <HighlightField cue={cue} onChange={(words) => edit(patch(tl, "cues", cue.id, { emphasis: words }), "Caption highlight")} />
+        <div>
+          <Label>Highlight colour</Label>
           <ColorPicker
-            compact
-            value={cue.custom?.accent || fullHex((CAPTION_LOOKS[cue.custom?.style || cap.style] || CAPTION_LOOKS.trylipi).accent)}
+            value={own.accent || fullHex((CAPTION_LOOKS[own.style || cap.style] || CAPTION_LOOKS.trylipi).accent)}
             keyId={`hl:${cue.id}`}
             onChange={(hex, key) => setOne({ accent: hex }, key || "Highlight colour")}
           />
-        </MiniLabel>
-      </div>
-
-      <div>
-        <Label>Just this line</Label>
-        <div style={{ display: "grid", gap: 13, justifyItems: "start" }}>
-          <MiniLabel text="Text colour">
-            <ColorPicker
-              compact
-              value={cue.custom?.color || cap.color || "#FFFFFF"}
-              keyId={cue.id}
-              onChange={(hex, key) => setOne({ color: hex }, key || "Line colour")}
-            />
-          </MiniLabel>
-          <MiniLabel text="Background">
-            <StripPicker
-              compact
-              value={cue.custom?.bg ?? cap.bg}
-              keyId={cue.id}
-              onChange={(v, key) => setOne({ bg: v }, key || "Line background")}
-            />
-          </MiniLabel>
-          <MiniLabel text="Size">
-            <SizePicker
-              compact
-              size={size.size}
-              px={size.shown}
-              min={CAPTION_PX.min}
-              max={CAPTION_PX.max}
-              onPreset={(v) => setOne({ size: v, px: null }, "Line size")}
-              onPx={(px) => setOne({ px }, `px:${cue.id}`)}
-            />
-          </MiniLabel>
-          <MiniLabel text="Look">
-            <CaptionLooks
-              compact
-              value={cue.custom?.style || cap.style}
-              color={cue.custom?.color || cap.color || "#FFFFFF"}
-              strip={cue.custom?.bg ?? cap.bg}
-              onChange={(v) => setOne({ style: v }, "Line look")}
-            />
-          </MiniLabel>
-          <Toggle
-            label="Bold"
-            checked={cue.custom?.bold !== false}
-            onChange={(v) => setOne({ bold: v ? null : false }, "Line weight")}
-          />
-          {cue.custom && (
-            <Btn size="xs" icon={<Icon name="reset" size={12} />} onClick={() => edit(patch(tl, "cues", cue.id, { custom: null }), "Reset line style")}>
-              Match the rest
-            </Btn>
-          )}
         </div>
       </div>
     </>
@@ -862,15 +858,6 @@ function StripPicker({ value, onChange, keyId = "all", compact = false }) {
   );
 }
 
-/** A small name over a compact control, where several share one heading. */
-function MiniLabel({ text, children }) {
-  return (
-    <div style={{ display: "grid", gap: 5 }}>
-      <span style={{ fontSize: 11, fontWeight: 650, color: "var(--ink-mute)" }}>{text}</span>
-      {children}
-    </div>
-  );
-}
 const STYLE_LABEL = { trylipi: "Clipo", hormozi: "Bold", apple: "Quiet", minimal: "Minimal", neon: "Neon" };
 /** Caption pixels are measured against a 1080-short-side frame. See render/ass.js. */
 const CAPTION_PX = { min: 12, max: 96 };
