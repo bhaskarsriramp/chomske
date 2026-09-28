@@ -62,6 +62,9 @@ export default function Preview({
   // button under its rectangle (RectHandle).
   following = null,
   onApplyBlur = null,
+  // The AI voiceover (VoicePanel): { url, on, keepOriginal }. One track in the
+  // recording's own time, so it simply follows the video's clock.
+  voice = null,
 }) {
   const wrapRef = useRef(null);
   // The background image, once loaded. A ref, not state: the frame loop below
@@ -82,6 +85,14 @@ export default function Preview({
   }, [backgroundUrl]);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const voiceRef = useRef(null);
+  const voiceOnRef = useRef(false);
+  voiceOnRef.current = !!(voice?.on && voice?.url);
+  // Instead of the recording's own sound, unless the creator kept it.
+  const muteOriginal = !!(voice?.on && voice?.url && !voice?.keepOriginal);
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.muted = muteOriginal;
+  }, [muteOriginal]);
   const box = useBox(wrapRef);
   const [ready, setReady] = useState(false);
 
@@ -261,6 +272,17 @@ export default function Preview({
         onPlayingChange?.(false);
       }
     }
+
+    // ── The AI voiceover, kept with the picture ────────────────────────
+    // Same clock as the video, so a seek, a cut skipped or a pause is just
+    // the two drifting apart, and they are pulled back together.
+    const a = voiceRef.current;
+    if (a) {
+      if (voiceOnRef.current && !v.paused) {
+        if (Math.abs(a.currentTime - v.currentTime) > 0.2) a.currentTime = v.currentTime;
+        if (a.paused) a.play().catch(() => {});
+      } else if (!a.paused) a.pause();
+    }
   }, [tl, lay, vb, blurs, blurById, follows, clicks, srcW, srcH, onTime, onPlayingChange]);
 
   useEffect(() => {
@@ -303,6 +325,7 @@ export default function Preview({
         onEnded={() => onPlayingChange?.(false)}
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
       />
+      {voice?.url && <audio ref={voiceRef} src={voice.url} preload="auto" />}
 
       <div style={{ position: "relative", width: fw || 0, height: fh || 0 }}>
         <canvas

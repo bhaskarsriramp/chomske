@@ -22,6 +22,7 @@ function withLinks(d) {
       r.thumb_url = abs(r.thumb_url);
     }
     if (d.demo.renders) d.demo.renders = d.demo.renders.map((x) => ({ ...x, url: abs(x.url) }));
+    if (d.demo.voiceover) d.demo.voiceover = { ...d.demo.voiceover, url: abs(d.demo.voiceover.url) };
   }
   return d;
 }
@@ -80,6 +81,27 @@ export const followBlur = (id, b) =>
 /** Each blur's follow, and where each blur's latest Apply is: { follows, jobs }. */
 export const getFollows = (id) => api.get(`/studio/demos/${id}/follows`).then((r) => r.data);
 
+/* ── The AI voiceover (backend services/studio/voice.js) ──────────────────── */
+
+/** One voice saying `text`, as a playable data: URL. */
+export const voiceSample = (id, voice, text) =>
+  api.post(`/studio/demos/${id}/voice/sample`, { voice, text }).then((r) => r.data.audio);
+/**
+ * Make the voiceover from these captions in this voice. Sent the captions as
+ * the editor has them, like a blur to follow: Apply often comes right after an
+ * edit, before the autosave lands. Answers { sig }.
+ */
+export const makeVoice = (id, voice, cues) =>
+  api
+    .post(`/studio/demos/${id}/voice`, { voice, cues: cues.map((c) => ({ id: c.id, start: c.start, end: c.end, text: c.text })) })
+    .then((r) => r.data);
+/** The voiceover, and where the latest request for one is: { voiceover, job }. */
+export const getVoice = (id) =>
+  api.get(`/studio/demos/${id}/voice`).then((r) => {
+    const v = r.data.voiceover;
+    return { ...r.data, voiceover: v ? { ...v, url: abs(v.url) } : null };
+  });
+
 export const saveTimeline = (id, timeline, rev) =>
   api.put(`/studio/demos/${id}/timeline`, { timeline, rev }).then((r) => r.data);
 
@@ -127,5 +149,6 @@ const studioApi = {
   startAnalysis, readScreens, requestCaptions, captionsFromScript, requestReview, resolveSuggestion,
   saveTimeline, startRender, renderDownloadUrl, deleteRender,
   listBackgrounds, uploadBackground, deleteBackground, followBlur, getFollows,
+  voiceSample, makeVoice, getVoice,
 }
 export default studioApi;

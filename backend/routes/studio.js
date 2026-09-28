@@ -48,7 +48,7 @@ import { hasEncoder } from "../services/media/ffmpeg.js";
 import { enqueue } from "../services/studio/studioRunner.js";
 import {
   STUDIO_LIMITS, LEDGER_REASON, acceptable, ACCEPT_MIME, demoKey, demoPrefix, bumpExpiry,
-  studioCost, shapeDemo, shapeDemoCard, publishProgress, followsFor,
+  studioCost, shapeDemo, shapeDemoCard, publishProgress, followsFor, shapeVoiceover,
   STUDIO_ANALYSE_CREDITS_PER_MIN, STUDIO_EXPORT_CREDITS_PER_MIN,
 } from "../services/studio/demoService.js";
 import {
@@ -63,6 +63,8 @@ import { GRADIENTS } from "../services/studio/render/frame.js";
 import { applySuggestion } from "../services/studio/suggestions.js";
 import { isDemoSlug, ensureDemoSlug } from "../services/studio/demoSlug.js";
 import { blurSig } from "../../src/components/Studio/follow.mjs";
+import { voiceById, voiceSig } from "../../src/components/Studio/voices.mjs";
+import { sampleVoice } from "../services/studio/voice.js";
 import StudioAsset from "../models/StudioAsset.js";
 import {
   BACKGROUND_LIMITS, BACKGROUND_TYPES, prepareBackground, saveBackground, deleteBackground, shapeBackground,
@@ -816,6 +818,106 @@ router.post("/demos/:id/follow", wrap(async (req, res) => {
  * (a dropped socket, a worker that never picked the job up) shows as what it
  * is instead of "Applying…" for ever.
  */
+/* ────────────────────────────────────────────────────────────────────────────
+   The AI voiceover
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Samples already spoken, so playing a voice twice, or in two tabs, is one
+ * model call. Small: a sample is one sentence of one demo.
+ */
+const samples = new Map();
+const SAMPLES_KEPT = 120;
+
+/**
+ * POST /studio/demos/:id/voice/sample  { voice, text }
+ *
+ * One voice saying the demo's own first sentence, so a creator hears how it
+ * sounds on their content before choosing it: { audio: "data:audio/wav;…" }.
+ * Free, like the voiceover itself for now.
+ */
+router.post("/demos/:id/voice/sample", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  const v = voiceById(String(req.body?.voice || ""));
+  const text = String(req.body?.text || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  if (!v) return fail(res, 400, "Which voice?");
+  if (!text) return fail(res, 400, "There is nothing to say yet.");
+  const key = `${v.id}|${text}`;
+  let wav = samples.get(key);
+  if (!wav) {
+    try {
+      wav = await sampleVoice(text, v.id);
+    } catch (err) {
+      console.error(`[studio] voice sample ${v.id} failed:`, err.message);
+      return fail(res, 502, err.userMessage || "That voice didn't answer. Try again in a moment.");
+    }
+    samples.set(key, wav);
+    while (samples.size > SAMPLES_KEPT) samples.delete(samples.keys().next().value);
+  }
+  res.json({ success: true, audio: `data:audio/wav;base64,${wav.toString("base64")}` });
+}));
+
+/**
+ * POST /studio/demos/:id/voice  { voice, cues: [{ id, start, end, text }] }
+ *
+ * Make the voiceover from these captions in this voice (the "voice" job,
+ * services/studio/voice.js). The captions come in the body, exactly as the
+ * editor has them, like a blur to follow: Apply is pressed right after an
+ * edit, before the autosave lands. A newer request replaces a queued one.
+ * Answers with the signature the finished voiceover will carry.
+ */
+router.post("/demos/:id/voice", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  if (demo.purged) return fail(res, 410, "This recording's files have been deleted.");
+  const v = voiceById(String(req.body?.voice || ""));
+  if (!v) return fail(res, 400, "Which voice?");
+  const total = Number(demo.recording?.duration || demo.timeline?.duration || 0);
+  const cues = (Array.isArray(req.body?.cues) ? req.body.cues : [])
+    .slice(0, 1000)
+    .map((c) => ({
+      id: String(c?.id || "").slice(0, 40),
+      start: Math.max(0, Math.min(total || Infinity, Number(c?.start) || 0)),
+      end: Math.max(0, Math.min(total || Infinity, Number(c?.end) || 0)),
+      text: String(c?.text || "").replace(/\s+/g, " ").trim().slice(0, 300),
+    }))
+    .filter((c) => c.text && c.end > c.start);
+  if (!cues.length) return fail(res, 400, "Add some captions first: the voice speaks them.");
+
+  const sig = voiceSig(v.id, cues);
+  await StudioJob.deleteMany({ demo: demo._id, type: "voice", status: "queued" });
+  await enqueue({ demo: demo._id, user: req.user.id, type: "voice", ref: sig, data: { voice: v.id, cues, sig, seq: Date.now() } });
+  publishProgress(demo, { voicing: { sig, progress: 0 } });
+  res.json({ success: true, sig });
+}));
+
+/**
+ * GET /studio/demos/:id/voice
+ *
+ * The voiceover, and where the latest request for one is: { voiceover, job:
+ * { sig, status, error, age } }. The editor reads this every few seconds
+ * while one is being made, so a lost progress message never leaves it saying
+ * "Making the voiceover…" for ever.
+ */
+router.get("/demos/:id/voice", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  const job = await StudioJob.findOne({ demo: demo._id, type: "voice" }).sort({ created_at: -1 }).select("ref status error created_at").lean();
+  res.json({
+    success: true,
+    voiceover: await shapeVoiceover(demo, { baseUrl: baseUrlOf() }),
+    job: job
+      ? {
+          sig: job.ref,
+          status: job.status,
+          error: job.status === "failed" ? "We couldn't make the voiceover. Try again in a moment." : "",
+          age: Math.round((Date.now() - new Date(job.created_at).getTime()) / 1000),
+        }
+      : null,
+  });
+}));
+
 router.get("/demos/:id/follows", wrap(async (req, res) => {
   const demo = await ownDemo(req, res);
   if (!demo) return;

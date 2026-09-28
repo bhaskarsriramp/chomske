@@ -21,8 +21,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onLiveEvent } from "../../realtime/socket";
 // requestReview and resolveSuggestion are hidden with the Review tab (see TABS).
-import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds, followBlur, getFollows } from "./studioApi";
+import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds, followBlur, getFollows, makeVoice, getVoice } from "./studioApi";
 import { blurSig, applyState } from "./follow.mjs";
+import { voiceSig } from "./voices.mjs";
+import VoicePanel from "./VoicePanel";
 import { Thinking } from "./RecordPage";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
@@ -54,6 +56,8 @@ const TABS = [
   { id: "blur", label: "Blur", icon: "blur" },
   { id: "captions", label: "Captions", icon: "caption" },
   { id: "cursor", label: "Cursor", icon: "cursor" },
+  // The AI voiceover that reads the captions (VoicePanel.js).
+  { id: "voice", label: "Voice", icon: "mic" },
   // Canvas moved under the preview (CanvasBar.js); Review is hidden for now.
   // Both are commented out, not removed, with their panel blocks in `panel`.
   // { id: "canvas", label: "Canvas", icon: "canvas" },
@@ -156,6 +160,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   // picture and Export (follow.mjs applyState).
   const [follows, setFollows] = useState({});
   const [following, setFollowing] = useState({});
+  // The AI voiceover being made (VoicePanel, backend voice.js): { sig,
+  // progress } or { sig, failed, message }; null when none is.
+  const [voicing, setVoicing] = useState(null);
   useEffect(() => {
     let live = true;
     listBackgrounds()
@@ -299,6 +306,13 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         if (e.notice) setNotice(e.notice);
         return;
       }
+      // The voiceover being made: its progress, without reading the demo again.
+      // Only for the one asked for last; an older one still finishing is not it.
+      if (e.voicing) {
+        setVoicing((p) => (p && p.sig !== e.voicing.sig ? p : { ...(p || {}), ...e.voicing }));
+        return;
+      }
+      if (e.voiceover) setVoicing((p) => (p && p.sig === e.voiceover.sig ? null : p));
       if (e.notice) setNotice(e.notice);
       if (e.captioning === false) setCaptioning(false);
       if (e.reading === false || e.read) setReading(false);
@@ -678,6 +692,70 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       live = false;
     };
   }, [unappliedIds, demoId]);
+
+  /**
+   * ── THE AI VOICEOVER ──────────────────────────────────────────────────────
+   * Apply makes it on the server from the captions as they are now, in the
+   * voice chosen, and turns it on. Captions and voice unchanged since the one
+   * already made: it is only turned on, nothing is made again.
+   */
+  const applyVoice = useCallback(
+    (voice) => {
+      const cur = tlRef.current;
+      if (!cur) return;
+      const cues = (cur.cues || []).filter((c) => String(c.text || "").trim());
+      if (!cues.length) return;
+      if (!cur.voice?.on) edit({ voice: { ...(cur.voice || {}), on: true } }, "Voiceover on");
+      const sig = voiceSig(voice, cues);
+      if (demoRef.current?.voiceover?.sig === sig) return;
+      setVoicing({ sig, progress: 0 });
+      makeVoice(demoId, voice, cues)
+        .then((r) => setVoicing((p) => (p && p.sig === sig && r?.sig && r.sig !== sig ? { ...p, sig: r.sig } : p)))
+        .catch((err) =>
+          setVoicing((p) => (p && p.sig === sig ? { sig, failed: true, message: err?.response?.data?.message || "We couldn't make the voiceover. Try again." } : p))
+        );
+    },
+    [demoId, edit]
+  );
+
+  // Checked on while one is being made, beside the live messages, so a lost
+  // one never leaves "Making the voiceover…" up for ever.
+  const voicingSig = voicing && !voicing.failed ? voicing.sig : "";
+  useEffect(() => {
+    if (!voicingSig) return undefined;
+    let live = true;
+    const timer = setInterval(async () => {
+      const res = await getVoice(demoId).catch(() => null);
+      if (!live || !res) return;
+      if (res.voiceover?.sig === voicingSig) {
+        setVoicing((p) => (p && p.sig === voicingSig ? null : p));
+        load(true);
+      } else if (res.job?.sig === voicingSig && res.job.status === "failed") {
+        setVoicing((p) => (p && p.sig === voicingSig ? { sig: voicingSig, failed: true, message: res.job.error } : p));
+      }
+    }, APPLY_POLL_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [voicingSig, demoId, load]);
+
+  // One already being made when the tab opens (the page was reloaded while it
+  // ran, say): shown as being made rather than offered again.
+  useEffect(() => {
+    if (tab !== "voice" || voicing) return undefined;
+    let live = true;
+    getVoice(demoId)
+      .then((res) => {
+        const job = res?.job;
+        if (!live || !job || !["queued", "running"].includes(job.status) || res.voiceover?.sig === job.sig) return;
+        setVoicing((p) => p || { sig: job.sig, progress: 0 });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [tab, voicing, demoId]);
 
   // "Cut here" on the video lane: split the clip under that moment in two,
   // taking nothing out (clips.js). A moment too near a clip's edge is ignored.
@@ -1070,6 +1148,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         follows={follows}
         following={following}
         onApplyBlur={applyBlur}
+        // The AI voiceover, played with the picture when it is on.
+        voice={{ url: demo.voiceover?.url || "", on: !!(tl.voice?.on && demo.voiceover?.url), keepOriginal: !!tl.voice?.keep_original }}
       />
       {full && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 4px 0", color: "#fff" }}>
@@ -1217,6 +1297,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         />
       )}
       {tab === "cursor" && <CursorPanel tl={tl} edit={edit} />}
+      {tab === "voice" && (
+        <VoicePanel tl={tl} edit={edit} demo={demo} voicing={voicing} onApply={applyVoice} onGoCaptions={() => openTab("captions")} />
+      )}
       {/* Canvas and Review: hidden with their tabs (see TABS).
       {tab === "canvas" && <CanvasPanel tl={tl} edit={edit} />}
       {tab === "review" && (

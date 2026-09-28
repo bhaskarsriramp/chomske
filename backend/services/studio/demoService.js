@@ -176,6 +176,24 @@ export async function stableUrl(key, opts = {}) {
   }
 }
 
+/**
+ * The AI voiceover as the editor sees it: which voice, what it was made from
+ * (sig), where each sentence sits, and a URL to play. The storage key stays
+ * here.
+ */
+export async function shapeVoiceover(d, { baseUrl } = {}) {
+  const v = d.voiceover;
+  if (!v?.key) return null;
+  return {
+    name: v.name,
+    sig: v.sig,
+    seconds: v.seconds || 0,
+    sentences: v.sentences || [],
+    made_at: v.made_at || null,
+    url: await stableUrl(v.key, { baseUrl, optional: true }),
+  };
+}
+
 /** The follows of the blurs the timeline still has; a deleted blur's go unsaid. */
 export function followsFor(d) {
   const all = d.follows || {};
@@ -203,6 +221,8 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
     slug: d.slug || "",
     // Each blur's follow, for the blurs that still exist (follow.mjs).
     follows: followsFor(d),
+    // The AI voiceover, when one has been made (voice.js).
+    voiceover: await shapeVoiceover(d, { baseUrl }),
     title: d.title || "Untitled recording",
     status: d.status,
     stage: d.stage || "",

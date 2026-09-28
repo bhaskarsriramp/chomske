@@ -344,6 +344,15 @@ const StudioDemoSchema = new Schema({
    * only while that blur still matches it.
    */
   follows: { type: Schema.Types.Mixed, default: undefined },
+  /**
+   * The AI voiceover, made from the captions by the "voice" job
+   * (services/studio/voice.js): { name, sig, key, seconds, sentences, seq,
+   * made_at }. `sig` is voices.mjs voiceSig of the voice and the captions it
+   * was made from, so the editor can tell when the captions have moved on.
+   * Beside the timeline, like `follows`, so the job never races a save.
+   * Whether it plays is the timeline's (timeline.voice.on).
+   */
+  voiceover: { type: Schema.Types.Mixed, default: undefined },
 
   expires_at: { type: Date, default: null, index: true },
   purged: { type: Boolean, default: false },

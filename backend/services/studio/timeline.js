@@ -33,6 +33,7 @@
  *   events   [{ id, t, type, x, y, ... }]                clicks, scrolls, typing
  *   steps    [{ id, start, end, title, detail, importance, camera }]
  *   captions { enabled, style, position, size, px, color, bg, x, y, lang }
+ *   voice    { on, keep_original }                     the AI voiceover (demo.voiceover) plays
  *   cues     [{ id, start, end, text, emphasis, custom }]  custom: one line styled alone
  *   blurs    [{ id, start, end, x, y, w, h, kind, strength, label, auto }]
  *   canvas   { aspect, background, padding, radius, shadow }
@@ -126,6 +127,14 @@ export const defaultCursor = () => ({
   hide_real: true,
   captured_px: 22,
 });
+
+/**
+ * The AI voiceover: whether it plays, in the editor and the export, and
+ * whether the recording's own sound plays under it. What it says, and in
+ * which voice, is the demo's voiceover (StudioDemo.voiceover, made by the
+ * "voice" job from the captions), kept beside the timeline like a blur's follow.
+ */
+export const defaultVoice = () => ({ on: false, keep_original: false });
 
 export const defaultCaptions = () => ({
   enabled: false,
@@ -919,6 +928,8 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
     y: cap.y == null ? null : round4(frac(cap.y, 0.84)),
     lang: text(cap.lang, 12),
   };
+  const voice = src.voice || {};
+  out.voice = { on: voice.on === true, keep_original: voice.keep_original === true };
   out.cues = (src.cues || [])
     .slice(0, 5000)
     .map((q) => ({

@@ -39,6 +39,7 @@ import { witnessPass, WITNESS_MODE } from "./witness.js";
 import { applySuggestion } from "./suggestions.js";
 import { renderTimeline } from "./render/compose.js";
 import { trackBlur } from "./blurTrack.js";
+import { buildVoiceover } from "./voice.js";
 import { twinOf } from "./foundBlurs.js";
 import { blurSig } from "../../../src/components/Studio/follow.mjs";
 import { missingFonts, FONTS_DIR } from "./render/ass.js";
@@ -66,7 +67,7 @@ const AUTO_APPLY_PRESSES = String(process.env.STUDIO_AUTO_PRESS_ZOOMS || "1") !=
  * local and only the download or upload was at fault. An analysis gives up
  * sooner: every try pays for model calls again.
  */
-const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3, track: 6 };
+const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3, track: 6, voice: 4 };
 
 const int = (v, d) => (parseInt(v, 10) > 0 ? parseInt(v, 10) : d);
 const LIMIT = {
@@ -79,8 +80,10 @@ const LIMIT = {
   // Following a blur is a few seconds of frame matching per blur, and a
   // creator adjusting several blurs in a row asks for several.
   track: int(process.env.STUDIO_TRACK_CONCURRENCY, 2),
+  // A voiceover is a few model calls a sentence and one short encode.
+  voice: int(process.env.STUDIO_VOICE_CONCURRENCY, 2),
 };
-const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0, track: 0 };
+const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0, track: 0, voice: 0 };
 
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
 
@@ -1008,6 +1011,10 @@ const render = {
     const source = await materialize(demo.recording.mp4_key, workDir, "recording.mp4");
     const options = cleanExportOptions(entry.options);
     const out = path.join(workDir, `export.${options.format}`);
+    // The AI voiceover, when it is on and there is one (voice.js).
+    const voiceFile = demo.timeline.voice?.on && demo.voiceover?.key
+      ? await materialize(demo.voiceover.key, workDir, "voice.mp3")
+      : null;
 
     const result = await renderTimeline({
       timeline: demo.timeline,
@@ -1019,6 +1026,7 @@ const render = {
       user: demo.user,
       // Where each blur goes when what it covers moves (follow.mjs).
       follows: demo.follows || {},
+      voiceFile,
       onProgress: (p, stage) => report({ stage, progress: Math.max(0.01, Math.min(0.99, p)) }),
     });
 
@@ -1224,7 +1232,69 @@ async function dropFoundTwins(demo) {
   return drop;
 }
 
-const HANDLERS = { prepare, analyse, vision, captions, render, review, track };
+/* ────────────────────────────────────────────────────────────────────────────
+   voice: the AI voiceover, spoken from the captions
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Made from the captions as the editor had them when Apply was pressed (sent
+ * with the request, like a blur to follow, because the autosave may not have
+ * landed), in the voice chosen. Written to demo.voiceover only if nothing
+ * newer landed first, and never touching the timeline, so no save is in its
+ * way; the file it replaces is removed. The editor hears about it live.
+ */
+const voice = {
+  async run(job, workDir) {
+    const { voice: name, cues, sig, seq } = job.data || {};
+    const demo = await StudioDemo.findById(job.demo).select("user recording purged voiceover").lean();
+    if (!demo || demo.purged || !name || !Array.isArray(cues)) return;
+
+    publishProgress(demo, { voicing: { sig, progress: 0.02 } });
+    let told = 0;
+    const result = await buildVoiceover({
+      cues,
+      voice: name,
+      duration: demo.recording?.duration || 0,
+      workDir,
+      onProgress: (p) => {
+        const now = Date.now();
+        if (now - told < 700) return;
+        told = now;
+        publishProgress(demo, { voicing: { sig, progress: Math.round(p * 100) / 100 } });
+      },
+    });
+
+    const key = demoKey(demo, "voice", `${sig}-${seq}.mp3`);
+    await putFile(result.file, key, "audio/mpeg");
+    const voiceover = {
+      name, sig, key, seq,
+      seconds: result.seconds,
+      sentences: result.sentences,
+      made_at: new Date(),
+    };
+    const saved = await retryDb(`save voiceover ${demo._id}`, () => StudioDemo.updateOne(
+      { _id: demo._id, $or: [{ voiceover: null }, { voiceover: { $exists: false } }, { "voiceover.seq": { $lt: seq } }] },
+      { $set: { voiceover } }
+    ));
+    if (!saved?.modifiedCount) {
+      // A newer one landed while this was being made: this file is nobody's.
+      await removeObject(key).catch(() => {});
+      return;
+    }
+    if (demo.voiceover?.key && demo.voiceover.key !== key) await removeObject(demo.voiceover.key).catch(() => {});
+    console.log(`[studio] voiceover ${demo._id}: ${name}, ${result.sentences.length} sentences, ${result.seconds}s`);
+    publishProgress(demo, { voiceover: { sig, done: true } });
+  },
+
+  async fail(job, err) {
+    const demo = await StudioDemo.findById(job.demo).select("user").lean();
+    if (!demo) return;
+    const message = err.userMessage || "We couldn't make the voiceover. Try again in a moment.";
+    publishProgress(demo, { voicing: { sig: job.data?.sig, failed: true, message } });
+  },
+};
+
+const HANDLERS = { prepare, analyse, vision, captions, render, review, track, voice };
 
 /* ────────────────────────────────────────────────────────────────────────────
    Retention

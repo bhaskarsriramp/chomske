@@ -66,7 +66,7 @@ const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
  * @param {Function} o.onProgress (fraction, stage)
  * @returns {Promise<{ width, height, duration, drew, srt }>}
  */
-export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null, follows = {} }) {
+export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null, follows = {}, voiceFile = null }) {
   const o = cleanExportOptions(options, { hevc: options?.codec === "hevc" });
   const lay = layout(timeline);
   if (!(lay.duration > 0.1)) {
@@ -456,6 +456,35 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   // break the rule at the top of this file, so it is refused instead.
   if (music.length) {
     throw userError("Background music isn't in this export yet. Remove the music track and export again.");
+  }
+
+  /**
+   * ── THE AI VOICEOVER ────────────────────────────────────────────────────
+   * One track in the recording's own time (services/studio/voice.js), cut here
+   * exactly as the picture was: each kept stretch of it, joined in order, so a
+   * sentence spoken over a stretch that was cut goes with it. Instead of the
+   * recording's own sound, or over it when the creator asked to keep that.
+   * Padded with silence to the end: the export stops at the video's length.
+   */
+  if (voiceFile && timeline.voice?.on) {
+    const vi = next++;
+    inputs.push("-i", voiceFile);
+    const kept = segments.length ? segments : [{ src_start: 0, src_end: duration }];
+    const fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo";
+    const trim = (s) => `atrim=start=${s.src_start.toFixed(3)}:end=${s.src_end.toFixed(3)},asetpts=PTS-STARTPTS`;
+    if (kept.length === 1) {
+      graph.push(`[${vi}:a]${trim(kept[0])},${fmt},apad[vtrk]`);
+    } else {
+      graph.push(`[${vi}:a]asplit=${kept.length}${kept.map((_, i) => `[vs${i}]`).join("")}`);
+      kept.forEach((s, i) => graph.push(`[vs${i}]${trim(s)}[vp${i}]`));
+      graph.push(`${kept.map((_, i) => `[vp${i}]`).join("")}concat=n=${kept.length}:v=0:a=1,${fmt},apad[vtrk]`);
+    }
+    if (a && timeline.voice.keep_original) {
+      graph.push(`[${a}][vtrk]amix=inputs=2:duration=first:normalize=0[avo]`);
+      a = "avo";
+    } else {
+      a = "vtrk";
+    }
   }
 
   const isGif = o.format === "gif";
