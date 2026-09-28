@@ -277,7 +277,7 @@ function drawArrow(ctx, s, look) {
   ctx.fillStyle = look.fill;
   ctx.fill();
   ctx.shadowColor = "transparent";
-  ctx.lineWidth = Math.max(1, s * 0.055);
+  ctx.lineWidth = Math.max(look.lineMin, s * look.lineW);
   ctx.lineJoin = "round";
   ctx.strokeStyle = look.line;
   ctx.stroke();
@@ -297,11 +297,11 @@ function drawHand(ctx, s, look) {
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.strokeStyle = look.line;
-  ctx.lineWidth = Math.max(1, s * 0.055);
+  ctx.lineWidth = Math.max(look.lineMin, s * look.lineW);
   ctx.stroke();
   // The lines between the fingers, a little finer than the outline.
   ctx.strokeStyle = look.detail;
-  ctx.lineWidth = Math.max(0.8, s * 0.04);
+  ctx.lineWidth = Math.max(look.detailMin, s * look.detailW);
   traceHandDetail(ctx, s);
 }
 

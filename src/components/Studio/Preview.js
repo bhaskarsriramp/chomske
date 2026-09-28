@@ -502,7 +502,8 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
   const zoom = clamp(1 / cam.w, 1, 3);
   const s = Math.max(22, Number(cur?.captured_px) || 22) * (d.dw / srcW) * (cur?.size || DEFAULT_CURSOR_SIZE) * Math.min(zoom, 2.2);
   // Dark, Light or the creator's colour, as the export draws it.
-  const { fill, line, detail } = cursorColors(cur);
+  const look = cursorColors(cur);
+  const { fill, line, detail } = look;
 
   ctx.save();
   ctx.translate(x, y);
@@ -533,13 +534,13 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     ctx.fillStyle = fill;
     ctx.fill();
     ctx.shadowColor = "transparent";
-    ctx.lineWidth = Math.max(1, s * 0.055);
+    ctx.lineWidth = Math.max(look.lineMin, s * look.lineW);
     ctx.lineJoin = "round";
     ctx.strokeStyle = line;
     ctx.stroke();
     ctx.lineCap = "round";
     ctx.strokeStyle = detail;
-    ctx.lineWidth = Math.max(0.8, s * 0.04);
+    ctx.lineWidth = Math.max(look.detailMin, s * look.detailW);
     traceHandDetail(ctx, s);
   } else {
     // Same sub-pixel tip margin as overlay.js drawArrow.
@@ -548,7 +549,7 @@ function paintCursor(ctx, p, cam, cur, d, srcW) {
     ctx.fillStyle = fill;
     ctx.fill();
     ctx.shadowColor = "transparent";
-    ctx.lineWidth = Math.max(1, s * 0.055);
+    ctx.lineWidth = Math.max(look.lineMin, s * look.lineW);
     ctx.lineJoin = "round";
     ctx.strokeStyle = line;
     ctx.stroke();

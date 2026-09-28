@@ -6,10 +6,10 @@
  * file is an export nobody previewed.
  *
  * Three looks: Dark, the default; Light; and the creator's own colour
- * (`color`), all of it that colour, outline included (the creator's call:
- * an orange pointer with a black border read as not quite the colour picked).
- * Only the lines between the hand's fingers differ, a deeper shade of it, or
- * the hand would be a flat blob.
+ * (`color`), edged with a very thin black line. The creator's calls, in
+ * order: a normal black border made an orange pointer read as not quite the
+ * colour picked; one in the colour itself left no edge at all and did not
+ * look good either; a hairline of black does both.
  * A demo may still carry a look that no longer exists: "system" was the light
  * arrow, and ring, dot and none draw as the default.
  *
@@ -46,13 +46,6 @@ function luminance(hex) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-/** The colour moved `k` of the way towards black (k > 0) or white (k < 0). */
-function shade(hex, k) {
-  const to = k > 0 ? 0 : 255;
-  const a = Math.abs(k);
-  return "#" + rgbOf(hex).map((c) => Math.round(c + (to - c) * a).toString(16).padStart(2, "0")).join("");
-}
-
 /** Which of the three looks a cursor's `theme` means. */
 export function cursorLookName(theme) {
   if (theme === "light" || theme === "system") return "light";
@@ -60,19 +53,26 @@ export function cursorLookName(theme) {
   return "dark";
 }
 
+/** The outline and finger lines of Dark and Light, as fractions of the size. */
+const EDGE = { lineW: 0.055, lineMin: 1, detailW: 0.04, detailMin: 0.8 };
+/** ...and the hairline a colour gets. */
+const HAIRLINE = { lineW: 0.02, lineMin: 0.6, detailW: 0.018, detailMin: 0.5 };
+
 /**
- * The pointer's { fill, line, detail }: its body, its outline, and the lines
- * between the hand's fingers.
+ * The pointer's colours: `fill` its body, `line` its outline and `detail` the
+ * lines between the hand's fingers; and how thick those two are drawn, at
+ * size s, Math.max(lineMin, s * lineW) and Math.max(detailMin, s * detailW).
  */
 export function cursorColors(cur) {
   const look = cursorLookName(cur?.theme);
-  if (look === "light") return { fill: WHITE, line: INK, detail: INK };
+  if (look === "light") return { fill: WHITE, line: INK, detail: INK, ...EDGE };
   if (look === "custom") {
     const fill = isHex(cur?.color) ? cur.color.toLowerCase() : DEFAULT_CURSOR_COLOR;
-    // Deeper for most colours; lighter for one too dark to go deeper.
-    return { fill, line: fill, detail: luminance(fill) < 0.04 ? shade(fill, -0.45) : shade(fill, 0.45) };
+    // A near-black colour against a black hairline would have no edge.
+    const line = luminance(fill) < 0.04 ? WHITE : "#000000";
+    return { fill, line, detail: line, ...HAIRLINE };
   }
-  return { fill: INK, line: WHITE, detail: WHITE };
+  return { fill: INK, line: WHITE, detail: WHITE, ...EDGE };
 }
 
 /** The ripple's colour as "r, g, b", for an rgba() carrying the ripple's own fade. */
@@ -84,7 +84,8 @@ export function rippleRgb(cur) {
  * ── THE HAND ─────────────────────────────────────────────────────────────────
  * The classic pointing hand, the one every desktop draws over a link: index
  * finger up, the other three curled beside it with a line between each, the
- * thumb out to the left, a cuff at the wrist. Laid out from the fingertip,
+ * thumb out to the left, and the palm rounded off underneath in one smooth
+ * curve (the creator's reference; a square wrist cuff read as clunky). Laid out from the fingertip,
  * which is the hotspot, in units of the cursor's size `s`. traceHand is the
  * outline (fill it, then stroke it); traceHandDetail strokes the lines
  * between the fingers.
@@ -113,17 +114,14 @@ export function traceHand(ctx, s) {
   ctx.quadraticCurveTo(...p(0.43, 0.22), ...p(0.43, 0.31));
   ctx.quadraticCurveTo(...p(0.43, 0.28), ...p(0.5, 0.28));
   ctx.quadraticCurveTo(...p(0.57, 0.28), ...p(0.57, 0.37));
-  // Down the outside of the hand into the cuff.
-  ctx.lineTo(...p(0.57, 0.7));
-  ctx.quadraticCurveTo(...p(0.57, 0.86), ...p(0.47, 0.94));
-  ctx.lineTo(...p(0.47, 1.04));
-  ctx.lineTo(...p(-0.03, 1.04));
-  ctx.lineTo(...p(-0.03, 0.94));
+  // Down the outside, then one smooth curve round the heel of the palm.
+  ctx.lineTo(...p(0.57, 0.6));
+  ctx.bezierCurveTo(...p(0.57, 0.86), ...p(0.4, 1.02), ...p(0.16, 1.02));
+  ctx.bezierCurveTo(...p(0.0, 1.02), ...p(-0.1, 0.95), ...p(-0.19, 0.83));
   // The thumb, out to the left and back into the base of the finger.
-  ctx.quadraticCurveTo(...p(-0.13, 0.86), ...p(-0.24, 0.72));
-  ctx.quadraticCurveTo(...p(-0.33, 0.61), ...p(-0.35, 0.55));
-  ctx.quadraticCurveTo(...p(-0.36, 0.47), ...p(-0.28, 0.47));
-  ctx.quadraticCurveTo(...p(-0.2, 0.48), ...p(-0.13, 0.56));
+  ctx.lineTo(...p(-0.31, 0.64));
+  ctx.quadraticCurveTo(...p(-0.37, 0.53), ...p(-0.3, 0.48));
+  ctx.quadraticCurveTo(...p(-0.22, 0.44), ...p(-0.13, 0.56));
   ctx.closePath();
 }
 
