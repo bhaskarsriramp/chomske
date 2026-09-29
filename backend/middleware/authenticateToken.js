@@ -81,7 +81,7 @@ export function readSession(req, res) {
       visitor_id: payload.vid || "",
     };
   } catch {
-    res.clearCookie(COOKIE_NAME, cookieOptions());
+    res.clearCookie(COOKIE_NAME, clearCookieOptions());
     return null;
   }
 }
@@ -195,4 +195,14 @@ export function cookieOptions() {
     path: "/",
     maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days, matching the JWT below
   };
+}
+
+/**
+ * The same settings for clearCookie, minus maxAge. Express 4 warns when a clear
+ * is passed one (and 5 ignores it); matching is on name, domain and path, so
+ * leaving it out changes nothing about which cookie is removed.
+ */
+export function clearCookieOptions() {
+  const { maxAge, ...rest } = cookieOptions();
+  return rest;
 }

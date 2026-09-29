@@ -115,6 +115,7 @@ async function checkRedis() {
     console.log(
       `[worker] scratch: ${root}` +
         (room ? ` — ${(room.free / 1e9).toFixed(0)} GB free of ${(room.total / 1e9).toFixed(0)} GB` : "") +
+        (room ? "" : "  ** CANNOT READ THIS FOLDER. Create it and give this user write access, or every job fails. **") +
         (onRam ? "  ** THIS IS RAM (tmpfs). Set STUDIO_TMPDIR to a real disk. **" : "")
     );
 

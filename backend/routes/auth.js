@@ -15,7 +15,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 import User from "../models/User.js";
-import { COOKIE_NAME, cookieOptions, readSession } from "../middleware/authenticateToken.js";
+import { COOKIE_NAME, cookieOptions, clearCookieOptions, readSession } from "../middleware/authenticateToken.js";
 import { publicCategories, MAX_CATEGORIES } from "../services/categories.js";
 
 const router = express.Router();
@@ -114,7 +114,7 @@ router.get("/me", async (req, res) => {
   if (!user) {
     // The account went away under a still-valid token (deleted, or a restore).
     // Same shape as signed out, because that is what the holder now is.
-    res.clearCookie(COOKIE_NAME, cookieOptions());
+    res.clearCookie(COOKIE_NAME, clearCookieOptions());
     return res.json({ success: true, user: null });
   }
 
@@ -135,7 +135,7 @@ router.get("/categories", (req, res) => {
 
 /** POST /auth/logout */
 router.post("/logout", (req, res) => {
-  res.clearCookie(COOKIE_NAME, cookieOptions());
+  res.clearCookie(COOKIE_NAME, clearCookieOptions());
   return res.json({ success: true });
 });
 

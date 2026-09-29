@@ -42,7 +42,13 @@ export function scratchRoot() {
  */
 export async function jobDir(kind, id) {
   const dir = path.join(scratchRoot(), kind, String(id));
-  await fsp.mkdir(dir, { recursive: true }).catch(() => {});
+  // Not thrown: callers make it before their try, and the job then fails on its
+  // first write. But said, because that failure is an ENOENT on a file inside
+  // the folder, which points nowhere near the cause (EACCES on a fresh VM whose
+  // STUDIO_TMPDIR was never created, 2026-09-29).
+  await fsp.mkdir(dir, { recursive: true }).catch((err) =>
+    console.error(`[scratch] cannot create ${dir}: ${err.message}`)
+  );
   return dir;
 }
 
