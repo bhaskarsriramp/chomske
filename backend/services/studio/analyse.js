@@ -143,8 +143,17 @@ export const BLUR_ON =
  * @param {object} o.source      { width, height, fps }
  * @param {number} o.duration
  * @param {Function} o.onProgress (fraction, stage)
+ * @param {object} [o.screen]    sync.js readScreen's result, already made — the
+ *                               browser analysis gets it from the server
+ * @param {object} [o.asks]      answers to the model's questions, replayed
+ *                               instead of asked: { identify(rivals),
+ *                               judgeRuns({ reference, runs, heightPx }),
+ *                               judgePresses(events, o) }. The server's re-check
+ *                               of a browser analysis uses the answers that run
+ *                               got, so a model changing its mind is not
+ *                               mistaken for the two runs disagreeing.
  */
-export async function analyseRecording({ video, audio = "", workDir, capture = {}, source, duration, wantCaptions = false, onProgress = () => {} }) {
+export async function analyseRecording({ video, audio = "", workDir, capture = {}, source, duration, wantCaptions = false, onProgress = () => {}, screen = null, asks = null }) {
   const spend = newSpend();
   const every = Math.max(0.5, STUDIO_LIMITS.frameEvery);
 
@@ -216,7 +225,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * makes no difference at all. See sync.js.
    */
   onProgress(0.04, "Checking the pointer against the recording");
-  const aligned = await alignCapture({ video, capture, duration, sourceWidth: source?.width || 1920, sourceHeight: source?.height || 1080 }).catch((err) => {
+  const aligned = await alignCapture({ video, capture, duration, sourceWidth: source?.width || 1920, sourceHeight: source?.height || 1080, screen }).catch((err) => {
     console.error("[studio] capture alignment failed:", err);
     return { track: capture.track || [], motion: capture.motion || [], screen: null, sync: { offset: 0, confident: false, reason: "the check could not be run" } };
   });
@@ -277,7 +286,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
      * page — the model is shown each, boxed, and asked which is whose.
      */
     identify: POINTER_VISION && providerReady()
-      ? (rivals) => identifyPointer({ video, dir: path.join(workDir, "identity"), rivals, spend })
+      ? (rivals) => (asks?.identify ? asks.identify(rivals) : identifyPointer({ video, dir: path.join(workDir, "identity"), rivals, spend }))
       : null,
     /**
      * ── THE HINTS ARE THE RAW LOG, NOT THE CLEANED ONE ────────────────────
@@ -368,7 +377,9 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
           H: source?.height || 1080,
           screen: aligned.screen,
           judge: ({ reference, runs }) =>
-            judgeRuns({ video, dir: path.join(workDir, "runs"), reference, runs, heightPx: located.heightPx, spend }),
+            asks?.judgeRuns
+              ? asks.judgeRuns({ reference, runs, heightPx: located.heightPx })
+              : judgeRuns({ video, dir: path.join(workDir, "runs"), reference, runs, heightPx: located.heightPx, spend }),
         }).catch((err) => {
           console.error("[studio] the check for somebody else's pointer failed:", err);
           return null;
@@ -534,7 +545,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
    * unless STUDIO_PRESS_JUDGE says otherwise; see judge.js.
    */
   if (PRESS_JUDGE_MODE !== "off" && providerReady()) {
-    events = await judgePresses(events, {
+    events = await (asks?.judgePresses || judgePresses)(events, {
       video,
       workDir,
       located: located.track,

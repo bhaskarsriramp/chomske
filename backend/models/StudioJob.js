@@ -32,7 +32,7 @@ const StudioJobSchema = new Schema({
   //   review    the quality pass over a finished edit, on its own so a creator
   //             can ask for fresh suggestions without re-analysing anything
   //   track     follow one blur through the recording (ref: the blur's id)
-  type: { type: String, enum: ["prepare", "analyse", "vision", "captions", "render", "review", "track", "voice"], required: true },
+  type: { type: String, enum: ["prepare", "analyse", "vision", "captions", "render", "review", "track", "voice", "recheck"], required: true },
   ref: { type: String, default: "" },   // render id, where the job is about one
   // What the job needs that is not in the demo yet: for a track, the blur as
   // the editor had it when it asked (it may not have been saved yet).

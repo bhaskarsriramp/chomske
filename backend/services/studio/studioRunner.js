@@ -48,6 +48,8 @@ import { RENDER_ENGINE, cleanExportOptions } from "./exportOptions.js";
 import { STUDIO_LIMITS, PREVIEW_LINES, PREVIEW_VERSION, demoKey, demoPrefix, bumpExpiry, publishProgress } from "./demoService.js";
 import { jobDir } from "../media/scratch.js";
 import { retryDb } from "../../db.js";
+import { storeScreen, storeResult, resultKey, readText, replayAsks, compareResults } from "./browserAnalysis.js";
+import { exactStringify, exactParse } from "./exactJson.js";
 
 const WORKER = `${os.hostname()}:${process.pid}`;
 const LEASE_MS = 90_000;
@@ -67,7 +69,7 @@ const AUTO_APPLY_PRESSES = String(process.env.STUDIO_AUTO_PRESS_ZOOMS || "1") !=
  * local and only the download or upload was at fault. An analysis gives up
  * sooner: every try pays for model calls again.
  */
-const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3, track: 6, voice: 4 };
+const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3, track: 6, voice: 4, recheck: 2 };
 
 const int = (v, d) => (parseInt(v, 10) > 0 ? parseInt(v, 10) : d);
 const LIMIT = {
@@ -82,14 +84,22 @@ const LIMIT = {
   track: int(process.env.STUDIO_TRACK_CONCURRENCY, 2),
   // A voiceover is a few model calls a sentence and one short encode.
   voice: int(process.env.STUDIO_VOICE_CONCURRENCY, 2),
+  // The server re-running a browser analysis to compare (browserAnalysis.js).
+  // Never urgent: one at a time, and last in the order the loop claims in.
+  recheck: int(process.env.STUDIO_RECHECK_CONCURRENCY, 1),
 };
-const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0, track: 0, voice: 0 };
+const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0, track: 0, voice: 0, recheck: 0 };
 
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
 
 /** Queue work. Returns at once; the job runs on the next tick. */
-export async function enqueue({ demo, user, type, ref = "", data = null }) {
-  const job = await StudioJob.create({ demo, user, type, ref, data });
+/**
+ * `notBefore`: the job waits until then before any worker may claim it. The
+ * browser analysis holds the server's analyse job this way, and each of its
+ * heartbeats pushes the moment back (browserAnalysis.js).
+ */
+export async function enqueue({ demo, user, type, ref = "", data = null, notBefore = null }) {
+  const job = await StudioJob.create({ demo, user, type, ref, data, not_before: notBefore });
   setImmediate(() => tick().catch(() => {}));
   return job;
 }
@@ -330,6 +340,11 @@ const prepare = {
     await putFile(thumb, thumbKey, "image/jpeg");
     if (audioLocal) await putFile(audioLocal, audioKey, "audio/mpeg");
 
+    // The one input the browser analysis cannot make for itself, made from
+    // the file just stored with the same numbers the analysis will use.
+    // Nothing (and no time) when browser analysis is off.
+    const screenKey = await storeScreen(demo, mp4, { duration: meta.duration, width: meta.width, height: meta.height });
+
     const stat = await statObject(mp4Key).catch(() => null);
 
     await StudioDemo.updateOne(
@@ -342,6 +357,7 @@ const prepare = {
           "recording.proxy_v": PREVIEW_VERSION,
           "recording.thumb_key": thumbKey,
           "recording.audio_key": audioKey,
+          "recording.screen_key": screenKey,
           "recording.duration": meta.duration,
           "recording.width": meta.width,
           "recording.height": meta.height,
@@ -412,83 +428,18 @@ const analyse = {
       onProgress: (p, stage) => report({ stage, progress: Math.max(0.01, Math.min(0.99, p)) }),
     });
 
-    // Waits out a database dropout: this is what the model calls were paid for.
-    await retryDb(`save analysis ${demo._id}`, () => StudioDemo.updateOne(
-      { _id: demo._id },
-      {
-        $set: {
-          timeline: result.timeline,
-          status: "ready",
-          stage: "",
-          progress: 1,
-          "analysis.status": "done",
-          "analysis.summary": result.summary,
-          "analysis.product": result.product,
-          "analysis.language": result.language,
-          "analysis.language_label": result.language_label,
-          "analysis.frames_read": result.frames_read,
-          "analysis.blur_checked": !!result.blur_checked,
-          "analysis.frames_failed": result.frames_failed,
-          "analysis.sync": result.sync || null,
-          "analysis.locate": result.locate || null,
-          "analysis.elements": result.elements || null,
-          // The moments the screen changed, measured once. See the model.
-          "analysis.changes": result.changes || null,
-          "analysis.rests": result.rests || null,
-          // The recording as a graph (vig.js): screens, objects, what was done to what.
-          "analysis.vig": result.vig || null,
-          /**
-           * ── LAST TIME'S FINDINGS DO NOT SURVIVE A NEW EDIT ────────────────
-           * The edit has just been rebuilt from scratch, so every zoom id a
-           * previous audit or review named is gone. applySuggestion() refuses a
-           * dead id politely enough, but offering a creator three buttons that
-           * all answer "that zoom isn't in the edit any more" is worse than
-           * offering none. The check re-runs immediately below.
-           */
-          "analysis.suggestions": [],
-          "analysis.resolved": [],
-          "analysis.findings": null,
-          "analysis.audited_at": null,
-          "analysis.audited_rev": -1,
-          "analysis.usd": result.spend.usd,
-          "analysis.calls": result.spend.calls,
-          "analysis.finished_at": new Date(),
-          title: demo.title || defaultTitle(result),
-          expires_at: bumpExpiry(),
-          updated_at: new Date(),
-        },
-        $inc: { rev: 1 },
-      }
-    ));
+    // Shadowing a browser run: this result is the one the creator gets; the
+    // browser's is compared with it (browserAnalysis.js).
+    const shadow = job.data?.browser?.mode === "shadow" ? job.data.browser : null;
+    if (shadow) await keepServerResult(demo, shadow.session, result).catch((err) => console.error("[studio] shadow: could not keep the server result:", err.message));
+    if (job.data?.browser?.mode === "on") {
+      // The browser was given this and did not finish: this run is the fallback.
+      await setDemo(demo._id, { "analysis.browser.fallback": true, "analysis.browser.status": "fallback" }).catch(() => {});
+      console.log(`[studio] browser analysis ${demo._id}: the server took over (session ${job.data.browser.session})`);
+    }
 
-    console.log(
-      `[studio] analysed ${demo._id}: ${result.frames_read} frames (${result.frames_failed} missed), ` +
-        `clock ${result.sync?.confident ? `${result.sync.offset >= 0 ? "+" : ""}${result.sync.offset}s` : "unchecked"}` +
-        `${result.sync?.parked ? " (opening filled)" : ""}, ` +
-        `${result.timeline.steps.length} steps, ${result.timeline.zooms.length} zooms, ` +
-        `${result.timeline.blurs.length} blurs, ${result.timeline.cues.length} cues, $${result.spend.usd.toFixed(4)}`
-    );
-
-    publishProgress(demo, { status: "ready", stage: "", progress: 1, analysed: true });
-    await applyFound(demo, result.timeline.blurs);
-
-    /**
-     * ── THE CHECK IS ITS OWN JOB, AND IT RUNS EVERY TIME NOW ─────────────────
-     * Separate so the editor opens the moment the edit exists rather than
-     * waiting on more model calls for advice.
-     *
-     * It used to be enqueued only when the model pass had run, because the only
-     * thing in it was the quality reviewer and the reviewer needs a step list to
-     * say anything beyond generalities. The job does two things now, and the
-     * other one — checking the clicks against the recording — needs no steps, no
-     * frame grid and no vision pass. It needs the change list, which the
-     * analysis above always produces. See the review handler.
-     *
-     * So it runs on every analysis. On a demo whose screens nobody has read,
-     * that is the audit alone: the presses whose verdict was a close call, and
-     * the moments on screen that nothing in the edit accounts for.
-     */
-    await enqueue({ demo: demo._id, user: demo.user, type: "review" }).catch(() => {});
+    await saveAnalysis(demo, result);
+    await afterAnalysis(demo, result);
   },
 
   async fail(job, err) {
@@ -507,6 +458,174 @@ const analyse = {
     publishProgress(demo, { status: demo.timeline ? "ready" : "failed", error: message });
   },
 };
+
+/**
+ * The first analysis's result, saved as the edit. Shared by the analyse job and
+ * the browser analysis's result intake (routes/studio.js), so an edit made in
+ * the browser is stored by exactly the code that stores one made here.
+ * `spend` is what the model calls cost: the result's own, or, for a browser
+ * run, the server's log of the questions it answered.
+ */
+export async function saveAnalysis(demo, result, spend = result.spend) {
+  // Waits out a database dropout: this is what the model calls were paid for.
+  await retryDb(`save analysis ${demo._id}`, () => StudioDemo.updateOne(
+    { _id: demo._id },
+    {
+      $set: {
+        timeline: result.timeline,
+        status: "ready",
+        stage: "",
+        progress: 1,
+        "analysis.status": "done",
+        "analysis.summary": result.summary,
+        "analysis.product": result.product,
+        "analysis.language": result.language,
+        "analysis.language_label": result.language_label,
+        "analysis.frames_read": result.frames_read,
+        "analysis.blur_checked": !!result.blur_checked,
+        "analysis.frames_failed": result.frames_failed,
+        "analysis.sync": result.sync || null,
+        "analysis.locate": result.locate || null,
+        "analysis.elements": result.elements || null,
+        // The moments the screen changed, measured once. See the model.
+        "analysis.changes": result.changes || null,
+        "analysis.rests": result.rests || null,
+        // The recording as a graph (vig.js): screens, objects, what was done to what.
+        "analysis.vig": result.vig || null,
+        /**
+         * ── LAST TIME'S FINDINGS DO NOT SURVIVE A NEW EDIT ────────────────
+         * The edit has just been rebuilt from scratch, so every zoom id a
+         * previous audit or review named is gone. applySuggestion() refuses a
+         * dead id politely enough, but offering a creator three buttons that
+         * all answer "that zoom isn't in the edit any more" is worse than
+         * offering none. The check re-runs immediately below.
+         */
+        "analysis.suggestions": [],
+        "analysis.resolved": [],
+        "analysis.findings": null,
+        "analysis.audited_at": null,
+        "analysis.audited_rev": -1,
+        "analysis.usd": spend.usd,
+        "analysis.calls": spend.calls,
+        "analysis.finished_at": new Date(),
+        title: demo.title || defaultTitle(result),
+        expires_at: bumpExpiry(),
+        updated_at: new Date(),
+      },
+      $inc: { rev: 1 },
+    }
+  ));
+
+  console.log(
+    `[studio] analysed ${demo._id}: ${result.frames_read} frames (${result.frames_failed} missed), ` +
+      `clock ${result.sync?.confident ? `${result.sync.offset >= 0 ? "+" : ""}${result.sync.offset}s` : "unchecked"}` +
+      `${result.sync?.parked ? " (opening filled)" : ""}, ` +
+      `${result.timeline.steps.length} steps, ${result.timeline.zooms.length} zooms, ` +
+      `${result.timeline.blurs.length} blurs, ${result.timeline.cues.length} cues, $${spend.usd.toFixed(4)}`
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   The browser analysis: shadow comparisons and the re-check
+   (services/studio/browserAnalysis.js)
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/** Shadow mode: the server's raw result, kept beside the browser's for comparing. */
+async function keepServerResult(demo, session, result) {
+  await storeResult(demo, session, "server", exactStringify(result));
+  await StudioDemo.updateOne(
+    { _id: demo._id, "analysis.browser.session": session },
+    { $set: { "analysis.browser.server_key": resultKey(demo, session, "server") } }
+  );
+  await compareShadow(demo._id, session);
+}
+
+/**
+ * Compare a shadowed run's two results, once both exist. Called by whichever
+ * of the two finishes second (this file, and the browser's result intake).
+ * A difference where the model was asked may be the model answering the two
+ * runs differently, so that is recorded beside it.
+ */
+export async function compareShadow(demoId, session) {
+  const d = await StudioDemo.findById(demoId).lean();
+  const b = d?.analysis?.browser;
+  if (!b || b.session !== session || !b.server_key || !b.result_key || b.compare) return null;
+  const [server, browser] = await Promise.all([readText(b.server_key), readText(b.result_key)]);
+  const c = compareResults(exactParse(server), exactParse(browser));
+  const aiAsked = (b.asks || []).length > 0;
+  await StudioDemo.updateOne(
+    { _id: demoId, "analysis.browser.session": session },
+    { $set: { "analysis.browser.compare": { ...c, ai_asked: aiAsked, at: new Date() } } }
+  );
+  console.log(
+    `[studio] browser analysis shadow ${demoId}: ${c.identical ? "IDENTICAL to the server" : `DIFFERS from the server in ${c.count} field(s), first ${c.diffs[0]?.at}`}` +
+      (aiAsked ? " (the model was asked; its answers may differ run to run)" : "")
+  );
+  return c;
+}
+
+/**
+ * The re-check: a sample of accepted browser analyses run again here, the
+ * server's own way, with the model's answers replayed from the browser run's
+ * log so only the arithmetic is compared. It never touches the creator's
+ * edit; it records whether the two agree.
+ */
+const recheck = {
+  async run(job, workDir) {
+    const demo = await StudioDemo.findById(job.demo);
+    if (!demo || demo.purged) return;
+    const b = demo.analysis?.browser;
+    if (!b || b.session !== job.ref || !b.result_key) return;
+    const r = demo.recording;
+    const video = await materialize(r.mp4_key, workDir, "recording.mp4");
+    const browser = exactParse(await readText(b.result_key));
+    const t0 = Date.now();
+    const server = await analyseRecording({
+      video,
+      audio: "",
+      workDir,
+      capture: { track: demo.capture?.track || [], motion: demo.capture?.motion || [] },
+      source: { width: r.width, height: r.height, fps: r.fps || 30 },
+      duration: r.duration,
+      wantCaptions: false,
+      asks: replayAsks(b.asks || []),
+    });
+    const c = compareResults(server, browser);
+    await setDemo(demo._id, { "analysis.browser.recheck": { ...c, at: new Date(), ms: Date.now() - t0 } });
+    console.log(
+      `[studio] browser analysis re-check ${demo._id}: ${c.identical ? "IDENTICAL" : `DIFFERS in ${c.count} field(s), first ${c.diffs[0]?.at}`} (${((Date.now() - t0) / 1000).toFixed(0)}s)`
+    );
+  },
+
+  async fail(job, err) {
+    console.error(`[studio] browser analysis re-check ${job.demo} could not run:`, err.message);
+    await setDemo(job.demo, { "analysis.browser.recheck": { error: String(err.message).slice(0, 300), at: new Date() } }).catch(() => {});
+  },
+};
+
+/** What follows a saved analysis: the editor told, found blurs followed, the check queued. */
+export async function afterAnalysis(demo, result) {
+  publishProgress(demo, { status: "ready", stage: "", progress: 1, analysed: true });
+  await applyFound(demo, result.timeline.blurs);
+
+  /**
+   * ── THE CHECK IS ITS OWN JOB, AND IT RUNS EVERY TIME NOW ─────────────────
+   * Separate so the editor opens the moment the edit exists rather than
+   * waiting on more model calls for advice.
+   *
+   * It used to be enqueued only when the model pass had run, because the only
+   * thing in it was the quality reviewer and the reviewer needs a step list to
+   * say anything beyond generalities. The job does two things now, and the
+   * other one — checking the clicks against the recording — needs no steps, no
+   * frame grid and no vision pass. It needs the change list, which the
+   * analysis above always produces. See the review handler.
+   *
+   * So it runs on every analysis. On a demo whose screens nobody has read,
+   * that is the audit alone: the presses whose verdict was a close call, and
+   * the moments on screen that nothing in the edit accounts for.
+   */
+  await enqueue({ demo: demo._id, user: demo.user, type: "review" }).catch(() => {});
+}
 
 function defaultTitle(result) {
   if (result.product) return `${result.product} demo`;
@@ -1294,7 +1413,7 @@ const voice = {
   },
 };
 
-const HANDLERS = { prepare, analyse, vision, captions, render, review, track, voice };
+const HANDLERS = { prepare, analyse, vision, captions, render, review, track, voice, recheck };
 
 /* ────────────────────────────────────────────────────────────────────────────
    Retention

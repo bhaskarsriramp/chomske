@@ -264,6 +264,20 @@ export async function readUrl(key, { baseUrl, filename, contentType, expiresSec 
 }
 
 /**
+ * A link served through this server (/media/file/<token>, ranges supported),
+ * even when the bucket could sign one.
+ *
+ * For a reader that is a script rather than a <video> element: the browser
+ * analysis (browser-analysis/) fetches the recording with fetch(), which a
+ * signed bucket link only allows from the origins in the bucket's CORS list.
+ * Through this server it is same-origin, whatever that list says.
+ */
+export function relayUrl(key, { baseUrl, contentType, expiresSec = 2 * 3600 } = {}) {
+  const token = jwt.sign({ k: key, op: "get", ct: contentType, fn: "" }, secret(), { expiresIn: expiresSec });
+  return `${baseUrl || ""}/media/file/${token}`;
+}
+
+/**
  * The only prefixes a delete is ever allowed to name.
  *
  * Exactly one product's folder for exactly one user's one project — never the
@@ -451,5 +465,5 @@ async function relayFromBucket(req, res, claims) {
 
 export default {
   CHUNK_BYTES, storageKind, createUploadSession, statObject, materialize, putFile,
-  readUrl, removePrefix, removeObject, handleLocalUpload, handleLocalRead,
+  readUrl, relayUrl, removePrefix, removeObject, handleLocalUpload, handleLocalRead,
 };

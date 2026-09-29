@@ -77,7 +77,10 @@ async function once(method, path, body, config = {}) {
   // A flag rather than abort(reason), because we need to tell OUR timeout apart
   // from the caller's own abort, and abort reasons are not universally readable.
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, TIMEOUT_MS);
+  // `config.timeout` for the few calls that legitimately take longer (a
+  // question to the model from the browser analysis); everything else waits
+  // the usual 30 seconds.
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, config.timeout > 0 ? config.timeout : TIMEOUT_MS);
 
   const outer = config.signal;
   const relay = () => controller.abort();

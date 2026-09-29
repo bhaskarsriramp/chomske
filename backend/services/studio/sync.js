@@ -2273,18 +2273,31 @@ function sampleAt(track, t) {
  *
  * @returns {{ track, motion, sync }}
  */
-export async function alignCapture({ video, capture = {}, duration = 0, sourceWidth = 1920, sourceHeight = 1080 }) {
+export async function alignCapture({ video, capture = {}, duration = 0, sourceWidth = 1920, sourceHeight = 1080, screen: given = null }) {
   const track = Array.isArray(capture.track) ? capture.track : [];
   const motion = Array.isArray(capture.motion) ? capture.motion : [];
   const bare = { track, motion, screen: null, sync: { offset: 0, score: 0, margin: 0, confident: false, cursor_px: 0, parked: false, spinners: 0, reason: "" } };
   if (!video || !motion.length) return { ...bare, sync: { ...bare.sync, reason: "nothing to align" } };
 
+  /**
+   * ── A SCREEN READING MADE ELSEWHERE ──────────────────────────────────────
+   * When the analysis runs in the creator's browser (browser-analysis/), this
+   * one reading comes from the server: it shrinks every frame with ffmpeg's
+   * scaler, which no browser reproduces byte for byte, and everything after
+   * it is decided from it. The server makes it with this same function, on
+   * this same file, in the prepare job — so `given` IS what the line below
+   * would have returned. Absent, nothing changes.
+   */
   let screen;
-  try {
-    screen = await readScreen(video, { duration, sourceWidth, sourceHeight });
-  } catch (err) {
-    console.error("[studio] sync: could not re-read the recording:", err);
-    return { ...bare, sync: { ...bare.sync, reason: "the recording could not be re-read" } };
+  if (given) {
+    screen = given;
+  } else {
+    try {
+      screen = await readScreen(video, { duration, sourceWidth, sourceHeight });
+    } catch (err) {
+      console.error("[studio] sync: could not re-read the recording:", err);
+      return { ...bare, sync: { ...bare.sync, reason: "the recording could not be re-read" } };
+    }
   }
 
   const found = clockOffset(motion, screen, { duration });

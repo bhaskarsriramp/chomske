@@ -39,6 +39,9 @@ const RecordingSchema = new Schema(
     proxy_v: { type: Number, default: 0 },     // 2: full size (demoService PREVIEW_VERSION); 0: the old 540p one
     audio_key: { type: String, default: "" },  // the speech track captions read
     thumb_key: { type: String, default: "" },
+    // sync.js readScreen's result for the browser analysis (exactJson), made
+    // in the prepare job. Empty when browser analysis is off.
+    screen_key: { type: String, default: "" },
 
     // An upload in flight: the browser's own name for it, so asking twice
     // starts one upload rather than two, and the resumable session, so a
@@ -262,6 +265,11 @@ const AnalysisSchema = new Schema(
     resolved: { type: [String], default: [] },
     finished_at: { type: Date, default: null },
     error: { type: String, default: "" },
+    // When the analysis ran (or shadowed) in the creator's browser: the run's
+    // mode and session, the model's answers it was given (replayed by the
+    // re-check), where its raw result is kept, and the comparisons made.
+    // See services/studio/browserAnalysis.js.
+    browser: { type: Schema.Types.Mixed, default: null },
   },
   { _id: false }
 );

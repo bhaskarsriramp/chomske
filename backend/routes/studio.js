@@ -45,7 +45,12 @@ import {
   storageKind, CHUNK_BYTES, createUploadSession, statObject, readUrl, removePrefix, removeObject,
 } from "../services/media/storage.js";
 import { hasEncoder } from "../services/media/ffmpeg.js";
-import { enqueue } from "../services/studio/studioRunner.js";
+import { enqueue, saveAnalysis, afterAnalysis, compareShadow } from "../services/studio/studioRunner.js";
+import {
+  browserStatus, browserPlan, sessionPayload, answer, parseResult, storeResult, resultKey,
+  HOLD_MS, FIRST_HOLD_MS, RECHECK_RATE,
+} from "../services/studio/browserAnalysis.js";
+import { exactDiff } from "../services/studio/exactJson.js";
 import {
   STUDIO_LIMITS, LEDGER_REASON, acceptable, ACCEPT_MIME, demoKey, demoPrefix, bumpExpiry,
   studioCost, shapeDemo, shapeDemoCard, publishProgress, followsFor, shapeVoiceover,
@@ -201,6 +206,13 @@ router.get("/config", wrap(async (req, res) => {
       blur_kinds: BLUR_KINDS,
       backgrounds: Object.keys(GRADIENTS),
     },
+    // Whether the first analysis may run in the creator's browser, and which
+    // build does it (services/studio/browserAnalysis.js). "off" unless this
+    // server has checked the build is its own code.
+    browser_analysis: await browserStatus().then(
+      (s) => ({ mode: s.mode, version: s.version || null, worker: s.worker || null }),
+      () => ({ mode: "off", version: null, worker: null })
+    ),
     balance: await getBalance(req.user.id),
   });
 }));
@@ -545,18 +557,217 @@ router.post("/demos/:id/analyse", wrap(async (req, res) => {
   // recording must not be given captions of room tone by default.
   const wantCaptions = req.body?.captions === true && demo.recording.has_audio;
 
+  /**
+   * ── IN THE CREATOR'S BROWSER, WHEN IT CAN ────────────────────────────────
+   * If this server offers it and the page says it can run this exact build,
+   * the analysis runs in the browser (services/studio/browserAnalysis.js). The
+   * server's own job is queued either way:
+   *   on      held — no worker may take it while the browser sends heartbeats;
+   *           if they stop, the hold lapses and it runs as it always would
+   *   shadow  not held — it runs now and its result is the one used; the
+   *           browser's is only compared with it
+   */
+  const plan = await browserPlan(demo, { client: req.body?.browser || null, wantCaptions }).catch((err) => {
+    console.error("[studio] browser analysis plan failed; analysing on the server:", err.message);
+    return null;
+  });
+
   demo.status = "analysing";
   demo.stage = "Queued";
   demo.progress = 0.01;
   demo.error = "";
-  demo.analysis = { ...(demo.analysis?.toObject?.() || {}), status: "running", error: "", charged };
+  demo.analysis = {
+    ...(demo.analysis?.toObject?.() || {}),
+    status: "running",
+    error: "",
+    charged,
+    browser: plan ? { mode: plan.mode, session: plan.session, version: plan.version, status: "running", started_at: new Date(), asks: [] } : null,
+  };
   demo.expires_at = bumpExpiry();
   await demo.save();
 
-  await enqueue({ demo: demo._id, user: req.user.id, type: "analyse", ref: wantCaptions ? "captions" : "" });
+  await enqueue({
+    demo: demo._id,
+    user: req.user.id,
+    type: "analyse",
+    ref: wantCaptions ? "captions" : "",
+    data: plan ? { browser: { mode: plan.mode, session: plan.session } } : null,
+    notBefore: plan?.mode === "on" ? new Date(Date.now() + FIRST_HOLD_MS) : null,
+  });
   publishProgress(demo, { status: "analysing", stage: "Queued", progress: 0.01 });
 
-  await respond(req, res, demo, { charged, balance: await getBalance(req.user.id) });
+  const browser = plan ? await sessionPayload(demo, plan, { baseUrl: baseUrlOf() }) : null;
+  await respond(req, res, demo, { charged, balance: await getBalance(req.user.id), ...(browser ? { browser } : {}) });
+}));
+
+/* ────────────────────────────────────────────────────────────────────────────
+   The browser analysis (services/studio/browserAnalysis.js)
+
+   The page reports on the run (heartbeat), asks the model's questions through
+   the server (ask), hands in the result (result), or gives up (failed). Every
+   route answers only for the demo's current session; anything else is a run
+   the server has already moved on from.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const BROWSER_ASKS = ["identify", "judgeRuns", "judgePresses"];
+const MAX_BROWSER_RUN_MS = Math.max(120, Number(process.env.STUDIO_BROWSER_MAX_RUN_S) || 420) * 1000;
+
+/** The demo's browser run, if `session` is it. */
+function browserRun(demo, session) {
+  const b = demo.analysis?.browser;
+  return b && session && b.session === String(session) ? b : null;
+}
+
+/** Push the server's held analyse job back by `ms`; false when it is no longer held. */
+async function holdFor(demo, session, ms) {
+  const r = await StudioJob.updateOne(
+    { demo: demo._id, type: "analyse", status: "queued", "data.browser.session": session },
+    { $set: { not_before: new Date(Date.now() + ms), updated_at: new Date() } }
+  );
+  return r.matchedCount > 0;
+}
+
+router.post("/demos/:id/analysis/heartbeat", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  const session = String(req.body?.session || "");
+  const b = browserRun(demo, session);
+  if (!b || b.status !== "running") return res.json({ success: true, go: false });
+  if (b.mode !== "on") return res.json({ success: true, go: true });
+
+  // Past the longest a browser run may take, the hold is not renewed and the
+  // server's job runs.
+  if (Date.now() - new Date(b.started_at).getTime() > MAX_BROWSER_RUN_MS) {
+    return res.json({ success: true, go: false, reason: "too slow" });
+  }
+  if (!(await holdFor(demo, session, HOLD_MS))) return res.json({ success: true, go: false });
+
+  const progress = Math.max(0.01, Math.min(0.99, Number(req.body?.progress) || 0.01));
+  const stage = String(req.body?.stage || "Analysing").slice(0, 80);
+  await StudioDemo.updateOne({ _id: demo._id }, { $set: { stage, progress, updated_at: new Date() } });
+  publishProgress(demo, { status: "analysing", stage, progress });
+  res.json({ success: true, go: true });
+}));
+
+router.post("/demos/:id/analysis/ask", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  const session = String(req.body?.session || "");
+  const b = browserRun(demo, session);
+  if (!b || b.status !== "running") return fail(res, 409, "This analysis is no longer running in the browser.");
+  const kind = String(req.body?.kind || "");
+  const q = req.body?.q;
+  if (!BROWSER_ASKS.includes(kind) || typeof q !== "string" || q.length > 20 * 1024 * 1024) return fail(res, 400, "That isn't a question the analysis asks.");
+  if ((b.asks || []).length >= 40) return fail(res, 429, "Too many questions for one analysis.");
+
+  // The model can take a while; the browser is waiting on it, not gone.
+  if (b.mode === "on") await holdFor(demo, session, HOLD_MS + 180_000);
+  const out = await answer(demo, kind, q);
+  await StudioDemo.updateOne(
+    { _id: demo._id, "analysis.browser.session": session },
+    { $push: { "analysis.browser.asks": { kind, q, a: out.a ?? null, error: out.error || null, usd: out.usd || 0, calls: out.calls || 0, at: new Date() } } }
+  );
+  res.json({ success: true, a: out.a ?? null, error: out.error || null });
+}));
+
+router.post("/demos/:id/analysis/failed", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  const session = String(req.body?.session || "");
+  const b = browserRun(demo, session);
+  if (!b) return res.json({ success: true });
+  const reason = String(req.body?.reason || "unknown").slice(0, 300);
+  await StudioDemo.updateOne(
+    { _id: demo._id, "analysis.browser.session": session },
+    { $set: { "analysis.browser.status": "failed", "analysis.browser.error": reason } }
+  );
+  // The server's job runs now rather than when the hold would have lapsed.
+  if (b.mode === "on") await holdFor(demo, session, 0);
+  console.log(`[studio] browser analysis ${demo._id} gave up (${reason}); ${b.mode === "on" ? "the server takes over" : "shadow only"}`);
+  res.json({ success: true });
+}));
+
+router.post("/demos/:id/analysis/result", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  const session = String(req.body?.session || "");
+  const b = browserRun(demo, session);
+  if (!b || b.status !== "running") return res.json({ success: true, accepted: false, reason: "this run is over" });
+
+  const status = await browserStatus();
+  const reject = async (reason) => {
+    await StudioDemo.updateOne(
+      { _id: demo._id, "analysis.browser.session": session },
+      { $set: { "analysis.browser.status": "rejected", "analysis.browser.error": reason } }
+    );
+    if (b.mode === "on") await holdFor(demo, session, 0);
+    console.log(`[studio] browser analysis ${demo._id}: result refused (${reason})`);
+    return res.json({ success: true, accepted: false, reason });
+  };
+  if (req.body?.version !== b.version || status.version !== b.version) return reject("it was made by a different build");
+
+  let result;
+  try {
+    result = parseResult(req.body?.result);
+  } catch (err) {
+    return reject(err.message);
+  }
+  /**
+   * ── CHECKED, NOT CLEANED ─────────────────────────────────────────────────
+   * The editor's saves are passed through sanitizeTimeline. A result from the
+   * analysis is already in the shape it produces, so passing it through must
+   * change nothing — and if it would, the result did not come from the
+   * analysis as built, and the server does the job instead. Cleaning it would
+   * make it neither the browser's result nor the server's.
+   */
+  const cleaned = sanitizeTimeline(result.timeline, { duration: demo.recording?.duration || 0, source: result.timeline.source });
+  const changed = exactDiff(result.timeline, cleaned, { limit: 1 });
+  if (changed.length) return reject(`the edit is not in the shape the analysis makes (${changed[0].at})`);
+
+  await storeResult(demo, session, "browser", req.body.result);
+  const key = resultKey(demo, session, "browser");
+  const ms = Math.max(0, Number(req.body?.ms) || 0);
+
+  if (b.mode === "shadow") {
+    await StudioDemo.updateOne(
+      { _id: demo._id, "analysis.browser.session": session },
+      { $set: { "analysis.browser.status": "done", "analysis.browser.result_key": key, "analysis.browser.ms": ms } }
+    );
+    compareShadow(demo._id, session).catch((err) => console.error("[studio] shadow compare failed:", err.message));
+    return res.json({ success: true, accepted: true, shadow: true });
+  }
+
+  // Taken only while still held: once a worker has started it, the server's
+  // run is the one that counts.
+  const taken = await StudioJob.findOneAndUpdate(
+    { demo: demo._id, type: "analyse", status: "queued", "data.browser.session": session },
+    { $set: { status: "done", lease_until: null, updated_at: new Date(), "data.browser.done_at": new Date() } },
+    { new: true }
+  );
+  if (!taken) return res.json({ success: true, accepted: false, reason: "the server has already taken over" });
+
+  try {
+    const fresh = await StudioDemo.findById(demo._id);
+    const asks = fresh.analysis?.browser?.asks || [];
+    const spent = { usd: asks.reduce((s, a) => s + (Number(a.usd) || 0), 0), calls: asks.reduce((s, a) => s + (Number(a.calls) || 0), 0) };
+    await StudioDemo.updateOne(
+      { _id: demo._id, "analysis.browser.session": session },
+      { $set: { "analysis.browser.status": "done", "analysis.browser.result_key": key, "analysis.browser.ms": ms } }
+    );
+    await saveAnalysis(fresh, result, spent);
+    await afterAnalysis(fresh, result);
+  } catch (err) {
+    // Not saved: the server's job runs after all.
+    await StudioJob.updateOne({ _id: taken._id }, { $set: { status: "queued", not_before: null, updated_at: new Date() } }).catch(() => {});
+    throw err;
+  }
+  console.log(`[studio] browser analysis ${demo._id}: accepted (${(ms / 1000).toFixed(0)}s in the browser)`);
+
+  if (Math.random() < RECHECK_RATE) {
+    // A minute's grace, so a re-check never competes with the creator's own next steps.
+    await enqueue({ demo: demo._id, user: demo.user, type: "recheck", ref: session, notBefore: new Date(Date.now() + 60_000) }).catch(() => {});
+  }
+  res.json({ success: true, accepted: true });
 }));
 
 /**

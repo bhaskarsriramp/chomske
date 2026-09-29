@@ -27,6 +27,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { getStudioConfig, listDemos, deleteDemo, startAnalysis } from "./studioApi";
+import { browserAnalysisOffer, runBrowserAnalysis } from "./browserAnalysis";
 import RecordPage from "./RecordPage";
 import StudioEditor from "./StudioEditor";
 import Skeleton from "../Shell/Skeleton";
@@ -107,14 +108,19 @@ export default function StudioPage() {
   const analyse = useCallback(
     async (key, opts = {}) => {
       try {
-        await startAnalysis(key, { captions: !!opts.captions });
+        // When the server offers it and this browser can, the analysis runs
+        // in this tab (browserAnalysis.js); the server keeps its own job
+        // waiting as the fallback, so nothing is lost if it cannot finish.
+        const browser = opts.captions ? null : await browserAnalysisOffer(config);
+        const res = await startAnalysis(key, { captions: !!opts.captions, browser });
+        if (res?.browser) runBrowserAnalysis(key, res.browser);
       } catch (err) {
         const d = err?.response?.data;
         setNotice(d?.message || "We couldn't start the edit.");
       }
       refresh();
     },
-    [refresh]
+    [refresh, config]
   );
 
   // A recording has just been saved. The edit is started BEFORE the editor

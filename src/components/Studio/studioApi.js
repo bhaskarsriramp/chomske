@@ -24,6 +24,7 @@ function withLinks(d) {
     if (d.demo.renders) d.demo.renders = d.demo.renders.map((x) => ({ ...x, url: abs(x.url) }));
     if (d.demo.voiceover) d.demo.voiceover = { ...d.demo.voiceover, url: abs(d.demo.voiceover.url) };
   }
+  if (d?.browser) d.browser = { ...d.browser, video: abs(d.browser.video), screen: abs(d.browser.screen) };
   return d;
 }
 
@@ -47,8 +48,15 @@ export const startUpload = (id, { filename, mime, size, clientKey }) =>
 export const resumeUpload = (id) => api.post(`/studio/demos/${id}/upload/resume`).then(session);
 export const completeUpload = (id, capture) => api.post(`/studio/demos/${id}/upload/complete`, { capture }).then(data);
 
-export const startAnalysis = (id, { expectedCost, captions }) =>
-  api.post(`/studio/demos/${id}/analyse`, { expected_cost: expectedCost, captions }).then(data);
+export const startAnalysis = (id, { expectedCost, captions, browser = null }) =>
+  api.post(`/studio/demos/${id}/analyse`, { expected_cost: expectedCost, captions, ...(browser ? { browser } : {}) }).then(data);
+
+/* ── The first analysis in the browser (browserAnalysis.js) ───────────────── */
+export const analysisHeartbeat = (id, body) => api.post(`/studio/demos/${id}/analysis/heartbeat`, body).then((r) => r.data);
+// A question to the model can take a minute; a result on a slow uplink too.
+export const analysisAsk = (id, body) => api.post(`/studio/demos/${id}/analysis/ask`, body, { timeout: 240000 }).then((r) => r.data);
+export const analysisResult = (id, body) => api.post(`/studio/demos/${id}/analysis/result`, body, { timeout: 180000 }).then((r) => r.data);
+export const analysisFailed = (id, body) => api.post(`/studio/demos/${id}/analysis/failed`, body).then((r) => r.data);
 /**
  * Read the screens: blur, steps, narration.
  *

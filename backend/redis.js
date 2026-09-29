@@ -32,8 +32,9 @@ import Redis from "ioredis";
 
 // The Memorystore private IP, the same node betaFounderProduction uses.
 // Reachable only from inside the VPC. REDIS_HOST overrides it without a deploy.
-const HOST = String(process.env.REDIS_HOST || "10.3.176.99").trim();
+const HOST = String(process.env.REDIS_HOST || "10.42.246.83").trim();
 const PORT = parseInt(process.env.REDIS_PORT || "6379", 10);
+
 
 // The host above is a VPC-private address, so off the VM it is unreachable by
 // definition. REDIS_DISABLED skips the client entirely for local development,
