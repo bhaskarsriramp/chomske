@@ -563,9 +563,28 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         }
       }
       const added = (ops.add || []).filter((z) => !kept.some((k) => k.id === z.id));
-      if (!added.length && !removed.length && !trimmed.length) return null;
-      edit({ zooms: [...kept, ...added] }, label);
-      return { added: added.map((z) => z.id), removed, trimmed };
+
+      // Blurs the same way: made in their applied form (the server builds
+      // them like appliedForm does), so the caller only has to follow them.
+      const dropBlurs = new Set(ops.removeBlurs || []);
+      const removedBlurs = (cur.blurs || []).filter((b) => dropBlurs.has(b.id));
+      const keptBlurs = (cur.blurs || []).filter((b) => !dropBlurs.has(b.id));
+      const addedBlurs = (ops.addBlurs || []).filter((b) => !keptBlurs.some((k) => k.id === b.id));
+
+      if (!added.length && !removed.length && !trimmed.length && !addedBlurs.length && !removedBlurs.length) return null;
+      const patch = {};
+      if (added.length || removed.length || trimmed.length) patch.zooms = [...kept, ...added];
+      if (addedBlurs.length || removedBlurs.length) patch.blurs = [...keptBlurs, ...addedBlurs];
+      edit(patch, label);
+      return {
+        added: added.map((z) => z.id),
+        removed,
+        trimmed,
+        addedBlurs: addedBlurs.map((b) => b.id),
+        removedBlurs,
+        // For the caller to follow: blurs are applied the moment they are made.
+        newBlurs: addedBlurs,
+      };
     },
     [edit]
   );
@@ -574,13 +593,26 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     (u) => {
       const cur = tlRef.current;
       if (!cur || !u) return false;
-      const gone = new Set(u.added);
-      const ends = new Map(u.trimmed.map((t) => [t.id, t.end]));
-      let zooms = (cur.zooms || []).filter((z) => !gone.has(z.id)).map((z) => (ends.has(z.id) ? { ...z, end: ends.get(z.id) } : z));
-      const have = new Set(zooms.map((z) => z.id));
-      zooms = [...zooms, ...u.removed.filter((z) => !have.has(z.id))];
-      edit({ zooms }, "Undo chat edit");
-      setSelection((s) => (s?.kind === "zoom" && gone.has(s.id) ? null : s));
+      const patch = {};
+      const gone = new Set(u.added || []);
+      if (gone.size || u.removed?.length || u.trimmed?.length) {
+        const ends = new Map((u.trimmed || []).map((t) => [t.id, t.end]));
+        let zooms = (cur.zooms || []).filter((z) => !gone.has(z.id)).map((z) => (ends.has(z.id) ? { ...z, end: ends.get(z.id) } : z));
+        const have = new Set(zooms.map((z) => z.id));
+        zooms = [...zooms, ...(u.removed || []).filter((z) => !have.has(z.id))];
+        patch.zooms = zooms;
+      }
+      const goneBlurs = new Set(u.addedBlurs || []);
+      if (goneBlurs.size || u.removedBlurs?.length) {
+        // A blur put back keeps its id, so its follow (still stored under that
+        // id, and signed for exactly this blur) applies to it again.
+        let blurs = (cur.blurs || []).filter((b) => !goneBlurs.has(b.id));
+        const have = new Set(blurs.map((b) => b.id));
+        blurs = [...blurs, ...(u.removedBlurs || []).filter((b) => !have.has(b.id))];
+        patch.blurs = blurs;
+      }
+      edit(patch, "Undo chat edit");
+      setSelection((s) => (s && ((s.kind === "zoom" && gone.has(s.id)) || (s.kind === "blur" && goneBlurs.has(s.id))) ? null : s));
       return true;
     },
     [edit]
@@ -1405,6 +1437,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       selection={selection}
       onApply={applyCommand}
       onUndo={undoCommand}
+      onFollow={requestFollow}
       onSelect={select}
       onSeek={seek}
     />

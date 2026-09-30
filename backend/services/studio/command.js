@@ -53,6 +53,7 @@ import { materialize, readUrl, storageKind } from "../media/storage.js";
 import { layout, toSource, toOutput, toOutputSnapped } from "./timeline.js";
 import { containing, containingBox } from "./events.js";
 import { cursorAt, zoomOutGap } from "../../../src/components/Studio/camera.mjs";
+import { followFor, followAt, heldAt } from "../../../src/components/Studio/follow.mjs";
 
 /** The level Add and the analysis both use. */
 const DEFAULT_LEVEL = 1.8;
@@ -340,6 +341,26 @@ function cleanZooms(list, duration) {
     .sort((a, b) => a.start - b.start);
 }
 
+/** The editor's blurs, as they are now: enough to tell where each one is and what it is on. */
+function cleanBlurs(list, duration) {
+  return (Array.isArray(list) ? list : [])
+    .slice(0, 200)
+    .map((b) => ({
+      id: str(b?.id, 40),
+      x: clamp(num(b?.x), 0, 1),
+      y: clamp(num(b?.y), 0, 1),
+      w: clamp(num(b?.w), 0, 1),
+      h: clamp(num(b?.h), 0, 1),
+      at: b?.at == null ? null : clamp(num(b.at), 0, duration),
+      start: clamp(num(b?.start), 0, duration),
+      end: clamp(num(b?.end, duration), 0, duration),
+      kind: ["blur", "pixelate", "box"].includes(b?.kind) ? b.kind : "blur",
+      label: str(b?.label, 80),
+      auto: !!b?.auto,
+    }))
+    .filter((b) => b.id && b.w > 0 && b.h > 0);
+}
+
 function cleanCuts(list, duration) {
   return (Array.isArray(list) ? list : [])
     .slice(0, 300)
@@ -362,6 +383,11 @@ export function commandContext(demo, body = {}) {
   const total = lay.duration;
   const playhead = clamp(num(body.playhead), 0, total);
   const selected = zooms.some((z) => z.id === body.selected) ? String(body.selected) : null;
+  const blurs = cleanBlurs(body.blurs, duration);
+  const selectedBlur = blurs.some((b) => b.id === body.selectedBlur) ? String(body.selectedBlur) : null;
+  // The recording's own pixels, for close-ups (refineBox).
+  const W = num(demo.recording?.width) || num(stored.source?.width);
+  const H = num(demo.recording?.height) || num(stored.source?.height);
 
   for (const z of zooms) {
     z.outStart = toOutputSnapped(z.start, lay);
@@ -449,6 +475,10 @@ export function commandContext(demo, body = {}) {
 
   return {
     duration, lay, total, playhead, selected, zooms, clicks, things, every, tol,
+    blurs, selectedBlur, W, H,
+    // Where each applied blur has followed its text to (blurTrack.js): what
+    // "already blurred" and "the blur showing here" are read from.
+    follows: demo.follows && typeof demo.follows === "object" ? (demo.follows.toObject?.() ?? demo.follows) : {},
     thingByKey: new Map(things.map((th) => [th.key, th])),
     track: Array.isArray(stored.track) ? stored.track : [],
     read: shots.length > 0,
@@ -507,7 +537,7 @@ async function localCopy(demo, key) {
  * than the whole file. If that fails (a signing hiccup, an ffmpeg built
  * without https), the whole file is downloaded once and kept for a while.
  */
-export async function frameAt(demo, t) {
+export async function frameAt(demo, t, { crop = null } = {}) {
   const key = demo.recording?.mp4_key;
   if (!key || demo.purged) throw new Error("the recording's file is not available");
   await fsp.mkdir(CACHE_DIR, { recursive: true });
@@ -521,7 +551,9 @@ export async function frameAt(demo, t) {
   for (const src of sources) {
     try {
       const file = src || (await localCopy(demo, key));
-      await extractFrameAt(file, dest, t, { longEdge: 1280, timeoutMs: FRAME_TIMEOUT });
+      // `crop` is in the recording's own pixels, cut before any scaling, so a
+      // close-up keeps every pixel the recording has.
+      await extractFrameAt(file, dest, t, { longEdge: 1280, crop, timeoutMs: FRAME_TIMEOUT });
       if ((await fsp.stat(dest).then((s) => s.size, () => 0)) > 0) return dest;
     } catch (err) {
       console.warn(`[studio] command: the frame at ${t.toFixed(2)}s could not be read from ${src ? "the bucket link" : "the file"}: ${String(err?.message).slice(0, 160)}`);
@@ -612,6 +644,175 @@ export async function findOnFrame(file, description, { ask = generateJson } = {}
   return { matches: j.found === false ? [] : matches, usd: num(res.usd) };
 }
 
+/* ── Finding what to blur ─────────────────────────────────────────────────── */
+
+/**
+ * The padding every blur the product places gets (vision.js joinRegions): so
+ * no glyph sits on its edge, and wider than it looks it needs to be, because
+ * text reflows and a number gains a digit. Less above and below, where text
+ * does not grow. A blur asked for in words is the same blur as one drawn or
+ * found, so it is the same size around the same text.
+ */
+const BLUR_PAD_X = 0.012;
+const BLUR_PAD_Y = 0.01;
+
+export const SECRET_FINDER = (description) => `This is one frame of a screen recording that is about to be published. The person who made it wants something on screen hidden, and described it in their own words:
+
+${JSON.stringify(description)}
+
+Find EVERY place on this frame where that is visible, and return one box for each:
+- Each separate occurrence is its own box: two email addresses are two boxes; an email and an API key are two boxes.
+- One box per run of text on one line. Never one box around several lines, a whole row or a whole panel, unless what they described IS an image, a photo, a face or a panel.
+- Only what they described: the key, not the "API key:" label beside it; the address, not the whole menu.
+- The box must include every character, the first and the last. Slightly too big is safe; cutting off a character is not.
+- If it is not on this frame, set "found" to false and return no boxes. Do not return lookalikes: a placeholder like "your-api-key-here" or "user@example.com" is not a secret unless they asked for it.
+
+"box_2d" is [ymin, xmin, ymax, xmax], normalized to 0-1000.
+"label" names what it is in two or three words, like "account email" or "Stripe API key". Never repeat the secret itself.
+"confidence" is how sure you are, from 0 to 1, that this is something they asked to hide.
+
+Return ONLY valid JSON matching the schema.`;
+
+const SECRET_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    found: { type: "BOOLEAN" },
+    matches: {
+      type: "ARRAY",
+      maxItems: 12,
+      items: FIND_SCHEMA.properties.matches.items,
+    },
+  },
+  required: ["found", "matches"],
+  propertyOrdering: ["found", "matches"],
+};
+
+export const EDGE_FINDER = (label, description) => `This is a close-up of part of a screen recording. Somewhere in it is ${JSON.stringify(label || description)}, which the person who made the recording asked to hide (they described it as ${JSON.stringify(description)}).
+
+Return the box around exactly that, and only that:
+- every character of it, the first and the last, and nothing from the lines above or below;
+- if it is cut off by the edge of this image, box the part that is visible.
+If it is not in this image, set "found" to false.
+
+"box_2d" is [ymin, xmin, ymax, xmax] of THIS image, normalized to 0-1000.
+
+Return ONLY valid JSON matching the schema.`;
+
+const EDGE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    found: { type: "BOOLEAN" },
+    box_2d: { type: "ARRAY", items: { type: "NUMBER" }, minItems: 4, maxItems: 4 },
+  },
+  required: ["found", "box_2d"],
+  propertyOrdering: ["found", "box_2d"],
+};
+
+/** Every place on a frame (a JPEG on disk) where the described thing is. */
+export async function findSecrets(file, description, { ask = generateJson } = {}) {
+  const data = await fsp.readFile(file);
+  const parts = [{ text: SECRET_FINDER(str(description, 300)) }, { inlineData: { mimeType: "image/jpeg", data: data.toString("base64") } }];
+  const res = await askJson(ask, { model: MODEL.vision, parts, maxOutputTokens: 2048, schema: SECRET_SCHEMA, label: "command blur" });
+  const j = res.json || {};
+  const matches = (Array.isArray(j.matches) ? j.matches : [])
+    .map((m) => ({ box: fromBox2d(m?.box_2d), label: str(m?.label, 40), confidence: clamp(num(m?.confidence, 0.5), 0, 1) }))
+    .filter((m) => m.box && m.confidence >= MIN_FOUND)
+    .slice(0, 12);
+  return { matches: j.found === false ? [] : matches, usd: num(res.usd) };
+}
+
+/**
+ * Where a close-up should be cut to check one box's edges: the box with room
+ * around it (a line of text either side, and a good margin along it), in the
+ * recording's own pixels.
+ */
+export function closeUp(box, W, H) {
+  const bw = box.w * W;
+  const bh = box.h * H;
+  const padX = Math.max(bw * 0.6, 0.06 * W);
+  const padY = Math.max(bh * 2.5, 0.05 * H);
+  const x0 = clamp(box.x * W - padX, 0, W);
+  const y0 = clamp(box.y * H - padY, 0, H);
+  const x1 = clamp((box.x + box.w) * W + padX, 0, W);
+  const y1 = clamp((box.y + box.h) * H + padY, 0, H);
+  // Even sizes: the scaler after the crop wants them.
+  const w = Math.max(16, Math.floor((x1 - x0) / 2) * 2);
+  const h = Math.max(16, Math.floor((y1 - y0) / 2) * 2);
+  return { x: Math.floor(x0), y: Math.floor(y0), w: Math.min(w, W - Math.floor(x0)), h: Math.min(h, H - Math.floor(y0)) };
+}
+
+/**
+ * The box a close-up gives, as a box of the whole frame; null when it did not
+ * find it or what it found cannot be the same thing.
+ *
+ * ── WHY A SECOND LOOK ────────────────────────────────────────────────────────
+ * Boxes read off a whole frame are a row out often enough on small text that
+ * "the element under the pointer" was once the item above it (prompts.js
+ * POINTER_TARGET). For a zoom that is nothing; for a blur it is an API key
+ * left in plain view with the line above it blurred. The close-up is read at
+ * the recording's full resolution, where one line of text is dozens of pixels
+ * tall instead of a dozen, and its box is the one used.
+ */
+export function fromCloseUp(edge, crop, coarse, W, H) {
+  if (!edge) return null;
+  const r = {
+    x: (crop.x + edge.x * crop.w) / W,
+    y: (crop.y + edge.y * crop.h) / H,
+    w: (edge.w * crop.w) / W,
+    h: (edge.h * crop.h) / H,
+  };
+  // The same thing: its middle within the first box (with half its size to
+  // spare), and not wildly bigger or smaller.
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const inside = Math.abs(cx - (coarse.x + coarse.w / 2)) <= coarse.w && Math.abs(cy - (coarse.y + coarse.h / 2)) <= coarse.h * 1.5 + 0.01;
+  const ratio = (r.w * r.h) / Math.max(1e-6, coarse.w * coarse.h);
+  if (!inside || ratio < 0.1 || ratio > 6) return null;
+  // Along the line, never narrower than the first look: a digit it saw and
+  // the close-up missed stays under the blur.
+  const sameLine = Math.abs(cy - (coarse.y + coarse.h / 2)) <= Math.max(r.h, coarse.h) * 0.75;
+  if (sameLine) {
+    const x0 = Math.min(r.x, coarse.x);
+    const x1 = Math.max(r.x + r.w, coarse.x + coarse.w);
+    return { x: x0, y: r.y, w: x1 - x0, h: r.h };
+  }
+  return r;
+}
+
+/** One box's edges, from a close-up at full resolution. The first box when the close-up cannot be read. */
+export async function refineBox(demo, t, match, description, { ask = generateJson, W, H } = {}) {
+  if (!(W > 0 && H > 0)) return match.box;
+  const crop = closeUp(match.box, W, H);
+  let file = null;
+  try {
+    file = await frameAt(demo, t, { crop });
+    const data = await fsp.readFile(file);
+    const parts = [{ text: EDGE_FINDER(match.label, str(description, 300)) }, { inlineData: { mimeType: "image/jpeg", data: data.toString("base64") } }];
+    const res = await askJson(ask, { model: MODEL.vision, parts, maxOutputTokens: 512, schema: EDGE_SCHEMA, label: "command blur edges" });
+    const j = res.json || {};
+    const edge = j.found === false ? null : fromBox2d(j.box_2d);
+    return fromCloseUp(edge, crop, match.box, W, H) || match.box;
+  } catch (err) {
+    console.warn(`[studio] command: the close-up at ${t.toFixed(2)}s could not be read: ${String(err?.message).slice(0, 160)}`);
+    return match.box;
+  } finally {
+    if (file) fsp.rm(file, { force: true }).catch(() => {});
+  }
+}
+
+/** A found box as a blur's box: padded like every other blur, and inside the frame. */
+export function blurBox(b) {
+  const w = clamp(b.w + BLUR_PAD_X * 2, 0.005, 1);
+  const h = clamp(b.h + BLUR_PAD_Y * 2, 0.005, 1);
+  return {
+    x: round4(clamp(b.x - BLUR_PAD_X, 0, 1 - w)),
+    y: round4(clamp(b.y - BLUR_PAD_Y, 0, 1 - h)),
+    w: round4(w),
+    h: round4(h),
+  };
+}
+const round4 = (v) => Math.round(v * 10000) / 10000;
+
 /* ────────────────────────────────────────────────────────────────────────────
    Asking the model what the sentence means
    ──────────────────────────────────────────────────────────────────────────── */
@@ -621,12 +822,14 @@ export const COMMAND_READER = `You turn a creator's message into an edit on the 
 What can be done for now:
 - "add_zoom": zoom the camera in. On something on screen, at a time, over a stretch of time, at the playhead, or when a click happens.
 - "remove_zoom": take zooms off the timeline.
+- "add_blur": hide something on screen by blurring it: an email, an API key, a password, a name, a phone or card number, a face, a photo. Put what to hide in "look_for". "time" is the moment it is on screen ("none" means the playhead).
+- "remove_blur": take blurs off.
 - "undo": they want the last change undone ("undo", "revert that", "go back", "wapas karo").
-- "unsupported": anything else: blur, cuts, captions, voiceover, changing the strength, timing or framing of an existing zoom, speed, music. Put ONE short sentence in "answer" saying where to do it by hand, using only this list:
+- "unsupported": anything else: cuts, captions, voiceover, changing the strength, timing or framing of an existing zoom, moving or resizing an existing blur, speed, music. Put ONE short sentence in "answer" saying where to do it by hand, using only this list:
     zoom strength: the Zoom level slider in the Zoom tab
     a zoom's timing: drag its edges on the timeline
     where a zoom points: drag its rectangle on the preview
-    blur: the Blur tab
+    moving or resizing a blur: drag its box on the preview, in the Blur tab
     cuts: "Cut here" on the timeline, or the Video tab
     captions: the Captions tab
     voiceover: the Voice tab
@@ -638,8 +841,8 @@ TIME ("time.kind")
   "range"    a start and an end: "from 0:05 to 0:20", "between 10 and 15 seconds", "in the first 10 seconds", "after 1:00"
   "moment"   one time: "at 0:12", "at 45 seconds"
   "playhead" here, now, at this point, where I am
-  "selected" this zoom, this one, the selected one
-  "all"      every zoom: "remove all zooms"
+  "selected" this zoom, this blur, this one, the selected one
+  "all"      every zoom or every blur: "remove all zooms", "remove all blurs"
   "none"     no time was said
 Copy times EXACTLY as the creator wrote them into "start", "end" and "at": "0.5", "1.25", "1:25", "10s", "2 min". Do not convert, round or correct them. "0.5" stays "0.5" and "1.25" stays "1.25": the app works out what they mean and asks the creator when a time can be read two ways.
 Only these rewrites are allowed:
@@ -658,7 +861,10 @@ WHAT
 "clicks": ids from CLICKS, only when they tie the zoom to a click: "when I click Projects", "on the Billing click". Otherwise empty.
 "zooms": ids from ZOOMS ON THE TIMELINE that the creator pointed at by what the zoom is on or by its order: "the zoom on Pricing", "the second zoom", "the last one". When they point at a zoom by time instead, leave this empty and use "time".
 "named": the words the creator used for a thing on screen, like "Projects button". "" when they did not name a thing ("zoom here", "zoom at 0:12", "remove this zoom").
-"level": how strong, only when they said it: "2x" → 2, "zoom in a lot" → 2.4, "a little" → 1.4. Otherwise 0.
+"blurs": ids from BLURS ON THE TIMELINE that the creator pointed at by what the blur is on or by its order: "the blur on the email", "the last blur". When they point at a blur by time, or say "this blur", leave this empty and use "time".
+"level": how strong a zoom, only when they said it: "2x" → 2, "zoom in a lot" → 2.4, "a little" → 1.4. Otherwise 0.
+"blur_kind": for add_blur, "pixelate" when they ask for pixels or a mosaic, "box" when they ask for a black box, a solid box or to cover it completely; otherwise "".
+"everywhere": true when they ask for it hidden everywhere, throughout, in the whole video, wherever it appears. Otherwise false.
 
 EXAMPLES
 "zoom in on projects"                   → add_zoom, time none, things [the Projects item], look_for "Projects"
@@ -672,13 +878,20 @@ EXAMPLES
 "remove the zoom on pricing"            → remove_zoom, zooms [the zoom on Pricing]
 "remove all zooms"                      → remove_zoom, all
 "make this zoom stronger"               → unsupported, answer "Use the Zoom level slider in the Zoom tab."
+"blur my email"                         → add_blur, time none, look_for "the email address"
+"blur the api key at 0:12"              → add_blur, moment, at "0:12", look_for "the API key"
+"hide the card number with a black box" → add_blur, time none, look_for "the card number", blur_kind "box"
+"blur the api keys and email everywhere" → add_blur, time none, look_for "the API keys and the email address", everywhere true
+"remove this blur"                      → remove_blur, selected
+"remove the blur on the email"          → remove_blur, blurs [the blur on "account email"]
+"remove all blurs"                      → remove_blur, all
 
 Return ONLY valid JSON matching the schema.`;
 
 const COMMAND_SCHEMA = {
   type: "OBJECT",
   properties: {
-    action: { type: "STRING", enum: ["add_zoom", "remove_zoom", "undo", "unsupported", "unclear"] },
+    action: { type: "STRING", enum: ["add_zoom", "remove_zoom", "add_blur", "remove_blur", "undo", "unsupported", "unclear"] },
     time: {
       type: "OBJECT",
       properties: {
@@ -694,18 +907,22 @@ const COMMAND_SCHEMA = {
     things: { type: "ARRAY", maxItems: 5, items: { type: "STRING" } },
     clicks: { type: "ARRAY", maxItems: 5, items: { type: "STRING" } },
     zooms: { type: "ARRAY", maxItems: 40, items: { type: "STRING" } },
+    blurs: { type: "ARRAY", maxItems: 40, items: { type: "STRING" } },
     named: { type: "STRING" },
     look_for: { type: "STRING" },
     level: { type: "NUMBER" },
+    blur_kind: { type: "STRING", enum: ["", "blur", "pixelate", "box"] },
+    everywhere: { type: "BOOLEAN" },
     answer: { type: "STRING" },
   },
-  required: ["action", "time", "length", "things", "clicks", "zooms", "named", "look_for", "level", "answer"],
-  propertyOrdering: ["action", "time", "length", "things", "clicks", "zooms", "named", "look_for", "level", "answer"],
+  required: ["action", "time", "length", "things", "clicks", "zooms", "blurs", "named", "look_for", "level", "blur_kind", "everywhere", "answer"],
+  propertyOrdering: ["action", "time", "length", "things", "clicks", "zooms", "blurs", "named", "look_for", "level", "blur_kind", "everywhere", "answer"],
 };
 
 /** The lists, as the model reads them, with the short ids it answers in. */
 export function describe(ctx, history = []) {
   const zoomIds = new Map();
+  const blurIds = new Map();
   const clickIds = new Map();
   const thingIds = new Map();
   const lines = [];
@@ -721,6 +938,15 @@ export function describe(ctx, history = []) {
     lines.push(`${id} ${fmt(z.outStart)}–${fmt(z.outEnd)}${z.label ? ` on "${z.label}"` : ""}${z.auto ? " (automatic)" : ""}${sel}`);
   });
   if (!ctx.zooms.length) lines.push("(none)");
+
+  lines.push("", "BLURS ON THE TIMELINE");
+  ctx.blurs.forEach((b, i) => {
+    const id = `B${i + 1}`;
+    blurIds.set(id, b.id);
+    const sel = b.id === ctx.selectedBlur ? " (selected)" : "";
+    lines.push(`${id} ${b.label ? `on "${b.label}"` : "unnamed"}, placed at ${fmt(toOutputSnapped(b.at ?? b.start, ctx.lay))}${b.kind !== "blur" ? ` (${b.kind})` : ""}${sel}`);
+  });
+  if (!ctx.blurs.length) lines.push("(none)");
 
   lines.push("", "CLICKS THE CREATOR MADE");
   ctx.clicks.forEach((c, i) => {
@@ -754,7 +980,7 @@ export function describe(ctx, history = []) {
     for (const m of past) lines.push(`${m.who}: ${m.text}`);
   }
 
-  return { text: lines.join("\n"), zoomIds, clickIds, thingIds };
+  return { text: lines.join("\n"), zoomIds, clickIds, thingIds, blurIds };
 }
 
 /**
@@ -776,6 +1002,9 @@ export async function readCommand(text, ctx, history = [], { ask = generateJson 
     thingKeys: pick(j.things, d.thingIds),
     clickTimes: pick(j.clicks, d.clickIds),
     zoomIds: pick(j.zooms, d.zoomIds),
+    blurIds: pick(j.blurs, d.blurIds),
+    blurKind: j.blur_kind,
+    everywhere: j.everywhere,
     named: j.named,
     lookFor: j.look_for,
     level: j.level,
@@ -784,7 +1013,7 @@ export async function readCommand(text, ctx, history = [], { ask = generateJson 
   return { intent, usd: num(res.usd) };
 }
 
-const ACTIONS = ["add_zoom", "remove_zoom", "undo", "unsupported", "unclear"];
+const ACTIONS = ["add_zoom", "remove_zoom", "add_blur", "remove_blur", "undo", "unsupported", "unclear"];
 
 function cleanBox(b) {
   if (!b || typeof b !== "object") return null;
@@ -812,6 +1041,9 @@ export function cleanIntent(i = {}) {
     thingKeys: list(i?.thingKeys, 5, (v) => str(v, 200)),
     clickTimes: list(i?.clickTimes, 5, (v) => Number(v)),
     zoomIds: list(i?.zoomIds, 40, (v) => str(v, 32)),
+    blurIds: list(i?.blurIds, 40, (v) => str(v, 32)),
+    blurKind: ["blur", "pixelate", "box"].includes(i?.blurKind) ? i.blurKind : "",
+    everywhere: !!i?.everywhere,
     named: str(i?.named, 80),
     // How to find it by looking, when the readings have no name for it.
     lookFor: str(i?.lookFor, 300),
@@ -846,12 +1078,14 @@ const ask = (reply, choices) => ({ kind: "ask", reply, choices });
 export async function resolve(intent, ctx) {
   if (intent.action === "undo") return { kind: "undo", reply: "" };
   if (intent.action === "unsupported") {
-    return info(`For now I can add and remove zooms.${intent.answer ? ` ${intent.answer}` : ""}`);
+    return info(`For now I can add and remove zooms and blurs.${intent.answer ? ` ${intent.answer}` : ""}`);
   }
   if (intent.action === "unclear") {
-    return info(intent.answer || "I didn't follow that. Try “zoom in on Projects” or “remove the zoom at 0:12”.");
+    return info(intent.answer || "I didn't follow that. Try “zoom in on Projects”, “blur the email address” or “remove the zoom at 0:12”.");
   }
   if (intent.action === "remove_zoom") return removeZoom(intent, ctx);
+  if (intent.action === "add_blur") return addBlur(intent, ctx);
+  if (intent.action === "remove_blur") return removeBlur(intent, ctx);
   return addZoom(intent, ctx);
 }
 
@@ -1345,6 +1579,244 @@ function removeZoom(intent, ctx) {
   return { kind: "applied", reply, ops: { add: [], remove: pick.map((z) => z.id), trim: [] }, select: null, seek: null, choices: [] };
 }
 
+/* ── Blur ────────────────────────────────────────────────────────────────── */
+
+/** Two blurs sharing this much of the smaller one are on the same thing (foundBlurs.js SAME_SHARE). */
+const SAME_BLUR = 0.6;
+
+/** How much of the smaller of two boxes they share. */
+function shared(a, b) {
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return (ix * iy) / Math.max(1e-9, Math.min(a.w * a.h, b.w * b.h));
+}
+
+/**
+ * Where a blur is at recording time t, or null when it is not showing there:
+ * where its follow has it once applied, otherwise where it was placed, over its
+ * span. `seenOnly` leaves out a follow's held stretches, where the tracker lost
+ * sight of its text and is only keeping the blur where it last was: that
+ * proves nothing about what is there (foundBlurs.js twinOf).
+ */
+function blurRectAt(b, t, follows, { seenOnly = false } = {}) {
+  const f = followFor(follows, b);
+  if (f) {
+    if (seenOnly && heldAt(f, t)) return null;
+    const p = followAt(f, t);
+    return p.on ? { x: p.x, y: p.y, w: b.w * p.s, h: b.h * p.s } : null;
+  }
+  if (t < b.start - 0.05 || t > b.end + 0.05) return null;
+  return { x: b.x, y: b.y, w: b.w, h: b.h };
+}
+
+const short = (v, n = 60) => {
+  const s = str(v, 200);
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+};
+
+/** “account email”, “API key” and “card number”; a name found twice says so. */
+function names(list) {
+  const counts = new Map();
+  for (const n of list) counts.set(n, (counts.get(n) || 0) + 1);
+  const shown = [...counts].map(([n, c]) => `“${n}”${c > 1 ? ` (${c})` : ""}`);
+  if (shown.length < 2) return shown[0] || "";
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
+/**
+ * "Blur the API key": every place it is on the frame at that moment, each
+ * made into the same blur a creator would draw there and applied the same
+ * way (the editor follows it through the recording from this frame). The
+ * only thing this replaces is drawing the box and putting it in the right
+ * place; everything after that is the blur the product already has.
+ */
+async function addBlur(intent, ctx) {
+  const { total, playhead } = ctx;
+  const what = intent.lookFor || intent.named;
+  if (!what) return info("Tell me what to hide, like “blur the email address” or “blur the API key at 0:12”.");
+  if (!ctx.lookSecrets) {
+    return info(`I can't look at this recording's video right now, so I can't find “${short(what)}”. Draw the blur in the Blur tab instead.`);
+  }
+
+  // ── When: a moment it is on screen ────────────────────────────────────────
+  // A blur is applied over the whole recording and shows wherever its text
+  // is, so the time only says which frame to find it on.
+  let at = playhead;
+  let why = "playhead";
+  const kind = intent.time.kind;
+  if (kind === "moment") {
+    const m = readMoment(intent.time.at, ctx);
+    if (m.bad) return badTime(m.bad);
+    if (!m.moments.length) return info(`${intent.time.at} is past the end of this video (${fmt(total)}).`);
+    if (m.moments.length > 1) {
+      return ask(
+        "Which time do you mean?",
+        m.moments.map((x) => choice(x.how === "seconds" ? `${Number(x.sec.toFixed(2))} s` : fmt(x.sec), intent, { time: { kind: "moment", at: secText(x.sec) } }))
+      );
+    }
+    at = m.moments[0].sec;
+    why = "moment";
+  } else if (kind === "range") {
+    const r = readRange(intent.time.start, intent.time.end, ctx);
+    if (r.bad) return badTime(r.bad);
+    if (!r.ranges.length) return info(outside(intent.time.start, intent.time.end, total));
+    if (r.ranges.length > 1) {
+      return ask(
+        "Which time do you mean?",
+        r.ranges.map((x) => choice(rangeLabel(x), intent, { time: { kind: "moment", at: secText(x.s), start: "", end: "" } }))
+      );
+    }
+    at = r.ranges[0].s;
+    why = "moment";
+  }
+  at = clamp(at, 0, Math.max(0, total - 0.05));
+  const tSrc = round3(toSource(at, ctx.lay));
+
+  // ── Where: every place it is on that frame ────────────────────────────────
+  const seen = await ctx.lookSecrets(at, what);
+  if (seen.error) return info(`I couldn't look at the video just now, so I can't find “${short(what)}”. Try again in a moment.`);
+  if (!seen.matches.length) {
+    const when = why === "playhead" ? `at the playhead (${fmt(at)})` : `at ${fmt(at)}`;
+    const next =
+      why === "playhead"
+        ? "Move the playhead to a moment where it's on screen and ask again, or tell me the time it appears."
+        : "If it's on screen at another moment, tell me that time, or move the playhead there and ask again.";
+    return info(`I looked at the frame ${when} and couldn't see “${short(what)}” there. ${next}`);
+  }
+  const boxes = await ctx.refine(at, seen.matches, what);
+
+  const style = intent.blurKind || "blur";
+  const made = [];
+  const already = [];
+  seen.matches.forEach((m, i) => {
+    const box = blurBox(boxes[i] || m.box);
+    const label = m.label || short(what, 40);
+    const twin =
+      ctx.blurs.find((b) => {
+        const r = blurRectAt(b, tSrc, ctx.follows, { seenOnly: true });
+        return r && shared(r, box) >= SAME_BLUR;
+      }) || made.find((b) => shared(b, box) >= SAME_BLUR);
+    if (twin) {
+      already.push(label);
+      return;
+    }
+    made.push({
+      id: newId("b"),
+      // The applied form (StudioEditor appliedForm, vision.js joinRegions):
+      // the whole recording, anchored on this frame, where it shows coming
+      // from its follow.
+      start: 0,
+      end: round3(ctx.duration),
+      ...box,
+      at: tSrc,
+      kind: style,
+      strength: style === "box" ? 1 : 0.8,
+      label: str(label, 80),
+      auto: false,
+    });
+  });
+
+  if (!made.length) {
+    return info(`${names(already)} ${already.length === 1 ? "is" : "are"} already blurred at ${fmt(at)}.`);
+  }
+
+  const verb = style === "box" ? "Covered" : style === "pixelate" ? "Pixelated" : "Blurred";
+  let reply =
+    made.length === 1
+      ? `${verb} ${names(made.map((b) => b.label))} at ${fmt(at)}.`
+      : `${verb} ${made.length} things at ${fmt(at)}: ${names(made.map((b) => b.label))}.`;
+  reply +=
+    made.length === 1
+      ? " It's being applied now, and it will follow the text wherever it moves on screen."
+      : " They're being applied now, and each one follows its text wherever it moves on screen.";
+  reply +=
+    made.length === 1
+      ? " Check the box on the preview; drag it if it doesn't cover everything."
+      : " Check the boxes on the preview; drag any that don't cover everything.";
+  if (already.length) reply += ` ${names(already)} ${already.length === 1 ? "was" : "were"} already blurred.`;
+  if (intent.everywhere) reply += " If it shows up somewhere else later in the video, move the playhead there and ask again.";
+
+  return {
+    kind: "applied",
+    reply,
+    ops: { add: [], remove: [], trim: [], addBlurs: made, removeBlurs: [] },
+    select: made[0].id,
+    selectKind: "blur",
+    seek: round3(at),
+    choices: [],
+  };
+}
+
+function removeBlur(intent, ctx) {
+  const blurs = ctx.blurs;
+  if (!blurs.length) return info("There are no blurs on the timeline to remove.");
+  const kind = intent.time.kind;
+  const name = intent.named || intent.lookFor;
+  let pick = [];
+
+  if (intent.blurIds.length) {
+    pick = blurs.filter((b) => intent.blurIds.includes(b.id));
+    if (!pick.length) return info("That blur isn't on the timeline any more.");
+  } else if (kind === "all") {
+    pick = blurs;
+  } else if (kind === "none" && name) {
+    const n = norm(name);
+    pick = blurs.filter((b) => b.label && (norm(b.label).includes(n) || n.includes(norm(b.label))));
+    if (!pick.length) return info(`I couldn't tell which blur is on “${short(name)}”. Click it on the preview and say “remove this blur”.`);
+  } else if ((kind === "selected" || kind === "none") && ctx.selectedBlur) {
+    pick = blurs.filter((b) => b.id === ctx.selectedBlur);
+  } else {
+    let at = ctx.playhead;
+    if (kind === "moment") {
+      const m = readMoment(intent.time.at, ctx);
+      if (m.bad) return badTime(m.bad);
+      if (!m.moments.length) return info(`${intent.time.at} is past the end of this video (${fmt(ctx.total)}).`);
+      if (m.moments.length > 1) {
+        return ask(
+          "Which time do you mean?",
+          m.moments.map((x) => choice(x.how === "seconds" ? `${Number(x.sec.toFixed(2))} s` : fmt(x.sec), intent, { time: { kind: "moment", at: secText(x.sec) } }))
+        );
+      }
+      at = m.moments[0].sec;
+    }
+    const t = toSource(at, ctx.lay);
+    const showing = blurs.filter((b) => blurRectAt(b, t, ctx.follows));
+    if (!showing.length) {
+      return info(
+        kind === "selected"
+          ? `No blur is selected, and none is showing at ${fmt(at)}. Click the blur on the preview first, or tell me what it's on.`
+          : `No blur is showing at ${fmt(at)}.`
+      );
+    }
+    if (showing.length > 1) {
+      return ask(
+        `${showing.length} blurs are showing at ${fmt(at)}. Which one?`,
+        [
+          ...showing.slice(0, 4).map((b) => choice(`The one on “${short(b.label || "unnamed", 30)}”`, intent, { blurIds: [b.id] })),
+          choice("All of them", intent, { blurIds: showing.map((b) => b.id) }),
+        ]
+      );
+    }
+    pick = showing;
+  }
+
+  const on = (b) => (b.label ? ` on “${b.label}”` : "");
+  const reply =
+    pick.length === 1
+      ? `Removed the blur${on(pick[0])}.`
+      : pick.length === blurs.length
+        ? `Removed all ${pick.length} blurs.`
+        : `Removed ${pick.length} blurs: ${names(pick.map((b) => b.label || "unnamed"))}.`;
+  return {
+    kind: "applied",
+    reply,
+    ops: { add: [], remove: [], trim: [], addBlurs: [], removeBlurs: pick.map((b) => b.id) },
+    select: null,
+    seek: null,
+    choices: [],
+  };
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
    One command, start to finish
    ──────────────────────────────────────────────────────────────────────────── */
@@ -1354,7 +1826,7 @@ function removeZoom(intent, ctx) {
  * @param {object} o.demo
  * @param {object} o.body   the request: { text | intent, playhead, selected, zooms, cuts, history }
  */
-export async function runCommand({ demo, body, ask, look, onStatus }) {
+export async function runCommand({ demo, body, ask, look, lookSecrets, refine, onStatus }) {
   const cid = newId("cmd");
   const ctx = commandContext(demo, body);
   const text = str(body?.text, MAX_TEXT);
@@ -1396,6 +1868,33 @@ export async function runCommand({ demo, body, ask, look, onStatus }) {
       }
     : null);
 
+  // The same, for a blur: every place the thing is on the frame…
+  ctx.lookSecrets = lookSecrets || (recordingThere
+    ? async (outT, description) => {
+        status(`Looking at the frame at ${fmt(outT)}…`);
+        let file = null;
+        try {
+          file = await frameAt(demo, toSource(outT, ctx.lay));
+          const r = await findSecrets(file, description, ask ? { ask } : {});
+          usd += r.usd;
+          looked = ` looked at ${fmt(outT)}: ${r.matches.length ? r.matches.map((m) => `"${m.label}" ${m.confidence.toFixed(2)}`).join(", ") : "nothing"};`;
+          return r;
+        } catch (err) {
+          console.warn(`[studio] command ${cid} on ${demo._id}: looking at ${fmt(outT)} failed: ${String(err?.message).slice(0, 200)}`);
+          looked = ` looking at ${fmt(outT)} failed;`;
+          return { error: true, matches: [] };
+        }
+      }
+    : null);
+  // …and each one's edges from a close-up, all at once. A close-up that
+  // cannot be read keeps the box the first look found (refineBox).
+  ctx.refine = refine || (async (outT, matches, description) => {
+    if (!matches.length) return [];
+    status(matches.length === 1 ? "Finding its exact edges…" : `Finding the exact edges of all ${matches.length}…`);
+    const t = toSource(outT, ctx.lay);
+    return Promise.all(matches.map((m) => refineBox(demo, t, m, description, { ...(ask ? { ask } : {}), W: ctx.W, H: ctx.H })));
+  });
+
   if (body?.intent && typeof body.intent === "object") {
     intent = cleanIntent(body.intent);
   } else {
@@ -1415,6 +1914,8 @@ export async function runCommand({ demo, body, ask, look, onStatus }) {
       `${intent.thingKeys.length ? ` things=${intent.thingKeys.length}` : ""}${intent.clickTimes.length ? ` clicks=${intent.clickTimes.length}` : ""}` +
       `${intent.zoomIds.length ? ` zooms=${intent.zoomIds.length}` : ""}${intent.lookFor ? ` look_for=${JSON.stringify(intent.lookFor)}` : ""} →${looked} ${out.kind}` +
       `${out.ops ? ` +${out.ops.add.length} -${out.ops.remove.length} ~${out.ops.trim.length}` : ""}` +
+      `${out.ops?.addBlurs?.length ? ` blurs+${out.ops.addBlurs.length} ${out.ops.addBlurs.map((b) => `[${b.x},${b.y},${b.w},${b.h}]@${b.at}`).join(" ")}` : ""}` +
+      `${out.ops?.removeBlurs?.length ? ` blurs-${out.ops.removeBlurs.length}` : ""}` +
       `${usd ? ` $${usd.toFixed(5)}` : ""}: ${out.reply}`
   );
   return { cid, ...out };
@@ -1422,5 +1923,5 @@ export async function runCommand({ demo, body, ask, look, onStatus }) {
 
 export default {
   runCommand, resolve, readCommand, commandContext, cleanIntent, readTime, readRange, readMoment, readLength, fmt,
-  frameAt, findOnFrame, fromBox2d,
+  frameAt, findOnFrame, fromBox2d, findSecrets, refineBox, closeUp, fromCloseUp, blurBox,
 };

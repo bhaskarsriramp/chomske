@@ -33,7 +33,7 @@ const nextId = () => `m${++seq}`;
 /** How much of the conversation goes with a message, so "the other one" means something. */
 const HISTORY = 6;
 
-export default function CommandChat({ demoId, tl, time, total, selection, onApply, onUndo, onSelect, onSeek }) {
+export default function CommandChat({ demoId, tl, time, total, selection, onApply, onUndo, onFollow, onSelect, onSeek }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
@@ -121,6 +121,8 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
           rid,
           playhead: t,
           selected: sel?.kind === "zoom" ? sel.id : null,
+          selectedBlur: sel?.kind === "blur" ? sel.id : null,
+          blurs: (cur.blurs || []).map(({ id, x, y, w, h, at, start, end, kind, label, auto }) => ({ id, x, y, w, h, at, start, end, kind, label, auto })),
           zooms: (cur.zooms || []).map(({ id, start, end, x, y, w, h, level, label, auto, easing, ease_out, ramp_in, ramp_out }) => ({
             id, start, end, x, y, w, h, level, label, auto, easing, ease_out, ramp_in, ramp_out,
           })),
@@ -136,17 +138,30 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
         }
 
         if (res.kind === "applied") {
-          const undo = onApply(res.ops, res.ops.add.length ? "Chat: add zoom" : "Chat: remove zoom");
-          if (!undo) {
+          const ops = res.ops || {};
+          const label = ops.addBlurs?.length
+            ? "Chat: add blur"
+            : ops.removeBlurs?.length
+              ? "Chat: remove blur"
+              : ops.add?.length
+                ? "Chat: add zoom"
+                : "Chat: remove zoom";
+          const made = onApply(ops, label);
+          if (!made) {
             push({ role: "app", text: "The timeline changed while I was working, so there was nothing left to change. Try again." });
             return;
           }
+          // A blur is applied the moment it is made, exactly as the Apply
+          // button does it: followed through the recording from its frame.
+          const { newBlurs = [], ...undo } = made;
+          for (const b of newBlurs) onFollow?.(b);
           // Picking another moment replaced the zoom the earlier answer added;
           // that answer's Undo would now undo the wrong thing.
           if (from) patchMsg(from, { replaced: true });
           push({ role: "app", text: res.reply, undo, cid: res.cid, choices: res.choices || [] });
-          const removedSelected = sel?.kind === "zoom" && res.ops.remove.includes(sel.id);
-          if (res.select) onSelect({ kind: "zoom", id: res.select });
+          const removedSelected =
+            (sel?.kind === "zoom" && (ops.remove || []).includes(sel.id)) || (sel?.kind === "blur" && (ops.removeBlurs || []).includes(sel.id));
+          if (res.select) onSelect({ kind: res.selectKind || "zoom", id: res.select });
           else if (removedSelected) onSelect(null);
           if (res.seek != null) onSeek(res.seek);
           return;
@@ -165,7 +180,7 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
         setBusy(false);
       }
     },
-    [demoId, onApply, onSelect, onSeek, patchMsg, push, undoMessage]
+    [demoId, onApply, onFollow, onSelect, onSeek, patchMsg, push, undoMessage]
   );
 
   const submit = () => {
@@ -185,13 +200,14 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
   const zooms = tl?.zooms || [];
   const sorted = [...zooms].sort((a, b) => a.start - b.start);
   const selIndex = selection?.kind === "zoom" ? sorted.findIndex((z) => z.id === selection.id) : -1;
+  const selBlur = selection?.kind === "blur" ? (tl?.blurs || []).find((b) => b.id === selection.id) : null;
   const named = sorted.find((z) => z.label && z.label.length <= 24)?.label;
   const from = Math.floor((total || 0) * 0.2);
   const examples = [
     named ? `Zoom in on ${named}` : "Zoom in here",
-    "Zoom here for 4 seconds",
     total > 12 ? `Add a zoom from ${fmtTime(from)} to ${fmtTime(from + 5)}` : "Add a zoom from 0:01 to 0:04",
-    "Remove this zoom",
+    "Blur the email address here",
+    "Blur the API key with a black box",
     total > 20 ? "Remove the zooms in the first 10 seconds" : "Remove all zooms",
   ];
 
@@ -200,6 +216,7 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
       <div className="st-chat-context" aria-live="polite">
         Playhead {fmtTime(time, true)}
         {selIndex >= 0 ? ` · Zoom ${selIndex + 1} selected` : ""}
+        {selBlur ? ` · Blur${selBlur.label ? ` on “${selBlur.label}”` : ""} selected` : ""}
       </div>
       <form
         className="st-chat-compose"
@@ -246,13 +263,13 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
           <Icon name="chat" size={22} />
         </button>
       )}
-      <Drawer open={open} title="Edit with a message" sub="Adds and removes zooms for now" onClose={() => setOpen(false)} footer={footer}>
+      <Drawer open={open} title="Edit with a message" sub="Adds and removes zooms and blurs" onClose={() => setOpen(false)} footer={footer}>
         <div className="st-chat-log">
           {!messages.length && (
             <div className="st-chat-intro">
               <p>
-                Tell me what to change and I'll make the edit on the timeline. Name a button, or describe what you see, like “the image
-                with the play button”. Anything I do can be undone.
+                Tell me what to zoom in on or what to hide, and I'll make the edit on the timeline. Name a button, or describe what you
+                see, like “the image with the play button” or “my email in the top corner”. Anything I do can be undone.
               </p>
               <div className="st-chat-examples" aria-label="Examples">
                 {examples.map((e) => (
