@@ -656,20 +656,36 @@ export async function findOnFrame(file, description, { ask = generateJson } = {}
 const BLUR_PAD_X = 0.012;
 const BLUR_PAD_Y = 0.01;
 
+const SECRET_RULES = `- Each separate occurrence is its own box: two email addresses are two boxes; an email and an API key are two boxes.
+- One box per run of text on one line. Never one box around several lines, a whole row or a whole panel, unless what they described IS an image, a photo, a face or a panel.
+- Only what they described: the key, not the "API key:" label beside it; the address, not the whole menu.
+- The box must include every character, the first and the last. Slightly too big is safe; cutting off a character is not.
+- Do not return lookalikes: a placeholder like "your-api-key-here" or "user@example.com" is not a secret unless they asked for it.
+
+"box_2d" is [ymin, xmin, ymax, xmax], normalized to 0-1000.
+"label" names what it is in two or three words, like "account email" or "Stripe API key". Never repeat the secret itself.
+"confidence" is how sure you are, from 0 to 1, that this is something they asked to hide.`;
+
 export const SECRET_FINDER = (description) => `This is one frame of a screen recording that is about to be published. The person who made it wants something on screen hidden, and described it in their own words:
 
 ${JSON.stringify(description)}
 
-Find EVERY place on this frame where that is visible, and return one box for each:
-- Each separate occurrence is its own box: two email addresses are two boxes; an email and an API key are two boxes.
-- One box per run of text on one line. Never one box around several lines, a whole row or a whole panel, unless what they described IS an image, a photo, a face or a panel.
-- Only what they described: the key, not the "API key:" label beside it; the address, not the whole menu.
-- The box must include every character, the first and the last. Slightly too big is safe; cutting off a character is not.
-- If it is not on this frame, set "found" to false and return no boxes. Do not return lookalikes: a placeholder like "your-api-key-here" or "user@example.com" is not a secret unless they asked for it.
+Find EVERY place on this frame where that is visible, and return one box for each. If it is not on this frame, set "found" to false and return no boxes.
+${SECRET_RULES}
 
-"box_2d" is [ymin, xmin, ymax, xmax], normalized to 0-1000.
-"label" names what it is in two or three words, like "account email" or "Stripe API key". Never repeat the secret itself.
-"confidence" is how sure you are, from 0 to 1, that this is something they asked to hide.
+Return ONLY valid JSON matching the schema.`;
+
+/** The same question asked of several frames at once, for "blur it everywhere". */
+export const SECRET_SCAN = (description, frames) => `These are ${frames.length} frames from one screen recording that is about to be published, in order:
+${frames.map((f, i) => `Frame ${i + 1}: t=${f.out.toFixed(1)}s`).join("\n")}
+
+The person who made it wants something hidden wherever it appears in the video, and described it in their own words:
+
+${JSON.stringify(description)}
+
+For EACH frame, find every place on that frame where that is visible, and return one box for each. Return one entry per frame, in order ("frame" is its number above), with an empty "matches" list when it is not on that frame. Boxes are relative to their own frame.
+${SECRET_RULES}
+"tail" is the last 3 characters of the text in the box, exactly as shown, so the same text can be told apart from different text in the same place on the next frame. "" for a picture, a face or text too small to read.
 
 Return ONLY valid JSON matching the schema.`;
 
@@ -707,6 +723,195 @@ const EDGE_SCHEMA = {
   required: ["found", "box_2d"],
   propertyOrdering: ["found", "box_2d"],
 };
+
+const SCAN_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    frames: {
+      type: "ARRAY",
+      maxItems: 8,
+      items: {
+        type: "OBJECT",
+        properties: {
+          frame: { type: "INTEGER" },
+          matches: {
+            type: "ARRAY",
+            maxItems: 12,
+            items: {
+              type: "OBJECT",
+              properties: {
+                box_2d: { type: "ARRAY", items: { type: "NUMBER" }, minItems: 4, maxItems: 4 },
+                label: { type: "STRING" },
+                tail: { type: "STRING" },
+                confidence: { type: "NUMBER" },
+              },
+              required: ["box_2d", "label", "tail", "confidence"],
+              propertyOrdering: ["box_2d", "label", "tail", "confidence"],
+            },
+          },
+        },
+        required: ["frame", "matches"],
+        propertyOrdering: ["frame", "matches"],
+      },
+    },
+  },
+  required: ["frames"],
+  propertyOrdering: ["frames"],
+};
+
+/* ── "Everywhere": the whole video, looked through ────────────────────────── */
+
+/**
+ * ── WHY A BLUR ON ONE COPY DOES NOT COVER THE OTHERS ─────────────────────────
+ * The tracker follows ONE thing through the recording and refuses the same
+ * text somewhere else (blurTrack.js STRICT_CONTEXT): a blur on a channel name
+ * once jumped to the same name in a search box, and that is the rule that
+ * stopped it. So "blur Open Editor on every screen", blurred on the frame at
+ * 0:00, covered the hero's button and not the other "Open Editor" at 0:24 in
+ * a different section. For "everywhere", the video is looked through: a frame
+ * every SCAN_EVERY seconds, each occurrence becomes its own blur anchored
+ * where it was seen best, and each is followed like any other.
+ */
+const SCAN_EVERY = 2;
+/** Most frames looked at in one scan: a long video is sampled more sparsely. */
+const SCAN_MAX = 60;
+/** Frames per model call. */
+const SCAN_BATCH = 4;
+/** Most blurs one scan makes (the follow route queues at most 24 per demo). */
+const SCAN_BLURS = 16;
+
+/** fn over items, at most `n` at a time. */
+async function mapLimit(items, n, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  return out;
+}
+
+/** The output times a scan looks at: every SCAN_EVERY seconds (sparser past SCAN_MAX), and the last moment. */
+export function scanTimes(total) {
+  if (!(total > 0)) return [];
+  const step = Math.max(SCAN_EVERY, total / SCAN_MAX);
+  const out = [];
+  for (let t = Math.min(0.25, total / 2); t < total - 0.1; t += step) out.push(round3(t));
+  const last = round3(Math.max(0, total - 0.15));
+  if (!out.length || last - out[out.length - 1] > step / 2) out.push(last);
+  return out;
+}
+
+/**
+ * Every sighting of the described thing across the video: [{ src, out, box,
+ * label, confidence }]. Frames come from one downloaded copy of the recording
+ * (localCopy), each read as "what was on screen at t" (extractFrameAt), so a
+ * sighting's time is the frame the tracker will cut its blur from.
+ *
+ * @returns {{ sightings: object[], frames: number, missed: number, usd: number, error?: boolean }}
+ */
+export async function scanForSecrets(demo, ctx, description, { ask = generateJson, status = () => {} } = {}) {
+  const key = demo.recording?.mp4_key;
+  if (!key || demo.purged) return { error: true, sightings: [], frames: 0, missed: 0, usd: 0 };
+  const times = scanTimes(ctx.total).map((out) => ({ out, src: round3(toSource(out, ctx.lay)) }));
+  status("Reading the video…");
+  await fsp.mkdir(CACHE_DIR, { recursive: true });
+  const dir = await fsp.mkdtemp(path.join(CACHE_DIR, "scan-"));
+  let usd = 0;
+  try {
+    const file = await localCopy(demo, key);
+    await mapLimit(times, 4, async (f, i) => {
+      f.file = path.join(dir, `f${String(i).padStart(3, "0")}.jpg`);
+      try {
+        await extractFrameAt(file, f.file, f.src, { longEdge: 1280, timeoutMs: FRAME_TIMEOUT });
+        f.ok = (await fsp.stat(f.file).then((s) => s.size, () => 0)) > 0;
+      } catch {
+        f.ok = false;
+      }
+    });
+    const frames = times.filter((f) => f.ok);
+    if (!frames.length) return { error: true, sightings: [], frames: 0, missed: times.length, usd };
+
+    status(`Looking through ${frames.length} frames for “${short(description, 40)}”…`);
+    const batches = [];
+    for (let i = 0; i < frames.length; i += SCAN_BATCH) batches.push(frames.slice(i, i + SCAN_BATCH));
+    let missed = 0;
+    const sightings = [];
+    await Promise.all(
+      batches.map(async (batch) => {
+        try {
+          const parts = [{ text: SECRET_SCAN(str(description, 300), batch) }];
+          for (let i = 0; i < batch.length; i++) {
+            parts.push({ text: `Frame ${i + 1}: t=${batch[i].out.toFixed(1)}s` });
+            parts.push({ inlineData: { mimeType: "image/jpeg", data: (await fsp.readFile(batch[i].file)).toString("base64") } });
+          }
+          const res = await askJson(ask, { model: MODEL.vision, parts, maxOutputTokens: 4096, schema: SCAN_SCHEMA, label: "command blur scan" });
+          usd += num(res.usd);
+          for (const fr of Array.isArray(res.json?.frames) ? res.json.frames : []) {
+            const f = batch[Math.round(num(fr?.frame)) - 1];
+            if (!f) continue;
+            for (const m of Array.isArray(fr.matches) ? fr.matches : []) {
+              const box = fromBox2d(m?.box_2d);
+              const confidence = clamp(num(m?.confidence, 0.5), 0, 1);
+              // `tail` only tells sightings apart (instancesOf); it is never
+              // stored or logged, being three characters of a secret.
+              const tail = String(m?.tail ?? "").trim().slice(-3).toLowerCase();
+              if (box && confidence >= MIN_FOUND) sightings.push({ src: f.src, out: f.out, box, label: str(m?.label, 40), tail, confidence });
+            }
+          }
+        } catch (err) {
+          missed += batch.length;
+          console.warn(`[studio] command: a scan batch failed: ${String(err?.message).slice(0, 160)}`);
+        }
+      })
+    );
+    return { sightings, frames: frames.length, missed, usd, error: missed >= frames.length };
+  } finally {
+    fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Sightings grouped into the things they are sightings of.
+ *
+ * Joined only when a thing is seen again at the next frame looked at, in the
+ * same place at the same size, showing the same text: never on a guess
+ * (vision.js joinRegions). A thing that scrolled between two frames comes
+ * out as two, and both are followed; two blurs over one thing look like one.
+ * The other mistake is the one that leaks: in a list scrolling past, a NEW
+ * row can arrive exactly where the last one was, and joined to it, it would
+ * never get a blur of its own. The text's last characters (`tail`) keep them
+ * apart; a sighting without them (a picture, a face) goes by place alone.
+ */
+export function instancesOf(sightings, step) {
+  const same = (a, b) => {
+    const cx = Math.abs(a.box.x + a.box.w / 2 - (b.box.x + b.box.w / 2));
+    const cy = Math.abs(a.box.y + a.box.h / 2 - (b.box.y + b.box.h / 2));
+    const rw = a.box.w / Math.max(1e-6, b.box.w);
+    const rh = a.box.h / Math.max(1e-6, b.box.h);
+    const text = !a.tail || !b.tail || a.tail === b.tail;
+    return text && cx <= Math.max(a.box.w, b.box.w) * 0.25 && cy <= Math.max(a.box.h, b.box.h) * 0.5 && rw > 0.7 && rw < 1.43 && rh > 0.6 && rh < 1.67;
+  };
+  const out = [];
+  for (const s of [...sightings].sort((a, b) => a.src - b.src || b.confidence - a.confidence)) {
+    const hit = out.find((i) => i.last.src < s.src && s.src - i.last.src <= step * 1.6 + 0.05 && same(i.last, s));
+    if (hit) {
+      hit.seen.push(s);
+      hit.last = s;
+    } else {
+      out.push({ seen: [s], last: s });
+    }
+  }
+  return out.map((i) => {
+    // Anchored where it was seen most surely, the earliest of those: that
+    // frame is where the tracker cuts the picture of it to follow.
+    const best = i.seen.reduce((a, b) => (b.confidence > a.confidence + 0.05 ? b : a));
+    return { first: i.seen[0], best, seen: i.seen };
+  });
+}
 
 /** Every place on a frame (a JPEG on disk) where the described thing is. */
 export async function findSecrets(file, description, { ask = generateJson } = {}) {
@@ -822,7 +1027,7 @@ export const COMMAND_READER = `You turn a creator's message into an edit on the 
 What can be done for now:
 - "add_zoom": zoom the camera in. On something on screen, at a time, over a stretch of time, at the playhead, or when a click happens.
 - "remove_zoom": take zooms off the timeline.
-- "add_blur": hide something on screen by blurring it: an email, an API key, a password, a name, a phone or card number, a face, a photo. Put what to hide in "look_for". "time" is the moment it is on screen ("none" means the playhead).
+- "add_blur": hide something on screen by blurring it: an email, an API key, a password, a name, a phone or card number, a face, a photo. Put what to hide in "look_for". "time" is the moment it is on screen when they say one ("here" is "playhead"); "none" when they did not, and then the whole video is searched.
 - "remove_blur": take blurs off.
 - "undo": they want the last change undone ("undo", "revert that", "go back", "wapas karo").
 - "unsupported": anything else: cuts, captions, voiceover, changing the strength, timing or framing of an existing zoom, moving or resizing an existing blur, speed, music. Put ONE short sentence in "answer" saying where to do it by hand, using only this list:
@@ -879,6 +1084,7 @@ EXAMPLES
 "remove all zooms"                      → remove_zoom, all
 "make this zoom stronger"               → unsupported, answer "Use the Zoom level slider in the Zoom tab."
 "blur my email"                         → add_blur, time none, look_for "the email address"
+"blur this email here"                  → add_blur, playhead, look_for "the email address"
 "blur the api key at 0:12"              → add_blur, moment, at "0:12", look_for "the API key"
 "hide the card number with a black box" → add_blur, time none, look_for "the card number", blur_kind "box"
 "blur the api keys and email everywhere" → add_blur, time none, look_for "the API keys and the email address", everywhere true
@@ -1637,6 +1843,9 @@ async function addBlur(intent, ctx) {
   if (!ctx.lookSecrets) {
     return info(`I can't look at this recording's video right now, so I can't find “${short(what)}”. Draw the blur in the Blur tab instead.`);
   }
+  // No moment given, or "everywhere": the whole video. A secret is rarely on
+  // one screen only, and "blur my email" means wherever it is.
+  if (intent.everywhere || intent.time.kind === "none") return blurEverywhere(intent, ctx, what);
 
   // ── When: a moment it is on screen ────────────────────────────────────────
   // A blur is applied over the whole recording and shows wherever its text
@@ -1734,7 +1943,6 @@ async function addBlur(intent, ctx) {
       ? " Check the box on the preview; drag it if it doesn't cover everything."
       : " Check the boxes on the preview; drag any that don't cover everything.";
   if (already.length) reply += ` ${names(already)} ${already.length === 1 ? "was" : "were"} already blurred.`;
-  if (intent.everywhere) reply += " If it shows up somewhere else later in the video, move the playhead there and ask again.";
 
   return {
     kind: "applied",
@@ -1743,6 +1951,88 @@ async function addBlur(intent, ctx) {
     select: made[0].id,
     selectKind: "blur",
     seek: round3(at),
+    // The tracker follows these through the video, not other copies of them
+    // elsewhere: the whole video can be looked through for those.
+    choices: [choice("Find it everywhere in the video", intent, { everywhere: true, time: { kind: "none", at: "", start: "", end: "" } })],
+  };
+}
+
+/**
+ * "Blur X everywhere": every place X is seen across the video, each its own
+ * blur (see scanForSecrets for why one blur cannot cover the others).
+ */
+async function blurEverywhere(intent, ctx, what) {
+  if (!ctx.scan) return info(`I can't look through this recording's video right now, so I can't find “${short(what)}”. Draw the blur in the Blur tab instead.`);
+  const r = await ctx.scan(what);
+  if (r.error) return info(`I couldn't look through the video just now, so I can't find “${short(what)}”. Try again in a moment.`);
+  const step = Math.max(SCAN_EVERY, ctx.total / SCAN_MAX);
+  const every = `${Number(step.toFixed(1))} s`;
+  if (!r.sightings.length) {
+    return info(
+      `I looked through the whole video (${r.frames} frames, one every ${every}) and couldn't find “${short(what)}”. If you can see it, move the playhead to it and say “blur it here”.`
+    );
+  }
+
+  const style = intent.blurKind || "blur";
+  const found = instancesOf(r.sightings, step);
+  const fresh = [];
+  let already = 0;
+  for (const inst of found) {
+    const covered = ctx.blurs.some((b) => {
+      const at = blurRectAt(b, inst.best.src, ctx.follows, { seenOnly: true });
+      return at && shared(at, inst.best.box) >= SAME_BLUR;
+    });
+    if (covered) already += 1;
+    else fresh.push(inst);
+  }
+  if (!fresh.length) {
+    return info(`“${short(what)}” is already blurred everywhere I found it (${found.length} ${found.length === 1 ? "place" : "places"}).`);
+  }
+
+  // Earliest first; the follow route takes at most 24 at once per demo.
+  const kept = fresh.slice(0, SCAN_BLURS);
+  const boxes = await ctx.refineMany(kept.map((i) => ({ src: i.best.src, match: i.best })), what);
+  const made = kept.map((inst, k) => ({
+    id: newId("b"),
+    start: 0,
+    end: round3(ctx.duration),
+    ...blurBox(boxes[k] || inst.best.box),
+    at: inst.best.src,
+    kind: style,
+    strength: style === "box" ? 1 : 0.8,
+    label: str(inst.best.label || short(what, 40), 80),
+    auto: false,
+  }));
+
+  const verb = style === "box" ? "Covered" : style === "pixelate" ? "Pixelated" : "Blurred";
+  const when = kept.map((i) => fmt(i.first.out));
+  const whenText = when.length > 1 ? `${when.slice(0, -1).join(", ")} and ${when[when.length - 1]}` : when[0];
+  let reply =
+    made.length === 1
+      ? `${verb} ${names(made.map((b) => b.label))}, the one place I found it in the video (first seen at ${whenText}).`
+      : `${verb} ${names([...new Set(made.map((b) => b.label))])} wherever I found it in the video: ${made.length} blurs, first seen at ${whenText}.`;
+  reply +=
+    made.length === 1
+      ? " It's being applied now, and it follows its text while it's on screen."
+      : " They're being applied now, and each one follows its text while it's on screen.";
+  // Seen at the same x, the same size, lower or higher: most likely one thing
+  // scrolling, blurred once per place it was seen. Harmless, and said so.
+  const scrolled = made.some((a, i) =>
+    made.some((b, j) => j > i && Math.abs(a.x + a.w / 2 - (b.x + b.w / 2)) < 0.02 && Math.abs(a.w - b.w) < 0.02 && Math.abs(a.y - b.y) > a.h)
+  );
+  if (scrolled) reply += " Text that scrolls can get more than one blur; they overlap and look like one.";
+  if (already) reply += ` ${already} more ${already === 1 ? "place was" : "places were"} already blurred.`;
+  if (fresh.length > kept.length) reply += ` I found ${fresh.length - kept.length} more places; ask again once these finish applying and I'll blur those too.`;
+  reply += ` I looked at one frame every ${every}, so something on screen for less than that can be missed. If you spot one, move the playhead to it and say “blur it here”.`;
+  if (r.missed) reply += ` ${r.missed} of the frames couldn't be read.`;
+
+  return {
+    kind: "applied",
+    reply,
+    ops: { add: [], remove: [], trim: [], addBlurs: made, removeBlurs: [] },
+    select: made[0].id,
+    selectKind: "blur",
+    seek: round3(kept[0].best.out),
     choices: [],
   };
 }
@@ -1826,7 +2116,7 @@ function removeBlur(intent, ctx) {
  * @param {object} o.demo
  * @param {object} o.body   the request: { text | intent, playhead, selected, zooms, cuts, history }
  */
-export async function runCommand({ demo, body, ask, look, lookSecrets, refine, onStatus }) {
+export async function runCommand({ demo, body, ask, look, lookSecrets, refine, scan, refineMany, onStatus }) {
   const cid = newId("cmd");
   const ctx = commandContext(demo, body);
   const text = str(body?.text, MAX_TEXT);
@@ -1894,6 +2184,21 @@ export async function runCommand({ demo, body, ask, look, lookSecrets, refine, o
     const t = toSource(outT, ctx.lay);
     return Promise.all(matches.map((m) => refineBox(demo, t, m, description, { ...(ask ? { ask } : {}), W: ctx.W, H: ctx.H })));
   });
+  // "Everywhere": the whole video looked through, then each place's edges,
+  // each on its own frame.
+  ctx.scan = scan || (recordingThere
+    ? async (description) => {
+        const r = await scanForSecrets(demo, ctx, description, { ...(ask ? { ask } : {}), status });
+        usd += r.usd;
+        looked = ` scanned ${r.frames} frames (${r.missed} missed): ${r.sightings.length} sightings;`;
+        return r;
+      }
+    : null);
+  ctx.refineMany = refineMany || (async (items, description) => {
+    if (!items.length) return [];
+    status(items.length === 1 ? "Finding its exact edges…" : `Finding the exact edges of all ${items.length}…`);
+    return mapLimit(items, 6, (it) => refineBox(demo, it.src, it.match, description, { ...(ask ? { ask } : {}), W: ctx.W, H: ctx.H }));
+  });
 
   if (body?.intent && typeof body.intent === "object") {
     intent = cleanIntent(body.intent);
@@ -1924,4 +2229,5 @@ export async function runCommand({ demo, body, ask, look, lookSecrets, refine, o
 export default {
   runCommand, resolve, readCommand, commandContext, cleanIntent, readTime, readRange, readMoment, readLength, fmt,
   frameAt, findOnFrame, fromBox2d, findSecrets, refineBox, closeUp, fromCloseUp, blurBox,
+  scanForSecrets, scanTimes, instancesOf,
 };

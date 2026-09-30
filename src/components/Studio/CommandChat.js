@@ -193,7 +193,10 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
   const pick = (m, c) => {
     if (busy) return;
     patchMsg(m.id, { picked: true });
-    run({ intent: c.intent, shown: c.label, from: m.undo ? m.id : null });
+    // Only a button that takes the earlier answer's edit away ("use the click
+    // at 0:31 instead") retires that answer's Undo; "find it everywhere" adds
+    // to it and leaves it be.
+    run({ intent: c.intent, shown: c.label, from: m.undo && c.intent?.replace?.length ? m.id : null });
   };
 
   // ── What to try: real names from this recording where there are some ──────
