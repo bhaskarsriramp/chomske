@@ -32,7 +32,7 @@ import {
 } from "./model";
 import { useBox, Icon } from "./ui";
 import Skeleton from "../Shell/Skeleton";
-import { followFor, followAt, applyState, blurCorner } from "./follow.mjs";
+import { followFor, followAt, followNear, applyState, blurCorner } from "./follow.mjs";
 import { cursorColors, rippleRgb, traceHand, strokeOutline, strokeHandDetail, cursorSize } from "./cursorLook.mjs";
 
 /** How long a click ripple lives. Matches overlay.js. */
@@ -233,10 +233,13 @@ export default function Preview({
         // recording, and not at all while it is off the screen.
         const f = followFor(follows, blurById.get(b.id));
         if (f) {
-          const p = followAt(f, srcT);
-          if (!p.on) continue;
-          // At the size it is on this frame: what it covers can zoom.
-          paintBlur(ctx, v, { ...b, x: p.x, y: p.y, w: b.w * p.s, h: b.h * p.s }, cam, { dx, dy, dw, dh });
+          // Everywhere it is on the frames around this moment, not only the
+          // one the clock names: the frame on screen can be the one before
+          // or after (follow.mjs followNear). At the size it is on each
+          // frame: what it covers can zoom.
+          for (const p of followNear(f, srcT)) {
+            paintBlur(ctx, v, { ...b, x: p.x, y: p.y, w: b.w * p.s, h: b.h * p.s }, cam, { dx, dy, dw, dh });
+          }
         } else {
           paintBlur(ctx, v, b, cam, { dx, dy, dw, dh });
         }

@@ -85,6 +85,55 @@ export function followAt(follow, t) {
   return { x: k[lo][1], y: k[lo][2], on: !!k[lo][3], s: k[lo][4] || 1 };
 }
 
+/**
+ * ── WHERE A MOVING BLUR HAS TO BE DRAWN ──────────────────────────────────────
+ * followAt is exact on the recording's own frames, and the editor does not
+ * show those. It plays a copy made at a constant 30 frames a second
+ * (ffmpeg.js makeVideoProxy), whose `fps` filter puts each frame on the
+ * NEAREST tick: up to half a tick before its own time, or most of a tick
+ * after it. A browser also draws a video a frame or so behind its clock. In
+ * a fast scroll that was enough to show what was blurred. Measured on the
+ * Cursorful demo (2026-09-30): the blur sat up to 96 px off "Open Editor" for
+ * 3–10 ms at every new frame, 7.7% of the scroll, and pausing in one of those
+ * windows showed half the text.
+ *
+ * The export already allows for its own version of this (render/followBlur.js
+ * draws a moving blur at its neighbouring positions too). This is the same for
+ * anything drawing in the recording's time: every position the blur has
+ * within `slop` of t. Standing still, that is one position; moving, two or
+ * three, overlapping, for the instant it moves. On that recording ±17 ms
+ * already left no instant uncovered; FOLLOW_SLOP allows for the browser too.
+ *
+ * @returns {{x: number, y: number, s: number}[]} the positions it is on, none when it is off
+ */
+export const FOLLOW_SLOP = 0.05;
+export function followNear(follow, t, slop = FOLLOW_SLOP) {
+  const k = follow.keys;
+  const last = (tt) => {
+    let lo = -1;
+    let hi = k.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (k[mid][0] <= tt + 1e-6) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  const a = Math.max(0, last(t - slop));
+  const b = Math.max(0, last(t + slop));
+  const out = [];
+  const seen = new Set();
+  for (let i = a; i <= b; i++) {
+    if (!k[i][3]) continue;
+    const s = k[i][4] || 1;
+    const id = `${k[i][1]},${k[i][2]},${s}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ x: k[i][1], y: k[i][2], s });
+  }
+  return out;
+}
+
 /** Whether t falls in a stretch where the tracker lost it and held it in place. */
 export function heldAt(follow, t) {
   return (follow?.held || []).some(([a, b]) => t >= a - 1e-6 && t <= b + 1e-6);
