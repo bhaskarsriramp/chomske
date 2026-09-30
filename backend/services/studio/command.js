@@ -80,6 +80,26 @@ const MIN_KEEP = 0.3;
  * and it takes the next one's place instead (create.js MIN_OWN).
  */
 const MIN_OWN = 0.8;
+/** Two zooms on the same thing starting this close are the same shot: a new one replaces the old (a redo, like "zoom in on Projects" over the automatic zoom on that click). */
+const SAME_MOMENT = 0.5;
+/** Shortest an added zoom may be when it is ended just before the next one rather than asking. */
+const MIN_TIGHT = 0.7;
+/** How far before the next zoom one ends when there is no room for the camera to pull out: a few frames, two blocks. */
+const EDGE = 0.1;
+
+/**
+ * Where zoom `a` (starting at aStart) should end so that zoom `b` (starting at
+ * bStart) stays its own shot: early enough for the camera to pull all the way
+ * out when that leaves `a` at least `want` seconds, otherwise just before `b`
+ * when that leaves at least `min`. Null when neither does.
+ */
+function endBefore(aStart, a, b, bStart, want, min) {
+  const full = round3(bStart - zoomOutGap(a, b));
+  if (full - aStart >= want) return full;
+  const tight = round3(bStart - EDGE);
+  if (tight - aStart >= min) return tight;
+  return null;
+}
 /** Below this a "zoom" does not look like one. */
 const MIN_EFFECTIVE = 1.15;
 /**
@@ -1009,11 +1029,15 @@ async function addZoom(intent, ctx) {
     cropped = true;
   }
 
-  // ── Room: every zoom ends in time for the camera to pull out ──────────────
-  // Two zooms closer than zoomOutGap play as one long move (camera.mjs), so
-  // this one ends before the next begins, and an earlier one that runs into it
-  // is cut back to end before it begins. Only what the creator's own stretch
-  // of time covers is replaced; the next zoom is kept, not swallowed.
+  // ── Room: a zoom that is added is its own shot ────────────────────────────
+  // It never swallows the zoom after it. It ends far enough before the next
+  // one for the camera to pull out (camera.mjs zoomOutGap) when that leaves it
+  // a real length, and otherwise just before it, as a separate zoom the camera
+  // moves straight on from. The first creator to try this added a zoom at
+  // 0:28.6 with an automatic one at 0:29.6, and the old rule replaced that one
+  // with a single zoom running 0:28.6–0:31.1: "it got merged with the next
+  // zoom". Only a zoom at the very same moment (a redo of it), or one wholly
+  // inside a stretch of time the creator gave, is replaced.
   const sStart = round3(toSource(win.s, ctx.lay));
   let sEnd = round3(toSource(win.e, ctx.lay));
   const ours = { easing: "smooth" };
@@ -1023,13 +1047,31 @@ async function addZoom(intent, ctx) {
   const trim = [];
   const replaced = [];
   let shortened = null; // { z, end }: an earlier zoom, cut back
-  let stoppedFor = null; // the next zoom this one now ends before
+  let stoppedFor = null; // { z, tight }: the next zoom this one now ends before
   const others = ctx.zooms.filter((z) => !replace.has(z.id));
+  // A place found by looking goes with every button, so picking one needs no second look.
+  const found = where === "seen" && box ? { box, boxLabel: label } : {};
+
+  // The same shot: starting at the same moment AND on the same thing, like
+  // "zoom in on Projects" over the automatic zoom on that very click. A zoom
+  // on something else is never taken for it, however close.
+  const sameShot = (z) => {
+    if (Math.abs(z.start - sStart) >= SAME_MOMENT) return false;
+    const a = norm(z.label);
+    const b = norm(label || named);
+    return !!(a && b && (a === b || a.includes(b) || b.includes(a)));
+  };
 
   for (const z of others) {
-    if (!(z.start < sStart && z.end > sStart)) continue;
-    const cut = round3(sStart - zoomOutGap(z, ours));
-    if (cut - z.start >= MIN_KEEP) {
+    if (!(z.start < sEnd && z.end > sStart)) continue;
+    if (sameShot(z)) {
+      remove.push(z.id);
+      replaced.push(z);
+      continue;
+    }
+    if (z.start >= sStart) continue; // a later one: below
+    const cut = endBefore(z.start, z, ours, sStart, MIN_OWN, MIN_KEEP);
+    if (cut != null) {
       trim.push({ id: z.id, end: cut });
       shortened = { z, end: cut };
     } else {
@@ -1037,32 +1079,42 @@ async function addZoom(intent, ctx) {
       replaced.push(z);
     }
   }
-  for (const z of others.filter((o) => o.start >= sStart).sort((a, b) => a.start - b.start)) {
-    const g = zoomOutGap(ours, z);
-    if (z.start >= sEnd + g) break;
-    // Wholly inside a stretch the creator gave: that stretch is one zoom.
-    if (explicitEnd && z.end <= sEnd + 1e-6) {
-      remove.push(z.id);
-      replaced.push(z);
-      continue;
-    }
-    const fit = round3(z.start - g);
-    if (fit - sStart >= MIN_OWN) {
-      sEnd = Math.min(sEnd, fit);
-      stoppedFor = z;
+
+  const gone = new Set(remove);
+  for (const z of others.filter((o) => o.start >= sStart && !gone.has(o.id)).sort((a, b) => a.start - b.start)) {
+    if (explicitEnd) {
+      // A stretch the creator gave is kept as given, and what is wholly inside
+      // it is part of it. Only one that starts inside it and runs on is its own.
+      if (z.start >= sEnd - 1e-6) break;
+      if (z.end <= sEnd + 1e-6) {
+        remove.push(z.id);
+        replaced.push(z);
+        continue;
+      }
+    } else if (z.start >= sEnd + zoomOutGap(ours, z)) {
       break;
     }
-    // No room to end before it. If it starts inside this one, this one takes
-    // its place; if it starts just after, the camera goes straight from one to
-    // the other, which is the best two zooms that close can do.
-    if (z.start < sEnd) {
-      remove.push(z.id);
-      replaced.push(z);
-      continue;
+    const end = endBefore(sStart, ours, z, z.start, MIN_OWN, MIN_TIGHT);
+    if (end != null) {
+      if (end < sEnd) {
+        stoppedFor = { z, tight: end > z.start - zoomOutGap(ours, z) + 1e-6 };
+        sEnd = end;
+      }
+      break;
     }
-    break;
+    // Not even room to end just before it: ask rather than swallow it.
+    const after = clamp(z.outEnd + EDGE, 0, total);
+    const options = [choice(`Replace the zoom at ${fmt(z.outStart)}`, intent, { ...found, replace: [...intent.replace, z.id] })];
+    if (after < total - MIN_LENGTH) {
+      options.push(choice(`Zoom right after it, at ${fmt(after)}`, intent, { time: { kind: "moment", at: secText(after), start: "", end: "" } }));
+    }
+    return ask(
+      `There's already a zoom at ${fmt(z.outStart)}, only ${Number((z.outStart - win.s).toFixed(1))} s after ${fmt(win.s)}, so there isn't room for another zoom before it.`,
+      options
+    );
   }
   if (stoppedFor) win.e = toOutputSnapped(sEnd, ctx.lay);
+  if (stoppedFor) alts.unshift({ label: `Replace the zoom at ${fmt(stoppedFor.z.outStart)} instead`, change: { ...found, replace: [stoppedFor.z.id] } });
 
   const onThing = where === "thing" || where === "click" || where === "seen";
   const zoom = {
@@ -1094,12 +1146,13 @@ async function addZoom(intent, ctx) {
   if (where === "centre") reply += " It's centred on the middle of the screen, because I couldn't see the pointer then. Drag the rectangle on the preview to move it.";
   if (cropped) reply += ` “${zoom.label}” is bigger than a zoomed-in view can hold, so this zooms on its middle and crops its edges.`;
   else if (effective < level - 0.05) reply += ` That's as close as it can get while keeping all of “${zoom.label}” in view.`;
-  if (stoppedFor) reply += ` It ends there so the camera can pull out before the next zoom, at ${fmt(stoppedFor.outStart)}.`;
+  if (stoppedFor && !stoppedFor.tight) reply += ` It ends there so the camera can pull out before the next zoom, at ${fmt(stoppedFor.z.outStart)}.`;
+  if (stoppedFor && stoppedFor.tight) reply += ` It ends just before the next zoom, at ${fmt(stoppedFor.z.outStart)}, so the camera moves straight from this one to that one.`;
   if (replaced.length === 1) reply += ` It replaces the zoom that was at ${fmt(replaced[0].outStart)}.`;
   if (replaced.length > 1) reply += ` It replaces ${replaced.length} zooms that were inside that time.`;
   if (shortened) reply += ` The zoom before it now ends at ${fmt(toOutputSnapped(shortened.end, ctx.lay))}, so the camera pulls out in between.`;
 
-  const choices = alts.slice(0, 3).map((a) => choice(a.label, intent, { ...a.change, replace: [zoom.id] }));
+  const choices = alts.slice(0, 3).map((a) => choice(a.label, intent, { ...a.change, replace: [zoom.id, ...(a.change.replace || [])] }));
 
   return {
     kind: "applied",

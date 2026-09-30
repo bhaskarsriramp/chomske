@@ -19,27 +19,37 @@ export const DEFAULT_LENGTH = { zoom: 2.5, blur: Infinity, cue: 1.8 };
 export const MIN_LENGTH = { zoom: 0.4, blur: 0.4, cue: 0.4 };
 
 /**
- * Shorter than this, a zoom ended early for the next one is not worth having
- * on its own, and it runs up to the next one instead.
+ * Ended early so the camera can pull out before the next zoom, a new zoom
+ * must still be at least this long; if it would not be, it ends just before
+ * the next zoom instead (EDGE), and the camera moves straight on from it.
  */
 const MIN_OWN = 0.8;
+/** How far before the next zoom a new one ends when there is no room to pull out: a few frames, two blocks. */
+const EDGE = 0.1;
 
 /**
- * A new zoom's end, brought in so the camera pulls all the way out before the
- * next zoom starts (camera.mjs zoomOutGap). Clicking the lane just before a
- * zoom used to make one that ended exactly where the next began, and Add made
- * one that ran into it and was cut back to the same place on save: either way
- * the camera slid from one into the other and the two played as one long zoom.
+ * A new zoom's end, brought in so it never runs into the next zoom.
+ *
+ * Clicking the lane just before a zoom used to make one that ended exactly
+ * where the next began, and Add made one that ran into it and was cut back to
+ * the same place on save: either way the camera slid from one into the other
+ * and the two played as one long zoom. Now it ends far enough before the next
+ * one for the camera to pull all the way out (camera.mjs zoomOutGap) when that
+ * leaves it MIN_OWN, and otherwise a few frames before it, so the two are
+ * always two zooms. The same rule as the chat's (backend command.js).
  */
 export function fitBeforeNext(item, zooms) {
   const next = (zooms || [])
     .filter((z) => z.id !== item.id && z.start > item.start + 0.01)
     .sort((a, b) => a.start - b.start)[0];
   if (!next) return item.end;
-  const fit = next.start - zoomOutGap(item, next);
-  if (item.end <= fit) return item.end;
-  if (fit - item.start >= MIN_OWN) return Math.round(fit * 1000) / 1000;
-  // No room to pull out first: stop at it rather than run into it.
+  const round = (v) => Math.round(v * 1000) / 1000;
+  const full = next.start - zoomOutGap(item, next);
+  if (item.end <= full) return item.end;
+  if (full - item.start >= MIN_OWN) return round(full);
+  const tight = next.start - EDGE;
+  if (tight - item.start > 0.1) return round(Math.min(item.end, tight));
+  // Added right up against the next zoom: stop at it, never run into it.
   return Math.min(item.end, next.start);
 }
 
