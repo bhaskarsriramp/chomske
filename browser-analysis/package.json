@@ -1,0 +1,13 @@
+{
+  "name": "clipo-browser-analysis",
+  "private": true,
+  "type": "module",
+  "description": "Builds the Web Worker that runs the server's first analysis in the creator's browser. Output: public/studio/analysis/. See build.mjs.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "mediabunny": "1.60.0"
+  }
+}
