@@ -86,12 +86,21 @@ const canvasVersion = JSON.parse(fs.readFileSync(abs("backend/node_modules/@napi
 
 const mediabunnyVersion = JSON.parse(fs.readFileSync(path.join(HERE, "node_modules/mediabunny/package.json"), "utf8")).version;
 
+/**
+ * A source file's contents with Windows line endings made Unix ones. Several
+ * files here are CRLF on the development machine and arrive LF on the server
+ * (git converts them), and a line ending cannot change what JavaScript does —
+ * even inside a template literal, where the language itself normalises them.
+ */
+const sourceOf = (f) => fs.readFileSync(abs(f), "utf8").replace(/\r\n/g, "\n");
+const fileHash = (f) => crypto.createHash("sha256").update(sourceOf(f)).digest("hex");
+
 /** Must match services/studio/browserAnalysis.js fingerprint(). */
 function fingerprint(files) {
   const h = crypto.createHash("sha256");
   for (const f of files) {
     h.update(f + "\0");
-    h.update(fs.readFileSync(abs(f)));
+    h.update(sourceOf(f));
     h.update("\0");
   }
   h.update(`canvas:${canvasVersion}|mediabunny:${mediabunnyVersion}`);
@@ -160,6 +169,8 @@ const manifest = {
   worker: PUBLIC_PATH + workerName,
   templates: PUBLIC_PATH + "tpl/",
   files,
+  // Each file's own hash, so a server whose copy differs can say which one.
+  file_hashes: Object.fromEntries(files.map((f) => [f, fileHash(f)])),
   env_keys: envKeys,
   gray_lut: lut,
   canvas_version: canvasVersion,

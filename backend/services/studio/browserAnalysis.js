@@ -100,11 +100,34 @@ export function fingerprint(files, canvasVersion, mediabunnyVersion) {
   const h = crypto.createHash("sha256");
   for (const rel of files) {
     h.update(rel + "\0");
-    h.update(fs.readFileSync(path.join(REPO, rel)));
+    h.update(sourceOf(rel));
     h.update("\0");
   }
   h.update(`canvas:${canvasVersion}|mediabunny:${mediabunnyVersion}`);
   return h.digest("hex");
+}
+
+/**
+ * A file's contents with Windows line endings made Unix ones, as the build
+ * reads it: the development machine has CRLF files that git delivers to the
+ * server as LF, and a line ending cannot change what JavaScript does.
+ */
+function sourceOf(rel) {
+  return fs.readFileSync(path.join(REPO, rel), "utf8").replace(/\r\n/g, "\n");
+}
+
+/** Which of the manifest's files (or versions) this server's copy differs in. */
+function whatDiffers(m) {
+  const out = [];
+  for (const rel of m.files || []) {
+    const want = m.file_hashes?.[rel];
+    if (!want) continue;
+    let have = "missing";
+    try { have = crypto.createHash("sha256").update(sourceOf(rel)).digest("hex"); } catch { /* missing */ }
+    if (have !== want) out.push(rel + (have === "missing" ? " (missing)" : ""));
+  }
+  if (m.canvas_version && m.canvas_version !== canvasVersion()) out.push(`@napi-rs/canvas ${canvasVersion()} here, ${m.canvas_version} in the build`);
+  return out;
 }
 
 function canvasVersion() {
@@ -151,7 +174,14 @@ export function browserStatus() {
       try { m = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { return off("the manifest could not be read: " + e.message); }
       let version;
       try { version = fingerprint(m.files || [], canvasVersion(), m.mediabunny || ""); } catch (e) { return off("a bundled file is missing on this server: " + e.message); }
-      if (version !== m.version) return off("the browser bundle was built from different analysis code than this server has; rebuild it (browser-analysis/build.mjs)");
+      if (version !== m.version) {
+        const which = whatDiffers(m);
+        return off(
+          "the browser bundle was built from different analysis code than this server has" +
+            (which.length ? ` — differs in: ${which.slice(0, 5).join(", ")}${which.length > 5 ? ` and ${which.length - 5} more` : ""}` : "") +
+            ". Deploy the same files the bundle was built from, or rebuild it (browser-analysis/build.mjs)"
+        );
+      }
       const lut = await grayLut().catch((e) => null);
       if (!lut || lut.join(",") !== (m.gray_lut || []).join(",")) return off("this server's ffmpeg converts to grey differently from the one the bundle was built against");
       if (VISION_ON_ANALYSE) return off("STUDIO_VISION_ON_ANALYSE is on; the vision pass needs the server");
