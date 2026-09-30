@@ -48,7 +48,7 @@ import { RENDER_ENGINE, cleanExportOptions } from "./exportOptions.js";
 import { STUDIO_LIMITS, PREVIEW_LINES, PREVIEW_VERSION, demoKey, demoPrefix, bumpExpiry, publishProgress } from "./demoService.js";
 import { jobDir } from "../media/scratch.js";
 import { retryDb } from "../../db.js";
-import { storeScreen, storeResult, resultKey, readText, replayAsks, compareResults } from "./browserAnalysis.js";
+import { storeScreen, storeResult, resultKey, readText, loadAsks, replayAsks, compareResults } from "./browserAnalysis.js";
 import { exactStringify, exactParse } from "./exactJson.js";
 
 const WORKER = `${os.hostname()}:${process.pid}`;
@@ -579,6 +579,7 @@ const recheck = {
     const r = demo.recording;
     const video = await materialize(r.mp4_key, workDir, "recording.mp4");
     const browser = exactParse(await readText(b.result_key));
+    const asked = await loadAsks(b.asks || []);
     const t0 = Date.now();
     const server = await analyseRecording({
       video,
@@ -588,7 +589,7 @@ const recheck = {
       source: { width: r.width, height: r.height, fps: r.fps || 30 },
       duration: r.duration,
       wantCaptions: false,
-      asks: replayAsks(b.asks || []),
+      asks: replayAsks(asked),
     });
     const c = compareResults(server, browser);
     await setDemo(demo._id, { "analysis.browser.recheck": { ...c, at: new Date(), ms: Date.now() - t0 } });

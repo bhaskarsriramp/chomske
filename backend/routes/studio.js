@@ -48,8 +48,10 @@ import { hasEncoder } from "../services/media/ffmpeg.js";
 import { enqueue, saveAnalysis, afterAnalysis, compareShadow } from "../services/studio/studioRunner.js";
 import {
   browserStatus, browserPlan, sessionPayload, answer, parseResult, storeResult, resultKey,
-  HOLD_MS, FIRST_HOLD_MS, RECHECK_RATE,
+  startAsk, findAsk, askingNow, waitAsk, logEntry, endSession,
+  HOLD_MS, FIRST_HOLD_MS, RECHECK_RATE, MAX_RUN_MS, ASK_KINDS, VISION_KINDS,
 } from "../services/studio/browserAnalysis.js";
+import { VISION_ON_ANALYSE } from "../services/studio/analyse.js";
 import { exactDiff } from "../services/studio/exactJson.js";
 import {
   STUDIO_LIMITS, LEDGER_REASON, acceptable, ACCEPT_MIME, demoKey, demoPrefix, bumpExpiry,
@@ -609,8 +611,8 @@ router.post("/demos/:id/analyse", wrap(async (req, res) => {
    the server has already moved on from.
    ──────────────────────────────────────────────────────────────────────────── */
 
-const BROWSER_ASKS = ["identify", "judgeRuns", "judgePresses"];
-const MAX_BROWSER_RUN_MS = Math.max(120, Number(process.env.STUDIO_BROWSER_MAX_RUN_S) || 420) * 1000;
+/** How long one /ask request waits on the answer before telling the page to ask again. */
+const ASK_WAIT_MS = 20_000;
 
 /** The demo's browser run, if `session` is it. */
 function browserRun(demo, session) {
@@ -637,7 +639,7 @@ router.post("/demos/:id/analysis/heartbeat", wrap(async (req, res) => {
 
   // Past the longest a browser run may take, the hold is not renewed and the
   // server's job runs.
-  if (Date.now() - new Date(b.started_at).getTime() > MAX_BROWSER_RUN_MS) {
+  if (Date.now() - new Date(b.started_at).getTime() > MAX_RUN_MS) {
     return res.json({ success: true, go: false, reason: "too slow" });
   }
   if (!(await holdFor(demo, session, HOLD_MS))) return res.json({ success: true, go: false });
@@ -649,24 +651,52 @@ router.post("/demos/:id/analysis/heartbeat", wrap(async (req, res) => {
   res.json({ success: true, go: true });
 }));
 
+/**
+ * A question for the model, from the browser's analysis: { session, id, kind,
+ * q } starts it, { session, id } asks after it. Either answers within
+ * ASK_WAIT_MS with { a, error } or { pending, progress }, and the page asks
+ * again (see browserAnalysis.js startAsk). The answer is logged for the
+ * re-check whether or not the page is still there to receive it.
+ */
 router.post("/demos/:id/analysis/ask", wrap(async (req, res) => {
   const demo = await ownDemo(req, res);
   if (!demo) return;
   const session = String(req.body?.session || "");
   const b = browserRun(demo, session);
   if (!b || b.status !== "running") return fail(res, 409, "This analysis is no longer running in the browser.");
-  const kind = String(req.body?.kind || "");
-  const q = req.body?.q;
-  if (!BROWSER_ASKS.includes(kind) || typeof q !== "string" || q.length > 20 * 1024 * 1024) return fail(res, 400, "That isn't a question the analysis asks.");
-  if ((b.asks || []).length >= 40) return fail(res, 429, "Too many questions for one analysis.");
+  const id = Number(req.body?.id);
+  if (!Number.isInteger(id) || id < 1 || id > 1000) return fail(res, 400, "That isn't a question the analysis asks.");
+  const key = `${demo._id}|${session}|${id}`;
 
-  // The model can take a while; the browser is waiting on it, not gone.
-  if (b.mode === "on") await holdFor(demo, session, HOLD_MS + 180_000);
-  const out = await answer(demo, kind, q);
-  await StudioDemo.updateOne(
-    { _id: demo._id, "analysis.browser.session": session },
-    { $push: { "analysis.browser.asks": { kind, q, a: out.a ?? null, error: out.error || null, usd: out.usd || 0, calls: out.calls || 0, at: new Date() } } }
-  );
+  let entry = findAsk(key);
+  if (!entry) {
+    const kind = String(req.body?.kind || "");
+    const q = req.body?.q;
+    if (q == null) return fail(res, 410, "The server is no longer answering this question.");
+    if (!ASK_KINDS.includes(kind) || typeof q !== "string" || q.length > 20 * 1024 * 1024) return fail(res, 400, "That isn't a question the analysis asks.");
+    if (VISION_KINDS.has(kind) && !VISION_ON_ANALYSE) return fail(res, 400, "That isn't a question the analysis asks.");
+    const asked = [...(b.asks || []).map((x) => x.kind), ...askingNow(`${demo._id}|${session}|`)];
+    if (asked.length >= 40) return fail(res, 429, "Too many questions for one analysis.");
+    if (VISION_KINDS.has(kind) && asked.includes(kind)) return fail(res, 429, "The analysis asks that once.");
+
+    // The model can take a while; the browser is waiting on it, not gone.
+    if (b.mode === "on") await holdFor(demo, session, HOLD_MS + 60_000);
+    entry = startAsk(key, kind, async (e) => {
+      const out = await answer(demo, session, kind, q, { onProgress: (p) => (e.progress = Math.max(0, Math.min(1, Number(p) || 0))) });
+      if (out.refused) {
+        console.log(`[studio] browser analysis ${demo._id}: refused a ${kind} question (${out.refused})`);
+        return out;
+      }
+      const logged = await logEntry(demo, session, id, kind, q, out);
+      await StudioDemo.updateOne({ _id: demo._id, "analysis.browser.session": session }, { $push: { "analysis.browser.asks": logged } });
+      return out;
+    });
+  }
+
+  const out = await waitAsk(entry, ASK_WAIT_MS);
+  if (out.pending) return res.json({ success: true, pending: true, progress: out.progress });
+  // Not what the server's analysis would have been asked: the run ends and the server does the job.
+  if (out.refused) return fail(res, 409, out.refused);
   res.json({ success: true, a: out.a ?? null, error: out.error || null });
 }));
 
@@ -676,6 +706,7 @@ router.post("/demos/:id/analysis/failed", wrap(async (req, res) => {
   const session = String(req.body?.session || "");
   const b = browserRun(demo, session);
   if (!b) return res.json({ success: true });
+  endSession(demo._id, session);
   const reason = String(req.body?.reason || "unknown").slice(0, 300);
   await StudioDemo.updateOne(
     { _id: demo._id, "analysis.browser.session": session },
@@ -693,6 +724,7 @@ router.post("/demos/:id/analysis/result", wrap(async (req, res) => {
   const session = String(req.body?.session || "");
   const b = browserRun(demo, session);
   if (!b || b.status !== "running") return res.json({ success: true, accepted: false, reason: "this run is over" });
+  endSession(demo._id, session);
 
   const status = await browserStatus();
   const reject = async (reason) => {
@@ -734,6 +766,11 @@ router.post("/demos/:id/analysis/result", wrap(async (req, res) => {
       { $set: { "analysis.browser.status": "done", "analysis.browser.result_key": key, "analysis.browser.ms": ms } }
     );
     compareShadow(demo._id, session).catch((err) => console.error("[studio] shadow compare failed:", err.message));
+    // Where the model was asked, the server's own run got its own answers and
+    // the two can differ for that alone; the re-check replays this run's.
+    if ((b.asks || []).length) {
+      await enqueue({ demo: demo._id, user: demo.user, type: "recheck", ref: session, notBefore: new Date(Date.now() + 60_000) }).catch(() => {});
+    }
     return res.json({ success: true, accepted: true, shadow: true });
   }
 

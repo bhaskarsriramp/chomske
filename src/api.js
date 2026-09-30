@@ -19,6 +19,9 @@ export const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8001";
 /** Matches the timeout axios was configured with. */
 const TIMEOUT_MS = 30000;
 
+/** A body is compressed (when the call asks for it) above this many characters. */
+const GZIP_OVER = 64 * 1024;
+
 function buildUrl(path, params) {
   const url = new URL(path.replace(/^\//, ""), API_URL.replace(/\/?$/, "/"));
   // Skipping undefined/null is what axios did, and several callers lean on it:
@@ -96,12 +99,24 @@ async function once(method, path, body, config = {}) {
 
   let res;
   try {
+    let payload = body === undefined ? undefined : JSON.stringify(body);
+    /**
+     * `config.gzip` for the few bodies that can run to megabytes (the browser
+     * analysis's result and its questions for the model): compressed, they
+     * stay well inside the proxy's upload limit. The server's JSON parser
+     * inflates them itself.
+     */
+    const Gzip = typeof window !== "undefined" ? window.CompressionStream : undefined;
+    if (config.gzip && payload && payload.length > GZIP_OVER && typeof Gzip === "function") {
+      payload = await new Response(new Blob([payload]).stream().pipeThrough(new Gzip("gzip"))).arrayBuffer();
+      headers["Content-Encoding"] = "gzip";
+    }
     res = await fetch(buildUrl(path, config.params), {
       method,
       headers,
       credentials: "include",
       signal: controller.signal,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: payload,
     });
   } catch (err) {
     if (timedOut) throw httpError("timeout", { code: "ECONNABORTED" });

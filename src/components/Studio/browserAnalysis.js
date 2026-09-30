@@ -62,6 +62,10 @@ export function runBrowserAnalysis(key, session) {
   return done;
 }
 
+/** Answers the server gives while it is up or restarting, worth asking again after. */
+const PASSING = new Set([502, 503, 504]);
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function run(key, s) {
   let worker = null;
   let beat = null;
@@ -72,6 +76,36 @@ async function run(key, s) {
     if (finished) return;
     finished = true;
     await analysisFailed(key, { session: s.session, reason: String(reason).slice(0, 300) }).catch(() => {});
+  };
+
+  /**
+   * One question from the worker, asked until it is answered. The server
+   * answers within ~20 seconds or says it is still working on it (reading
+   * every still takes minutes), and is then asked after it by the worker's
+   * number for it, without the question. What comes back — the answer, or why
+   * there is none — goes to the worker, which breaks the run on the latter.
+   */
+  const askServer = async (m) => {
+    let sent = false;
+    let misses = 0;
+    while (!finished) {
+      try {
+        const r = await analysisAsk(key, sent ? { session: s.session, id: m.id } : { session: s.session, id: m.id, kind: m.kind, q: m.q });
+        if (!r?.pending) return { type: "answer", id: m.id, a: r?.a, error: r?.error };
+        sent = true;
+        misses = 0;
+        worker?.postMessage({ type: "asking", id: m.id, p: r.progress });
+      } catch (err) {
+        const status = err?.response?.status;
+        // The server said no — the run is over, or the question was refused or lost.
+        if (status && !PASSING.has(status)) return { type: "answer", id: m.id, transport: err.response.data?.message || err.message };
+        // Not answered at all: asked again (with the question, if it may never
+        // have arrived — the server keeps one per number).
+        if (++misses > 4) return { type: "answer", id: m.id, transport: err?.message || "no answer" };
+        await pause(2000 * misses);
+      }
+    }
+    return { type: "answer", id: m.id, transport: "the run was stopped" };
   };
 
   try {
@@ -104,13 +138,8 @@ async function run(key, s) {
         if (m.type === "progress") {
           latest = { progress: Math.max(0.02, Math.min(0.98, Number(m.p) || 0)), stage: String(m.stage || latest.stage) };
         } else if (m.type === "ask") {
-          try {
-            const r = await analysisAsk(key, { session: s.session, kind: m.kind, q: m.q });
-            worker.postMessage({ type: "answer", id: m.id, a: r.a, error: r.error });
-          } catch (err) {
-            // The server said the run is over (409), or it could not be reached.
-            worker.postMessage({ type: "answer", id: m.id, transport: err?.response?.data?.message || err?.message || "no answer" });
-          }
+          const reply = await askServer(m);
+          if (!finished) worker.postMessage(reply);
         } else if (m.type === "result") {
           try {
             const r = await analysisResult(key, { session: s.session, version: m.version, ms: m.ms, result: m.result });

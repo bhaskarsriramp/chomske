@@ -11,28 +11,21 @@
  *                               browserAnalysis.js sessionPayload), with its
  *                               links made absolute by the page
  *   { type: "answer", ... }     the server's answer to a question (rpc.js)
+ *   { type: "asking", id, p }   how far the server has got with one
  * Messages out:
  *   { type: "progress", p, stage }
  *   { type: "ask", id, kind, q }
  *   { type: "result", result, ms, version, stats }   result is exactJson
  *   { type: "failed", reason }                        give the job back
  */
-import { broken } from "./shims/globals.js";
+import { broken, whenBroken } from "./shims/globals.js";
 import { exactStringify, exactParse } from "../backend/services/studio/exactJson.js";
 import { stats } from "./shims/ffmpeg.js";
 import { canvasStats } from "./shims/canvas.js";
-import { answered } from "./shims/rpc.js";
+import { answered, progressed } from "./shims/rpc.js";
 
 /* global __VERSION__ */
 const VERSION = __VERSION__;
-
-/**
- * The locator stops refining once it has spent its budget (locate.js,
- * STUDIO_LOCATE_BUDGET_MS, never less than five minutes), measured by the
- * clock. A laptop slower than the server could reach it where the server
- * would not, and stop early. A run that took that long is handed back.
- */
-const BUDGET_MS = 300_000;
 
 let started = false;
 
@@ -43,6 +36,8 @@ self.onmessage = (e) => {
     run(m.session);
   } else if (m.type === "answer") {
     answered(m);
+  } else if (m.type === "asking") {
+    progressed(m);
   }
 };
 
@@ -67,20 +62,24 @@ async function run(s) {
 
     const { analyseRecording } = await import("../backend/services/studio/analyse.js");
     const t0 = performance.now();
-    const result = await analyseRecording({
-      video,
-      audio: "",
-      workDir: "/work",
-      capture: s.capture,
-      source: s.source,
-      duration: s.duration,
-      wantCaptions: false,
-      screen,
-      onProgress: (p, stage) => post({ type: "progress", p, stage }),
-    });
+    // A broken run is handed back at once rather than when the rest of it
+    // (minutes of the model reading stills, with the vision pass on) is done.
+    const result = await Promise.race([
+      analyseRecording({
+        video,
+        audio: "",
+        workDir: "/work",
+        capture: s.capture,
+        source: s.source,
+        duration: s.duration,
+        wantCaptions: false,
+        screen,
+        onProgress: (p, stage) => post({ type: "progress", p, stage }),
+      }),
+      whenBroken.then((reason) => { throw new Error(reason); }),
+    ]);
     const ms = performance.now() - t0;
     if (self.__analysis.broken) throw new Error(self.__analysis.broken);
-    if (ms >= BUDGET_MS) throw new Error("the analysis took longer than the locator's time budget");
     post({ type: "result", result: exactStringify(result), ms: Math.round(ms), version: VERSION, stats: { ...stats, ...canvasStats } });
   } catch (err) {
     post({ type: "failed", reason: String(self.__analysis.broken || err?.message || err).slice(0, 300) });

@@ -126,9 +126,24 @@ function toSlot(pts, res, fps) {
   return 2 * r >= res ? q + 1 : q;
 }
 
+/**
+ * ── THE POINTER SEARCH HAS A TIME BUDGET, AND THIS MACHINE IS NOT THE SERVER ──
+ * locate.js stops searching once its read of the recording has run for
+ * budgetMs (by the clock), so where it stops depends on how fast the machine
+ * is. A read here that gets near that budget is one the server may have
+ * finished — or stopped somewhere else — so it breaks the run. The same
+ * formula as locate.js, from the same setting (STUDIO_LOCATE_BUDGET_MS).
+ */
+const BUDGET_SHARE = 0.8;
+function locateBudgetMs(duration) {
+  return Math.round(Math.min(1_800_000, Math.max(300_000, Number(process.env.STUDIO_LOCATE_BUDGET_MS) || duration * 15_000)));
+}
+
 /** The server's ffmpegToFrames contract: onFrame(buf, index) awaited per frame; resolves { frames }. */
 export async function ffmpegToFrames(src, { width, height, fps, pixelFormat = "gray", start = 0, duration = 0, onFrame }) {
   if (pixelFormat !== "gray") throw broken("a " + pixelFormat + " frame read");
+  const began = Date.now();
+  const guardMs = BUDGET_SHARE * locateBudgetMs(duration);
   const { res, track } = await open(src);
   const sw = track.displayWidth;
   const sh = track.displayHeight;
@@ -149,6 +164,9 @@ export async function ffmpegToFrames(src, { width, height, fps, pixelFormat = "g
     if (firstSlot === null) firstSlot = slot;
     if (slot - firstSlot >= durSlots) return false;
     if (duration > 0 && slot * 1e6 >= durUs * fps) return false;
+    if (Date.now() - began > guardMs) {
+      broken(`reading the recording took over ${Math.round(guardMs / 1000)}s here, near the pointer search's time budget`);
+    }
     const y = frame.y;
     for (let i = 0; i < y.length; i++) out[i] = GRAY_LUT[y[i]];
     await onFrame(out, index++);

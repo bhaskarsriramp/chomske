@@ -12,16 +12,20 @@
  *   the screen reading   sync.js readScreen shrinks frames with ffmpeg's
  *                        scaler, which no browser reproduces. Made in the
  *                        prepare job, stored, handed over (exactJson.js).
- *   the model's answers  the two-pointer check, the stranger check and the
- *                        press judge need the recording's frames and Gemini;
- *                        the browser asks, this server answers from its own
- *                        copy exactly as the server analysis would, and
- *                        every answer is logged for the re-check.
+ *   the model's answers  the two-pointer check, the stranger check, the
+ *                        press judge and — with STUDIO_VISION_ON_ANALYSE on —
+ *                        the vision pass (every sampled still read, what the
+ *                        pointer rested on, the steps, the narration) need
+ *                        the recording and Gemini; the browser asks, this
+ *                        server answers from its own copy exactly as the
+ *                        server analysis would, and every answer is logged
+ *                        for the re-check.
  *   the templates        the pointer templates as the server's canvas draws
  *                        them, built once into static files (the build).
  *
- * Everything else — prepare, blur tracking, captions, voice, the vision pass,
- * review, export — stays on the server exactly as it was.
+ * Everything else — prepare, blur finding and tracking, captions, voice, the
+ * on-demand vision pass, review, export — stays on the server exactly as it
+ * was.
  *
  * ── MODES (STUDIO_BROWSER_ANALYSIS) ──────────────────────────────────────────
  *   off     (default) nothing changes anywhere
@@ -48,15 +52,15 @@ import path from "path";
 import crypto from "crypto";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
-import { FFMPEG_PATH } from "../media/ffmpeg.js";
+import { FFMPEG_PATH, extractFrames } from "../media/ffmpeg.js";
 import { materialize, putFile, relayUrl } from "../media/storage.js";
 import { exactStringify, exactParse, exactDiff } from "./exactJson.js";
 import { readScreen } from "./sync.js";
-import { identifyPointer, judgeRuns, newSpend } from "./vision.js";
+import { identifyPointer, judgeRuns, newSpend, readFrames, pointerTargets, detectSteps, writeNarration } from "./vision.js";
 import { judgePresses, PRESS_JUDGE_MODE } from "./judge.js";
 import { providerReady } from "../ai/provider.js";
-import { VISION_ON_ANALYSE } from "./analyse.js";
-import { demoKey } from "./demoService.js";
+import { VISION_ON_ANALYSE, BLUR_ON } from "./analyse.js";
+import { demoKey, STUDIO_LIMITS } from "./demoService.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "../../..");
@@ -73,6 +77,12 @@ export const HOLD_MS = Math.max(15, num(process.env.STUDIO_BROWSER_HOLD_S, 45)) 
 export const FIRST_HOLD_MS = Math.max(HOLD_MS, num(process.env.STUDIO_BROWSER_FIRST_HOLD_S, 120) * 1000);
 /** Longest recording the browser is given (memory: it holds the whole file). */
 export const MAX_SECONDS = num(process.env.STUDIO_BROWSER_MAX_SECONDS, 600);
+/**
+ * The longest a browser run may hold the server's job. With the vision pass
+ * on, a run also waits on the model reading every still, as the server's own
+ * analysis does, so it is allowed longer.
+ */
+export const MAX_RUN_MS = Math.max(120, num(process.env.STUDIO_BROWSER_MAX_RUN_S, VISION_ON_ANALYSE ? 900 : 420)) * 1000;
 /** The fields of an analysis result compared between two runs. `spend` is not: replayed answers cost nothing. */
 const COMPARED = (r) => { const { spend, ...rest } = r || {}; return rest; };
 
@@ -184,8 +194,13 @@ export function browserStatus() {
       }
       const lut = await grayLut().catch((e) => null);
       if (!lut || lut.join(",") !== (m.gray_lut || []).join(",")) return off("this server's ffmpeg converts to grey differently from the one the bundle was built against");
-      if (VISION_ON_ANALYSE) return off("STUDIO_VISION_ON_ANALYSE is on; the vision pass needs the server");
-      console.log(`[studio] browser analysis ${BROWSER_MODE.toUpperCase()}, bundle ${version.slice(0, 12)}, re-check ${Math.round(RECHECK_RATE * 100)}%`);
+      // The blur pass inside the first analysis (vision and blur both on) is
+      // not one of the questions a browser run can ask.
+      if (VISION_ON_ANALYSE && BLUR_ON) return off("STUDIO_BLUR is on with STUDIO_VISION_ON_ANALYSE; the blur pass runs on the server only");
+      console.log(
+        `[studio] browser analysis ${BROWSER_MODE.toUpperCase()}, bundle ${version.slice(0, 12)}, re-check ${Math.round(RECHECK_RATE * 100)}%` +
+          (VISION_ON_ANALYSE ? ", vision pass answered here" : "")
+      );
       return { mode: BROWSER_MODE, ok: true, version, worker: m.worker, templates: m.templates, envKeys: m.env_keys || [] };
     })();
   }
@@ -287,48 +302,282 @@ export const storeResult = (demo, session, who, text) => putText(text, resultKey
    The model's questions, answered from the server's copy
    ──────────────────────────────────────────────────────────────────────────── */
 
+/** Every question a browser run may ask. */
+export const ASK_KINDS = ["identify", "judgeRuns", "judgePresses", "readFrames", "pointerTargets", "detectSteps", "writeNarration"];
 /**
- * Answer one question the browser's analysis would have asked the model.
- * `q` is exactJson; so is the answer. Returns { a, usd, calls } or
- * { error } — an error is the one the server analysis would have met too.
+ * The vision pass's questions: asked only with STUDIO_VISION_ON_ANALYSE on,
+ * and each at most once a run, as the analysis asks them. Reading every still
+ * is most of what an analysis costs, so the cap is what keeps a page from
+ * asking for it twice.
  */
-export async function answer(demo, kind, qText) {
-  const q = exactParse(qText);
-  const r = demo.recording;
-  const workDir = await fsp.mkdtemp(path.join(os.tmpdir(), "lipi-ask-"));
-  const spend = newSpend();
+export const VISION_KINDS = new Set(["readFrames", "pointerTargets", "detectSteps", "writeNarration"]);
+
+const refusal = (reason) => Object.assign(new Error(reason), { refused: true });
+
+/** A promise-making function, run once; a failure is not kept, so the next caller tries again. */
+function once(make) {
+  let p = null;
+  return () => (p ||= make().catch((err) => { p = null; throw err; }));
+}
+
+/** At most EXTRACTING cuts of stills at once in this process: they are ffmpeg decoding a whole recording. */
+const EXTRACTING = Math.max(1, num(process.env.STUDIO_BROWSER_EXTRACT_CONCURRENCY, 2));
+let extracting = 0;
+const extractQueue = [];
+async function extractSlot(fn) {
+  if (extracting >= EXTRACTING) await new Promise((r) => extractQueue.push(r));
+  extracting++;
   try {
-    const video = await materialize(r.mp4_key, workDir, "recording.mp4");
-    let a;
-    if (kind === "identify") {
-      a = await identifyPointer({ video, dir: path.join(workDir, "identity"), rivals: q, spend });
-    } else if (kind === "judgeRuns") {
-      a = await judgeRuns({ video, dir: path.join(workDir, "runs"), reference: q.reference, runs: q.runs, heightPx: q.heightPx, spend });
-    } else if (kind === "judgePresses") {
-      const screen = r.screen_key ? exactParse(await readText(r.screen_key)) : null;
-      a = await judgePresses(q.events, {
-        video, workDir, located: q.located, flashes: q.flashes, screen, W: q.W, H: q.H, duration: q.duration, spend, mode: PRESS_JUDGE_MODE,
-      });
-    } else {
-      return { error: "unknown question " + kind };
-    }
-    return { a: exactStringify(a), usd: spend.usd, calls: spend.calls };
-  } catch (err) {
-    return { error: String(err?.message || err), usd: spend.usd, calls: spend.calls };
+    return await fn();
   } finally {
-    await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    extracting--;
+    extractQueue.shift()?.();
   }
 }
 
 /**
- * The logged answers, as the `asks` analyseRecording replays (see analyse.js).
- * A question the log does not have is a difference in itself: the re-check
- * asked something the browser run did not.
+ * ── ONE COPY OF THE RECORDING PER RUN ────────────────────────────────────────
+ * A run's questions share one folder: the recording, fetched once, and its
+ * sampled stills, cut once by the very call the server's analysis makes
+ * (extractFrames every STUDIO_FRAME_EVERY seconds, 1280 on the long edge). A
+ * failure to get either is a refusal — the server's analysis would have had
+ * them — so the run ends and the server does the job.
+ *
+ * `video` and `screen` load them; the parity harness passes local files.
+ */
+export function makeWorkspace({ dir, duration, video, screen = async () => null }) {
+  const every = Math.max(0.5, STUDIO_LIMITS.frameEvery);
+  let n = 0;
+  const ws = {
+    dir,
+    users: 0,
+    used: Date.now(),
+    closing: false,
+    video: once(() => video().catch((err) => { throw refusal("the recording could not be read here: " + err.message); })),
+    screen: once(() => screen().catch((err) => { throw refusal("the screen reading could not be read here: " + err.message); })),
+    frames: once(async () => {
+      const file = await ws.video();
+      const framesDir = path.join(dir, "frames");
+      try {
+        await fsp.rm(framesDir, { recursive: true, force: true });
+        await fsp.mkdir(framesDir, { recursive: true });
+        return await extractSlot(() => extractFrames(file, framesDir, { every, duration, longEdge: 1280 }));
+      } catch (err) {
+        throw refusal("the stills could not be cut here: " + err.message);
+      }
+    }),
+    /** A fresh folder inside this one, for a function that writes its own files. */
+    sub: async (name) => {
+      const d = path.join(dir, `${name}-${++n}`);
+      await fsp.mkdir(d, { recursive: true });
+      return d;
+    },
+  };
+  return ws;
+}
+
+/** Dropped this long after a run's last question, if its end was never reported. */
+const IDLE_MS = 15 * 60_000;
+const spaces = new Map();
+
+function sessionSpace(demo, session) {
+  const key = `${demo._id}|${session}`;
+  let ws = spaces.get(key);
+  if (!ws) {
+    const r = demo.recording;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lipi-ask-"));
+    ws = makeWorkspace({
+      dir,
+      duration: r.duration,
+      video: () => materialize(r.mp4_key, dir, "recording.mp4"),
+      screen: async () => (r.screen_key ? exactParse(await readText(r.screen_key)) : null),
+    });
+    spaces.set(key, ws);
+  }
+  ws.used = Date.now();
+  return ws;
+}
+
+function sweepSpaces() {
+  for (const [key, ws] of spaces) {
+    if (ws.users > 0 || !(ws.closing || Date.now() - ws.used > IDLE_MS)) continue;
+    spaces.delete(key);
+    fsp.rm(ws.dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+setInterval(sweepSpaces, 60_000).unref();
+
+/** The run is over (its result is in, or it gave up): its folder goes once no question is using it. */
+export function endSession(demoId, session) {
+  const ws = spaces.get(`${demoId}|${session}`);
+  if (!ws) return;
+  ws.closing = true;
+  sweepSpaces();
+}
+
+/**
+ * Answer one question the way the server's own analysis asks it: the same
+ * function, on the same recording, with the same stills. `q` is the parsed
+ * question; the answer is the function's value, and an error is the one the
+ * function threw. A question whose premise this server does not share — the
+ * browser's stills are not the ones cut here — is refused (err.refused).
+ */
+export async function answerWith(ws, kind, q, { spend = newSpend(), onProgress = () => {} } = {}) {
+  switch (kind) {
+    case "identify":
+      return identifyPointer({ video: await ws.video(), dir: await ws.sub("identity"), rivals: q, spend });
+    case "judgeRuns":
+      return judgeRuns({ video: await ws.video(), dir: await ws.sub("runs"), reference: q.reference, runs: q.runs, heightPx: q.heightPx, spend });
+    case "judgePresses":
+      return judgePresses(q.events, {
+        video: await ws.video(), workDir: await ws.sub("judge"), located: q.located, flashes: q.flashes, screen: await ws.screen(),
+        W: q.W, H: q.H, duration: q.duration, spend, mode: PRESS_JUDGE_MODE,
+      });
+    case "readFrames": {
+      const frames = await ws.frames();
+      const here = frames.map((f) => f.t);
+      if (exactStringify(here) !== exactStringify(q.t)) {
+        throw refusal(`the stills cut here (${here.length}) are not the ones the browser counted (${Array.isArray(q.t) ? q.t.length : "none"})`);
+      }
+      return readFrames(frames, { spend, onProgress });
+    }
+    case "pointerTargets":
+      return pointerTargets({ video: await ws.video(), dir: await ws.sub("targets"), targets: q.targets, W: q.W, H: q.H, spend });
+    case "detectSteps": {
+      // The readings name their stills by where they were cut; this run's are
+      // the same stills (one extractFrames call, one recording).
+      const files = new Map((await ws.frames()).map((f) => [f.t, f.file]));
+      const shots = (Array.isArray(q.shots) ? q.shots : []).map((s) => {
+        if (!files.has(s?.t)) throw refusal(`no still was cut here at ${s?.t}s`);
+        return { ...s, file: files.get(s.t) };
+      });
+      return detectSteps({ shots, events: q.events, duration: q.duration, spend });
+    }
+    case "writeNarration":
+      return writeNarration({ steps: q.steps, summary: q.summary, product: q.product, duration: q.duration, spend });
+    default:
+      throw refusal("unknown question " + kind);
+  }
+}
+
+/**
+ * Answer a browser run's question. `qText` is exactJson; so is the answer.
+ * Returns { a, usd, calls }, { error, usd, calls } — the error the server's
+ * analysis would have met too — or { refused } when it cannot be answered the
+ * way the server's analysis would have been.
+ */
+export async function answer(demo, session, kind, qText, { onProgress } = {}) {
+  const ws = sessionSpace(demo, session);
+  ws.users++;
+  const spend = newSpend();
+  try {
+    const a = await answerWith(ws, kind, exactParse(qText), { spend, onProgress });
+    return { a: exactStringify(a), usd: spend.usd, calls: spend.calls };
+  } catch (err) {
+    if (err?.refused) return { refused: err.message, usd: spend.usd, calls: spend.calls };
+    return { error: String(err?.message || err), usd: spend.usd, calls: spend.calls };
+  } finally {
+    ws.users--;
+    ws.used = Date.now();
+  }
+}
+
+/**
+ * ── A QUESTION OUTLIVES THE REQUEST THAT ASKED IT ────────────────────────────
+ * Reading every still takes minutes, and the proxy in front of the API closes
+ * a request after sixty seconds. So a question is started once, keyed by the
+ * run and the worker's own number for it, and the page asks after it until it
+ * is answered; the answer is kept a couple of minutes after, for a page whose
+ * last poll was lost.
+ *
+ * In this process's memory: a restart loses the question, the page is told
+ * so, and the server's own job takes over.
+ */
+const asking = new Map();
+const KEEP_ANSWERED_MS = 120_000;
+
+/** The question `key`, started with `work(entry)` if it is not already going. */
+export function startAsk(key, kind, work) {
+  let e = asking.get(key);
+  if (e) return e;
+  e = { kind, progress: 0, done: false, out: null };
+  e.promise = (async () => {
+    try {
+      e.out = await work(e);
+    } catch (err) {
+      // Not the model's answer (answer() returns those): the log could not be
+      // written, or similar. The server's analysis would not have met it.
+      e.out = { refused: String(err?.message || err) };
+    }
+    e.done = true;
+    setTimeout(() => asking.delete(key), KEEP_ANSWERED_MS).unref();
+    return e.out;
+  })();
+  asking.set(key, e);
+  return e;
+}
+
+export const findAsk = (key) => asking.get(key) || null;
+
+/** The kinds of the questions still being answered for keys starting `prefix`. */
+export const askingNow = (prefix) => [...asking].filter(([k, e]) => k.startsWith(prefix) && !e.done).map(([, e]) => e.kind);
+
+/** The question's outcome if it is answered within `ms`, else { pending, progress }. */
+export async function waitAsk(e, ms) {
+  let timer = null;
+  await Promise.race([e.promise, new Promise((r) => (timer = setTimeout(r, ms)))]);
+  clearTimeout(timer);
+  return e.done ? e.out : { pending: true, progress: e.progress };
+}
+
+/**
+ * ── THE LOG ─────────────────────────────────────────────────────────────────
+ * Every answer is kept for the re-check. It lives in the demo's document,
+ * which every request of the run reads, and a vision pass's readings run to a
+ * megabyte — so a large question and answer are stored as a file and the log
+ * names it.
+ */
+const INLINE_MAX = 32 * 1024;
+
+export async function logEntry(demo, session, id, kind, qText, out) {
+  const entry = { kind, id, q: qText, a: out.a ?? null, error: out.error || null, usd: out.usd || 0, calls: out.calls || 0, at: new Date() };
+  if (qText.length + (entry.a?.length || 0) > INLINE_MAX) {
+    const key = demoKey(demo, "analysis", `ask-${session}-${id}.json`);
+    await putText(JSON.stringify({ q: entry.q, a: entry.a }), key, "application/json");
+    entry.q = null;
+    entry.a = null;
+    entry.key = key;
+  }
+  return entry;
+}
+
+/** The log with every stored question and answer read back in. */
+export async function loadAsks(log = []) {
+  return Promise.all(
+    (log || []).map(async (x) => {
+      if (!x?.key) return x;
+      const { q, a } = JSON.parse(await readText(x.key));
+      return { ...x, q, a };
+    })
+  );
+}
+
+/**
+ * The logged answers (read in: loadAsks), as the `asks` analyseRecording
+ * replays (see analyse.js). Each question is built here exactly as the
+ * browser's shims build it. A question the log does not have is a difference
+ * in itself: the re-check asked something the browser run did not.
  */
 export function replayAsks(log = []) {
-  const found = new Map(log.map((x) => [x.kind + "\n" + x.q, x]));
+  /**
+   * A question as its key in the log. The ids timeline.js mints ("ev_3fbe9ee506")
+   * are random per run, so the re-check's presses carry different ones from the
+   * browser's; like exactDiff, the key does not count them as a difference.
+   */
+  const keyOf = (kind, qText) => kind + "\n" + String(qText).replace(/"[a-z]+_[0-9a-f]{10}"/g, '"#id"');
+  const found = new Map(log.map((x) => [keyOf(x.kind, x.q), x]));
   const get = (kind, q) => {
-    const hit = found.get(kind + "\n" + exactStringify(q));
+    const hit = found.get(keyOf(kind, exactStringify(q)));
     if (!hit) throw Object.assign(new Error(`the re-check asked a ${kind} question the browser run did not`), { unasked: true });
     if (hit.error) throw new Error(hit.error);
     return exactParse(hit.a);
@@ -337,6 +586,10 @@ export function replayAsks(log = []) {
     identify: async (rivals) => get("identify", rivals),
     judgeRuns: async ({ reference, runs, heightPx }) => get("judgeRuns", { reference, runs, heightPx }),
     judgePresses: async (events, o) => get("judgePresses", { events, located: o.located, flashes: o.flashes, W: o.W, H: o.H, duration: o.duration }),
+    readFrames: async (frames) => get("readFrames", { t: frames.map((f) => f.t) }),
+    pointerTargets: async ({ targets, W, H }) => get("pointerTargets", { targets, W, H }),
+    detectSteps: async ({ shots, events, duration }) => get("detectSteps", { shots, events, duration }),
+    writeNarration: async ({ steps, summary, product, duration }) => get("writeNarration", { steps, summary, product, duration }),
   };
 }
 
@@ -366,6 +619,7 @@ export function compareResults(a, b) {
 }
 
 export default {
-  BROWSER_MODE, RECHECK_RATE, HOLD_MS, FIRST_HOLD_MS, browserStatus, browserPlan, sessionPayload, storeScreen,
-  resultKey, storeResult, readText, answer, replayAsks, parseResult, compareResults, fingerprint,
+  BROWSER_MODE, RECHECK_RATE, HOLD_MS, FIRST_HOLD_MS, MAX_RUN_MS, ASK_KINDS, VISION_KINDS, browserStatus, browserPlan, sessionPayload, storeScreen,
+  resultKey, storeResult, readText, makeWorkspace, endSession, answerWith, answer, startAsk, findAsk, askingNow, waitAsk, logEntry, loadAsks,
+  replayAsks, parseResult, compareResults, fingerprint,
 };

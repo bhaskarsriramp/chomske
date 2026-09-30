@@ -53,9 +53,11 @@ export const startAnalysis = (id, { expectedCost, captions, browser = null }) =>
 
 /* ── The first analysis in the browser (browserAnalysis.js) ───────────────── */
 export const analysisHeartbeat = (id, body) => api.post(`/studio/demos/${id}/analysis/heartbeat`, body).then((r) => r.data);
-// A question to the model can take a minute; a result on a slow uplink too.
-export const analysisAsk = (id, body) => api.post(`/studio/demos/${id}/analysis/ask`, body, { timeout: 240000 }).then((r) => r.data);
-export const analysisResult = (id, body) => api.post(`/studio/demos/${id}/analysis/result`, body, { timeout: 180000 }).then((r) => r.data);
+// A question to the model is answered within ~20s or comes back "pending" to
+// be asked after again (the proxy closes a request at 60s). A result, or a
+// question carrying every still's reading, can be megabytes: compressed.
+export const analysisAsk = (id, body) => api.post(`/studio/demos/${id}/analysis/ask`, body, { timeout: 55000, gzip: true }).then((r) => r.data);
+export const analysisResult = (id, body) => api.post(`/studio/demos/${id}/analysis/result`, body, { timeout: 180000, gzip: true }).then((r) => r.data);
 export const analysisFailed = (id, body) => api.post(`/studio/demos/${id}/analysis/failed`, body).then((r) => r.data);
 /**
  * Read the screens: blur, steps, narration.

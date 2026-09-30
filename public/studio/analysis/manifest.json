@@ -1,6 +1,6 @@
 {
- "version": "e60523aee665f826ffce4fe1c2ccc32e028b6248d8b84da8ce05400f581e9a9f",
- "worker": "/studio/analysis/worker-e60523aee665f826.js",
+ "version": "b7e72ddf5f5707fcd1729c68a82519809a7e4d7f7d1cdf75b81a710341c87dc8",
+ "worker": "/studio/analysis/worker-b7e72ddf5f5707fc.js",
  "templates": "/studio/analysis/tpl/",
  "files": [
   "backend/services/studio/analyse.js",
@@ -32,7 +32,7 @@
   "src/components/Studio/cursorLook.mjs"
  ],
  "file_hashes": {
-  "backend/services/studio/analyse.js": "e8a9bdc0b6f0232aa9e98315074b3840b6e5fd35cf2e06f9768db5c95a12fb43",
+  "backend/services/studio/analyse.js": "8674f20d0b8341ad934d4c5db8c1bacaeeb3d0dc1ba7db6a32a96d7dea6c60fb",
   "backend/services/studio/audit.js": "e8609b5822b691dc0bd0899b619d7159f0a16e6670d9eff89a28ab85172e6b48",
   "backend/services/studio/events.js": "be8c07a867ab61da622b7bce9eff1246b313d39f32a421d6b26be63170d71f51",
   "backend/services/studio/exactJson.js": "bc98601aa8b52c03527c729a00243a84e661c59ba2a07ac76cfced297cec48df",
@@ -48,15 +48,15 @@
   "browser-analysis/shims/canvas.js": "65d844c136459621235ca59f48abc37e31314f5fcf83affe7b49c50a3c9bb0ac",
   "browser-analysis/shims/crypto.js": "6991e7a80d6b8f3592a24b97226279597e5eb074c9cb806a8cb91f53f4de87c1",
   "browser-analysis/shims/demoService.js": "0d97fb09f37b12ce923b58688b79dcbd3ef54de2440d80a211288c5fa8318e3f",
-  "browser-analysis/shims/ffmpeg.js": "dd941f3813fe7dbde0f8ba24f90354244876264323925e78dcc3d7d740f796cf",
+  "browser-analysis/shims/ffmpeg.js": "11d08ad662ab84a4620216044a1fe71550c18803db504dbc3731a959daab3dd2",
   "browser-analysis/shims/fsp.js": "2dd8db5113c6cabf9de662ab720664bf5b9e8244a25c2cb48a72010c1a2f3bb3",
-  "browser-analysis/shims/globals.js": "8aa6c05654fb2e68801bf4a70cbe17d499a435ea0f5a50146ccb9cecc38dd60d",
+  "browser-analysis/shims/globals.js": "746cf054f8ff5d2e50f6f0b07e167bb6228e00255a7e38b44ab75cce923720a6",
   "browser-analysis/shims/judge.js": "2e7e3cb28cdd627f57623510d8a67f354c65ca9b00c6ce414a7d6b5fd8f94fe1",
   "browser-analysis/shims/path.js": "e71ef2e198506c535b23ec81642454b4b207ea352ce3b56a61a5cbe51e7d434c",
   "browser-analysis/shims/provider.js": "a4902e7cd0690c3cf08c9857679b28c2a2464043aca4151520a5d3bccb2a2fed",
-  "browser-analysis/shims/rpc.js": "8ef4b26fea0035a07cd2760ce102a056b32a8b133ce32bbcb8159703c0f86ceb",
-  "browser-analysis/shims/vision.js": "f68b6d6c87d44f305c16ff03c299fc98ca97568bc0f69b73bfa98bee0d4122c1",
-  "browser-analysis/worker.js": "d0385277015d2d923d9dbbe2d15d835fd1fb12b887449ee785d2866bfe48feef",
+  "browser-analysis/shims/rpc.js": "ad88beb7f1d6d739618026c4ab5a7f69952f9621e493d645a368bb0849789ab0",
+  "browser-analysis/shims/vision.js": "15e376a2efbd60f1b14ffe635e7bb0561e24a717e1edebc27fee3a43d290096f",
+  "browser-analysis/worker.js": "93256b94ae3666a01a94b837fb137ef48bcd372fffd13edff9074ebd44bdfe3a",
   "src/components/Studio/camera.mjs": "c2b8285157b836edf78c74989b1ccfa81673946b0ec0df4776528604b2129ecf",
   "src/components/Studio/cursorLook.mjs": "c1068520de4c2f4806865ee20edf42a9769f1361553ec7af3cf62a5fd3514ec7"
  },
@@ -332,5 +332,5 @@
  ],
  "canvas_version": "1.0.9",
  "mediabunny": "1.60.0",
- "built_at": "2026-09-30T04:02:23.462Z"
+ "built_at": "2026-09-30T04:33:11.097Z"
 }

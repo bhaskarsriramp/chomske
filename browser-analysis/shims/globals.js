@@ -78,8 +78,15 @@ if (!self.setImmediate) {
 
 self.__analysis = { broken: null, providerReady: false, templates: "" };
 
+let onBroken = null;
+/** Resolves with the reason once the run is broken, so the worker can stop waiting on the rest. */
+export const whenBroken = new Promise((resolve) => (onBroken = resolve));
+
 /** Mark the run as not the server's, and why. The first reason is kept. */
 export function broken(reason) {
-  if (!self.__analysis.broken) self.__analysis.broken = String(reason);
+  if (!self.__analysis.broken) {
+    self.__analysis.broken = String(reason);
+    onBroken(self.__analysis.broken);
+  }
   return new Error(String(reason));
 }

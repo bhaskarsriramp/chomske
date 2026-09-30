@@ -148,10 +148,13 @@ export const BLUR_ON =
  * @param {object} [o.asks]      answers to the model's questions, replayed
  *                               instead of asked: { identify(rivals),
  *                               judgeRuns({ reference, runs, heightPx }),
- *                               judgePresses(events, o) }. The server's re-check
- *                               of a browser analysis uses the answers that run
- *                               got, so a model changing its mind is not
- *                               mistaken for the two runs disagreeing.
+ *                               judgePresses(events, o), readFrames(frames),
+ *                               pointerTargets({ targets, W, H }),
+ *                               detectSteps(o), writeNarration(o) }. The
+ *                               server's re-check of a browser analysis uses the
+ *                               answers that run got, so a model changing its
+ *                               mind is not mistaken for the two runs
+ *                               disagreeing.
  */
 export async function analyseRecording({ video, audio = "", workDir, capture = {}, source, duration, wantCaptions = false, onProgress = () => {}, screen = null, asks = null }) {
   const spend = newSpend();
@@ -317,10 +320,13 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   onProgress(0.06, "Reading the pointer");
 
   const uiTask = VISION_ON_ANALYSE
-    ? readFrames(frames, {
-        spend,
-        onProgress: (p) => onProgress(0.1 + 0.34 * p, "Understanding the interface"),
-      }).catch((err) => {
+    ? (asks?.readFrames
+        ? asks.readFrames(frames)
+        : readFrames(frames, {
+            spend,
+            onProgress: (p) => onProgress(0.1 + 0.34 * p, "Understanding the interface"),
+          })
+      ).catch((err) => {
         console.error("[studio] UI pass failed entirely:", err);
         return [];
       })
@@ -479,10 +485,11 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
     if (toName.length && providerReady()) {
       const W = source?.width || 1920;
       const H = source?.height || 1080;
-      const answers = await pointerTargets({
-        video, dir: path.join(workDir, "targets"), W, H, spend,
-        targets: toName.map((r) => ({ t: r.t, x: r.x * W, y: r.y * H })),
-      }).catch((err) => {
+      const targets = toName.map((r) => ({ t: r.t, x: r.x * W, y: r.y * H }));
+      const answers = await (asks?.pointerTargets
+        ? asks.pointerTargets({ targets, W, H })
+        : pointerTargets({ video, dir: path.join(workDir, "targets"), W, H, spend, targets })
+      ).catch((err) => {
         console.warn("[studio] vig: naming what the pointer was on failed: " + err.message);
         return [];
       });
@@ -565,7 +572,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
 
   /* ── What the person was doing ───────────────────────────────────────── */
   const { summary, product, steps, dead } = VISION_ON_ANALYSE
-    ? await detectSteps({ shots, events, duration, spend }).catch((err) => {
+    ? await (asks?.detectSteps || detectSteps)({ shots, events, duration, spend }).catch((err) => {
         console.error("[studio] step detection failed:", err);
         return { summary: "", product: "", steps: [], dead: [] };
       })
@@ -631,7 +638,7 @@ export async function analyseRecording({ video, audio = "", workDir, capture = {
   /* ── Narration ───────────────────────────────────────────────────────── */
   if (VISION_ON_ANALYSE) onProgress(0.68, "Writing the narration");
   const narration = VISION_ON_ANALYSE && steps.length
-    ? await writeNarration({ steps, summary, product, duration, spend }).catch(() => [])
+    ? await (asks?.writeNarration || writeNarration)({ steps, summary, product, duration, spend }).catch(() => [])
     : [];
 
   /* ── The passes that were running all along ──────────────────────────── */
