@@ -28,6 +28,8 @@
  * (`gcloud run services proxy`, for testing) is called without one.
  */
 import fsp from "fs/promises";
+import http from "http";
+import https from "https";
 import path from "path";
 import { GoogleAuth } from "google-auth-library";
 import { putFile, materialize, removeObject } from "../../media/storage.js";
@@ -62,6 +64,38 @@ async function authHeaders(url) {
   }
   const h = await client.getRequestHeaders();
   return typeof h?.get === "function" ? { Authorization: h.get("authorization") } : h;
+}
+
+/**
+ * ── NOT fetch() ──────────────────────────────────────────────────────────────
+ * The service answers when the export is made, and nothing is said on the
+ * connection until then. Node's fetch gives up on an answer whose headers take
+ * over five minutes (undici's headersTimeout), and a 4K export of a minute's
+ * demo takes longer than that — which would read as Cloud Run failing, send
+ * the export again, and end with the VM making it. A plain request waits as
+ * long as it is told to.
+ */
+function postJson(url, body, headers, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const data = JSON.stringify(body);
+    const req = (u.protocol === "https:" ? https : http).request(
+      u,
+      { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data), ...headers } },
+      (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (d) => (text += d));
+        res.on("end", () => resolve({ status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, text }));
+        res.on("error", reject);
+      }
+    );
+    // Quiet for minutes while the export renders: keep the connection known alive.
+    req.on("socket", (s) => s.setKeepAlive(true, 60_000));
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`no answer in ${Math.round(timeoutMs / 60_000)} minutes`)));
+    req.on("error", reject);
+    req.end(data);
+  });
 }
 
 async function putJson(workDir, key, value) {
@@ -118,14 +152,8 @@ export async function renderRemote({ dir, workDir, request, resolution = 1080, o
       let body = null;
       let failure = "";
       try {
-        res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(await authHeaders(url)) },
-          body: JSON.stringify({ request: requestKey }),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
-        const text = await res.text();
-        try { body = JSON.parse(text); } catch { failure = `HTTP ${res.status}: ${text.slice(0, 160)}`; }
+        res = await postJson(url, { request: requestKey }, await authHeaders(url), REQUEST_TIMEOUT_MS);
+        try { body = JSON.parse(res.text); } catch { failure = `HTTP ${res.status}: ${res.text.slice(0, 160)}`; }
       } catch (err) {
         failure = String(err?.message || err);
       }

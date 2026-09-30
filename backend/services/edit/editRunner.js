@@ -69,7 +69,9 @@ const r3 = (n) => Math.round(Number(n) * 1000) / 1000;
 /** Queue work. Returns at once; the job runs on the next tick. */
 export async function enqueue({ project, user, type, ref = "" }) {
   const job = await EditJob.create({ project, user, type, ref });
-  setImmediate(() => tick().catch(() => {}));
+  // Started at once only where the queues run (startEditRunner): the API
+  // queues jobs but must not run them. See studio/studioRunner.js enqueue.
+  if (timer) setImmediate(() => tick().catch(() => {}));
   return job;
 }
 

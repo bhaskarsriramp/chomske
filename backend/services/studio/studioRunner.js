@@ -102,7 +102,16 @@ const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
  */
 export async function enqueue({ demo, user, type, ref = "", data = null, notBefore = null }) {
   const job = await StudioJob.create({ demo, user, type, ref, data, not_before: notBefore });
-  setImmediate(() => tick().catch(() => {}));
+  /**
+   * ── STARTED AT ONCE ONLY WHERE THE QUEUES RUN ─────────────────────────────
+   * This used to tick in whatever process queued the job, and the API queues
+   * most of them (an upload's prepare, an export) — so the API claimed and ran
+   * them itself, although server.js keeps it out of the queues on purpose: a
+   * prepare's screen reading is synchronous JavaScript that stalls every other
+   * request. Seen on 2026-09-30 as a 4K export run by the API, not the worker.
+   * Elsewhere the job waits for the runner's own tick (TICK_MS, 2.5 s).
+   */
+  if (timer) setImmediate(() => tick().catch(() => {}));
   return job;
 }
 
