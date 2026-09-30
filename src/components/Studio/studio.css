@@ -560,3 +560,98 @@
 }
 @keyframes st-drawer-fade { from { opacity: 0; } }
 @keyframes st-drawer-fade-out { to { opacity: 0; } }
+
+/* ── The chat: an edit asked for in words (CommandChat.js) ────────────────────
+   A round button in the inspector's corner, the way a chat widget sits on a
+   page, and the drawer above when it is open. The creator's messages are ink,
+   the answers are cards, and every button in an answer is a pill: Undo first,
+   then any other moments it could have meant. */
+.st-chat-fab {
+  position: absolute; right: 16px; bottom: 16px; z-index: 15;
+  width: 50px; height: 50px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: none; background: var(--ink); color: #fff; cursor: pointer;
+  box-shadow: var(--shadow-pop);
+  transition: background var(--dur-hover) var(--ease-out), transform var(--dur-press) var(--ease-out);
+  animation: st-chat-fab-in var(--dur-pop) var(--ease-out) both;
+}
+.st-chat-fab:hover { background: var(--primary-hover); }
+.st-chat-fab:active { transform: scale(.95); }
+.st-chat-fab:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+@keyframes st-chat-fab-in { from { opacity: 0; transform: scale(.9); } }
+
+.st-chat-log { display: grid; gap: 10px; align-content: start; }
+
+.st-chat-intro { display: grid; gap: 12px; }
+.st-chat-intro p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink-body); }
+.st-chat-examples { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+
+.st-chat-msg {
+  max-width: 90%; padding: 9px 12px; border-radius: 14px;
+  font-size: 13px; line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.st-chat-msg.is-user {
+  justify-self: end; background: var(--ink); color: #fff;
+  border-bottom-right-radius: 4px; white-space: pre-wrap;
+}
+.st-chat-msg.is-app {
+  justify-self: start; background: var(--card); color: var(--ink-body);
+  border: 1px solid var(--line); border-bottom-left-radius: 4px;
+}
+.st-chat-msg.is-error { color: var(--bad); }
+.st-chat-text { font-variant-numeric: tabular-nums; }
+
+.st-chat-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.st-chat-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 99px;
+  font-family: inherit; font-size: 12px; font-weight: 600; line-height: 1.3; text-align: left;
+  color: var(--ink); background: var(--card); border: 1px solid var(--line-strong); cursor: pointer;
+  transition: background var(--dur-hover) var(--ease-out), border-color var(--dur-hover) var(--ease-out);
+}
+.st-chat-chip:hover { background: var(--hover); }
+.st-chat-chip:disabled { opacity: .45; cursor: default; }
+.st-chat-chip:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.st-chat-chip.is-choice { font-variant-numeric: tabular-nums; }
+.st-chat-note { margin-top: 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-mute); }
+
+/* Three dots while the answer is on its way. Still under reduced motion. */
+.st-chat-typing { display: inline-flex; gap: 4px; align-items: center; padding: 12px 14px; }
+.st-chat-typing i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ink-mute);
+  animation: st-chat-dot 1s var(--ease-in-out) infinite;
+}
+.st-chat-typing i:nth-child(2) { animation-delay: .15s; }
+.st-chat-typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes st-chat-dot { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+
+.st-drawer-foot { flex-shrink: 0; border-top: 1px solid var(--line); background: var(--card); }
+.st-chat-foot { display: grid; gap: 8px; padding: 10px 12px 12px; }
+.st-chat-context { font-size: 11.5px; font-weight: 600; color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+.st-chat-compose {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 6px 6px 6px 12px; border-radius: 12px;
+  border: 1px solid var(--line-strong); background: var(--paper);
+  transition: border-color var(--dur-hover) var(--ease-out), box-shadow var(--dur-hover) var(--ease-out);
+}
+.st-chat-compose:focus-within { border-color: var(--ink-mute); box-shadow: var(--ring); }
+.st-chat-input {
+  flex: 1; min-width: 0; max-height: 120px; padding: 6px 0;
+  border: none; outline: none; resize: none; background: transparent;
+  font-family: inherit; font-size: 13.5px; line-height: 1.45; color: var(--ink);
+}
+.st-chat-input::placeholder { color: var(--ink-mute); }
+.st-chat-send {
+  width: 32px; height: 32px; flex-shrink: 0; border-radius: 9px;
+  display: grid; place-items: center;
+  border: none; background: var(--ink); color: #fff; cursor: pointer;
+  transition: opacity var(--dur-hover) var(--ease-out);
+}
+.st-chat-send:disabled { opacity: .3; cursor: default; }
+.st-chat-send:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-chat-fab { animation: none; }
+  .st-chat-typing i { animation: none; opacity: .6; }
+}

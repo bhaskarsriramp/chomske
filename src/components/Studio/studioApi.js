@@ -115,6 +115,16 @@ export const getVoice = (id) =>
 export const saveTimeline = (id, timeline, rev) =>
   api.put(`/studio/demos/${id}/timeline`, { timeline, rev }).then((r) => r.data);
 
+/**
+ * An edit asked for in words, or a button from an earlier answer (CommandChat.js).
+ * Answers with the edit to make; the editor makes it. See backend command.js.
+ */
+export const sendCommand = (id, body) =>
+  api.post(`/studio/demos/${id}/command`, body, { timeout: 45000 }).then((r) => r.data);
+/** The creator undid an edit the chat made. Only logged, as a measure of how often it was wrong. */
+export const commandUndone = (id, cid, how) =>
+  api.post(`/studio/demos/${id}/command/undone`, { cid, how }).then((r) => r.data);
+
 export const startRender = (id, expectedCost, options) =>
   api.post(`/studio/demos/${id}/renders`, { expected_cost: expectedCost, options }).then(data);
 export const renderDownloadUrl = (id, rid, file = "") =>

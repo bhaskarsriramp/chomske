@@ -37,6 +37,7 @@ import { clipsOf, clipIdAt, splitPatch, deleteClipPatch, trimPatch } from "./cli
 // canvas controls moved under the preview (CanvasBar.js).
 import { VideoPanel, ZoomPanel, BlurPanel, CaptionsPanel, CaptionLine, CursorPanel, /* CanvasPanel, StepsPanel, SuggestionsPanel */ } from "./panels";
 import CanvasBar from "./CanvasBar";
+import CommandChat from "./CommandChat";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon, Drawer } from "./ui";
 import { layout, clamp, fmtTime, toSource } from "./model";
@@ -526,6 +527,61 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     edit({ [list]: (cur[list] || []).filter((x) => x.id !== sel.id) }, `Remove ${sel.kind === "cue" ? "caption" : sel.kind}`);
     setSelection(null);
   }, [selection, edit]);
+
+  /**
+   * ── AN EDIT ASKED FOR IN WORDS (CommandChat.js) ────────────────────────────
+   * The server says what to change; it is changed here, through edit(), so it
+   * autosaves, previews and undoes like one made by hand. Applied against the
+   * timeline as it is NOW: a zoom the creator deleted while the answer was on
+   * its way is simply not there to trim.
+   *
+   * What comes back is how to take it back again, and only it: the chat's own
+   * Undo removes what this added and puts back what it removed or shortened,
+   * so it still works after other edits, where stepping the undo stack back
+   * would throw those away too.
+   */
+  const applyCommand = useCallback(
+    (ops, label) => {
+      const cur = tlRef.current;
+      if (!cur || !ops) return null;
+      const drop = new Set(ops.remove || []);
+      const ends = new Map((ops.trim || []).map((t) => [t.id, t.end]));
+      const removed = [];
+      const trimmed = [];
+      const kept = [];
+      for (const z of cur.zooms || []) {
+        if (drop.has(z.id)) {
+          removed.push(z);
+        } else if (ends.has(z.id) && ends.get(z.id) < z.end) {
+          trimmed.push({ id: z.id, end: z.end });
+          kept.push({ ...z, end: ends.get(z.id) });
+        } else {
+          kept.push(z);
+        }
+      }
+      const added = (ops.add || []).filter((z) => !kept.some((k) => k.id === z.id));
+      if (!added.length && !removed.length && !trimmed.length) return null;
+      edit({ zooms: [...kept, ...added] }, label);
+      return { added: added.map((z) => z.id), removed, trimmed };
+    },
+    [edit]
+  );
+
+  const undoCommand = useCallback(
+    (u) => {
+      const cur = tlRef.current;
+      if (!cur || !u) return false;
+      const gone = new Set(u.added);
+      const ends = new Map(u.trimmed.map((t) => [t.id, t.end]));
+      let zooms = (cur.zooms || []).filter((z) => !gone.has(z.id)).map((z) => (ends.has(z.id) ? { ...z, end: ends.get(z.id) } : z));
+      const have = new Set(zooms.map((z) => z.id));
+      zooms = [...zooms, ...u.removed.filter((z) => !have.has(z.id))];
+      edit({ zooms }, "Undo chat edit");
+      setSelection((s) => (s?.kind === "zoom" && gone.has(s.id) ? null : s));
+      return true;
+    },
+    [edit]
+  );
 
   /* ── Clips and cuts ───────────────────────────────────────────────────── */
 
@@ -1334,6 +1390,23 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     </Drawer>
   );
 
+  // The chat: a button over the inspector's corner, and a drawer over the
+  // inspector when open, so the picture and the timeline stay in view while
+  // the edit it makes lands on them.
+  const chat = (
+    <CommandChat
+      demoId={demoId}
+      tl={tl}
+      time={time}
+      total={total}
+      selection={selection}
+      onApply={applyCommand}
+      onUndo={undoCommand}
+      onSelect={select}
+      onSeek={seek}
+    />
+  );
+
   const ruler = (
     <Timeline
       tl={tl}
@@ -1400,10 +1473,12 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         {transport}
         {tabs}
         <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
-          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "12px 14px 28px", background: "var(--paper)" }}>
+          {/* Bottom padding clears the chat button, so the last card can scroll out from under it. */}
+          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "12px 14px 80px", background: "var(--paper)" }}>
             {panel}
           </div>
           {lineDrawer}
+          {chat}
         </div>
         <div style={{ flexShrink: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "10px 12px 12px", overflowX: "auto" }}>
           {ruler}
@@ -1431,10 +1506,12 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         </div>
         <aside style={{ gridColumn: 2, gridRow: 1, minHeight: 0, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--paper)" }}>
           {tabs}
-          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "14px 16px 28px" }}>
+          {/* Bottom padding clears the chat button, so the last card can scroll out from under it. */}
+          <div className="st-scroll" style={{ flex: 1, minHeight: 0, display: "grid", gap: 12, alignContent: "start", gridAutoRows: "max-content", padding: "14px 16px 80px" }}>
             {panel}
           </div>
           {lineDrawer}
+          {chat}
         </aside>
         <div style={{ gridColumn: "1 / -1", gridRow: 2, minWidth: 0, borderTop: "1px solid var(--line)", background: "var(--card)", padding: "12px 16px 14px" }}>
           {ruler}

@@ -68,6 +68,7 @@ import {
 } from "../services/studio/timeline.js";
 import { GRADIENTS } from "../services/studio/render/frame.js";
 import { applySuggestion } from "../services/studio/suggestions.js";
+import { runCommand } from "../services/studio/command.js";
 import { isDemoSlug, ensureDemoSlug } from "../services/studio/demoSlug.js";
 import { blurSig } from "../../src/components/Studio/follow.mjs";
 import { voiceById, voiceSig } from "../../src/components/Studio/voices.mjs";
@@ -948,6 +949,43 @@ router.post("/demos/:id/suggestions/:sid", wrap(async (req, res) => {
   );
 
   await respond(req, res, demo, { applied, why });
+}));
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Edits asked for in words (the editor's chat, services/studio/command.js)
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * POST /studio/demos/:id/command
+ *   { text } or { intent }   a message, or a button from an earlier answer
+ *   { playhead, selected, zooms, cuts, history }   what the editor has now
+ *
+ * Answers with the edit to make, and the editor makes it through the same
+ * edit() every other change goes through, so it autosaves, undoes and
+ * previews like one made by hand. Nothing is written here: the zooms in the
+ * request may be ahead of the stored timeline, and a server-side write would
+ * race the editor's own autosave.
+ *
+ * Free for now, like the voiceover: one short text call per message.
+ */
+router.post("/demos/:id/command", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  if (!demo.timeline) return fail(res, 409, "There's no edit to change yet.");
+  const text = String(req.body?.text || "").trim();
+  if (!text && !(req.body?.intent && typeof req.body.intent === "object")) return fail(res, 400, "Type what you'd like to change.");
+  if (text.length > 400) return fail(res, 400, "That message is too long. Keep it under 400 characters.");
+  res.json({ success: true, ...(await runCommand({ demo, body: req.body })) });
+}));
+
+/** The creator undid an edit the chat made: logged beside the command, as how often it was wrong. */
+router.post("/demos/:id/command/undone", wrap(async (req, res) => {
+  const demo = await ownDemo(req, res);
+  if (!demo) return;
+  const cid = String(req.body?.cid || "").slice(0, 40);
+  const how = req.body?.how === "typed" ? "typed" : "button";
+  console.log(`[studio] command ${cid} on ${demo._id}: undone (${how})`);
+  res.json({ success: true });
 }));
 
 /* ────────────────────────────────────────────────────────────────────────────

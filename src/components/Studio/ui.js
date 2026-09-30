@@ -278,11 +278,11 @@ const DRAWER_LEAVE_MS = 240;
  * still showing what it showed, before it goes. The parent must be
  * position: relative; it covers that.
  */
-export function Drawer({ open, title, sub, onClose, children }) {
+export function Drawer({ open, title, sub, onClose, children, footer = null, label }) {
   const [mounted, setMounted] = useState(open);
   const [leaving, setLeaving] = useState(false);
   const kept = useRef(null);
-  if (open) kept.current = { title, sub, children };
+  if (open) kept.current = { title, sub, children, footer };
 
   useEffect(() => {
     if (open) {
@@ -299,12 +299,12 @@ export function Drawer({ open, title, sub, onClose, children }) {
   }, [open]);
 
   if (!open && !mounted) return null;
-  const c = kept.current || { title, sub, children };
+  const c = kept.current || { title, sub, children, footer };
   return (
     <section
       role="dialog"
       aria-modal="false"
-      aria-label={c.title}
+      aria-label={label || c.title}
       className={`st-drawer${leaving ? " is-leaving" : ""}`}
       onKeyDown={(e) => {
         // Also from inside its own fields, where the editor's Escape does not reach.
@@ -324,6 +324,8 @@ export function Drawer({ open, title, sub, onClose, children }) {
         </button>
       </header>
       <div className="st-drawer-body st-scroll">{c.children}</div>
+      {/* Pinned under the scrolling body: a composer, or actions that must stay in reach. */}
+      {c.footer && <div className="st-drawer-foot">{c.footer}</div>}
     </section>
   );
 }
@@ -438,6 +440,11 @@ const PATHS = {
   zoom: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.3-4.3M11 8.5v5M8.5 11h5" /></>,
   blur: <><circle cx="12" cy="12" r="8" strokeDasharray="2 3" /><circle cx="12" cy="12" r="3.5" /></>,
   note: <><path d="M4 5.5h16v11H12l-4 3.5v-3.5H4z" /></>,
+  // A speech bubble with a spark in it: the editor's chat (CommandChat.js).
+  chat: <><path d="M4.5 5h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H11l-4.5 3.5V17h-2A1.5 1.5 0 0 1 3 15.5v-9A1.5 1.5 0 0 1 4.5 5z" /><path d="M12 8l.8 2.2L15 11l-2.2.8L12 14l-.8-2.2L9 11l2.2-.8z" /></>,
+  send: <><path d="M12 19V5M6 11l6-6 6 6" /></>,
+  undo: <><path d="M9 14L4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></>,
+  redo: <><path d="M15 14l5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></>,
   cursor: <path d="M6 3.5l12 7.2-5.2 1.2-2 5z" />,
   caption: <><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M7 14h4M14 14h3" /></>,
   canvas: <><rect x="3" y="4" width="18" height="16" rx="3" /><rect x="7" y="8" width="10" height="8" rx="1.5" /></>,
