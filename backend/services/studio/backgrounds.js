@@ -212,6 +212,17 @@ export async function loadBackgroundImage({ id, user, workDir }) {
   }
 }
 
+/**
+ * Where an uploaded background lives in storage, checked against its owner the
+ * same way loadBackgroundImage() checks it, or "" when it is gone. For the
+ * Cloud Run export, which fetches the file but has no database to look it up.
+ */
+export async function backgroundKey({ id, user }) {
+  if (!user || !mongoose.Types.ObjectId.isValid(String(id || ""))) return "";
+  const asset = await StudioAsset.findOne({ _id: id, user, kind: "background" }).lean();
+  return asset?.key || "";
+}
+
 export default {
-  BACKGROUND_LIMITS, BACKGROUND_TYPES, prepareBackground, saveBackground, deleteBackground, shapeBackground, loadBackgroundImage,
+  BACKGROUND_LIMITS, BACKGROUND_TYPES, prepareBackground, saveBackground, deleteBackground, shapeBackground, loadBackgroundImage, backgroundKey,
 };

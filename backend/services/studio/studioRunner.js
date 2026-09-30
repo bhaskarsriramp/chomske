@@ -38,6 +38,8 @@ import { applyPatches } from "./audit.js";
 import { witnessPass, WITNESS_MODE } from "./witness.js";
 import { applySuggestion } from "./suggestions.js";
 import { renderTimeline } from "./render/compose.js";
+import { renderInCloud, renderRemote, CLOUD_FALLBACK } from "./render/remoteRender.js";
+import { backgroundKey } from "./backgrounds.js";
 import { trackBlur } from "./blurTrack.js";
 import { buildVoiceover } from "./voice.js";
 import { twinOf } from "./foundBlurs.js";
@@ -1128,40 +1130,88 @@ const render = {
     await setRender(demo._id, job.ref, { status: "rendering", stage: "Starting", progress: 0.01, error: "", worker: WORKER });
     publishProgress(demo, { render: job.ref, status: "rendering", progress: 0.01 });
 
-    const source = await materialize(demo.recording.mp4_key, workDir, "recording.mp4");
     const options = cleanExportOptions(entry.options);
-    const out = path.join(workDir, `export.${options.format}`);
-    // The AI voiceover, when it is on and there is one (voice.js).
-    const voiceFile = demo.timeline.voice?.on && demo.voiceover?.key
-      ? await materialize(demo.voiceover.key, workDir, "voice.mp3")
-      : null;
-
-    const result = await renderTimeline({
-      timeline: demo.timeline,
-      source,
-      workDir,
-      dest: out,
-      options,
-      // Whose background images the timeline may name (backgrounds.js).
-      user: demo.user,
-      // Where each blur goes when what it covers moves (follow.mjs).
-      follows: demo.follows || {},
-      voiceFile,
-      onProgress: (p, stage) => report({ stage, progress: Math.max(0.01, Math.min(0.99, p)) }),
-    });
-
-    await report({ stage: "Uploading", progress: 0.99 }, true);
     const ext = options.format;
     const outKey = demoKey(demo, "renders", `${job.ref}.${ext}`);
-    const mime = ext === "gif" ? "image/gif" : ext === "webm" ? "video/webm" : "video/mp4";
-    await putFile(out, outKey, mime);
+    const onProgress = (p, stage) => report({ stage, progress: Math.max(0.01, Math.min(0.99, p)) });
+    // The AI voiceover, when it is on and there is one (voice.js).
+    const withVoice = !!(demo.timeline.voice?.on && demo.voiceover?.key);
 
+    /**
+     * ── ON CLOUD RUN, WHEN IT IS SET UP ──────────────────────────────────────
+     * The same export made on a machine of its own (render/remoteRender.js),
+     * written to the same key. Anything Cloud Run cannot do — no free machine
+     * for ten minutes, a crash — is made here instead, as it always was, unless
+     * STUDIO_RENDER_CLOUD_FALLBACK=off. What the export itself refuses (nothing
+     * left to export) is refused here too, and not tried twice.
+     */
+    let result = null;
     let srtKey = "";
-    if (result.srt) {
-      const srtPath = path.join(workDir, "captions.srt");
-      await fsp.writeFile(srtPath, result.srt, "utf8");
-      srtKey = demoKey(demo, "renders", `${job.ref}.srt`);
-      await putFile(srtPath, srtKey, "text/plain; charset=utf-8");
+    let where = "here";
+    const t0 = Date.now();
+    if (renderInCloud()) {
+      try {
+        const bg = demo.timeline.canvas?.background;
+        const r = await renderRemote({
+          dir: demoKey(demo, "renders", `${job.ref}-cloud`),
+          workDir,
+          // What comes out: "source" keeps the recording's own size, below the
+          // resolution, which is then only a ceiling (exportOptions.js).
+          resolution: options.aspect === "source"
+            ? Math.min(options.resolution, Math.min(demo.recording.width || 1920, demo.recording.height || 1080))
+            : options.resolution,
+          request: {
+            source_key: demo.recording.mp4_key,
+            voice_key: withVoice ? demo.voiceover.key : "",
+            // Looked up here, with the owner check; Cloud Run only fetches it.
+            background_key: bg?.kind === "image" ? await backgroundKey({ id: bg.value, user: demo.user }) : "",
+            timeline: demo.timeline,
+            options,
+            follows: demo.follows || {},
+            output_key: outKey,
+            srt_key: demoKey(demo, "renders", `${job.ref}.srt`),
+          },
+          onProgress,
+        });
+        result = { width: r.width, height: r.height, duration: r.duration, drew: r.drew };
+        srtKey = r.srt_key || "";
+        where = "on Cloud Run";
+      } catch (err) {
+        if (err.userMessage || !CLOUD_FALLBACK) throw err;
+        console.warn(`[studio] cloud export ${demo._id}/${job.ref} failed, making it here instead: ${err.message}`);
+        await report({ stage: "Starting", progress: 0.01 }, true);
+      }
+    }
+
+    if (!result) {
+      const source = await materialize(demo.recording.mp4_key, workDir, "recording.mp4");
+      const out = path.join(workDir, `export.${options.format}`);
+      const voiceFile = withVoice ? await materialize(demo.voiceover.key, workDir, "voice.mp3") : null;
+
+      result = await renderTimeline({
+        timeline: demo.timeline,
+        source,
+        workDir,
+        dest: out,
+        options,
+        // Whose background images the timeline may name (backgrounds.js).
+        user: demo.user,
+        // Where each blur goes when what it covers moves (follow.mjs).
+        follows: demo.follows || {},
+        voiceFile,
+        onProgress,
+      });
+
+      await report({ stage: "Uploading", progress: 0.99 }, true);
+      const mime = ext === "gif" ? "image/gif" : ext === "webm" ? "video/webm" : "video/mp4";
+      await putFile(out, outKey, mime);
+
+      if (result.srt) {
+        const srtPath = path.join(workDir, "captions.srt");
+        await fsp.writeFile(srtPath, result.srt, "utf8");
+        srtKey = demoKey(demo, "renders", `${job.ref}.srt`);
+        await putFile(srtPath, srtKey, "text/plain; charset=utf-8");
+      }
     }
 
     const stat = await statObject(outKey).catch(() => null);
@@ -1182,7 +1232,10 @@ const render = {
     }));
     await setDemo(demo._id, { expires_at: bumpExpiry() }).catch(() => {});
 
-    console.log(`[studio] rendered ${demo._id}/${job.ref}: ${result.width}x${result.height} ${result.duration.toFixed(1)}s ${JSON.stringify(result.drew)}`);
+    console.log(
+      `[studio] rendered ${demo._id}/${job.ref} ${where} in ${((Date.now() - t0) / 1000).toFixed(0)}s: ` +
+        `${result.width}x${result.height} ${result.duration.toFixed(1)}s ${JSON.stringify(result.drew)}`
+    );
     publishProgress(demo, { render: job.ref, status: "done", progress: 1 });
   },
 
@@ -1464,7 +1517,8 @@ export function startStudioRunner() {
   tick().catch(() => {});
   console.log(
     `[studio] runner ${WORKER} started, engine ${RENDER_ENGINE} ` +
-      `(prepare ${LIMIT.prepare}, analyse ${LIMIT.analyse}, captions ${LIMIT.captions}, render ${LIMIT.render}, review ${LIMIT.review})`
+      `(prepare ${LIMIT.prepare}, analyse ${LIMIT.analyse}, captions ${LIMIT.captions}, render ${LIMIT.render}, review ${LIMIT.review})` +
+      (renderInCloud() ? `, exports on Cloud Run${CLOUD_FALLBACK ? " (made here if it cannot)" : ""}` : "")
   );
   // Said at start-up rather than discovered by a creator whose export failed.
   missingFonts().then((missing) => {

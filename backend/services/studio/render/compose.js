@@ -55,6 +55,19 @@ import { buildAss, buildSrt, missingFonts, FONTS_DIR } from "./ass.js";
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
 
 /**
+ * ── HOW MANY THREADS THE ENCODER USES, WHEN IT MUST NOT GUESS ────────────────
+ * x264 and x265 size their thread pool from the CPUs they can see (x264: one
+ * and a half per CPU), and the thread count is part of what decides the exact
+ * bytes they write. On the VM that is always the same machine. On Cloud Run
+ * the CPUs a container can see vary from host to host (9 on one run, 10 on the
+ * next, for an 8-CPU service), so the same export came out as two different
+ * files. Unset (the default), the encoders choose as they always have; set
+ * to 12 on Cloud Run, they write what an 8-CPU VM writes.
+ */
+const ENCODER_THREADS = parseInt(process.env.STUDIO_ENCODER_THREADS, 10) > 0 ? parseInt(process.env.STUDIO_ENCODER_THREADS, 10) : 0;
+const threads = () => (ENCODER_THREADS ? ["-threads", String(ENCODER_THREADS)] : []);
+
+/**
  * Render a demo.
  *
  * @param {object} o
@@ -64,9 +77,14 @@ const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
  * @param {string} o.dest
  * @param {object} o.options     export options, already cleaned or not
  * @param {Function} o.onProgress (fraction, stage)
+ * @param {Function} [o.loadBackground] ({ id, user, workDir }) → the image, or
+ *                               null. By default it is looked up by its owner
+ *                               (backgrounds.js); the Cloud Run export
+ *                               (renderJob.js), which has no database, is
+ *                               handed the file the VM looked up.
  * @returns {Promise<{ width, height, duration, drew, srt }>}
  */
-export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null, follows = {}, voiceFile = null }) {
+export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null, follows = {}, voiceFile = null, loadBackground = loadBackgroundImage }) {
   const o = cleanExportOptions(options, { hevc: options?.codec === "hevc" });
   const lay = layout(timeline);
   if (!(lay.duration > 0.1)) {
@@ -129,7 +147,7 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
         "-t", String(d),
         // CRF 16 is a working copy, not the export. It is encoded again in the
         // last pass, and a lossy first pass would show as softened text there.
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", ...threads(),
         "-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-ac", "2",
         "-video_track_timescale", String(FPS * 1000),
         out
@@ -161,7 +179,7 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   // rather than failing a render somebody paid for.
   let bgImage = null;
   if (design.background?.kind === "image") {
-    bgImage = await loadBackgroundImage({ id: design.background.value, user, workDir });
+    bgImage = await loadBackground({ id: design.background.value, user, workDir });
     if (!bgImage) design = { ...design, background: { kind: "none" } };
   }
   await drawBackground({ canvas: design, box, dest: bgPath, image: bgImage });
@@ -508,12 +526,13 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   if (a && !isGif) args.push("-map", a.includes(":") ? a : `[${a}]`);
 
   if (isGif) {
-    args.push("-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p");
+    args.push("-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", ...threads());
   } else if (o.codec === "vp9") {
-    args.push("-c:v", "libvpx-vp9", "-crf", String(crfFor(o) + 10), "-b:v", "0", "-row-mt", "1");
+    args.push("-c:v", "libvpx-vp9", "-crf", String(crfFor(o) + 10), "-b:v", "0", "-row-mt", "1", ...threads());
   } else {
     args.push(
       "-c:v", o.codec === "hevc" ? "libx265" : "libx264",
+      ...threads(),
       "-preset", SPEEDS[o.speed],
       ...(o.video_mbps ? ["-b:v", `${o.video_mbps}M`, "-maxrate", `${o.video_mbps * 1.5}M`, "-bufsize", `${o.video_mbps * 3}M`] : ["-crf", String(crfFor(o))]),
       "-pix_fmt", "yuv420p",
