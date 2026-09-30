@@ -30,12 +30,29 @@
  * can be behind what the creator is looking at. The zooms and cuts come in the
  * request; everything the editor never changes (the pointer track, the clicks,
  * the frame readings) comes from the stored demo.
+ *
+ * ── WHEN THE LIST HAS NO NAME FOR IT, LOOK ───────────────────────────────────
+ * The frame readings name controls: "Projects", "Install now". A creator
+ * describes what they SEE: "the girl image with a play button on the left".
+ * The first creator to try it asked for exactly that, at 0:15.7 with the
+ * playhead sitting on it, and was told it could not be found, because a
+ * picture inside a page is read as an unnamed "image" box and the words in it
+ * are not kept at all. So when nothing in the readings matches, the frame at
+ * that moment is read from the recording and Gemini is asked where the
+ * described thing is in it (findOnFrame). The readings still go first: they
+ * are instant, free, and right about named controls.
  */
 import crypto from "crypto";
+import fsp from "fs/promises";
+import os from "os";
+import path from "path";
 import { generateJson, TEXT_MODEL } from "../edit/gemini.js";
+import { MODEL } from "../ai/provider.js";
+import { extractFrameAt } from "../media/ffmpeg.js";
+import { materialize, readUrl, storageKind } from "../media/storage.js";
 import { layout, toSource, toOutput, toOutputSnapped } from "./timeline.js";
 import { containing, containingBox } from "./events.js";
-import { cursorAt } from "../../../src/components/Studio/camera.mjs";
+import { cursorAt, zoomOutGap } from "../../../src/components/Studio/camera.mjs";
 
 /** The level Add and the analysis both use. */
 const DEFAULT_LEVEL = 1.8;
@@ -58,8 +75,22 @@ const SETTLE = 0.3;
 const NEAR = 1.5;
 /** An earlier zoom trimmed to less than this is removed instead. */
 const MIN_KEEP = 0.3;
-/** Below this a "zoom" does not look like one, and it is not made. */
+/**
+ * Shorter than this, a zoom ended early for the next one is not worth having,
+ * and it takes the next one's place instead (create.js MIN_OWN).
+ */
+const MIN_OWN = 0.8;
+/** Below this a "zoom" does not look like one. */
 const MIN_EFFECTIVE = 1.15;
+/**
+ * A thing too big to hold whole in a zoomed frame (an image as tall as the
+ * screen) is zoomed on its middle at this level, with its edges cropped, and
+ * the reply says so. Refusing was the first answer, and it refused the exact
+ * request that showed this feature was needed.
+ */
+const CROP_LEVEL = 1.4;
+/** A place the model found with less confidence than this is not used. */
+const MIN_FOUND = 0.4;
 
 const MAX_TEXT = 400;
 const MAX_THINGS = 220;
@@ -278,6 +309,12 @@ function cleanZooms(list, duration) {
       level: clamp(num(z?.level, DEFAULT_LEVEL), 1, 5),
       label: str(z?.label, 80),
       auto: !!z?.auto,
+      // How it ramps, which is how long the camera needs to pull out before
+      // the next one (camera.mjs zoomOutGap). Absent means the easing's own.
+      easing: str(z?.easing, 16) || "smooth",
+      ease_out: z?.ease_out == null ? null : str(z.ease_out, 16),
+      ramp_in: z?.ramp_in == null ? null : num(z.ramp_in, null),
+      ramp_out: z?.ramp_out == null ? null : num(z.ramp_out, null),
     }))
     .filter((z) => z.id && z.end - z.start > 0.05)
     .sort((a, b) => a.start - b.start);
@@ -409,6 +446,153 @@ function nearest(th, out, tol) {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+   Looking at a frame
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const FRAME_TIMEOUT = 25000;
+const CACHE_DIR = path.join(os.tmpdir(), "clipo-command");
+const CACHE_LIFE = 30 * 60 * 1000;
+/** Whole recordings downloaded when a bucket link could not be read: key → { file: Promise, at }. */
+const copies = new Map();
+
+/** The recording on this disk, downloaded once and kept for half an hour. */
+async function localCopy(demo, key) {
+  if (storageKind() !== "gcs") return materialize(key, CACHE_DIR); // already on disk: its own path
+  const now = Date.now();
+  for (const [k, v] of copies) {
+    if (now - v.at > CACHE_LIFE) {
+      copies.delete(k);
+      v.file.then((f) => fsp.rm(f, { force: true }), () => {}).catch(() => {});
+    }
+  }
+  const hit = copies.get(key);
+  if (hit) {
+    hit.at = now;
+    return hit.file;
+  }
+  const name = `${String(demo._id)}-${crypto.createHash("sha1").update(key).digest("hex").slice(0, 10)}.mp4`;
+  const file = materialize(key, CACHE_DIR, name);
+  copies.set(key, { file, at: now });
+  file.catch(() => copies.delete(key));
+  return file;
+}
+
+/**
+ * The recording's frame at source time `t`, as a JPEG on disk (the caller
+ * deletes it). The file is the one the analysis read (recording.mp4_key), so
+ * a box found on it is in the same frame the zooms are stored against.
+ *
+ * Straight from the bucket first: the recording is written +faststart, so
+ * ffmpeg seeks it with range requests and reads a second or so of it rather
+ * than the whole file. If that fails (a signing hiccup, an ffmpeg built
+ * without https), the whole file is downloaded once and kept for a while.
+ */
+export async function frameAt(demo, t) {
+  const key = demo.recording?.mp4_key;
+  if (!key || demo.purged) throw new Error("the recording's file is not available");
+  await fsp.mkdir(CACHE_DIR, { recursive: true });
+  const dest = path.join(CACHE_DIR, `${String(demo._id)}-${Math.round(t * 1000)}-${crypto.randomBytes(3).toString("hex")}.jpg`);
+  const sources = [];
+  if (storageKind() === "gcs") {
+    const url = await readUrl(key, { expiresSec: 900 }).catch(() => "");
+    if (/^https?:\/\//.test(url)) sources.push(url);
+  }
+  sources.push(null);
+  for (const src of sources) {
+    try {
+      const file = src || (await localCopy(demo, key));
+      await extractFrameAt(file, dest, t, { longEdge: 1280, timeoutMs: FRAME_TIMEOUT });
+      if ((await fsp.stat(dest).then((s) => s.size, () => 0)) > 0) return dest;
+    } catch (err) {
+      console.warn(`[studio] command: the frame at ${t.toFixed(2)}s could not be read from ${src ? "the bucket link" : "the file"}: ${String(err?.message).slice(0, 160)}`);
+    }
+  }
+  throw new Error("could not read a frame");
+}
+
+export const FRAME_FINDER = (description) => `This is one frame of a screen recording of a website or app. The person who made the recording wants the camera to zoom in, and described what on screen to zoom in on, in their own words:
+
+${JSON.stringify(description)}
+
+Find it in this frame, and return the box the camera should hold to show it:
+- The box must contain what they described, and anything they specifically pointed at inside it: a button, an icon, text they quoted.
+- Keep it as tight as that allows. A zoom shows the box enlarged, so a box much bigger than what they meant zooms in less. If they describe a large thing but single out one part of it ("the section where the play button is"), box that part.
+- If it is not in this frame, set "found" to false and return no matches. Do not return the nearest lookalike.
+- If more than one thing fits the description, return each, at most 3, best first.
+
+"box_2d" is [ymin, xmin, ymax, xmax], normalized to 0-1000.
+"label" says what it is in a few words, the way the person would: "girl image with a play button".
+"confidence" is how sure you are, from 0 to 1, that this is what they meant.
+
+Return ONLY valid JSON matching the schema.`;
+
+const FIND_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    found: { type: "BOOLEAN" },
+    matches: {
+      type: "ARRAY",
+      maxItems: 3,
+      items: {
+        type: "OBJECT",
+        properties: {
+          box_2d: { type: "ARRAY", items: { type: "NUMBER" }, minItems: 4, maxItems: 4 },
+          label: { type: "STRING" },
+          confidence: { type: "NUMBER" },
+        },
+        required: ["box_2d", "label", "confidence"],
+        propertyOrdering: ["box_2d", "label", "confidence"],
+      },
+    },
+  },
+  required: ["found", "matches"],
+  propertyOrdering: ["found", "matches"],
+};
+
+/**
+ * Gemini's box_2d, [ymin, xmin, ymax, xmax] in 0–1000 (the form its detection
+ * is trained on), as a rect in fractions of the frame. Null when unusable.
+ */
+export function fromBox2d(b) {
+  if (!Array.isArray(b) || b.length < 4) return null;
+  let [y0, x0, y1, x1] = b.map((v) => num(v, NaN));
+  if (![y0, x0, y1, x1].every(Number.isFinite)) return null;
+  // Answered in fractions after all: read as fractions rather than as a box in
+  // the top-left corner.
+  const scale = Math.max(y0, x0, y1, x1) <= 1.5 ? 1 : 1000;
+  [y0, x0, y1, x1] = [y0, x0, y1, x1].map((v) => clamp(v / scale, 0, 1));
+  if (x1 < x0) [x0, x1] = [x1, x0];
+  if (y1 < y0) [y0, y1] = [y1, y0];
+  if (x1 - x0 < 0.004 || y1 - y0 < 0.004) return null;
+  return { x: round3(x0), y: round3(y0), w: round3(x1 - x0), h: round3(y1 - y0) };
+}
+
+/** A model call that is asked once more without its schema if the schema is refused (see vision.js ask). */
+async function askJson(ask, opts) {
+  try {
+    return await ask(opts);
+  } catch (err) {
+    if (!opts.schema || !/\b400\b|INVALID_ARGUMENT/.test(String(err?.message || ""))) throw err;
+    console.warn(`[studio] ${opts.label}: the response schema was refused (${String(err.message).slice(0, 80)}); asking without it`);
+    return ask({ ...opts, schema: null });
+  }
+}
+
+/** Where on a frame (a JPEG on disk) the described thing is. */
+export async function findOnFrame(file, description, { ask = generateJson } = {}) {
+  const data = await fsp.readFile(file);
+  const parts = [{ text: FRAME_FINDER(str(description, 300)) }, { inlineData: { mimeType: "image/jpeg", data: data.toString("base64") } }];
+  const res = await askJson(ask, { model: MODEL.vision, parts, maxOutputTokens: 1024, schema: FIND_SCHEMA, label: "command find" });
+  const j = res.json || {};
+  const matches = (Array.isArray(j.matches) ? j.matches : [])
+    .map((m) => ({ box: fromBox2d(m?.box_2d), label: str(m?.label, 60), confidence: clamp(num(m?.confidence, 0.5), 0, 1) }))
+    .filter((m) => m.box && m.confidence >= MIN_FOUND)
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 3);
+  return { matches: j.found === false ? [] : matches, usd: num(res.usd) };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
    Asking the model what the sentence means
    ──────────────────────────────────────────────────────────────────────────── */
 
@@ -449,18 +633,20 @@ Only these rewrites are allowed:
 "length": how long, only when they said it: "for 5 seconds" → "5s". Otherwise "".
 
 WHAT
-"things": ids from THINGS ON SCREEN that the creator named, best match first, at most 5. Match by meaning as well as spelling: "the projects tab in the sidebar" is a nav_item "Projects" at the left. Empty when nothing in the list is what they named. Never invent an id.
+"things": ids from THINGS ON SCREEN that the creator clearly named, best match first, at most 5. Match by meaning as well as spelling: "the projects tab in the sidebar" is a nav_item "Projects" at the left. Empty when nothing in the list is plainly what they mean, and empty when they describe something by how it looks (a picture, a photo, an icon, a colour, a section, text inside an image) rather than by a control's name. Never invent an id.
+"look_for": whenever the creator names or describes a thing on screen, describe it here so it can be found by looking at the frame: in English, in their words, short, keeping any text they quoted exactly. "the girl image on the left with a play button, where the text says 'Be the next solo flier'". "the Install now button". "" when they did not name or describe a thing.
 "clicks": ids from CLICKS, only when they tie the zoom to a click: "when I click Projects", "on the Billing click". Otherwise empty.
 "zooms": ids from ZOOMS ON THE TIMELINE that the creator pointed at by what the zoom is on or by its order: "the zoom on Pricing", "the second zoom", "the last one". When they point at a zoom by time instead, leave this empty and use "time".
 "named": the words the creator used for a thing on screen, like "Projects button". "" when they did not name a thing ("zoom here", "zoom at 0:12", "remove this zoom").
 "level": how strong, only when they said it: "2x" → 2, "zoom in a lot" → 2.4, "a little" → 1.4. Otherwise 0.
 
 EXAMPLES
-"zoom in on projects"                   → add_zoom, time none, things [the Projects item]
+"zoom in on projects"                   → add_zoom, time none, things [the Projects item], look_for "Projects"
 "add zoom from 0.5 to 1.25"             → add_zoom, range, start "0.5", end "1.25"
 "zoom here for 4 sec"                   → add_zoom, playhead, length "4s"
 "billing pe click ho tab zoom karo"     → add_zoom, time none, clicks [the click on Billing]
-"zoom on the search bar at 0:20"        → add_zoom, moment, at "0:20", things [the search field]
+"zoom on the search bar at 0:20"        → add_zoom, moment, at "0:20", things [the search field], look_for "the search bar"
+"zoom on the photo with the play icon"  → add_zoom, time none, things [], look_for "the photo with the play icon"
 "remove this zoom"                      → remove_zoom, selected
 "delete zooms in the first 10 seconds"  → remove_zoom, range, start "0", end "10s"
 "remove the zoom on pricing"            → remove_zoom, zooms [the zoom on Pricing]
@@ -489,11 +675,12 @@ const COMMAND_SCHEMA = {
     clicks: { type: "ARRAY", maxItems: 5, items: { type: "STRING" } },
     zooms: { type: "ARRAY", maxItems: 40, items: { type: "STRING" } },
     named: { type: "STRING" },
+    look_for: { type: "STRING" },
     level: { type: "NUMBER" },
     answer: { type: "STRING" },
   },
-  required: ["action", "time", "length", "things", "clicks", "zooms", "named", "level", "answer"],
-  propertyOrdering: ["action", "time", "length", "things", "clicks", "zooms", "named", "level", "answer"],
+  required: ["action", "time", "length", "things", "clicks", "zooms", "named", "look_for", "level", "answer"],
+  propertyOrdering: ["action", "time", "length", "things", "clicks", "zooms", "named", "look_for", "level", "answer"],
 };
 
 /** The lists, as the model reads them, with the short ids it answers in. */
@@ -559,16 +746,7 @@ export function describe(ctx, history = []) {
 export async function readCommand(text, ctx, history = [], { ask = generateJson } = {}) {
   const d = describe(ctx, history);
   const parts = [{ text: `${COMMAND_READER}\n\n${d.text}\n\nTHE CREATOR'S MESSAGE\n${JSON.stringify(str(text, MAX_TEXT))}` }];
-  let res;
-  try {
-    res = await ask({ model: TEXT_MODEL, parts, maxOutputTokens: 1024, schema: COMMAND_SCHEMA, label: "command" });
-  } catch (err) {
-    // The service's schema limits are unwritten (see vision.js ask). A refused
-    // schema is asked once more without it: the prompt still says the shape.
-    if (!/\b400\b|INVALID_ARGUMENT/.test(String(err?.message || ""))) throw err;
-    console.warn(`[studio] command: the response schema was refused (${String(err.message).slice(0, 80)}); asking without it`);
-    res = await ask({ model: TEXT_MODEL, parts, maxOutputTokens: 1024, label: "command" });
-  }
+  const res = await askJson(ask, { model: TEXT_MODEL, parts, maxOutputTokens: 1024, schema: COMMAND_SCHEMA, label: "command" });
   const j = res.json || {};
   const pick = (ids, map) => [...new Set((Array.isArray(ids) ? ids : []).map((id) => map.get(String(id).trim())).filter((v) => v != null))];
   const intent = cleanIntent({
@@ -579,6 +757,7 @@ export async function readCommand(text, ctx, history = [], { ask = generateJson 
     clickTimes: pick(j.clicks, d.clickIds),
     zoomIds: pick(j.zooms, d.zoomIds),
     named: j.named,
+    lookFor: j.look_for,
     level: j.level,
     answer: j.answer,
   });
@@ -586,6 +765,15 @@ export async function readCommand(text, ctx, history = [], { ask = generateJson 
 }
 
 const ACTIONS = ["add_zoom", "remove_zoom", "undo", "unsupported", "unclear"];
+
+function cleanBox(b) {
+  if (!b || typeof b !== "object") return null;
+  const x = clamp(num(b.x, NaN), 0, 1);
+  const y = clamp(num(b.y, NaN), 0, 1);
+  const w = clamp(num(b.w, NaN), 0, 1 - x);
+  const h = clamp(num(b.h, NaN), 0, 1 - y);
+  return [x, y, w, h].every(Number.isFinite) && w > 0.004 && h > 0.004 ? { x, y, w, h } : null;
+}
 const KINDS = ["none", "playhead", "moment", "range", "selected", "all"];
 
 /** An intent from the model or from a button, held to its shape. */
@@ -605,6 +793,12 @@ export function cleanIntent(i = {}) {
     clickTimes: list(i?.clickTimes, 5, (v) => Number(v)),
     zoomIds: list(i?.zoomIds, 40, (v) => str(v, 32)),
     named: str(i?.named, 80),
+    // How to find it by looking, when the readings have no name for it.
+    lookFor: str(i?.lookFor, 300),
+    // A place already found on a frame: a button offering another of the
+    // matches the model saw there, so picking it needs no second look.
+    box: cleanBox(i?.box),
+    boxLabel: str(i?.boxLabel, 60),
     level: clamp(num(i?.level), 0, 10),
     answer: str(i?.answer, 240),
     // Zooms to take off before this one goes on: the zoom a previous answer
@@ -629,7 +823,7 @@ const ask = (reply, choices) => ({ kind: "ask", reply, choices });
  *   choices?: {label: string, intent: object}[]
  * }}
  */
-export function resolve(intent, ctx) {
+export async function resolve(intent, ctx) {
   if (intent.action === "undo") return { kind: "undo", reply: "" };
   if (intent.action === "unsupported") {
     return info(`For now I can add and remove zooms.${intent.answer ? ` ${intent.answer}` : ""}`);
@@ -648,13 +842,23 @@ function badTime(what) {
   return info(`I couldn't read the time “${what}”. Try it like 0:12, 12s or 1 min 5 s.`);
 }
 
+/** What to call a thing in a reply and on the zoom: the creator's words when they are short, else what was found. */
+function nameFor(intent, found) {
+  const own = intent.named;
+  if (own && own.length <= 40) return own;
+  return found || own.slice(0, 40) || "it";
+}
+
 /* ── Add ─────────────────────────────────────────────────────────────────── */
 
-function addZoom(intent, ctx) {
+async function addZoom(intent, ctx) {
   const { total, playhead } = ctx;
   const level = intent.level ? clamp(intent.level, LEVEL_MIN, LEVEL_MAX) : DEFAULT_LEVEL;
   const things = intent.thingKeys.map((k) => ctx.thingByKey.get(k)).filter(Boolean);
   const named = intent.named || things[0]?.label || "";
+  // What to look for on the frame when the readings have no name for it.
+  const lookFor = intent.lookFor || intent.named;
+  const canLook = !!(lookFor && ctx.look);
   let length = null;
   if (intent.length) {
     length = readLength(intent.length);
@@ -662,8 +866,8 @@ function addZoom(intent, ctx) {
   }
   const span = length ?? DEFAULT_LENGTH;
 
-  // A thing was named and none of the list matched: say so rather than guess.
-  if (!things.length && !intent.clickTimes.length && intent.named) {
+  // Named, nothing in the readings matched, and no way to look: say so.
+  if (!things.length && !intent.clickTimes.length && !intent.box && intent.named && !canLook) {
     return info(notFound(intent.named, ctx));
   }
 
@@ -703,7 +907,7 @@ function addZoom(intent, ctx) {
       const c = clicks[0];
       win = clickWindow(c, span, total);
       for (const o of clicks.slice(1, 4)) alts.push({ label: `Use the click at ${fmt(o.out)}`, change: { clickTimes: [o.t], time: { kind: "none" } } });
-    } else if (things.length) {
+    } else if (things.length && !intent.box) {
       const pickd = momentFor(things[0], ctx);
       if (pickd.click) win = clickWindow(pickd.click, span, total);
       else win = { s: pickd.at, e: pickd.at + span, anchor: pickd.at, why: pickd.why };
@@ -715,6 +919,7 @@ function addZoom(intent, ctx) {
 
   win.s = clamp(win.s, 0, total);
   win.e = clamp(win.e, 0, total);
+  win.anchor = clamp(win.anchor, 0, total);
   if (win.e - win.s < MIN_LENGTH) {
     if (win.s >= total - MIN_LENGTH) return info(`That's the very end of the video (${fmt(total)}), so there's no room for a zoom there.`);
     return info("That's too short for a zoom. Give it at least half a second.");
@@ -725,17 +930,25 @@ function addZoom(intent, ctx) {
   let point = null;
   let label = "";
   let where = "";
+  let lookedAt = null; // the output time of the frame that was looked at
   const clickThing = win.click?.thing;
-  const thing = clickThing || things[0] || null;
+  const thing = intent.box ? null : clickThing || things[0] || null;
 
-  if (thing) {
+  if (intent.box) {
+    // A place already found on a frame, from a button: the other match it
+    // offered, so it goes by what was found there, not by the creator's words
+    // (which described the first).
+    box = intent.box;
+    label = intent.boxLabel || nameFor(intent, "");
+    where = "seen";
+  } else if (thing) {
     const at = win.click ? win.click.out : win.anchor + SETTLE;
     const r = nearest(thing, at, ctx.tol) || (win.why === "range" ? firstIn(thing, win.s, win.e) : null);
     if (r) {
       box = r.box;
       label = thing.label || thing.type.replace(/_/g, " ");
       where = "thing";
-    } else if (!win.click) {
+    } else if (!win.click && !canLook) {
       // Named, found, and not on screen at the time asked for.
       return info(
         `“${thing.label || named}” isn't on screen at ${fmt(win.anchor)}. It is on screen ${spansText(thing)}.`,
@@ -743,6 +956,32 @@ function addZoom(intent, ctx) {
       );
     }
   }
+
+  // The readings have nothing for it at this moment: look at the frame.
+  if (!box && !win.click && canLook) {
+    const at = win.anchor;
+    const seen = await ctx.look(at, lookFor);
+    if (seen.error) {
+      return info(`I couldn't look at the video just now, so I can't find “${nameFor(intent, "")}”. Try again in a moment.`);
+    }
+    if (!seen.matches.length) {
+      const when = win.why === "playhead" ? `at the playhead (${fmt(at)})` : `at ${fmt(at)}`;
+      const next =
+        win.why === "playhead"
+          ? "Move the playhead to a moment where it's on screen and ask again, or tell me the time it appears."
+          : "If it's on screen at another moment, tell me that time, or move the playhead there and say “zoom here on it”.";
+      return info(`I looked at the frame ${when} and couldn't find “${nameFor(intent, "")}” there. ${next}`);
+    }
+    const [best, ...others] = seen.matches;
+    box = best.box;
+    label = nameFor(intent, best.label);
+    where = "seen";
+    lookedAt = at;
+    for (const o of others) {
+      alts.push({ label: `Use: ${o.label || "the other match"}`, change: { box: o.box, boxLabel: o.label } });
+    }
+  }
+
   if (!box && win.click) {
     point = { x: win.click.x, y: win.click.y };
     label = win.click.label;
@@ -759,43 +998,81 @@ function addZoom(intent, ctx) {
     }
   }
 
-  const rect = box ? containingBox([box], level) : containing([point], level);
-  const effective = 1 / Math.max(0.01, rect.w);
-  // Only a thing can be too big to zoom on; a point is framed at the level asked.
+  let rect = box ? containingBox([box], level) : containing([point], level);
+  let effective = 1 / Math.max(0.01, rect.w);
+  let cropped = false;
+  // Too big to hold whole in a zoomed frame: zoom on its middle and crop its edges.
   if (box && effective < MIN_EFFECTIVE) {
-    return info(
-      `“${label || named}” takes up most of the screen, so zooming in would crop it. Try naming something inside it.`
-    );
+    const lv = intent.level ? level : CROP_LEVEL;
+    rect = containing([{ x: box.x + box.w / 2, y: box.y + box.h / 2 }], lv);
+    effective = 1 / Math.max(0.01, rect.w);
+    cropped = true;
   }
 
-  // ── Room: nothing else may cover the same moment ──────────────────────────
+  // ── Room: every zoom ends in time for the camera to pull out ──────────────
+  // Two zooms closer than zoomOutGap play as one long move (camera.mjs), so
+  // this one ends before the next begins, and an earlier one that runs into it
+  // is cut back to end before it begins. Only what the creator's own stretch
+  // of time covers is replaced; the next zoom is kept, not swallowed.
   const sStart = round3(toSource(win.s, ctx.lay));
-  const sEnd = round3(toSource(win.e, ctx.lay));
+  let sEnd = round3(toSource(win.e, ctx.lay));
+  const ours = { easing: "smooth" };
+  const explicitEnd = win.why === "range" || length != null;
   const replace = new Set(intent.replace);
   const remove = [...replace].filter((id) => ctx.zooms.some((z) => z.id === id));
   const trim = [];
   const replaced = [];
-  let shortened = null;
-  for (const z of ctx.zooms) {
-    if (replace.has(z.id)) continue;
-    if (!(z.start < sEnd && z.end > sStart)) continue;
-    if (z.start < sStart && sStart - z.start >= MIN_KEEP) {
-      trim.push({ id: z.id, end: sStart });
-      shortened = z;
+  let shortened = null; // { z, end }: an earlier zoom, cut back
+  let stoppedFor = null; // the next zoom this one now ends before
+  const others = ctx.zooms.filter((z) => !replace.has(z.id));
+
+  for (const z of others) {
+    if (!(z.start < sStart && z.end > sStart)) continue;
+    const cut = round3(sStart - zoomOutGap(z, ours));
+    if (cut - z.start >= MIN_KEEP) {
+      trim.push({ id: z.id, end: cut });
+      shortened = { z, end: cut };
     } else {
       remove.push(z.id);
       replaced.push(z);
     }
   }
+  for (const z of others.filter((o) => o.start >= sStart).sort((a, b) => a.start - b.start)) {
+    const g = zoomOutGap(ours, z);
+    if (z.start >= sEnd + g) break;
+    // Wholly inside a stretch the creator gave: that stretch is one zoom.
+    if (explicitEnd && z.end <= sEnd + 1e-6) {
+      remove.push(z.id);
+      replaced.push(z);
+      continue;
+    }
+    const fit = round3(z.start - g);
+    if (fit - sStart >= MIN_OWN) {
+      sEnd = Math.min(sEnd, fit);
+      stoppedFor = z;
+      break;
+    }
+    // No room to end before it. If it starts inside this one, this one takes
+    // its place; if it starts just after, the camera goes straight from one to
+    // the other, which is the best two zooms that close can do.
+    if (z.start < sEnd) {
+      remove.push(z.id);
+      replaced.push(z);
+      continue;
+    }
+    break;
+  }
+  if (stoppedFor) win.e = toOutputSnapped(sEnd, ctx.lay);
 
+  const onThing = where === "thing" || where === "click" || where === "seen";
   const zoom = {
     id: newId("z"),
     start: sStart,
     end: sEnd,
     x: rect.x, y: rect.y, w: rect.w, h: rect.h,
-    level: round3(level),
+    level: round3(cropped ? Math.min(level, effective) : level),
     easing: "smooth",
-    camera: where === "thing" || where === "click" ? "element" : "region",
+    camera: onThing ? "element" : "region",
     follow: false,
     follow_strength: 0.7,
     label: str(label, 80),
@@ -806,18 +1083,21 @@ function addZoom(intent, ctx) {
   // ── What to say ───────────────────────────────────────────────────────────
   const shown = Math.min(level, effective);
   let reply = `Added a ${fmtLevel(shown)} zoom`;
-  if (where === "thing" || where === "click") reply += ` on “${zoom.label || named || "what you clicked"}”`;
+  if (onThing) reply += ` on “${zoom.label || named || "what you clicked"}”`;
   reply += ` from ${fmt(win.s)} to ${fmt(win.e)}`;
   if (win.click) reply += ", when you clicked it";
   else if (win.why === "playhead") reply += ", at the playhead";
   else if (win.why === "seen") reply += ", when it first appears";
   reply += ".";
+  if (lookedAt != null) reply += ` I found it by looking at the frame at ${fmt(lookedAt)}. If the rectangle on the preview isn't on it, drag it there or describe it differently.`;
   if (where === "pointer") reply += ` It's centred on where the pointer was at ${fmt(win.anchor)}. Drag the rectangle on the preview to move it.`;
   if (where === "centre") reply += " It's centred on the middle of the screen, because I couldn't see the pointer then. Drag the rectangle on the preview to move it.";
-  if (effective < level - 0.05) reply += ` That's as close as it can get while keeping all of “${zoom.label}” in view.`;
+  if (cropped) reply += ` “${zoom.label}” is bigger than a zoomed-in view can hold, so this zooms on its middle and crops its edges.`;
+  else if (effective < level - 0.05) reply += ` That's as close as it can get while keeping all of “${zoom.label}” in view.`;
+  if (stoppedFor) reply += ` It ends there so the camera can pull out before the next zoom, at ${fmt(stoppedFor.outStart)}.`;
   if (replaced.length === 1) reply += ` It replaces the zoom that was at ${fmt(replaced[0].outStart)}.`;
   if (replaced.length > 1) reply += ` It replaces ${replaced.length} zooms that were inside that time.`;
-  if (shortened) reply += ` The zoom before it now ends at ${fmt(win.s)}.`;
+  if (shortened) reply += ` The zoom before it now ends at ${fmt(toOutputSnapped(shortened.end, ctx.lay))}, so the camera pulls out in between.`;
 
   const choices = alts.slice(0, 3).map((a) => choice(a.label, intent, { ...a.change, replace: [zoom.id] }));
 
@@ -898,11 +1178,12 @@ function momentChoices(th, intent, ctx) {
   return out.slice(0, 3);
 }
 
-function notFound(named, ctx) {
-  if (!ctx.read) {
-    return `This recording's screens haven't been read, so I can't find “${named}” by name. Give me a time instead, like “zoom at 0:12”, or move the playhead there and say “zoom here”.`;
-  }
-  return `I couldn't find “${named}” in this recording. I read one frame every ${Number(ctx.every.toFixed(1))} seconds, so something small or brief can be missed. Move the playhead to where it is and say “zoom here”, or give me a time.`;
+/**
+ * Only when there is nothing to look at: the recording's file is gone. With a
+ * file, a name the readings do not have is looked for on the frame instead.
+ */
+function notFound(named) {
+  return `I couldn't find “${named}”, and this recording's video file isn't available for me to look at. Move the playhead to it and say “zoom here”, then drag the rectangle on the preview onto it.`;
 }
 
 function outside(start, end, total) {
@@ -969,7 +1250,9 @@ function removeZoom(intent, ctx) {
     pick = things.length
       ? [...new Set(things.flatMap((th) => zoomsOn(th, zooms, ctx.tol)))]
       : zooms.filter((z) => z.label && norm(z.label).includes(norm(name)));
-    if (!pick.length) return info(`I couldn't find a zoom on “${name}”.`);
+    if (!pick.length) {
+      return info(`I couldn't tell which zoom is on “${name}”. Click that zoom on the timeline and say “remove this zoom”, or tell me its time.`);
+    }
   } else {
     // This one: the selected zoom, the one at a time, or the one at the playhead.
     if ((kind === "selected" || kind === "none") && ctx.selected) {
@@ -1018,12 +1301,48 @@ function removeZoom(intent, ctx) {
  * @param {object} o.demo
  * @param {object} o.body   the request: { text | intent, playhead, selected, zooms, cuts, history }
  */
-export async function runCommand({ demo, body, ask }) {
+export async function runCommand({ demo, body, ask, look, onStatus }) {
   const cid = newId("cmd");
   const ctx = commandContext(demo, body);
   const text = str(body?.text, MAX_TEXT);
+  const status = (s) => {
+    try {
+      onStatus?.(s);
+    } catch {
+      /* a status line is never worth failing the command over */
+    }
+  };
   let intent;
   let usd = 0;
+  let looked = "";
+
+  /**
+   * Looking at a frame: read it from the recording, ask where the described
+   * thing is, and delete the frame. Output time in, matches out; an error is
+   * an answer ({ error: true }) rather than a throw, so the reply can say the
+   * look failed instead of that the thing is not there.
+   */
+  const recordingThere = !!(demo.recording?.mp4_key && !demo.purged);
+  ctx.look = look || (recordingThere
+    ? async (outT, description) => {
+        status(`Looking at the frame at ${fmt(outT)}…`);
+        let file = null;
+        try {
+          file = await frameAt(demo, toSource(outT, ctx.lay));
+          const r = await findOnFrame(file, description, ask ? { ask } : {});
+          usd += r.usd;
+          looked = ` looked at ${fmt(outT)}: ${r.matches.length ? r.matches.map((m) => `"${m.label}" ${m.confidence.toFixed(2)}`).join(", ") : "nothing"};`;
+          return r;
+        } catch (err) {
+          console.warn(`[studio] command ${cid} on ${demo._id}: looking at ${fmt(outT)} failed: ${String(err?.message).slice(0, 200)}`);
+          looked = ` looking at ${fmt(outT)} failed;`;
+          return { error: true, matches: [] };
+        } finally {
+          if (file) fsp.rm(file, { force: true }).catch(() => {});
+        }
+      }
+    : null);
+
   if (body?.intent && typeof body.intent === "object") {
     intent = cleanIntent(body.intent);
   } else {
@@ -1037,15 +1356,18 @@ export async function runCommand({ demo, body, ask }) {
     }
   }
 
-  const out = resolve(intent, ctx);
+  const out = await resolve(intent, ctx);
   console.log(
     `[studio] command ${cid} on ${demo._id}: ${body?.intent ? "(button)" : JSON.stringify(text)} → ${intent.action}/${intent.time.kind}` +
       `${intent.thingKeys.length ? ` things=${intent.thingKeys.length}` : ""}${intent.clickTimes.length ? ` clicks=${intent.clickTimes.length}` : ""}` +
-      `${intent.zoomIds.length ? ` zooms=${intent.zoomIds.length}` : ""} → ${out.kind}` +
+      `${intent.zoomIds.length ? ` zooms=${intent.zoomIds.length}` : ""}${intent.lookFor ? ` look_for=${JSON.stringify(intent.lookFor)}` : ""} →${looked} ${out.kind}` +
       `${out.ops ? ` +${out.ops.add.length} -${out.ops.remove.length} ~${out.ops.trim.length}` : ""}` +
       `${usd ? ` $${usd.toFixed(5)}` : ""}: ${out.reply}`
   );
   return { cid, ...out };
 }
 
-export default { runCommand, resolve, readCommand, commandContext, cleanIntent, readTime, readRange, readMoment, readLength, fmt };
+export default {
+  runCommand, resolve, readCommand, commandContext, cleanIntent, readTime, readRange, readMoment, readLength, fmt,
+  frameAt, findOnFrame, fromBox2d,
+};

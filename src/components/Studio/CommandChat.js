@@ -22,6 +22,7 @@
  * edit() as everything else, so it autosaves and Ctrl+Z undoes it too.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { onLiveEvent } from "../../realtime/socket";
 import { sendCommand, commandUndone } from "./studioApi";
 import { Drawer, Icon } from "./ui";
 import { fmtTime } from "./model";
@@ -37,6 +38,10 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  // What the server says it is doing for the message in flight: "Looking at
+  // the frame at 0:15.7…". Sent over the live channel with the message's own id.
+  const [status, setStatus] = useState("");
+  const pending = useRef("");
   const inputRef = useRef(null);
   const endRef = useRef(null);
   const fabRef = useRef(null);
@@ -68,7 +73,15 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
   useEffect(() => {
     const body = endRef.current?.closest(".st-drawer-body");
     if (body) body.scrollTop = body.scrollHeight;
-  }, [messages, busy, open]);
+  }, [messages, busy, status, open]);
+
+  useEffect(
+    () =>
+      onLiveEvent("studio:update", (e) => {
+        if (e?.command?.rid && e.command.rid === pending.current) setStatus(String(e.command.status || ""));
+      }),
+    []
+  );
 
   // The box grows with what is typed, up to a few lines.
   useEffect(() => {
@@ -98,13 +111,19 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
         .slice(-HISTORY)
         .map((m) => ({ role: m.role, text: m.text }));
       push({ role: "user", text: shown || text });
+      const rid = `${nextId()}-${Math.random().toString(36).slice(2, 10)}`;
+      pending.current = rid;
+      setStatus("");
       setBusy(true);
       try {
         const res = await sendCommand(demoId, {
           ...(intent ? { intent } : { text }),
+          rid,
           playhead: t,
           selected: sel?.kind === "zoom" ? sel.id : null,
-          zooms: (cur.zooms || []).map(({ id, start, end, x, y, w, h, level, label, auto }) => ({ id, start, end, x, y, w, h, level, label, auto })),
+          zooms: (cur.zooms || []).map(({ id, start, end, x, y, w, h, level, label, auto, easing, ease_out, ramp_in, ramp_out }) => ({
+            id, start, end, x, y, w, h, level, label, auto, easing, ease_out, ramp_in, ramp_out,
+          })),
           cuts: (cur.cuts || []).map(({ start, end }) => ({ start, end })),
           history,
         });
@@ -141,6 +160,8 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
           text: err?.response?.data?.message || "I couldn't reach the server. Check your connection and try again.",
         });
       } finally {
+        pending.current = "";
+        setStatus("");
         setBusy(false);
       }
     },
@@ -229,7 +250,10 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
         <div className="st-chat-log">
           {!messages.length && (
             <div className="st-chat-intro">
-              <p>Tell me what to change and I'll make the edit on the timeline. Anything I do can be undone.</p>
+              <p>
+                Tell me what to change and I'll make the edit on the timeline. Name a button, or describe what you see, like “the image
+                with the play button”. Anything I do can be undone.
+              </p>
               <div className="st-chat-examples" aria-label="Examples">
                 {examples.map((e) => (
                   <button
@@ -280,10 +304,13 @@ export default function CommandChat({ demoId, tl, time, total, selection, onAppl
           })}
 
           {busy && (
-            <div className="st-chat-msg is-app st-chat-typing" role="status" aria-label="Working">
-              <i />
-              <i />
-              <i />
+            <div className="st-chat-msg is-app st-chat-working" role="status" aria-label={status || "Working"}>
+              <span className="st-chat-typing" aria-hidden>
+                <i />
+                <i />
+                <i />
+              </span>
+              {status && <span className="st-chat-status">{status}</span>}
             </div>
           )}
           <div ref={endRef} aria-hidden />

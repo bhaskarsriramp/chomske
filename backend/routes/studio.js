@@ -959,6 +959,7 @@ router.post("/demos/:id/suggestions/:sid", wrap(async (req, res) => {
  * POST /studio/demos/:id/command
  *   { text } or { intent }   a message, or a button from an earlier answer
  *   { playhead, selected, zooms, cuts, history }   what the editor has now
+ *   { rid }   the browser's id for this message, for the live "Looking at…" status
  *
  * Answers with the edit to make, and the editor makes it through the same
  * edit() every other change goes through, so it autosaves, undoes and
@@ -975,7 +976,12 @@ router.post("/demos/:id/command", wrap(async (req, res) => {
   const text = String(req.body?.text || "").trim();
   if (!text && !(req.body?.intent && typeof req.body.intent === "object")) return fail(res, 400, "Type what you'd like to change.");
   if (text.length > 400) return fail(res, 400, "That message is too long. Keep it under 400 characters.");
-  res.json({ success: true, ...(await runCommand({ demo, body: req.body })) });
+  // What it is doing while the creator waits ("Looking at the frame at
+  // 0:15.7…"), over the live channel, tagged with the browser's own id for
+  // this message so the right message shows it.
+  const rid = String(req.body?.rid || "").slice(0, 40);
+  const onStatus = rid ? (status) => publishProgress(demo, { command: { rid, status } }) : null;
+  res.json({ success: true, ...(await runCommand({ demo, body: req.body, onStatus })) });
 }));
 
 /** The creator undid an edit the chat made: logged beside the command, as how often it was wrong. */

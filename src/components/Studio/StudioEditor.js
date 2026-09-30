@@ -307,6 +307,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         if (e.notice) setNotice(e.notice);
         return;
       }
+      // What the chat is doing while it works ("Looking at the frame…"): the
+      // chat reads it itself (CommandChat.js); nothing in the demo changed.
+      if (e.command) return;
       // The voiceover being made: its progress, without reading the demo again.
       // Only for the one asked for last; an older one still finishing is not it.
       if (e.voicing) {

@@ -10,12 +10,38 @@
  * optional: without one, each kind gets the length its panel always gave it.
  */
 import { newId, clamp } from "./model";
+import { zoomOutGap } from "./camera.mjs";
 
 /** How long each kind runs when nobody has said, in seconds. Infinity is "to the end". */
 export const DEFAULT_LENGTH = { zoom: 2.5, blur: Infinity, cue: 1.8 };
 
 /** How much room each kind needs before it is worth making. */
 export const MIN_LENGTH = { zoom: 0.4, blur: 0.4, cue: 0.4 };
+
+/**
+ * Shorter than this, a zoom ended early for the next one is not worth having
+ * on its own, and it runs up to the next one instead.
+ */
+const MIN_OWN = 0.8;
+
+/**
+ * A new zoom's end, brought in so the camera pulls all the way out before the
+ * next zoom starts (camera.mjs zoomOutGap). Clicking the lane just before a
+ * zoom used to make one that ended exactly where the next began, and Add made
+ * one that ran into it and was cut back to the same place on save: either way
+ * the camera slid from one into the other and the two played as one long zoom.
+ */
+export function fitBeforeNext(item, zooms) {
+  const next = (zooms || [])
+    .filter((z) => z.id !== item.id && z.start > item.start + 0.01)
+    .sort((a, b) => a.start - b.start)[0];
+  if (!next) return item.end;
+  const fit = next.start - zoomOutGap(item, next);
+  if (item.end <= fit) return item.end;
+  if (fit - item.start >= MIN_OWN) return Math.round(fit * 1000) / 1000;
+  // No room to pull out first: stop at it rather than run into it.
+  return Math.min(item.end, next.start);
+}
 
 /**
  * @returns {{ item: object, patch: object, label: string }} the new item, the
@@ -40,6 +66,7 @@ export function create(kind, tl, start, end) {
       label: "",
       auto: false,
     };
+    item.end = fitBeforeNext(item, tl.zooms);
     return { item, patch: { zooms: [...(tl.zooms || []), item] }, label: "Add zoom" };
   }
 

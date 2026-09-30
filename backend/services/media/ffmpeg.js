@@ -363,7 +363,10 @@ export async function extractFrames(src, destDir, { every = 2, start = 0, durati
  * model about ONE thing in a busy frame without describing where it is.
  * `crop` cuts a region out (also in source pixels) for a close-up.
  */
-export async function extractFrameAt(src, dest, at, { longEdge = 1280, mark = null, crop = null } = {}) {
+export async function extractFrameAt(src, dest, at, { longEdge = 1280, mark = null, crop = null, timeoutMs } = {}) {
+  // A time limit for readers that are waiting on the answer (the editor's chat
+  // reads a frame straight from a bucket link); jobs keep ffmpeg's own.
+  const run = timeoutMs ? { timeoutMs } : {};
   const box = mark
     ? `drawbox=x=${Math.round(mark.x)}:y=${Math.round(mark.y)}:w=${Math.round(mark.w)}:h=${Math.round(mark.h)}:color=magenta:t=${mark.t || 5},`
     : "";
@@ -395,7 +398,7 @@ export async function extractFrameAt(src, dest, at, { longEdge = 1280, mark = nu
       "-an", "-vf", vf,
       "-q:v", "3", "-update", "1",
       dest,
-    ]).then(() => true, () => false);
+    ], run).then(() => true, () => false);
     const size = ok ? await fsp.stat(dest).then((s) => s.size, () => 0) : 0;
     if (size > 0) return;
     if (from === 0) break;
@@ -407,7 +410,7 @@ export async function extractFrameAt(src, dest, at, { longEdge = 1280, mark = nu
     "-vf", vf,
     "-q:v", "3",
     dest,
-  ]);
+  ], run);
 }
 
 /**

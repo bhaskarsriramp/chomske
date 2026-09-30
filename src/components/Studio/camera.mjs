@@ -466,6 +466,25 @@ export function rampsOf(z) {
 }
 
 /**
+ * How long before zoom `b` starts zoom `a` must end for the camera to pull all
+ * the way out between them: a's ramp out, then b's ramp in.
+ *
+ * ── CLOSER THAN THIS, TWO ZOOMS ARE ONE MOVE ─────────────────────────────────
+ * cameraAt starts b's ramp from wherever a has the camera, so a zoom that ends
+ * less than this before the next one starts never gets back to the whole
+ * picture: the camera slides from one to the other and the pair reads as one
+ * long zoom. That is what the analysis wants for presses close together
+ * (events.js zoomsFromClicks). It is not what a creator wants from a zoom they
+ * ADD: one was added from the chat, ran into the automatic zoom after it, and
+ * "the entire zoom in is staying till the end of the next zoom". So a zoom
+ * that is added is ended this long before the next one (create.js, and
+ * backend command.js), and the camera visibly pulls out in between.
+ */
+export function zoomOutGap(a, b) {
+  return rampsOf(a).out + rampsOf(b).in + 0.05;
+}
+
+/**
  * The rect one zoom is holding at time t.
  *
  * A following zoom re-centres on the pointer as it moves, which is what makes a
