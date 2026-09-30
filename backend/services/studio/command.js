@@ -636,12 +636,16 @@ export async function findOnFrame(file, description, { ask = generateJson } = {}
   const parts = [{ text: FRAME_FINDER(str(description, 300)) }, { inlineData: { mimeType: "image/jpeg", data: data.toString("base64") } }];
   const res = await askJson(ask, { model: MODEL.vision, parts, maxOutputTokens: 1024, schema: FIND_SCHEMA, label: "command find" });
   const j = res.json || {};
-  const matches = (Array.isArray(j.matches) ? j.matches : [])
-    .map((m) => ({ box: fromBox2d(m?.box_2d), label: str(m?.label, 60), confidence: clamp(num(m?.confidence, 0.5), 0, 1) }))
-    .filter((m) => m.box && m.confidence >= MIN_FOUND)
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 3);
-  return { matches: j.found === false ? [] : matches, usd: num(res.usd) };
+  const all = (Array.isArray(j.matches) ? j.matches : []).map((m) => ({
+    box: fromBox2d(m?.box_2d),
+    label: str(m?.label, 60),
+    confidence: clamp(num(m?.confidence, 0.5), 0, 1),
+  }));
+  const matches =
+    j.found === false
+      ? []
+      : all.filter((m) => m.box && m.confidence >= MIN_FOUND).sort((a, b) => b.confidence - a.confidence).slice(0, 3);
+  return { matches, usd: num(res.usd), dropped: all.length - matches.length, raw: redact(j) };
 }
 
 /* ── Finding what to blur ─────────────────────────────────────────────────── */
@@ -656,15 +660,17 @@ export async function findOnFrame(file, description, { ask = generateJson } = {}
 const BLUR_PAD_X = 0.012;
 const BLUR_PAD_Y = 0.01;
 
-const SECRET_RULES = `- Each separate occurrence is its own box: two email addresses are two boxes; an email and an API key are two boxes.
+const SECRET_RULES = `- They decide what to hide. It may be a secret, or just a button label, a heading, a name or a logo they do not want shown. Do not judge whether it is sensitive: find exactly what they described.
+- Each separate occurrence is its own box: two email addresses are two boxes; an email and an API key are two boxes.
 - One box per run of text on one line. Never one box around several lines, a whole row or a whole panel, unless what they described IS an image, a photo, a face or a panel.
 - Only what they described: the key, not the "API key:" label beside it; the address, not the whole menu.
 - The box must include every character, the first and the last. Slightly too big is safe; cutting off a character is not.
 - Do not return lookalikes: a placeholder like "your-api-key-here" or "user@example.com" is not a secret unless they asked for it.
 
 "box_2d" is [ymin, xmin, ymax, xmax], normalized to 0-1000.
-"label" names what it is in two or three words, like "account email" or "Stripe API key". Never repeat the secret itself.
-"confidence" is how sure you are, from 0 to 1, that this is something they asked to hide.`;
+"label" names what it is in two or three words, like "account email", "Stripe API key" or "Open Editor button". Never repeat a secret itself.
+"tail" is the last 3 characters of the text in the box, exactly as shown, so the same text can be told apart from different text in the same place on another frame. "" for a picture, a face or text too small to read.
+"confidence" is how sure you are, from 0 to 1, that this is what they described. Not whether it is sensitive: they have already decided that.`;
 
 export const SECRET_FINDER = (description) => `This is one frame of a screen recording that is about to be published. The person who made it wants something on screen hidden, and described it in their own words:
 
@@ -675,20 +681,6 @@ ${SECRET_RULES}
 
 Return ONLY valid JSON matching the schema.`;
 
-/** The same question asked of several frames at once, for "blur it everywhere". */
-export const SECRET_SCAN = (description, frames) => `These are ${frames.length} frames from one screen recording that is about to be published, in order:
-${frames.map((f, i) => `Frame ${i + 1}: t=${f.out.toFixed(1)}s`).join("\n")}
-
-The person who made it wants something hidden wherever it appears in the video, and described it in their own words:
-
-${JSON.stringify(description)}
-
-For EACH frame, find every place on that frame where that is visible, and return one box for each. Return one entry per frame, in order ("frame" is its number above), with an empty "matches" list when it is not on that frame. Boxes are relative to their own frame.
-${SECRET_RULES}
-"tail" is the last 3 characters of the text in the box, exactly as shown, so the same text can be told apart from different text in the same place on the next frame. "" for a picture, a face or text too small to read.
-
-Return ONLY valid JSON matching the schema.`;
-
 const SECRET_SCHEMA = {
   type: "OBJECT",
   properties: {
@@ -696,7 +688,17 @@ const SECRET_SCHEMA = {
     matches: {
       type: "ARRAY",
       maxItems: 12,
-      items: FIND_SCHEMA.properties.matches.items,
+      items: {
+        type: "OBJECT",
+        properties: {
+          box_2d: { type: "ARRAY", items: { type: "NUMBER" }, minItems: 4, maxItems: 4 },
+          label: { type: "STRING" },
+          tail: { type: "STRING" },
+          confidence: { type: "NUMBER" },
+        },
+        required: ["box_2d", "label", "tail", "confidence"],
+        propertyOrdering: ["box_2d", "label", "tail", "confidence"],
+      },
     },
   },
   required: ["found", "matches"],
@@ -724,41 +726,6 @@ const EDGE_SCHEMA = {
   propertyOrdering: ["found", "box_2d"],
 };
 
-const SCAN_SCHEMA = {
-  type: "OBJECT",
-  properties: {
-    frames: {
-      type: "ARRAY",
-      maxItems: 8,
-      items: {
-        type: "OBJECT",
-        properties: {
-          frame: { type: "INTEGER" },
-          matches: {
-            type: "ARRAY",
-            maxItems: 12,
-            items: {
-              type: "OBJECT",
-              properties: {
-                box_2d: { type: "ARRAY", items: { type: "NUMBER" }, minItems: 4, maxItems: 4 },
-                label: { type: "STRING" },
-                tail: { type: "STRING" },
-                confidence: { type: "NUMBER" },
-              },
-              required: ["box_2d", "label", "tail", "confidence"],
-              propertyOrdering: ["box_2d", "label", "tail", "confidence"],
-            },
-          },
-        },
-        required: ["frame", "matches"],
-        propertyOrdering: ["frame", "matches"],
-      },
-    },
-  },
-  required: ["frames"],
-  propertyOrdering: ["frames"],
-};
-
 /* ── "Everywhere": the whole video, looked through ────────────────────────── */
 
 /**
@@ -771,12 +738,22 @@ const SCAN_SCHEMA = {
  * a different section. For "everywhere", the video is looked through: a frame
  * every SCAN_EVERY seconds, each occurrence becomes its own blur anchored
  * where it was seen best, and each is followed like any other.
+ *
+ * ── ONE FRAME PER QUESTION, LIKE THE BLUR PASS ───────────────────────────────
+ * The first version asked about four frames in each call and came back empty
+ * on a video with "Open Editor" in plain view, while the same question about
+ * one frame had found it a minute earlier. The analysis's own blur pass
+ * (vision.js findSensitive) asks about one frame at a time, and so does this:
+ * the question that is known to work, asked of every frame.
  */
 const SCAN_EVERY = 2;
+/** Looking more closely: a frame every second. */
+const SCAN_CLOSE = 1;
 /** Most frames looked at in one scan: a long video is sampled more sparsely. */
 const SCAN_MAX = 60;
-/** Frames per model call. */
-const SCAN_BATCH = 4;
+const SCAN_MAX_CLOSE = 120;
+/** Frames asked about at once. */
+const SCAN_PARALLEL = 8;
 /** Most blurs one scan makes (the follow route queues at most 24 per demo). */
 const SCAN_BLURS = 16;
 
@@ -794,10 +771,14 @@ async function mapLimit(items, n, fn) {
   return out;
 }
 
-/** The output times a scan looks at: every SCAN_EVERY seconds (sparser past SCAN_MAX), and the last moment. */
-export function scanTimes(total) {
+/** Seconds between the frames a scan looks at. */
+export const scanStep = (total, close = false) =>
+  Math.max(close ? SCAN_CLOSE : SCAN_EVERY, total / (close ? SCAN_MAX_CLOSE : SCAN_MAX));
+
+/** The output times a scan looks at, and the last moment. */
+export function scanTimes(total, { close = false } = {}) {
   if (!(total > 0)) return [];
-  const step = Math.max(SCAN_EVERY, total / SCAN_MAX);
+  const step = scanStep(total, close);
   const out = [];
   for (let t = Math.min(0.25, total / 2); t < total - 0.1; t += step) out.push(round3(t));
   const last = round3(Math.max(0, total - 0.15));
@@ -807,16 +788,18 @@ export function scanTimes(total) {
 
 /**
  * Every sighting of the described thing across the video: [{ src, out, box,
- * label, confidence }]. Frames come from one downloaded copy of the recording
- * (localCopy), each read as "what was on screen at t" (extractFrameAt), so a
- * sighting's time is the frame the tracker will cut its blur from.
+ * label, tail, confidence }]. `find(file)` is the one-frame question: where
+ * on this frame is it (findSecrets for a blur, findOnFrame for a zoom).
+ * Frames come from one downloaded copy of the recording (localCopy), each
+ * read as "what was on screen at t" (extractFrameAt), so a sighting's time is
+ * the frame the tracker will cut a blur from.
  *
- * @returns {{ sightings: object[], frames: number, missed: number, usd: number, error?: boolean }}
+ * @returns {{ sightings: object[], frames: number, missed: number, dropped: number, usd: number, error?: boolean, sample?: string }}
  */
-export async function scanForSecrets(demo, ctx, description, { ask = generateJson, status = () => {} } = {}) {
+export async function scanFrames(demo, ctx, find, { status = () => {}, what = "", close = false } = {}) {
   const key = demo.recording?.mp4_key;
-  if (!key || demo.purged) return { error: true, sightings: [], frames: 0, missed: 0, usd: 0 };
-  const times = scanTimes(ctx.total).map((out) => ({ out, src: round3(toSource(out, ctx.lay)) }));
+  if (!key || demo.purged) return { error: true, sightings: [], frames: 0, missed: 0, dropped: 0, usd: 0 };
+  const times = scanTimes(ctx.total, { close }).map((out) => ({ out, src: round3(toSource(out, ctx.lay)) }));
   status("Reading the video…");
   await fsp.mkdir(CACHE_DIR, { recursive: true });
   const dir = await fsp.mkdtemp(path.join(CACHE_DIR, "scan-"));
@@ -833,42 +816,26 @@ export async function scanForSecrets(demo, ctx, description, { ask = generateJso
       }
     });
     const frames = times.filter((f) => f.ok);
-    if (!frames.length) return { error: true, sightings: [], frames: 0, missed: times.length, usd };
+    if (!frames.length) return { error: true, sightings: [], frames: 0, missed: times.length, dropped: 0, usd };
 
-    status(`Looking through ${frames.length} frames for “${short(description, 40)}”…`);
-    const batches = [];
-    for (let i = 0; i < frames.length; i += SCAN_BATCH) batches.push(frames.slice(i, i + SCAN_BATCH));
+    status(`Looking through ${frames.length} frames${what ? ` for “${short(what, 40)}”` : ""}…`);
     let missed = 0;
+    let dropped = 0;
+    let sample = "";
     const sightings = [];
-    await Promise.all(
-      batches.map(async (batch) => {
-        try {
-          const parts = [{ text: SECRET_SCAN(str(description, 300), batch) }];
-          for (let i = 0; i < batch.length; i++) {
-            parts.push({ text: `Frame ${i + 1}: t=${batch[i].out.toFixed(1)}s` });
-            parts.push({ inlineData: { mimeType: "image/jpeg", data: (await fsp.readFile(batch[i].file)).toString("base64") } });
-          }
-          const res = await askJson(ask, { model: MODEL.vision, parts, maxOutputTokens: 4096, schema: SCAN_SCHEMA, label: "command blur scan" });
-          usd += num(res.usd);
-          for (const fr of Array.isArray(res.json?.frames) ? res.json.frames : []) {
-            const f = batch[Math.round(num(fr?.frame)) - 1];
-            if (!f) continue;
-            for (const m of Array.isArray(fr.matches) ? fr.matches : []) {
-              const box = fromBox2d(m?.box_2d);
-              const confidence = clamp(num(m?.confidence, 0.5), 0, 1);
-              // `tail` only tells sightings apart (instancesOf); it is never
-              // stored or logged, being three characters of a secret.
-              const tail = String(m?.tail ?? "").trim().slice(-3).toLowerCase();
-              if (box && confidence >= MIN_FOUND) sightings.push({ src: f.src, out: f.out, box, label: str(m?.label, 40), tail, confidence });
-            }
-          }
-        } catch (err) {
-          missed += batch.length;
-          console.warn(`[studio] command: a scan batch failed: ${String(err?.message).slice(0, 160)}`);
-        }
-      })
-    );
-    return { sightings, frames: frames.length, missed, usd, error: missed >= frames.length };
+    await mapLimit(frames, SCAN_PARALLEL, async (f) => {
+      try {
+        const r = await find(f.file);
+        usd += num(r.usd);
+        dropped += num(r.dropped);
+        if (!sample && r.raw) sample = `t=${f.out}: ${JSON.stringify(r.raw).slice(0, 300)}`;
+        for (const m of r.matches) sightings.push({ src: f.src, out: f.out, ...m });
+      } catch (err) {
+        missed += 1;
+        console.warn(`[studio] command: the frame at ${f.out}s could not be asked about: ${String(err?.message).slice(0, 160)}`);
+      }
+    });
+    return { sightings, frames: frames.length, missed, dropped, usd, sample, error: missed >= frames.length };
   } finally {
     fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
@@ -919,11 +886,26 @@ export async function findSecrets(file, description, { ask = generateJson } = {}
   const parts = [{ text: SECRET_FINDER(str(description, 300)) }, { inlineData: { mimeType: "image/jpeg", data: data.toString("base64") } }];
   const res = await askJson(ask, { model: MODEL.vision, parts, maxOutputTokens: 2048, schema: SECRET_SCHEMA, label: "command blur" });
   const j = res.json || {};
-  const matches = (Array.isArray(j.matches) ? j.matches : [])
-    .map((m) => ({ box: fromBox2d(m?.box_2d), label: str(m?.label, 40), confidence: clamp(num(m?.confidence, 0.5), 0, 1) }))
-    .filter((m) => m.box && m.confidence >= MIN_FOUND)
-    .slice(0, 12);
-  return { matches: j.found === false ? [] : matches, usd: num(res.usd) };
+  const all = (Array.isArray(j.matches) ? j.matches : []).map((m) => ({
+    box: fromBox2d(m?.box_2d),
+    label: str(m?.label, 40),
+    // Only tells sightings apart (instancesOf): never stored or logged, being
+    // three characters of what is being hidden.
+    tail: String(m?.tail ?? "").trim().slice(-3).toLowerCase(),
+    confidence: clamp(num(m?.confidence, 0.5), 0, 1),
+  }));
+  const matches = j.found === false ? [] : all.filter((m) => m.box && m.confidence >= MIN_FOUND).slice(0, 12);
+  // `raw` and `dropped` are for the log when a scan finds nothing: what the
+  // model said, and how much of it was thrown away here.
+  return { matches, usd: num(res.usd), dropped: all.length - matches.length, raw: redact(j) };
+}
+
+/** A model's answer as it can be logged: boxes and scores, never the tails. */
+function redact(j) {
+  return {
+    found: j?.found,
+    matches: (Array.isArray(j?.matches) ? j.matches : []).map((m) => ({ box_2d: m?.box_2d, label: m?.label, confidence: m?.confidence })),
+  };
 }
 
 /**
@@ -1250,6 +1232,8 @@ export function cleanIntent(i = {}) {
     blurIds: list(i?.blurIds, 40, (v) => str(v, 32)),
     blurKind: ["blur", "pixelate", "box"].includes(i?.blurKind) ? i.blurKind : "",
     everywhere: !!i?.everywhere,
+    // Look through the video a frame a second instead of every two.
+    close: !!i?.close,
     named: str(i?.named, 80),
     // How to find it by looking, when the readings have no name for it.
     lookFor: str(i?.lookFor, 300),
@@ -1391,6 +1375,7 @@ async function addZoom(intent, ctx) {
   let label = "";
   let where = "";
   let lookedAt = null; // the output time of the frame that was looked at
+  let scanned = false; // found by looking through the video, not at the playhead
   const clickThing = win.click?.thing;
   const thing = intent.box ? null : clickThing || things[0] || null;
 
@@ -1417,26 +1402,51 @@ async function addZoom(intent, ctx) {
     }
   }
 
-  // The readings have nothing for it at this moment: look at the frame.
+  // The readings have nothing for it at this moment: look at the frame, and
+  // when it isn't on that frame, look through the video for it. Finding it is
+  // this feature's job; sending the creator to scrub for it is not.
   if (!box && !win.click && canLook) {
     const at = win.anchor;
     const seen = await ctx.look(at, lookFor);
     if (seen.error) {
       return info(`I couldn't look at the video just now, so I can't find “${nameFor(intent, "")}”. Try again in a moment.`);
     }
-    if (!seen.matches.length) {
-      const when = win.why === "playhead" ? `at the playhead (${fmt(at)})` : `at ${fmt(at)}`;
-      const next =
-        win.why === "playhead"
-          ? "Move the playhead to a moment where it's on screen and ask again, or tell me the time it appears."
-          : "If it's on screen at another moment, tell me that time, or move the playhead there and say “zoom here on it”.";
-      return info(`I looked at the frame ${when} and couldn't find “${nameFor(intent, "")}” there. ${next}`);
+    let hit = seen.matches.length ? { matches: seen.matches, at } : null;
+    if (!hit) {
+      const when = win.why === "playhead" ? "at the playhead" : `at ${fmt(at)}`;
+      if (!ctx.scanLook) return info(`“${nameFor(intent, "")}” isn't on screen ${when}, and I can't look through the rest of the video right now. Try again in a moment.`);
+      const close = !!intent.close;
+      const r = await ctx.scanLook(lookFor, { close });
+      if (r.error) return info(`“${nameFor(intent, "")}” isn't on screen ${when}, and I couldn't look through the rest of the video just now. Try again in a moment.`);
+      const places = placesOf(r.sightings, scanStep(total, close));
+      if (!places.length) {
+        const closer = close ? [] : [choice("Look more closely", intent, { close: true })];
+        return info(
+          `I looked through the whole video (${r.frames} frames) and couldn't find “${nameFor(intent, "")}”. ` +
+            (close ? "Try describing it another way, like the words written on it." : "I can look more closely, or you can describe it another way, like the words written on it."),
+          closer
+        );
+      }
+      // A time they named is kept: where it really is comes as buttons.
+      if (win.why === "moment" || win.why === "range") {
+        return info(
+          `“${nameFor(intent, "")}” isn't on screen at ${fmt(at)}. I found it at ${places.slice(0, 3).map((p) => fmt(p.from)).join(", ")}.`,
+          places.slice(0, 3).map((p) => choice(`Zoom at ${fmt(p.from)}`, intent, placeChange(p)))
+        );
+      }
+      // No time given: the first place it appears, and the others as buttons.
+      const first = places[0];
+      win = { s: first.from, e: clamp(first.from + span, 0, total), anchor: first.from, why: "seen" };
+      if (win.e - win.s < MIN_LENGTH) win.s = Math.max(0, win.e - MIN_LENGTH);
+      hit = { matches: [first.best], at: first.from, scanned: true };
+      for (const p of places.slice(1, 3)) alts.push({ label: `Use ${fmt(p.from)} instead`, change: placeChange(p) });
     }
-    const [best, ...others] = seen.matches;
+    const [best, ...others] = hit.matches;
     box = best.box;
     label = nameFor(intent, best.label);
     where = "seen";
-    lookedAt = at;
+    lookedAt = hit.at;
+    scanned = !!hit.scanned;
     for (const o of others) {
       alts.push({ label: `Use: ${o.label || "the other match"}`, change: { box: o.box, boxLabel: o.label } });
     }
@@ -1581,7 +1591,8 @@ async function addZoom(intent, ctx) {
   else if (win.why === "playhead") reply += ", at the playhead";
   else if (win.why === "seen") reply += ", when it first appears";
   reply += ".";
-  if (lookedAt != null) reply += ` I found it by looking at the frame at ${fmt(lookedAt)}. If the rectangle on the preview isn't on it, drag it there or describe it differently.`;
+  if (lookedAt != null && scanned) reply += " It wasn't at the playhead, so I looked through the video for it. If the rectangle on the preview isn't on it, drag it there or describe it differently.";
+  else if (lookedAt != null) reply += ` I found it by looking at the frame at ${fmt(lookedAt)}. If the rectangle on the preview isn't on it, drag it there or describe it differently.`;
   if (where === "pointer") reply += ` It's centred on where the pointer was at ${fmt(win.anchor)}. Drag the rectangle on the preview to move it.`;
   if (where === "centre") reply += " It's centred on the middle of the screen, because I couldn't see the pointer then. Drag the rectangle on the preview to move it.";
   if (cropped) reply += ` “${zoom.label}” is bigger than a zoomed-in view can hold, so this zooms on its middle and crops its edges.`;
@@ -1603,6 +1614,29 @@ async function addZoom(intent, ctx) {
     choices,
   };
 }
+
+/**
+ * Sightings of a thing as the stretches of the video it is on screen:
+ * [{ from, to, best }], `best` the sighting at `from` (where a zoom on it
+ * starts, so its box is the one on screen then).
+ */
+function placesOf(sightings, step) {
+  const byFrame = new Map();
+  for (const s of sightings) {
+    const cur = byFrame.get(s.out);
+    if (!cur || s.confidence > cur.confidence) byFrame.set(s.out, s);
+  }
+  const out = [];
+  for (const s of [...byFrame.values()].sort((a, b) => a.out - b.out)) {
+    const last = out[out.length - 1];
+    if (last && s.out - last.to <= step * 1.6 + 0.05) last.to = s.out;
+    else out.push({ from: s.out, to: s.out, best: s });
+  }
+  return out;
+}
+
+/** A button's change for zooming on one of those places: that moment, and the box already found there. */
+const placeChange = (p) => ({ time: { kind: "moment", at: secText(p.from), start: "", end: "" }, box: p.best.box, boxLabel: p.best.label });
 
 /** A zoom around a press: arriving just before it, for `span` seconds. */
 function clickWindow(c, span, total) {
@@ -1676,7 +1710,7 @@ function momentChoices(th, intent, ctx) {
  * file, a name the readings do not have is looked for on the frame instead.
  */
 function notFound(named) {
-  return `I couldn't find “${named}”, and this recording's video file isn't available for me to look at. Move the playhead to it and say “zoom here”, then drag the rectangle on the preview onto it.`;
+  return `I couldn't find “${named}”, and this recording's video file isn't available for me to look at right now. Try again in a moment.`;
 }
 
 function outside(start, end, total) {
@@ -1744,7 +1778,10 @@ function removeZoom(intent, ctx) {
       ? [...new Set(things.flatMap((th) => zoomsOn(th, zooms, ctx.tol)))]
       : zooms.filter((z) => z.label && norm(z.label).includes(norm(name)));
     if (!pick.length) {
-      return info(`I couldn't tell which zoom is on “${name}”. Click that zoom on the timeline and say “remove this zoom”, or tell me its time.`);
+      return ask(
+        `I couldn't tell which zoom is on “${name}”. Which one?`,
+        zooms.slice(0, 5).map((z) => choice(`${fmt(z.outStart)}${z.label ? ` on “${short(z.label, 24)}”` : ""}`, intent, { zoomIds: [z.id] }))
+      );
     }
   } else {
     // This one: the selected zoom, the one at a time, or the one at the playhead.
@@ -1885,12 +1922,10 @@ async function addBlur(intent, ctx) {
   const seen = await ctx.lookSecrets(at, what);
   if (seen.error) return info(`I couldn't look at the video just now, so I can't find “${short(what)}”. Try again in a moment.`);
   if (!seen.matches.length) {
+    // Not on this frame: find it wherever it is, rather than send the creator
+    // looking for a moment it is on screen.
     const when = why === "playhead" ? `at the playhead (${fmt(at)})` : `at ${fmt(at)}`;
-    const next =
-      why === "playhead"
-        ? "Move the playhead to a moment where it's on screen and ask again, or tell me the time it appears."
-        : "If it's on screen at another moment, tell me that time, or move the playhead there and ask again.";
-    return info(`I looked at the frame ${when} and couldn't see “${short(what)}” there. ${next}`);
+    return blurEverywhere({ ...intent, everywhere: true }, ctx, what, { note: `“${short(what)}” isn't on screen ${when}, so I looked through the whole video. ` });
   }
   const boxes = await ctx.refine(at, seen.matches, what);
 
@@ -1959,17 +1994,22 @@ async function addBlur(intent, ctx) {
 
 /**
  * "Blur X everywhere": every place X is seen across the video, each its own
- * blur (see scanForSecrets for why one blur cannot cover the others).
+ * blur (see scanFrames for why one blur cannot cover the others).
  */
-async function blurEverywhere(intent, ctx, what) {
-  if (!ctx.scan) return info(`I can't look through this recording's video right now, so I can't find “${short(what)}”. Draw the blur in the Blur tab instead.`);
-  const r = await ctx.scan(what);
-  if (r.error) return info(`I couldn't look through the video just now, so I can't find “${short(what)}”. Try again in a moment.`);
-  const step = Math.max(SCAN_EVERY, ctx.total / SCAN_MAX);
-  const every = `${Number(step.toFixed(1))} s`;
+async function blurEverywhere(intent, ctx, what, { note = "" } = {}) {
+  if (!ctx.scan) return info(`${note}I can't look through this recording's video right now, so I can't find “${short(what)}”. Try again in a moment.`);
+  const close = !!intent.close;
+  const r = await ctx.scan(what, { close });
+  if (r.error) return info(`${note}I couldn't look through the video just now, so I can't find “${short(what)}”. Try again in a moment.`);
+  const step = scanStep(ctx.total, close);
+  const every = step === 1 ? "second" : `${Number(step.toFixed(1))} s`;
+  // Never "move the playhead to it": finding it is this feature's job.
+  const closer = close ? [] : [choice("Look more closely", intent, { close: true, everywhere: true, time: { kind: "none", at: "", start: "", end: "" } })];
   if (!r.sightings.length) {
     return info(
-      `I looked through the whole video (${r.frames} frames, one every ${every}) and couldn't find “${short(what)}”. If you can see it, move the playhead to it and say “blur it here”.`
+      `${note}I looked through the whole video (${r.frames} frames, one every ${every}) and couldn't find “${short(what)}”. ` +
+        (close ? "Try describing it another way, like the words written on it." : "I can look more closely, or you can describe it another way, like the words written on it."),
+      closer
     );
   }
 
@@ -2023,8 +2063,9 @@ async function blurEverywhere(intent, ctx, what) {
   if (scrolled) reply += " Text that scrolls can get more than one blur; they overlap and look like one.";
   if (already) reply += ` ${already} more ${already === 1 ? "place was" : "places were"} already blurred.`;
   if (fresh.length > kept.length) reply += ` I found ${fresh.length - kept.length} more places; ask again once these finish applying and I'll blur those too.`;
-  reply += ` I looked at one frame every ${every}, so something on screen for less than that can be missed. If you spot one, move the playhead to it and say “blur it here”.`;
+  reply += ` I looked at one frame every ${every}, so something on screen for less than that could be missed.`;
   if (r.missed) reply += ` ${r.missed} of the frames couldn't be read.`;
+  if (note) reply = note + reply;
 
   return {
     kind: "applied",
@@ -2033,7 +2074,7 @@ async function blurEverywhere(intent, ctx, what) {
     select: made[0].id,
     selectKind: "blur",
     seek: round3(kept[0].best.out),
-    choices: [],
+    choices: closer,
   };
 }
 
@@ -2052,7 +2093,12 @@ function removeBlur(intent, ctx) {
   } else if (kind === "none" && name) {
     const n = norm(name);
     pick = blurs.filter((b) => b.label && (norm(b.label).includes(n) || n.includes(norm(b.label))));
-    if (!pick.length) return info(`I couldn't tell which blur is on “${short(name)}”. Click it on the preview and say “remove this blur”.`);
+    if (!pick.length) {
+      return ask(
+        `I couldn't tell which blur is on “${short(name)}”. Which one?`,
+        blurs.slice(0, 5).map((b) => choice(`The one on “${short(b.label || "unnamed", 30)}”`, intent, { blurIds: [b.id] }))
+      );
+    }
   } else if ((kind === "selected" || kind === "none") && ctx.selectedBlur) {
     pick = blurs.filter((b) => b.id === ctx.selectedBlur);
   } else {
@@ -2072,10 +2118,10 @@ function removeBlur(intent, ctx) {
     const t = toSource(at, ctx.lay);
     const showing = blurs.filter((b) => blurRectAt(b, t, ctx.follows));
     if (!showing.length) {
-      return info(
-        kind === "selected"
-          ? `No blur is selected, and none is showing at ${fmt(at)}. Click the blur on the preview first, or tell me what it's on.`
-          : `No blur is showing at ${fmt(at)}.`
+      // None here: the blurs there are, as buttons, rather than an errand.
+      return ask(
+        kind === "selected" ? `No blur is selected, and none is showing at ${fmt(at)}. Which one?` : `No blur is showing at ${fmt(at)}. Which one?`,
+        blurs.slice(0, 5).map((b) => choice(`The one on “${short(b.label || "unnamed", 30)}”`, intent, { blurIds: [b.id] }))
       );
     }
     if (showing.length > 1) {
@@ -2116,7 +2162,7 @@ function removeBlur(intent, ctx) {
  * @param {object} o.demo
  * @param {object} o.body   the request: { text | intent, playhead, selected, zooms, cuts, history }
  */
-export async function runCommand({ demo, body, ask, look, lookSecrets, refine, scan, refineMany, onStatus }) {
+export async function runCommand({ demo, body, ask, look, lookSecrets, refine, scan, scanLook, refineMany, onStatus }) {
   const cid = newId("cmd");
   const ctx = commandContext(demo, body);
   const text = str(body?.text, MAX_TEXT);
@@ -2186,14 +2232,19 @@ export async function runCommand({ demo, body, ask, look, lookSecrets, refine, s
   });
   // "Everywhere": the whole video looked through, then each place's edges,
   // each on its own frame.
-  ctx.scan = scan || (recordingThere
-    ? async (description) => {
-        const r = await scanForSecrets(demo, ctx, description, { ...(ask ? { ask } : {}), status });
-        usd += r.usd;
-        looked = ` scanned ${r.frames} frames (${r.missed} missed): ${r.sightings.length} sightings;`;
-        return r;
-      }
-    : null);
+  const scanWith = (find, what) => async (description, { close = false } = {}) => {
+    const r = await scanFrames(demo, ctx, (file) => find(file, description, ask ? { ask } : {}), { status, what: description, close });
+    usd += r.usd;
+    looked += ` scanned ${r.frames} frames${close ? " closely" : ""} for ${what} (${r.missed} missed, ${r.dropped} dropped): ${r.sightings.length} sightings;`;
+    // Nothing anywhere: what the model actually said about one frame, so a
+    // miss like "21 frames and no Open Editor" can be read, not guessed at.
+    if (!r.sightings.length && r.sample) console.warn(`[studio] command ${cid} on ${demo._id}: scan found nothing; one answer ${r.sample}`);
+    return r;
+  };
+  ctx.scan = scan || (recordingThere ? scanWith(findSecrets, "a blur") : null);
+  // The same look through the video for a zoom, when what was described is
+  // not at the playhead: it is found rather than the creator being sent to find it.
+  ctx.scanLook = scanLook || (recordingThere ? scanWith(findOnFrame, "a zoom") : null);
   ctx.refineMany = refineMany || (async (items, description) => {
     if (!items.length) return [];
     status(items.length === 1 ? "Finding its exact edges…" : `Finding the exact edges of all ${items.length}…`);
@@ -2229,5 +2280,5 @@ export async function runCommand({ demo, body, ask, look, lookSecrets, refine, s
 export default {
   runCommand, resolve, readCommand, commandContext, cleanIntent, readTime, readRange, readMoment, readLength, fmt,
   frameAt, findOnFrame, fromBox2d, findSecrets, refineBox, closeUp, fromCloseUp, blurBox,
-  scanForSecrets, scanTimes, instancesOf,
+  scanFrames, scanTimes, scanStep, instancesOf,
 };
