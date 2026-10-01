@@ -47,7 +47,7 @@ import { demoKey, bumpExpiry, publishProgress } from "../demoService.js";
 import { voiceById, voiceSig, DEFAULT_VOICE } from "../../../../src/components/Studio/voices.mjs";
 import { zoomOutGap } from "../../../../src/components/Studio/camera.mjs";
 import { direct, refit } from "./director.js";
-import { buildNarration } from "./narrator.js";
+import { buildNarration, engineLabel } from "./narrator.js";
 
 /** How long one job waits for the analysis before handing over to the next. */
 const WAIT_SLICE_MS = 45_000;
@@ -391,7 +391,7 @@ export const autodemoJob = {
         usd.total += re.spend.usd;
         if (!re.changed) break;
         report(0.82 + 0.05 * round, "Smoothing the voice", true);
-        const again = await buildNarration({ lines: re.lines, voice, duration, workDir, cache: takes, onProgress: (p) => report(0.82 + 0.05 * round + 0.05 * p, "Smoothing the voice") });
+        const again = await buildNarration({ lines: re.lines, voice, duration, workDir, cache: takes, engine: made.engine, onProgress: (p) => report(0.82 + 0.05 * round + 0.05 * p, "Smoothing the voice") });
         lines = re.lines;
         made = again;
         refitted += re.changed;
@@ -423,7 +423,7 @@ export const autodemoJob = {
       const sig = voiceSig(voice, cues);
       const key = demoKey(demo, "voice", `${sig}-${vseq}.mp3`);
       await putFile(made.file, key, "audio/mpeg");
-      voiceover = { name: voice, sig, key, seq: vseq, seconds: made.seconds, sentences: made.sentences, made_at: new Date() };
+      voiceover = { name: voice, sig, key, seq: vseq, seconds: made.seconds, sentences: made.sentences, engine: engineLabel(made.engine), made_at: new Date() };
     }
 
     /* 6. Written on the freshest timeline, only where nobody saved in between. */
@@ -476,6 +476,7 @@ export const autodemoJob = {
         "autodemo.cues": cues.length,
         "autodemo.voice_ok": !!voiceover,
         "autodemo.voice_error": voiceError,
+        "autodemo.voice_engine": made ? engineLabel(made.engine) : "",
         "autodemo.seen": plan.seen,
         "autodemo.focus": placed.map((z) => ({ id: z.id, start: z.start, end: z.end, label: z.label, level: z.level })),
         "autodemo.skipped": [...plan.skipped, ...plan.focus.filter((f) => !focusIds.has(f.id)).map((f) => ({ what: f.label, why: "a zoom arrived there meanwhile" }))],
@@ -500,7 +501,7 @@ export const autodemoJob = {
 
     console.log(
       `[autodemo] ${demo._id}: ${lines.length} lines, ${cues.length} captions, ` +
-        `voice ${voiceover ? `${voice} ${voiceover.seconds}s` : "failed"}, watched as ${plan.seen}, ` +
+        `voice ${voiceover ? `${voice} (${voiceover.engine}) ${voiceover.seconds}s` : "failed"}, watched as ${plan.seen}, ` +
         `fitted ${plan.shortened} shorter / ${plan.lengthened} longer, ${refitted} refitted to the voice, ` +
         `${plan.focus.length} focus zoom(s)${plan.skipped.length ? ` (${plan.skipped.length} skipped)` : ""}, $${usd.total.toFixed(4)}`
     );

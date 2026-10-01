@@ -11,6 +11,18 @@
  * other way round. It speaks to the same model the same way (voice.js's
  * endpoint and model, measured there).
  *
+ * ── TWO VOICES, ONE PER DEMO ─────────────────────────────────────────────────
+ *   gemini   AI Studio, gemini-3.8-flash-tts (voice.js's model): 10 a minute and
+ *            100 a DAY per project on Tier 1
+ *   cloud    Cloud Text-to-Speech, Gemini-TTS (cloudVoice.js): its own, far
+ *            larger quota, billed to the Cloud project
+ * A demo is spoken by ONE of them, never a mix: two models reading alternate
+ * lines would sound like two people. "auto" (the default) tries gemini and,
+ * if it fails for any reason, speaks the whole demo again with cloud. A daily
+ * limit is remembered until it lifts, so later demos go straight to cloud
+ * instead of spending a refused request each.
+ *   STUDIO_AUTODEMO_VOICE   auto (default) | gemini | cloud
+ *
  * ── WHAT MAKES IT SOUND CONTINUOUS ───────────────────────────────────────────
  *   one take per script line   a line is a thought; split in two it gets two
  *                              falling endings and sounds read off cards
@@ -27,6 +39,7 @@ import { aistudioKeys, pool } from "../../ai/provider.js";
 import { ffmpeg } from "../../media/ffmpeg.js";
 import { VOICE_MODEL } from "../voice.js";
 import { PAUSE } from "./prompts.js";
+import { askCloud, CLOUD_MODEL } from "./cloudVoice.js";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const RATE = 24000;
@@ -90,11 +103,23 @@ const retryAfter = (message) => {
   return m ? Math.min(70_000, Math.ceil(Number(m[1]) * 1000) + 1000) : 0;
 };
 
+/** "retry in 15h13m31s" → its length in ms (the daily limit's own word for when it lifts). */
+export function waitOf(message) {
+  const m = String(message || "").match(/retry in\s+((?:\d+(?:\.\d+)?[hms]\s*)+)/i);
+  if (!m) return 0;
+  let ms = 0;
+  for (const [, n, u] of m[1].matchAll(/(\d+(?:\.\d+)?)([hms])/g)) ms += Number(n) * { h: 3600_000, m: 60_000, s: 1000 }[u];
+  return Math.round(ms);
+}
+
 let turn = 0;
 
-async function ask(text, { voice, style }) {
+async function askGemini(text, { voice, style }) {
   const keys = aistudioKeys();
-  if (!keys.length) throw userError("The voice needs an AI Studio key on this server.");
+  if (!keys.length) {
+    console.error("[autodemo] no AI Studio key is set (AISTUDIO_KEY / GEMINI_API_KEY): the voice cannot be made");
+    throw userError("The voice isn't available right now. Your script and captions are ready.");
+  }
   let last = null;
   for (let attempt = 1; attempt <= 6; attempt++) {
     const key = keys[turn++ % keys.length];
@@ -124,8 +149,13 @@ async function ask(text, { voice, style }) {
       // Tier 1… retry in 15h13m") does not reopen in a minute: say so at once
       // instead of retrying for minutes. The script and captions still land.
       if (res.status === 429 && /per day/i.test(String(body?.error?.message || ""))) {
+        // For the operator, in the log; the creator is told what to do, not
+        // whose plan ran out (no vendor or plan names in what creators see).
+        console.error(`[autodemo] speech DAILY quota reached for ${VOICE_MODEL}: ${String(body?.error?.message || "").slice(0, 200)}`);
         throw Object.assign(err, {
-          userMessage: "The voice has reached today's limit on this Gemini plan, so the script and captions are in without it. Add the voice from the Voice tab tomorrow, or raise the plan's tier.",
+          daily: true,
+          waitMs: waitOf(body?.error?.message) || 6 * 3600_000,
+          userMessage: "The voice couldn't be added right now because voices are busy today. Your script and captions are ready. Add the voice from the Voice tab a little later.",
         });
       }
       if (res.status === 429 || res.status >= 500) {
@@ -197,8 +227,24 @@ export function trimQuiet(pcm) {
   return out;
 }
 
-async function speak(text, { voice, style, workDir, tag }) {
-  const wav = await ask(text, { voice, style });
+/* ── Which voice ────────────────────────────────────────────────────────────── */
+
+const ENGINES = { gemini: askGemini, cloud: askCloud };
+const MODE = String(process.env.STUDIO_AUTODEMO_VOICE || "auto").trim().toLowerCase();
+/** Until when the first voice is known to refuse (its daily limit), ms since epoch. */
+let geminiPausedUntil = 0;
+
+/** The voices to try for one demo, in order. */
+export function engineOrder(now = Date.now()) {
+  if (MODE === "cloud") return ["cloud"];
+  if (MODE === "gemini") return ["gemini"];
+  return now < geminiPausedUntil ? ["cloud"] : ["gemini", "cloud"];
+}
+/** What the voiceover records about who spoke it. */
+export const engineLabel = (engine) => (engine === "cloud" ? `cloud:${CLOUD_MODEL}` : `gemini:${VOICE_MODEL}`);
+
+async function speak(text, { engine, speakers, voice, style, workDir, tag }) {
+  const wav = await speakers[engine](text, { voice, style });
   let { pcm, rate } = samplesOf(wav);
   if (rate !== RATE) pcm = await transform(pcm, rate, [], workDir, `${tag}-rate`);
   pcm = trimQuiet(pcm);
@@ -213,15 +259,35 @@ async function speak(text, { voice, style, workDir, tag }) {
  * @param {string} o.voice     a voices.mjs id
  * @param {number} o.duration  the recording's length
  * @param {string} o.workDir
- * @param {Map}    [o.cache]   takes already made, by text: a second build after
- *                             some lines were rewritten speaks only those again
- * @returns {Promise<{ file, seconds, sentences: Array<{ start, end, text, rate }>, takes: Array<{ text, seconds }> }>}
+ * @param {Map}    [o.cache]   takes already made, by voice and text: a second build
+ *                             after some lines were rewritten speaks only those again
+ * @param {string} [o.engine]  "gemini" or "cloud": speak with this one only. A
+ *                             rebuild after refitting passes the first build's,
+ *                             so a demo keeps one voice from start to finish
+ * @param {object} [o.speakers] the two voices, replaceable by a test
+ * @returns {Promise<{ file, seconds, sentences: Array<{ start, end, text, rate }>, takes: Array<{ text, seconds }>, engine }>}
  *   the same shape voice.js answers with, so the editor and the export read it
  *   alike; `takes` is each line's own length as first spoken, before any fitting
  */
-export async function buildNarration({ lines, voice, duration, workDir, cache = new Map(), onProgress = () => {} }) {
+export async function buildNarration({ lines, voice, duration, workDir, cache = new Map(), engine = null, speakers = ENGINES, onProgress = () => {} }) {
   const said = (lines || []).filter((l) => String(l.text || "").trim());
   if (!said.length) throw userError("There is no script to speak.");
+  const order = engine ? [engine] : engineOrder();
+  let failed = null;
+  for (const [n, e] of order.entries()) {
+    try {
+      return await speakWith(e, { said, voice, duration, workDir, cache, speakers, onProgress });
+    } catch (err) {
+      failed = err;
+      if (e === "gemini" && err.daily) geminiPausedUntil = Date.now() + (err.waitMs || 6 * 3600_000);
+      const next = order[n + 1];
+      console.warn(`[autodemo] voice: ${engineLabel(e)} failed (${String(err.message).slice(0, 160)})${next ? `; speaking the whole demo with ${engineLabel(next)}` : ""}`);
+    }
+  }
+  throw failed;
+}
+
+async function speakWith(engine, { said, voice, duration, workDir, cache, speakers, onProgress }) {
   const total = Math.max(0.5, duration || 0, said[said.length - 1].end);
   const until = (i) => (said[i + 1] ? said[i + 1].start : total);
 
@@ -229,8 +295,8 @@ export async function buildNarration({ lines, voice, duration, workDir, cache = 
   let done = 0;
   const spoken = new Array(said.length);
   await pool(said, AT_ONCE, async (l, i) => {
-    const key = `${voice}|${l.text}`;
-    if (!cache.has(key)) cache.set(key, await speak(l.text, { voice, style: PRESENTER, workDir, tag: `n${i}-${done}` }));
+    const key = `${engine}|${voice}|${l.text}`;
+    if (!cache.has(key)) cache.set(key, await speak(l.text, { engine, speakers, voice, style: PRESENTER, workDir, tag: `n${i}-${done}` }));
     spoken[i] = cache.get(key);
     onProgress(0.05 + 0.7 * (++done / said.length));
   });
@@ -272,7 +338,7 @@ export async function buildNarration({ lines, voice, duration, workDir, cache = 
   await fsp.rm(raw, { force: true });
   if (!fs.existsSync(file)) throw new Error("the narration did not encode");
   onProgress(1);
-  return { file, seconds: round3(seconds), sentences: placed, takes };
+  return { file, seconds: round3(seconds), sentences: placed, takes, engine };
 }
 
-export default { buildNarration, trimQuiet, PRESENTER };
+export default { buildNarration, trimQuiet, engineOrder, engineLabel, waitOf, PRESENTER };
