@@ -14,11 +14,11 @@
  * ── WHAT MAKES IT SOUND CONTINUOUS ───────────────────────────────────────────
  *   one take per script line   a line is a thought; split in two it gets two
  *                              falling endings and sounds read off cards
- *   a presenter's style        warm, engaged, one part of a longer walkthrough
- *   silence trimmed            the model pads every take with ~0.2–0.4 s at
- *                              each end; between lines that is dead air twice
- *   placed back to back        a line that runs over pushes the next along by
- *                              a breath, never talks over it, never is cut
+ *   the model's padding taken  the model pads every take with ~0.2–0.4 s at
+ *                              each end; the breath (KEEP) is left, faded
+ *   a breath between lines     GAP; a line that runs over pushes the next
+ *                              along, never talks over it, is never cut or
+ *                              hurried (see PRESENTER for why)
  */
 import fs from "fs";
 import fsp from "fs/promises";
@@ -29,22 +29,33 @@ import { VOICE_MODEL } from "../voice.js";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const RATE = 24000;
-/** How the demo is presented. Passed as the delivery style, never in the words (it would be read out). */
-export const PRESENTER =
-  "an engaging product-demo presenter walking a viewer through the product live: warm, confident and conversational, " +
-  "with natural energy and light emphasis on the key words; one continuous walkthrough, flowing on from the line before";
-/** ...and for a line that has to be quicker to fit its moment. */
-const PRESENTER_BRISK = `${PRESENTER}; speaking a little faster than usual, still natural`;
-/** Sped up at most this much, pitch kept. */
-const MAX_RATE = 1.15;
-/** Breath between two lines that run into each other. */
-const GAP = 0.1;
+/**
+ * How the demo is presented. Passed as the delivery style, never in the words
+ * (it would be read out).
+ *
+ * ── PLAIN ON PURPOSE ─────────────────────────────────────────────────────────
+ * The first version asked for "an engaging presenter … natural energy and
+ * light emphasis … flowing on from the line before", spoke lines that did not
+ * fit again "a little faster", stretched them up to 1.15x and placed them
+ * 0.1 s apart. The creator heard it as "cluttered and brittle… getting stuck
+ * and not at all clear", while the Voice tab's plain style (voice.js
+ * NARRATION) had sounded clear to them. So: that plain style, a real breath
+ * between lines, no faster re-takes, and speed changes kept inaudible. Words
+ * are what change to fit (director.js refit), never the voice.
+ */
+export const PRESENTER = "clear, friendly product-demo narration, natural and unhurried";
+/** Sped up at most this much, pitch kept: below what anyone hears as a change. */
+const MAX_RATE = 1.06;
+/** The breath between two lines, at least. */
+const GAP = 0.35;
 /** Lines spoken at once. */
 const AT_ONCE = 3;
 /** Quieter than this, at the ends of a take, is padding (about -46 dBFS). */
 const QUIET = 160;
-/** Kept either side of the speech, so a soft first consonant is not clipped. */
-const KEEP = 0.05;
+/** Kept either side of the speech: the breath before a line and the decay after it. */
+const KEEP = 0.15;
+/** Faded in and out at the edges of a take, so no cut is ever a click. */
+const FADE = 0.015;
 
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -167,7 +178,14 @@ export function trimQuiet(pcm) {
   while (b > a && !loud(b)) b -= win;
   if (a >= b) return pcm;
   const keep = Math.round(KEEP * RATE);
-  return pcm.slice(Math.max(0, a - keep), Math.min(pcm.length, b + win + keep));
+  const out = pcm.slice(Math.max(0, a - keep), Math.min(pcm.length, b + win + keep));
+  const fade = Math.min(Math.round(FADE * RATE), out.length >> 2);
+  for (let i = 0; i < fade; i++) {
+    const g = i / fade;
+    out[i] = Math.round(out[i] * g);
+    out[out.length - 1 - i] = Math.round(out[out.length - 1 - i] * g);
+  }
+  return out;
 }
 
 async function speak(text, { voice, style, workDir, tag }) {
@@ -188,15 +206,11 @@ async function speak(text, { voice, style, workDir, tag }) {
  * @param {string} o.workDir
  * @param {Map}    [o.cache]   takes already made, by text: a second build after
  *                             some lines were rewritten speaks only those again
- * @param {boolean} [o.brisk]  speak a line that does not fit again, briskly. Off
- *                             for a first build that is about to be measured and
- *                             refitted (the words are the better fix, and every
- *                             take counts against the model's per-minute limit)
  * @returns {Promise<{ file, seconds, sentences: Array<{ start, end, text, rate }>, takes: Array<{ text, seconds }> }>}
  *   the same shape voice.js answers with, so the editor and the export read it
  *   alike; `takes` is each line's own length as first spoken, before any fitting
  */
-export async function buildNarration({ lines, voice, duration, workDir, cache = new Map(), brisk = true, onProgress = () => {} }) {
+export async function buildNarration({ lines, voice, duration, workDir, cache = new Map(), onProgress = () => {} }) {
   const said = (lines || []).filter((l) => String(l.text || "").trim());
   if (!said.length) throw userError("There is no script to speak.");
   const total = Math.max(0.5, duration || 0, said[said.length - 1].end);
@@ -213,17 +227,11 @@ export async function buildNarration({ lines, voice, duration, workDir, cache = 
   });
   const takes = said.map((l, i) => ({ text: l.text, seconds: round3(spoken[i].seconds) }));
 
-  // 2. What does not fit its moment, again, a little brisker; kept only if shorter.
-  const long = brisk ? said.map((l, i) => i).filter((i) => spoken[i].seconds > until(i) - said[i].start + 0.05) : [];
-  await pool(long, AT_ONCE, async (i) => {
-    const key = `${voice}|brisk|${said[i].text}`;
-    if (!cache.has(key)) cache.set(key, await speak(said[i].text, { voice, style: PRESENTER_BRISK, workDir, tag: `nb${i}` }));
-    const again = cache.get(key);
-    if (again.seconds < spoken[i].seconds) spoken[i] = again;
-  });
   onProgress(0.85);
 
-  // 3. In order, each at its line's start, or a breath after the one before.
+  // 2. In order, each at its line's start, or a breath after the one before.
+  //    A line that does not fit runs on into the next one's time rather than
+  //    being hurried; director.js refit() shortens its words instead.
   const mix = new Int16Array(Math.ceil((total + 8) * RATE));
   const placed = [];
   let free = 0;
@@ -246,7 +254,7 @@ export async function buildNarration({ lines, voice, duration, workDir, cache = 
     placed.push({ start: round3(at), end: round3(free), text: said[i].text, rate: Math.round(rate * 100) / 100 });
   }
 
-  // 4. One track, as long as the recording (or as long as the last line ran).
+  // 3. One track, as long as the recording (or as long as the last line ran).
   const seconds = Math.max(total, last);
   const raw = path.join(workDir, "narration.pcm");
   const file = path.join(workDir, "narration.mp3");

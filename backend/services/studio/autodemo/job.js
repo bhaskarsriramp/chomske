@@ -361,12 +361,12 @@ export const autodemoJob = {
     const takes = new Map();
     report(0.6, "Recording the voice", true);
     try {
-      made = await buildNarration({ lines, voice, duration, workDir, cache: takes, brisk: false, onProgress: (p) => report(0.6 + 0.2 * p, "Recording the voice") });
+      made = await buildNarration({ lines, voice, duration, workDir, cache: takes, onProgress: (p) => report(0.6 + 0.2 * p, "Recording the voice") });
     } catch (err) {
       voiceError = err.userMessage || "The voice couldn't be made this time. The script and captions are in; add the voice from the Voice tab.";
       console.warn(`[autodemo] ${demo._id}: voice failed (${err.message})`);
     }
-    for (const [round, minGap] of [[0, 1.0], [1, 1.5]]) {
+    for (const [round, minGap] of [[0, 1.2], [1, 1.6]]) {
       if (!made) break;
       try {
         const re = await refit(lines, made.takes, { rec: plan.rec, brief: demo.autodemo.brief, steps: plan.steps, duration, minGap });

@@ -283,11 +283,13 @@ export function measuredMisfits(lines, takes, duration, { minGap = 1.0 } = {}) {
       const next = lines[i + 1];
       const room = (next ? next.start : duration) - l.start;
       const pace = have / seconds;
-      const want = Math.round(clamp(pace * Math.max(0.6, room - 0.35), 3, 34));
+      // Room for the line AND the breath after it (narrator.js GAP), plus a little.
+      const want = Math.round(clamp(pace * Math.max(0.6, room - 0.6), 3, 34));
       const hype = hypeOf(l.text);
       if (hype) return { i, have, want, why: `remove "${hype}"` };
       if (room - seconds > minGap && want - have >= 2) return { i, have, want, why: "too short" };
-      if (seconds > room * 1.12 && have - want >= 2) return { i, have, want, why: "too long" };
+      // Too long once it would need more than the narrator's inaudible 1.06x to keep its breath.
+      if (seconds > (room - 0.35) * 1.06 + 0.15 && have - want >= 2) return { i, have, want, why: "too long" };
       return null;
     })
     .filter(Boolean);

@@ -22,9 +22,9 @@
  */
 
 /** How fast the voice speaks, words a second. */
-export const WORDS_PER_SECOND = 2.5;
+export const WORDS_PER_SECOND = 2.3;
 /** How much of the recording the voice should cover. */
-export const COVERAGE = 0.9;
+export const COVERAGE = 0.85;
 
 export const DIRECTOR = `You are writing and directing a product demo video, made from a screen recording.
 
@@ -46,7 +46,8 @@ THE NARRATION RUNS FROM START TO FINISH, LIKE A LIVE PRESENTER
 - Open with what the viewer is about to see and why it matters to them, in terms of the description. End on what they can now do.
 
 HOW IT SHOULD SOUND
-- Spoken and engaging, like a founder showing their product to one interested person. Short sentences. Contractions. Talk to the viewer ("you").
+- Spoken and engaging, like a founder showing their product to one interested person. Talk to the viewer ("you"). Contractions.
+- Easy to follow by ear: short sentences with one idea each, never more than three items listed in one sentence, and a natural breath between thoughts. Continuous does not mean crammed: a listener who has to untangle a sentence has stopped watching.
 - Name on-screen labels exactly as they appear, in quotes where it helps: click "Pricing", not click the link.
 - Say what things are FOR, not only what they are.
 - No filler: never "In this video", "Let's go ahead and", "As you can see", "simply". No hype: nothing is seamless, powerful, robust, cutting-edge, revolutionary or game-changing.
