@@ -27,6 +27,7 @@ import adminRoutes from "./routes/admin.js";
 import showcaseRoutes from "./routes/showcase.js";
 import editRoutes from "./routes/edit.js";
 import studioRoutes from "./routes/studio.js";
+import autodemoRoutes from "./routes/autodemo.js";
 import mediaRoutes from "./routes/media.js";
 import { startEditRunner } from "./services/edit/editRunner.js";
 import { startStudioRunner } from "./services/studio/studioRunner.js";
@@ -177,6 +178,14 @@ app.use(
 // route, and what arrives here is polling, uploads being started, and autosaves
 // of a zoom being dragged. The ceiling is higher than /edit's because the
 // editor polls while an analysis runs and a demo has more moving parts.
+//
+// The auto product demo has its own router (routes/autodemo.js) under
+// /studio/autodemo, mounted first so the studio's routes stay as they were.
+app.use(
+  "/studio/autodemo",
+  rateLimit({ windowMs: 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false }),
+  autodemoRoutes
+);
 app.use(
   "/studio",
   rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false }),

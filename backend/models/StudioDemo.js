@@ -361,6 +361,13 @@ const StudioDemoSchema = new Schema({
    * Whether it plays is the timeline's (timeline.voice.on).
    */
   voiceover: { type: Schema.Types.Mixed, default: undefined },
+  /**
+   * The auto product demo: the creator's description of what the demo should
+   * show, and where building it is (services/studio/autodemo/job.js). Beside
+   * the timeline; what it writes INTO the timeline is only the narration,
+   * captions and voice switch, and `before` keeps what those were for Undo.
+   */
+  autodemo: { type: Schema.Types.Mixed, default: undefined },
 
   expires_at: { type: Date, default: null, index: true },
   purged: { type: Boolean, default: false },

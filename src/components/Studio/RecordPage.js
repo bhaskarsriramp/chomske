@@ -29,6 +29,8 @@ import { captureSupport, environment, startCapture, createRecorder, createTracke
 import { createDemo, startUpload, resumeUpload, completeUpload, startAnalysis } from "./studioApi";
 import { Btn, Icon, Toggle, Panel } from "./ui";
 import { fmtBytes } from "./model";
+import { AutoDemoAsk } from "./AutoDemo";
+import { requestAutoDemo } from "./autoDemoApi";
 import "./studio.css";
 
 const clock = (s) => {
@@ -61,6 +63,11 @@ export default function RecordPage({ config, onOpen, onCancel }) {
   const tracker = useRef(null);
   const demoRef = useRef(null);
   const stopping = useRef(false);
+  // The answer to "turn this into a product demo?" (AutoDemo.js), asked while
+  // the recording uploads: { brief, voice } for a demo, null to just edit it.
+  const demoChoice = useRef(null);
+  const chooseDemo = useRef(null);
+  const [saved, setSaved] = useState(false);
 
   /* ── Start ────────────────────────────────────────────────────────────── */
 
@@ -161,6 +168,10 @@ export default function RecordPage({ config, onOpen, onCancel }) {
   const finish = useCallback(async () => {
     if (stopping.current) return;
     stopping.current = true;
+    setSaved(false);
+    demoChoice.current = new Promise((resolve) => {
+      chooseDemo.current = resolve;
+    });
     setPhase("sending");
 
     try {
@@ -220,9 +231,25 @@ export default function RecordPage({ config, onOpen, onCancel }) {
         env: environment(),
       });
 
+      // The upload is done; the editor opens once the creator has answered.
+      setSaved(true);
+      const pick = await demoChoice.current;
+      let demoAsked = false;
+      if (pick?.brief) {
+        try {
+          await requestAutoDemo(demo.id, pick);
+          demoAsked = true;
+        } catch (err) {
+          console.error("[studio] the product demo request failed", err);
+        }
+      }
+
       setPhase("thinking");
-      // By slug, the id the editor's address uses (StudioPage.js).
-      onOpen(demo.slug || demo.id, { autoAnalyse, captions: wantCaptions });
+      // By slug, the id the editor's address uses (StudioPage.js). With a
+      // product demo asked for, the editor starts the automatic edit itself
+      // once the recording is prepared (StudioEditor.js), and the demo is
+      // built after it. Otherwise this is exactly what it always was.
+      onOpen(demo.slug || demo.id, { autoAnalyse: demoAsked ? false : autoAnalyse, captions: wantCaptions });
     } catch (err) {
       console.error("[studio] finish failed", err);
       setError(err?.message?.includes("abort") ? "The upload was stopped." : "We couldn't save that recording. Please try again.");
@@ -262,7 +289,12 @@ export default function RecordPage({ config, onOpen, onCancel }) {
   }
 
   if (phase === "sending" || phase === "thinking") {
-    return <SendingStage sent={sent} waiting={waiting} done={phase === "thinking"} />;
+    return (
+      <>
+        <SendingStage sent={sent} waiting={waiting} done={phase === "thinking"} compact={phase === "sending"} />
+        {phase === "sending" && <AutoDemoAsk saved={saved} onChoose={(choice) => chooseDemo.current?.(choice)} />}
+      </>
+    );
   }
 
   return (
@@ -530,9 +562,9 @@ function ControlPill({ elapsed, paused, muted, level, hasMic, onPause, onMute, o
    Sending
    ──────────────────────────────────────────────────────────────────────────── */
 
-function SendingStage({ sent, waiting, done }) {
+function SendingStage({ sent, waiting, done, compact = false }) {
   return (
-    <div style={{ display: "grid", placeItems: "center", minHeight: "56vh", padding: 20 }}>
+    <div style={{ display: "grid", placeItems: "center", minHeight: compact ? 0 : "56vh", padding: compact ? "34px 20px 18px" : 20 }}>
       <div style={{ width: "100%", maxWidth: 380, textAlign: "center" }}>
         <h2 style={{ margin: "0 0 10px", fontSize: 19, fontWeight: 680, letterSpacing: "-0.025em", color: "var(--ink)" }}>
           {done ? "Saved" : "Saving your recording"}

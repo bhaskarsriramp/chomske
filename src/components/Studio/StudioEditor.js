@@ -38,6 +38,9 @@ import { clipsOf, clipIdAt, splitPatch, deleteClipPatch, trimPatch } from "./cli
 import { VideoPanel, ZoomPanel, BlurPanel, CaptionsPanel, CaptionLine, CursorPanel, /* CanvasPanel, StepsPanel, SuggestionsPanel */ } from "./panels";
 import CanvasBar from "./CanvasBar";
 import CommandChat from "./CommandChat";
+// The auto product demo: its screens and its status, from its own files.
+import { AutoDemoDialog, AutoDemoStrip, AutoDemoWaiting } from "./AutoDemo";
+import { useAutoDemo } from "./autoDemoApi";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon, Drawer } from "./ui";
 import { layout, clamp, fmtTime, toSource } from "./model";
@@ -253,6 +256,12 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The auto product demo (AutoDemo.js): followed on its own, and the demo is
+  // read again whenever a run finishes or is undone, so its captions and voice
+  // appear without a reload.
+  const auto = useAutoDemo(demoId, { onSettled: () => load(true) });
+  const [autoOpen, setAutoOpen] = useState(false);
 
   /**
    * ── THE POLL MUST NOT DEPEND ON THE THING IT IS POLLING FOR ────────────────
@@ -967,6 +976,28 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     }
   }, [onAnalyse, demo, load]);
 
+  /**
+   * ── A PRODUCT DEMO WAS ASKED FOR: THE AUTOMATIC EDIT STARTS BY ITSELF ──────
+   * Right after recording the edit cannot start yet (the recording is still
+   * being prepared), which is why the creator normally presses "Edit it
+   * automatically" here. With a product demo asked for, that press is made for
+   * them, once, the moment the recording is ready: the same button's action,
+   * the same price. The demo is built on the server after it finishes. If it
+   * could not start (credits, a limit), the normal screen and its button come
+   * back with the reason.
+   */
+  const autoWaiting = auto.ad?.status === "waiting";
+  const canAutoStart =
+    !!demo && !tl && demo.status === "ready" && demo.recording?.status === "ready" &&
+    !["running", "failed"].includes(demo.analysis?.status);
+  const autoStarted = useRef(false);
+  const [autoTried, setAutoTried] = useState(false);
+  useEffect(() => {
+    if (!autoWaiting || !canAutoStart || autoStarted.current) return;
+    autoStarted.current = true;
+    startAnalyse().finally(() => setAutoTried(true));
+  }, [autoWaiting, canAutoStart, startAnalyse]);
+
   const onCaptionsFromScript = useCallback(async () => {
     setCaptioning(true);
     setNotice("");
@@ -1092,6 +1123,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     );
   }
 
+  // A product demo is waiting on the automatic edit, which is starting now.
+  if (!tl && autoWaiting && (!autoTried || starting)) {
+    return <AutoDemoWaiting starting />;
+  }
+
   if (!tl) {
     return (
       <Centred>
@@ -1176,6 +1212,16 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         onFocus={(e) => { e.target.style.borderColor = "var(--line)"; }}
         onBlurCapture={(e) => { e.target.style.borderColor = "transparent"; }}
       />
+      <Btn
+        size="s"
+        kind="quiet"
+        onClick={() => setAutoOpen(true)}
+        disabled={auto.active}
+        title={auto.active ? "Your product demo is being built" : "Write a script, captions and a voice from a description"}
+        icon={<Icon name="wand" size={15} />}
+      >
+        {narrow ? "" : "Product demo"}
+      </Btn>
       <Btn size="s" kind="quiet" onClick={stepBack} disabled={!undo.current.length} title="Undo (Ctrl+Z)" icon={<Icon name="undo" size={15} />}>
         {narrow ? "" : "Undo"}
       </Btn>
@@ -1188,7 +1234,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     </header>
   );
 
-  const banner = notice ? (
+  const noticeBar = notice ? (
     <div
       role="status"
       style={{
@@ -1208,6 +1254,12 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       </button>
     </div>
   ) : null;
+  const banner = (
+    <>
+      {noticeBar}
+      <AutoDemoStrip demoId={demoId} ad={auto.ad} onUndo={auto.undo} onRetry={() => setAutoOpen(true)} />
+    </>
+  );
 
   const preview = (
     <div
@@ -1476,6 +1528,19 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       beforeExport={save}
     />
   ) : null;
+  const autoDialog = autoOpen ? (
+    <AutoDemoDialog
+      ad={auto.ad}
+      hasCaptions={(tl.cues || []).length > 0}
+      onClose={() => setAutoOpen(false)}
+      onStart={async (brief, voice) => {
+        // Anything unsaved goes first, so the demo is written over the edit
+        // as the creator has it rather than racing their autosave.
+        await save();
+        await auto.start(brief, voice);
+      }}
+    />
+  ) : null;
 
   /**
    * ── WHY THE INSPECTOR ROWS ARE max-content ──────────────────────────────
@@ -1520,6 +1585,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           {ruler}
         </div>
         {dialog}
+        {autoDialog}
       </div>
     );
   }
@@ -1554,6 +1620,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         </div>
       </div>
       {dialog}
+      {autoDialog}
     </div>
   );
 }

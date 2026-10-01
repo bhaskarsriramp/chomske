@@ -52,6 +52,9 @@ import { jobDir } from "../media/scratch.js";
 import { retryDb } from "../../db.js";
 import { storeScreen, storeResult, resultKey, readText, loadAsks, replayAsks, compareResults } from "./browserAnalysis.js";
 import { exactStringify, exactParse } from "./exactJson.js";
+// The auto product demo: its own job, kept in its own folder. Registered here
+// and nothing else; it never runs inside another job.
+import { autodemoJob } from "./autodemo/job.js";
 
 const WORKER = `${os.hostname()}:${process.pid}`;
 const LEASE_MS = 90_000;
@@ -71,7 +74,7 @@ const AUTO_APPLY_PRESSES = String(process.env.STUDIO_AUTO_PRESS_ZOOMS || "1") !=
  * local and only the download or upload was at fault. An analysis gives up
  * sooner: every try pays for model calls again.
  */
-const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3, track: 6, voice: 4, recheck: 2 };
+const NETWORK_RETRIES = { prepare: 10, render: 10, analyse: 4, vision: 4, captions: 4, review: 3, track: 6, voice: 4, recheck: 2, autodemo: 3 };
 
 const int = (v, d) => (parseInt(v, 10) > 0 ? parseInt(v, 10) : d);
 const LIMIT = {
@@ -86,11 +89,15 @@ const LIMIT = {
   track: int(process.env.STUDIO_TRACK_CONCURRENCY, 2),
   // A voiceover is a few model calls a sentence and one short encode.
   voice: int(process.env.STUDIO_VOICE_CONCURRENCY, 2),
+  // The auto product demo (autodemo/job.js): a model call or two and a
+  // voiceover, after the analysis. Waiting for that analysis is done in short
+  // slices, so a slot is never held for a whole analysis.
+  autodemo: int(process.env.STUDIO_AUTODEMO_CONCURRENCY, 2),
   // The server re-running a browser analysis to compare (browserAnalysis.js).
   // Never urgent: one at a time, and last in the order the loop claims in.
   recheck: int(process.env.STUDIO_RECHECK_CONCURRENCY, 1),
 };
-const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0, track: 0, voice: 0, recheck: 0 };
+const running = { prepare: 0, analyse: 0, vision: 0, captions: 0, render: 0, review: 0, track: 0, voice: 0, autodemo: 0, recheck: 0 };
 
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
 
@@ -1476,7 +1483,7 @@ const voice = {
   },
 };
 
-const HANDLERS = { prepare, analyse, vision, captions, render, review, track, voice, recheck };
+const HANDLERS = { prepare, analyse, vision, captions, render, review, track, voice, recheck, autodemo: autodemoJob };
 
 /* ────────────────────────────────────────────────────────────────────────────
    Retention
