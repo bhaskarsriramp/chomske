@@ -482,6 +482,7 @@ export const autodemoJob = {
         "autodemo.skipped": [...plan.skipped, ...plan.focus.filter((f) => !focusIds.has(f.id)).map((f) => ({ what: f.label, why: "a zoom arrived there meanwhile" }))],
         "autodemo.live_focus": placed.map((z) => z.id),
         "autodemo.shortened": plan.shortened,
+        "autodemo.joined": plan.joined || 0,
         "autodemo.lengthened": plan.lengthened,
         "autodemo.usd": Math.round(usd.total * 10000) / 10000,
         "autodemo.before": before,
@@ -502,7 +503,7 @@ export const autodemoJob = {
     console.log(
       `[autodemo] ${demo._id}: ${lines.length} lines, ${cues.length} captions, ` +
         `voice ${voiceover ? `${voice} (${voiceover.engine}) ${voiceover.seconds}s` : "failed"}, watched as ${plan.seen}, ` +
-        `fitted ${plan.shortened} shorter / ${plan.lengthened} longer, ${refitted} refitted to the voice, ` +
+        `fitted ${plan.shortened} shorter / ${plan.lengthened} longer, ${plan.joined || 0} joined (restarts ${(plan.restarts || []).join("→")}), ${refitted} refitted to the voice, ` +
         `${plan.focus.length} focus zoom(s)${plan.skipped.length ? ` (${plan.skipped.length} skipped)` : ""}, $${usd.total.toFixed(4)}`
     );
     publishProgress(demo, { autodemo: { status: "done" } });

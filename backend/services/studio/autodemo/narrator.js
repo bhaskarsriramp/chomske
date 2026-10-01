@@ -14,8 +14,9 @@
  * ── TWO VOICES, ONE PER DEMO ─────────────────────────────────────────────────
  *   gemini   AI Studio, gemini-3.8-flash-tts (voice.js's model): 10 a minute and
  *            100 a DAY per project on Tier 1
- *   cloud    Cloud Text-to-Speech, Gemini-TTS (cloudVoice.js): its own, far
- *            larger quota, billed to the Cloud project
+ *   cloud:…  Cloud Text-to-Speech, Gemini-TTS (cloudVoice.js), one engine per
+ *            model in STUDIO_CLOUD_TTS_MODELS (3.1-flash-preview, then the
+ *            stable 2.5-flash): their own quota, billed to the Cloud project
  * A demo is spoken by ONE of them, never a mix: two models reading alternate
  * lines would sound like two people. "auto" (the default) tries gemini and,
  * if it fails for any reason, speaks the whole demo again with cloud. A daily
@@ -39,7 +40,7 @@ import { aistudioKeys, pool } from "../../ai/provider.js";
 import { ffmpeg } from "../../media/ffmpeg.js";
 import { VOICE_MODEL } from "../voice.js";
 import { PAUSE } from "./prompts.js";
-import { askCloud, CLOUD_MODEL } from "./cloudVoice.js";
+import { askCloud, CLOUD_MODELS } from "./cloudVoice.js";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const RATE = 24000;
@@ -229,19 +230,23 @@ export function trimQuiet(pcm) {
 
 /* ── Which voice ────────────────────────────────────────────────────────────── */
 
-const ENGINES = { gemini: askGemini, cloud: askCloud };
+const CLOUD_ENGINES = CLOUD_MODELS.map((m) => `cloud:${m}`);
+const ENGINES = {
+  gemini: askGemini,
+  ...Object.fromEntries(CLOUD_MODELS.map((m) => [`cloud:${m}`, (text, o) => askCloud(text, { ...o, model: m })])),
+};
 const MODE = String(process.env.STUDIO_AUTODEMO_VOICE || "auto").trim().toLowerCase();
 /** Until when the first voice is known to refuse (its daily limit), ms since epoch. */
 let geminiPausedUntil = 0;
 
 /** The voices to try for one demo, in order. */
 export function engineOrder(now = Date.now()) {
-  if (MODE === "cloud") return ["cloud"];
+  if (MODE === "cloud") return CLOUD_ENGINES;
   if (MODE === "gemini") return ["gemini"];
-  return now < geminiPausedUntil ? ["cloud"] : ["gemini", "cloud"];
+  return now < geminiPausedUntil ? CLOUD_ENGINES : ["gemini", ...CLOUD_ENGINES];
 }
-/** What the voiceover records about who spoke it. */
-export const engineLabel = (engine) => (engine === "cloud" ? `cloud:${CLOUD_MODEL}` : `gemini:${VOICE_MODEL}`);
+/** What the voiceover records about who spoke it: "gemini:<model>" or "cloud:<model>". */
+export const engineLabel = (engine) => (engine === "gemini" ? `gemini:${VOICE_MODEL}` : String(engine));
 
 async function speak(text, { engine, speakers, voice, style, workDir, tag }) {
   const wav = await speakers[engine](text, { voice, style });
@@ -261,7 +266,7 @@ async function speak(text, { engine, speakers, voice, style, workDir, tag }) {
  * @param {string} o.workDir
  * @param {Map}    [o.cache]   takes already made, by voice and text: a second build
  *                             after some lines were rewritten speaks only those again
- * @param {string} [o.engine]  "gemini" or "cloud": speak with this one only. A
+ * @param {string} [o.engine]  "gemini" or "cloud:<model>": speak with this one only. A
  *                             rebuild after refitting passes the first build's,
  *                             so a demo keeps one voice from start to finish
  * @param {object} [o.speakers] the two voices, replaceable by a test

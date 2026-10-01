@@ -24,7 +24,7 @@ import { newId } from "../timeline.js";
 import { findOnFrame } from "../command.js";
 import { containingBox } from "../events.js";
 import { zoomOutGap } from "../../../../src/components/Studio/camera.mjs";
-import { DIRECTOR, DIRECTOR_SCHEMA, FIT, WORDS_PER_SECOND, COVERAGE, PAUSE } from "./prompts.js";
+import { DIRECTOR, DIRECTOR_SCHEMA, FIT, FLOW, WORDS_PER_SECOND, COVERAGE, PAUSE } from "./prompts.js";
 
 /** Frames a second the model samples from the watch copy. Clicks come from the log, so the flow is what it needs. */
 const WATCH_FPS = 2;
@@ -223,6 +223,28 @@ export function cleanLines(raw, duration) {
     .map((l) => ({ id: newId("v"), start: round2(l.start), end: round2(l.end), text: l.text }));
 }
 
+/**
+ * A sentence split across two lines, put back together: each line is spoken
+ * as its own take, and "…for extra upfront savings," / "receiving up to 12
+ * months…" (seen on a real run) is heard as a sentence broken in the middle.
+ * The merged line keeps the first one's start and the second one's end.
+ */
+export function joinSplitSentences(lines) {
+  const out = [];
+  for (const l of lines) {
+    const prev = out[out.length - 1];
+    const open = prev && !/[.!?…।]["'”’)\]]*$/.test(prev.text.trim());
+    const continues = /^[a-z]/.test(l.text.trim());
+    if (prev && (open || /[,;:]$/.test(prev.text.trim())) && continues) {
+      prev.text = `${prev.text.trim()} ${l.text.trim()}`;
+      prev.end = Math.max(prev.end, l.end);
+    } else {
+      out.push({ ...l });
+    }
+  }
+  return out;
+}
+
 export function cleanSteps(raw, duration) {
   return (Array.isArray(raw) ? raw : [])
     .map((s) => ({
@@ -335,6 +357,12 @@ async function fit(lines, marks, { rec, brief, steps, spend }) {
     const t = clean(r?.text, 400);
     if (!m || !t) continue;
     const n = words(t);
+    const changed = factsChanged(lines[i].text, t);
+    const restarted = restarts([{ text: t }]) > 0 && restarts([lines[i]]) === 0;
+    if (changed.length || restarted) {
+      console.log(`[autodemo] fit: kept line ${i} (${changed.length ? `changed "${changed[0]}"` : "would restart the story"})`);
+      continue;
+    }
     if (m.why.startsWith("remove")) {
       // The word gone, and no further from the length wanted than before.
       if (!hypeOf(t) && Math.abs(n - m.want) <= Math.abs(m.have - m.want) + 2) {
@@ -367,6 +395,160 @@ export async function refit(lines, takes, { rec, brief, steps, duration, minGap 
   if (!marks.length || !rec) return { lines, changed: 0, marks, spend };
   const done = await fit(lines, marks, { rec, brief, steps, spend });
   return { lines: done.lines, changed: done.shortened + done.lengthened, marks, spend };
+}
+
+/* ── One story ─────────────────────────────────────────────────────────────── */
+
+/** A line that starts over instead of carrying on: "Now…", "Next…", "Here you can see…". */
+const RESTART = /^(now|next|moving on|let'?s look at|here we have|here you can see|then|also|finally)\b/i;
+export const restarts = (lines) => lines.filter((l) => RESTART.test(String(l.text || "").trim().replace(/^["'“‘]/, ""))).length;
+/** The on-screen labels a line quotes, which a rewrite must keep. */
+const quotedIn = (s) => [...String(s || "").matchAll(/"([^"]+)"|“([^”]+)”/g)].map((m) => (m[1] || m[2]).toLowerCase());
+
+/**
+ * The facts in a line that a rewrite must not touch: its numbers, by VALUE
+ * and with what bounds them. Seen on a real run: a join turned "220+
+ * countries" into "two hundred countries" and "up to twelve months of free
+ * credits" into "twelve months completely free" — better flowing, and no
+ * longer true. Compared by value because the same fact is written many ways:
+ * "forty plus" is "40+", "four percent" is "4%", "more than two hundred and
+ * twenty" is "220+", "up to twelve" is "≤12". (Comparing the words themselves
+ * refused every honest rewrite on the next run.)
+ */
+const UNITS = { zero: 0, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
+const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const SCALES = { thousand: 1e3, million: 1e6, billion: 1e9 };
+const DIGIT_WORDS = { zero: "0", oh: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9" };
+const isNumberWord = (w, next) =>
+  w in UNITS || w in TENS || w in SCALES || w === "hundred" || (w === "one" && (next === "hundred" || next in SCALES));
+
+/** Spelled-out numbers turned into digits: "two hundred and twenty" → "220". */
+export function spelledToDigits(text) {
+  const parts = String(text || "").toLowerCase().replace(/(\d),(\d{3})\b/g, "$1$2").split(/(\s+|-)/);
+  const wordAt = (k) => (parts[k] || "").replace(/[^a-z]/g, "");
+  const nextWord = (k) => {
+    for (let j = k + 1; j < parts.length; j++) if (wordAt(j)) return wordAt(j);
+    return "";
+  };
+  const out = [];
+  for (let i = 0; i < parts.length; ) {
+    if (!isNumberWord(wordAt(i), nextWord(i))) {
+      out.push(parts[i]);
+      i++;
+      continue;
+    }
+    let total = 0;
+    let current = 0;
+    let decimals = "";
+    let j = i;
+    let tail = "";
+    for (; j < parts.length; j++) {
+      const raw = parts[j];
+      const w = wordAt(j);
+      if (!w) {
+        if (/^(\s+|-)$/.test(raw) || raw === "") continue;
+        break;
+      }
+      if (w in UNITS) current += UNITS[w];
+      else if (w === "one") current += 1;
+      else if (w in TENS) current += TENS[w];
+      else if (w === "hundred") current = (current || 1) * 100;
+      else if (w in SCALES) {
+        total += (current || 1) * SCALES[w];
+        current = 0;
+      } else if (w === "and" && isNumberWord(nextWord(j), "")) continue;
+      else if (w === "point" && DIGIT_WORDS[nextWord(j)]) {
+        for (j = j + 1; j < parts.length; j++) {
+          const d = wordAt(j);
+          if (!d) { if (/^(\s+|-)$/.test(parts[j])) continue; break; }
+          if (!DIGIT_WORDS[d]) break;
+          decimals += DIGIT_WORDS[d];
+          tail = parts[j].replace(/^[a-z]+/i, "");
+          if (tail) { j++; break; }
+        }
+        break;
+      } else break;
+      tail = raw.replace(/^[a-z]+/i, "");
+      if (tail) { j++; break; }
+    }
+    // Trailing whitespace swallowed by the run goes back in.
+    const value = String(total + current) + (decimals ? `.${decimals}` : "");
+    out.push(value + tail);
+    if (j < parts.length && /^(\s+|-)$/.test(parts[j - 1] || "") && !tail) out.push(" ");
+    i = j;
+  }
+  return out.join("").replace(/\s{2,}/g, " ");
+}
+
+/** The numeric facts of a line, canonical: "220+", "≤12", "4%", "40". */
+export function factsIn(text) {
+  const s = spelledToDigits(text).replace(/(\d)\s*(?:percent|per cent)\b/g, "$1%");
+  const re = /(up to|at most|less than|no more than|under|more than|over|at least|above)?\s*[$€£₹]?(\d+(?:\.\d+)?)\s*(%)?\s*(\+(?!\s*[$€£₹]?\d)|plus\b(?!\s+[$€£₹]?\d))?/g;
+  const out = [];
+  for (const m of s.matchAll(re)) {
+    let t = m[2] + (m[3] || "");
+    if (m[1] && /up to|at most|less than|no more than|under/.test(m[1])) t = `≤${t}`;
+    else if ((m[1] && /more than|over|at least|above/.test(m[1])) || m[4]) t = `${t}+`;
+    out.push(t);
+  }
+  return out;
+}
+
+const minus = (a, b) => {
+  const left = [...b];
+  return a.filter((x) => {
+    const k = left.indexOf(x);
+    if (k >= 0) left.splice(k, 1);
+    return k < 0;
+  });
+};
+
+/**
+ * What a rewrite for LENGTH changed: a fact it states that the line did not
+ * (a rounded "220+" comes back as "200"; "up to 12" comes back as "12").
+ * Dropping a whole clause, number and all, is how a line gets shorter and is
+ * allowed; altering one is not.
+ */
+export const factsChanged = (before, after) => minus(factsIn(after), factsIn(before));
+
+/** What a rewrite for FLOW dropped or altered of the line's facts: all must stay. */
+export const factsLost = (before, after) => minus(factsIn(before), factsIn(after));
+
+/**
+ * The script's joins rewritten so it reads as one story (prompts.js FLOW).
+ * A line's new wording is kept only if it is within two words (or 15%) of
+ * the old length — its length is its time on screen — still quotes every
+ * label it quoted, and gained no hype word; otherwise the old line stands.
+ */
+export async function flow(lines, { brief, spend }) {
+  const before = restarts(lines);
+  if (lines.length < 2) return { lines, joined: 0, restartsBefore: before, restartsAfter: before };
+  const script = lines.map((l, i) => `[${i}] ${l.start.toFixed(1)}–${l.end.toFixed(1)}s, ${words(l.text)} words: ${l.text}`).join("\n");
+  const text = `${FLOW}\n\nCREATOR'S DESCRIPTION:\n"""\n${clean(brief, 1500)}\n"""\n\nSCRIPT:\n${script}`;
+  let json = null;
+  try {
+    json = await askJson({ model: MODEL.text, label: "autodemo:flow", parts: [{ text }], maxOutputTokens: 4096, temperature: 0.5, thinkingBudget: 2048 }, spend);
+  } catch (err) {
+    console.warn(`[autodemo] flow pass failed (${err.message}); keeping the lines as they were`);
+    return { lines, joined: 0, restartsBefore: before, restartsAfter: before };
+  }
+  const next = lines.map((l) => ({ ...l }));
+  let joined = 0;
+  for (const r of Array.isArray(json?.lines) ? json.lines : []) {
+    const i = Math.round(num(r?.i, -1));
+    const t = clean(r?.text, 400);
+    if (!next[i] || !t || t === lines[i].text) continue;
+    const have = words(lines[i].text);
+    const n = words(t);
+    const lost = [...quotedIn(lines[i].text).filter((q) => !t.toLowerCase().includes(q)), ...factsLost(lines[i].text, t)];
+    if (Math.abs(n - have) > Math.max(2, Math.round(have * 0.15)) || lost.length || hypeOf(t)) {
+      console.log(`[autodemo] flow: kept line ${i} (${n} words for ${have}${lost.length ? `, lost "${lost[0]}"` : ""}${hypeOf(t) ? `, "${hypeOf(t)}"` : ""})`);
+      continue;
+    }
+    next[i].text = t;
+    joined++;
+  }
+  return { lines: next, joined, restartsBefore: before, restartsAfter: restarts(next) };
 }
 
 /* ── Focus zooms ───────────────────────────────────────────────────────────── */
@@ -539,12 +721,16 @@ export async function direct({ video, workDir, duration, brief, timeline, hint =
     spend
   );
 
-  let lines = cleanLines(json?.lines, duration);
+  let lines = joinSplitSentences(cleanLines(json?.lines, duration));
   const steps = cleanSteps(json?.steps, duration);
 
   onProgress(0.5, "Fitting the script to the video");
   const fitted = await fit(lines, misfits(lines), { rec, brief, steps, spend });
   lines = fitted.lines;
+
+  onProgress(0.62, "Joining the script into one story");
+  const joined = await flow(lines, { brief, spend });
+  lines = joinSplitSentences(joined.lines);
 
   onProgress(0.75, "Choosing what to show up close");
   const placed = await placeFocus({ video, workDir, focus: cleanFocus(json?.focus, duration), timeline, duration, changes: Array.isArray(changes) ? changes : [], spend });
@@ -558,6 +744,8 @@ export async function direct({ video, workDir, duration, brief, timeline, hint =
     skipped: placed.skipped,
     seen: rec.seen,
     shortened: fitted.shortened,
+    joined: joined.joined,
+    restarts: [joined.restartsBefore, joined.restartsAfter],
     lengthened: fitted.lengthened,
     spend,
     // Kept in memory for refit() after the voice has spoken; never stored.
@@ -565,4 +753,4 @@ export async function direct({ video, workDir, duration, brief, timeline, hint =
   };
 }
 
-export default { direct, refit, clickLog, cleanLines, cleanSteps, cleanFocus, focusWindow, focusLevel, placeFocus, misfits, measuredMisfits, hypeOf, targetOf };
+export default { direct, refit, flow, restarts, joinSplitSentences, clickLog, cleanLines, cleanSteps, cleanFocus, focusWindow, focusLevel, placeFocus, misfits, measuredMisfits, hypeOf, targetOf };

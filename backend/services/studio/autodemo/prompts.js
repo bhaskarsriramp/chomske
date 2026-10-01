@@ -45,6 +45,7 @@ The creator recorded their product and described what this demo should show and 
 WHAT DECIDES WHAT
 - The CREATOR'S DESCRIPTION decides the angle: who the viewer is, what matters, what they should come away knowing, the product's name, and the words to use for things.
 - The RECORDING decides the facts: what is on screen, what is clicked, what appears, in what order. Never describe anything that does not visibly happen. Never invent features, numbers or results that are not on screen, even if the description mentions them.
+- Numbers and limits exactly as the screen gives them: "220+ countries" is "over two hundred and twenty countries", never "two hundred countries"; "up to 12 months of free credits" keeps its "up to" and its "credits".
 - Never promise an outcome the screen does not state: no "to see how fast buyers convert", "boost your revenue", "save hours". A benefit is said in the screen's own words, or the description's.
 - The CLICK LOG was measured precisely from the recording. Trust its times over your own impression.
 - If the creator's own spoken words are given, keep their meaning, facts and order; make them clear and spoken. Do not add claims they did not make.
@@ -54,14 +55,20 @@ THE NARRATION RUNS FROM START TO FINISH, LIKE A LIVE PRESENTER
 - Each line runs until the next one starts: its window is from its own start to the next line's start. Fill each window with words at about ${WORDS_PER_SECOND} words per second (a 4-second window is about 10 words). The whole script should be about TARGET_WORDS words.
 - While the page scrolls, loads or changes, keep talking: say what the viewer is looking at, read out the details that matter (headings, numbers, options, prices, limits), say why it matters for the person in the description, or set up what comes next. That is where a presenter adds the most.
 - A line about a click or a new screen starts at that moment, at most half a second before it, so the viewer hears it as they see it.
-- Lines flow into each other: link them the way a person talking does ("Now…", "From here…", "And this is the part…"), so it sounds like one walkthrough, not a list of captions.
-- Open with what the viewer is about to see and why it matters to them, in terms of the description. End on what they can now do.
+ONE STORY, NOT A LIST
+- The narration is one continuous story told to one person. Every line grows out of the line before it, the way a person keeps talking: it picks up the last idea and carries it forward ("…which is exactly why…", "and because of that…", "that same…"), answers the question the last line raised, or turns from the problem to the fix ("That's the part it takes off your plate.").
+- Never restart. Do not begin lines with "Now", "Next", "Moving on", "Let's look at", "Here we have", "Here you can see", "Then", "Also", "Finally" — at most one of these in the whole script. If a line could be moved to another place in the script without anyone noticing, it is not connected yet.
+- Before the screen changes, let the line lead on to what comes next ("…and the first thing you'll want to know is what it costs."), so the next screen arrives as the answer.
+- Give it an arc built from the description: the viewer's problem or goal, how the product handles it on screen, the detail that proves it (a number, a label), what it costs or takes, and what to do next.
+- Disconnected: "Dodo handles billing for AI companies." / "Pricing is four percent plus forty cents." Connected: "Dodo takes billing, taxes and fraud off your plate." / "And all of that comes at one simple price: four percent plus forty cents per transaction."
+- Open with the viewer's problem or goal from the description, not with the product's name alone. End on what they can now do.
 
 HOW IT SHOULD SOUND
 - Spoken and engaging, like a founder showing their product to one interested person. Talk to the viewer ("you"). Contractions.
 - Easy to follow by ear: short sentences with one idea each, never more than three items listed in one sentence, and a natural breath between thoughts. Continuous does not mean crammed: a listener who has to untangle a sentence has stopped watching.
 - Each line is one part of the walkthrough, and the voice takes a short breath (about a second) before the next part. Leave room for it: do not fill a window to the last second.
-- Name on-screen labels exactly as they appear, in quotes where it helps: click "Pricing", not click the link.
+- Every line is one or two COMPLETE sentences. Never split a sentence across two lines (no line ending in a comma, no line starting mid-sentence): each line is spoken on its own, and a sentence cut in two sounds broken. Connect lines by what they say, not by sharing a sentence.
+- Name on-screen labels exactly as they appear. Put only the names of buttons, links, tabs and menus in quotes (click "Pricing"); say prices, numbers and other text plainly, without quotes (the Standard Plan is four percent plus forty cents per transaction).
 - Say what things are FOR, not only what they are.
 - No filler: never "In this video", "Let's go ahead and", "As you can see", "simply". No hype: nothing is seamless, powerful, robust, cutting-edge, revolutionary or game-changing.
 - Write in the same language and script as the creator's description.
@@ -156,10 +163,37 @@ export const FIT = `You are editing the voiceover of a product demo so it fits t
 
 Rewrite ONLY the marked lines, each to about its target number of words (within two words either way):
 - Too long: say the same thing in fewer words.
+- Every number and limit stays exactly as it is ("220+" is not "200", "up to" is not dropped).
+- Keep the line's opening words, its link to the line before, unless it is too long and they must go; then open with a shorter link of your own. Never begin a line with a restart word (Now, Next, Moving on, Let's look at, Here we have, Here you can see, Then, Also, Finally).
 - Too short: keep what it says and add what a presenter would say at that moment: a real detail visible on screen then (a heading, a number, an option, a label), why it matters to the viewer in the description, or a lead-in to what comes next. Never add a fact that is not on screen or in the description.
-- Keep on-screen labels exactly, in quotes. Keep the spoken, second-person tone and the flow from the line before into the line after.
+- Keep on-screen labels exactly, in quotes. Keep the spoken, second-person tone, and keep the line's link to the line before (how it picks up) and its lead-in to the line after (how it hands over): the script is one story, and a rewrite must not turn a line back into a standalone statement.
 - Same language and script as the script.
 
 Return ONLY valid JSON: { "lines": [ { "i": 0, "text": "string" } ] }, one entry per marked line, with its "i".`;
 
-export default { DIRECTOR, DIRECTOR_SCHEMA, FIT, WORDS_PER_SECOND, COVERAGE, PAUSE };
+/**
+ * The script read again as ONE story, and its joins rewritten.
+ *
+ * The creator, 2026-10-01, on a script whose every line was true and well
+ * timed: "it should not sound like, okay, it is done, now the second feature
+ * has started… there should be the magic of connection between the
+ * sentences… like how humans actually have the conversation". A first draft
+ * is written moment by moment against the video, and reads that way however
+ * the prompt asks; a pass that sees only the words, all at once, is what can
+ * join them. It changes how lines begin and end, not what they say or how
+ * long they are (each line's length is its time on screen).
+ */
+export const FLOW = `You are polishing the voiceover of a product demo so it sounds like one person talking to one viewer, not a list of captions read one after another. Below is the script, one line per moment of the video, with each line's time and word count.
+
+Rewrite the lines so each one connects to the one before it and leads into the one after it:
+- Change mainly how lines begin and end: a link that picks up the previous point (because of that, which means, that same, so when you), a question the previous line raised and this one answers, a turn from the problem to the fix, a lead-in to what the next screen will show.
+- Never restart: no line may begin with "Now", "Next", "Moving on", "Let's look at", "Here we have", "Here you can see", "Then", "Also" or "Finally" (one in the whole script at most). Vary the links; do not start every line with "And" or "So".
+- Keep every fact, number and on-screen label (in quotes) of each line exactly: never round a number, never drop "up to", "over", "per" or "plus", never turn a credit or a discount into "free", and keep each line in its place in time.
+- Keep each line within two words of its current length: the voice has exactly that much time.
+- Every line stays one or two complete sentences: never end a line with a comma or begin one mid-sentence. Quotes only around names of buttons, links, tabs and menus.
+- Add nothing that is not already in the script or the creator's description. No hype words: nothing is seamless, powerful, robust or game-changing.
+- Same language and script as the lines.
+
+Return ONLY valid JSON: { "lines": [ { "i": 0, "text": "string" } ] }, every line, in order, with its "i".`;
+
+export default { DIRECTOR, DIRECTOR_SCHEMA, FIT, FLOW, WORDS_PER_SECOND, COVERAGE, PAUSE };
