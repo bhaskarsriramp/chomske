@@ -9,44 +9,60 @@
  *
  * ── THE TWO SOURCES, AND WHICH ONE DECIDES WHAT ──────────────────────────────
  * The creator's description decides EMPHASIS: who is watching, what matters,
- * what to call things, what to skip. The recording decides FACTS: what was
- * clicked, what appeared, in what order. A voiceover that says something
- * happened when it did not is worse than silence, so the description is never
- * allowed to add an event the recording does not show.
+ * what to call things. The recording decides FACTS: what was clicked, what
+ * appeared, in what order. A voiceover that says something happened when it
+ * did not is worse than silence, so the description never adds an event.
+ *
+ * ── CONTINUOUS, NOT SPARSE ───────────────────────────────────────────────────
+ * The first version said "silence is fine" and was believed: on a 50 s demo
+ * the voice was quiet for 17.7 s, up to 5 s at a time, every time the page
+ * scrolled or loaded — "it takes breaks… it sounds robotic". A presenter does
+ * not stop talking while a page loads; they say what is coming. So the script
+ * is now asked to run end to end, with a word budget that makes it.
  */
 
-/** How fast the voice is assumed to speak; the same pace NARRATION_WRITER uses. */
-export const WORDS_PER_SECOND = 2.6;
+/** How fast the voice speaks, words a second. */
+export const WORDS_PER_SECOND = 2.5;
+/** How much of the recording the voice should cover. */
+export const COVERAGE = 0.9;
 
-export const DIRECTOR = `You are writing the voiceover for a product demo, made from a screen recording.
+export const DIRECTOR = `You are writing and directing a product demo video, made from a screen recording.
 
-The creator recorded their product and then described what this demo should show and to whom. Your job: turn the recording into a demo that does exactly that. You write the script that a voice will read over the video, line by line, each line timed to the moment on screen it talks about.
+The creator recorded their product and described what this demo should show and to whom. Turn the recording into a demo that does exactly that: a voiceover a presenter reads over the video, timed line by line to what happens on screen.
 
 WHAT DECIDES WHAT
-- The CREATOR'S DESCRIPTION decides the angle: who the viewer is, which parts matter, what the viewer should come away knowing, the product's name, and the words to use for things.
-- The RECORDING decides the facts: what is on screen, what is clicked, what appears, and in what order. Never describe anything that does not visibly happen. Never invent features, numbers, results, or steps that are not in the recording, even if the description mentions them.
-- The CLICK LOG was measured precisely from the recording. Trust its times over your own impression of when something happened.
-- If the creator's own spoken words are given, they are what the creator meant to say. Keep their meaning, facts and order; make them clear, short and spoken. Do not add claims they did not make.
+- The CREATOR'S DESCRIPTION decides the angle: who the viewer is, what matters, what they should come away knowing, the product's name, and the words to use for things.
+- The RECORDING decides the facts: what is on screen, what is clicked, what appears, in what order. Never describe anything that does not visibly happen. Never invent features, numbers or results that are not on screen, even if the description mentions them.
+- Never promise an outcome the screen does not state: no "to see how fast buyers convert", "boost your revenue", "save hours". A benefit is said in the screen's own words, or the description's.
+- The CLICK LOG was measured precisely from the recording. Trust its times over your own impression.
+- If the creator's own spoken words are given, keep their meaning, facts and order; make them clear and spoken. Do not add claims they did not make.
 
-HOW TO TIME THE LINES
-- Every line has a start and an end in seconds of the recording. A line about a click starts just before or at that click, so the viewer hears it as they see it.
-- Lines never overlap and stay in order. Leave a small breath (about 0.3 s) between lines.
-- Each line must be speakable inside its own window at about ${WORDS_PER_SECOND} words per second. A 3 second window holds about 8 words. Count them. Longer windows can hold longer lines; never cram.
-- Silence is fine. Moments that do not serve the description (closing a popup, waiting for a page, scrolling past something) get no line, or a very short one.
-- Open with one short line that tells the viewer what they are about to see, in terms of the description, placed in the first seconds. End on the result or what the viewer can now do, if there is room.
+THE NARRATION RUNS FROM START TO FINISH, LIKE A LIVE PRESENTER
+- The voice starts in the first half-second and keeps going to the end. No silence longer than about one second anywhere.
+- Each line runs until the next one starts: its window is from its own start to the next line's start. Fill each window with words at about ${WORDS_PER_SECOND} words per second (a 4-second window is about 10 words). The whole script should be about TARGET_WORDS words.
+- While the page scrolls, loads or changes, keep talking: say what the viewer is looking at, read out the details that matter (headings, numbers, options, prices, limits), say why it matters for the person in the description, or set up what comes next. That is where a presenter adds the most.
+- A line about a click or a new screen starts at that moment, at most half a second before it, so the viewer hears it as they see it.
+- Lines flow into each other: link them the way a person talking does ("Now…", "From here…", "And this is the part…"), so it sounds like one walkthrough, not a list of captions.
+- Open with what the viewer is about to see and why it matters to them, in terms of the description. End on what they can now do.
 
 HOW IT SHOULD SOUND
-- Spoken, not written. Short sentences. Contractions. Like a founder showing their product to one person.
-- Second person and present tense: "Click Retail, and the solutions for stores open."
-- Name on-screen labels exactly as they appear, in quotes where it helps: click "Start chat", not click the button.
-- Say what something is FOR when the description cares about it, not only what it does.
-- No filler: never "In this video", "Let's go ahead and", "As you can see", "simply". No superlatives: nothing is seamless, powerful, robust, cutting-edge or game-changing.
+- Spoken and engaging, like a founder showing their product to one interested person. Short sentences. Contractions. Talk to the viewer ("you").
+- Name on-screen labels exactly as they appear, in quotes where it helps: click "Pricing", not click the link.
+- Say what things are FOR, not only what they are.
+- No filler: never "In this video", "Let's go ahead and", "As you can see", "simply". No hype: nothing is seamless, powerful, robust, cutting-edge, revolutionary or game-changing.
 - Write in the same language and script as the creator's description.
+
+FOCUS MOMENTS (camera)
+The camera already zooms on every click in the click log. List, separately, up to 6 moments where something the narration talks about is on screen but was NOT clicked, and the viewer would follow better if the camera eased in on it: a usage bar, a price, a chart, a stat, a form, a result that just appeared.
+- Only while the screen is still: never while it scrolls or loads. "start" is when it is fully visible and settled, "end" is when the narration moves on (2 to 5 seconds later).
+- Never within a second of a click in the click log, and never the whole page: one area a viewer can take in at a glance.
+- "what" describes it so someone could find it on that frame: "the two usage progress bars under Plan usage limits".
+- Skip this entirely if nothing deserves it. Fewer, better moments beat many.
 
 ALSO RETURN
 - "product": the product's name, from the description or the screen, or "".
 - "summary": one sentence saying what the finished demo shows.
-- "steps": the demo's chapters as the viewer should understand them (3 to 12), each with start, end, a short imperative title, and "matters": "high" for what the description is about, "medium" for real work along the way, "low" for detours.
+- "steps": the demo's chapters (3 to 12): start, end, a short imperative title, "detail" (one sentence naming what is on screen in that stretch, with its real labels and values), and "matters": "high" for what the description is about, "medium" for real work along the way, "low" for detours.
 
 Return ONLY valid JSON matching the schema. No markdown fence, no commentary.
 
@@ -54,8 +70,9 @@ Schema:
 {
   "product": "string",
   "summary": "string",
-  "steps": [ { "start": 0.0, "end": 0.0, "title": "string", "matters": "high|medium|low" } ],
-  "lines": [ { "start": 0.0, "end": 0.0, "text": "string" } ]
+  "steps": [ { "start": 0.0, "end": 0.0, "title": "string", "detail": "string", "matters": "high|medium|low" } ],
+  "lines": [ { "start": 0.0, "end": 0.0, "text": "string" } ],
+  "focus": [ { "start": 0.0, "end": 0.0, "what": "string", "why": "string" } ]
 }`;
 
 /** The same shape, held to while the model writes. Small on purpose: see vision.js UI_SCHEMA on schema size limits. */
@@ -72,10 +89,11 @@ export const DIRECTOR_SCHEMA = {
           start: { type: "NUMBER" },
           end: { type: "NUMBER" },
           title: { type: "STRING" },
+          detail: { type: "STRING" },
           matters: { type: "STRING", enum: ["high", "medium", "low"] },
         },
         required: ["start", "end", "title"],
-        propertyOrdering: ["start", "end", "title", "matters"],
+        propertyOrdering: ["start", "end", "title", "detail", "matters"],
       },
     },
     lines: {
@@ -91,22 +109,43 @@ export const DIRECTOR_SCHEMA = {
         propertyOrdering: ["start", "end", "text"],
       },
     },
+    focus: {
+      type: "ARRAY",
+      maxItems: 6,
+      items: {
+        type: "OBJECT",
+        properties: {
+          start: { type: "NUMBER" },
+          end: { type: "NUMBER" },
+          what: { type: "STRING" },
+          why: { type: "STRING" },
+        },
+        required: ["start", "end", "what"],
+        propertyOrdering: ["start", "end", "what", "why"],
+      },
+    },
   },
   required: ["product", "summary", "steps", "lines"],
-  propertyOrdering: ["product", "summary", "steps", "lines"],
+  propertyOrdering: ["product", "summary", "steps", "lines", "focus"],
 };
 
 /**
- * Lines that came back too long for their window, shortened.
+ * Lines whose length does not match their moment, rewritten to fit.
  *
- * The voice can speed a sentence up a little and otherwise runs on into the
- * next one (voice.js). The picture is never cut or sped up to make room
- * (memory: no fast-forwarding), so the words are what has to give.
+ * Too long and the voice runs over into the next screen; too short and it
+ * goes quiet while the picture moves on. The picture is never cut or sped up
+ * to make room (memory: no fast-forwarding), so the words are what changes.
+ * Given the video again where it can be, so a line made longer gains a real
+ * detail from the screen rather than padding.
  */
-export const TIGHTEN = `You are editing a product demo's voiceover. Each line below is too long to be spoken in the time it has on screen.
+export const FIT = `You are editing the voiceover of a product demo so it fits the video exactly. The full script is below with each line's time window; some lines are marked with a target length because they are too long or too short for their window.
 
-Rewrite each one to AT MOST the number of words given, keeping its meaning, its on-screen labels (in quotes) exactly, and its spoken, second-person tone. Same language and script as the line. Do not add anything.
+Rewrite ONLY the marked lines, each to about its target number of words (within two words either way):
+- Too long: say the same thing in fewer words.
+- Too short: keep what it says and add what a presenter would say at that moment: a real detail visible on screen then (a heading, a number, an option, a label), why it matters to the viewer in the description, or a lead-in to what comes next. Never add a fact that is not on screen or in the description.
+- Keep on-screen labels exactly, in quotes. Keep the spoken, second-person tone and the flow from the line before into the line after.
+- Same language and script as the script.
 
-Return ONLY valid JSON: { "lines": [ { "i": 0, "text": "string" } ] } with one entry per line, using the same "i".`;
+Return ONLY valid JSON: { "lines": [ { "i": 0, "text": "string" } ] }, one entry per marked line, with its "i".`;
 
-export default { DIRECTOR, DIRECTOR_SCHEMA, TIGHTEN, WORDS_PER_SECOND };
+export default { DIRECTOR, DIRECTOR_SCHEMA, FIT, WORDS_PER_SECOND, COVERAGE };

@@ -2,16 +2,18 @@
  * autodemo/job.js: the auto product demo, as a job of its own.
  *
  * The creator records, describes what the demo should show, and gets back a
- * demo with a script written for that description, captions from the script
- * and a voice reading it — on top of the automatic edit, which is untouched.
+ * demo with a script written for that description, captions from the script,
+ * a presenter's voice reading it, and the camera easing in on what the script
+ * talks about where nothing was clicked — on top of the automatic edit.
  *
  * ── IT RUNS AFTER THE ANALYSIS, NEVER INSIDE IT ──────────────────────────────
- * The clicks and zooms are the analysis's (events.js, analyse.js), measured
- * against labelled recordings, and nothing here may move them. So this job
- * waits for the analysis to finish exactly as it always does, READS its
- * events and zooms, and writes only what is its own: the narration, the
- * captions, the voice. A bug in here can spoil a script; it cannot touch a
- * click or a zoom.
+ * The clicks and their zooms are the analysis's (events.js, analyse.js),
+ * measured against labelled recordings, and nothing here may move them. So
+ * this job waits for the analysis to finish exactly as it always does, READS
+ * its events and zooms, and writes only what is its own: the narration, the
+ * captions, the voice, and focus zooms ADDED beside the click zooms (never
+ * overlapping one, tracked by id in `live_focus`). A bug in here can spoil a
+ * script or a focus zoom; it cannot touch a click or a click's zoom.
  *
  * ── WAITING WITHOUT HOLDING A SLOT FOR MINUTES ───────────────────────────────
  * The request usually arrives before the recording is even prepared. The job
@@ -28,7 +30,8 @@
  * ── demo.autodemo ────────────────────────────────────────────────────────────
  *   { seq, brief, voice, status: waiting|running|done|failed|undone, stage,
  *     progress, error, requested_at, started_at, finished_at, product,
- *     summary, steps, lines, cues, voice_ok, voice_error, seen, usd, before }
+ *     summary, steps, lines, cues, voice_ok, voice_error, seen, usd, focus,
+ *     skipped, live_focus, shortened, lengthened, before }
  * `seq` names the request: a newer request replaces an older one, and a job
  * whose seq is no longer the demo's stops without writing.
  */
@@ -38,12 +41,13 @@ import { materialize, putFile } from "../../media/storage.js";
 import { providerReady } from "../../ai/provider.js";
 import { retryDb } from "../../../db.js";
 import { generateCaptions } from "../analyse.js";
-import { buildVoiceover } from "../voice.js";
 import { cuesFromNarration } from "../captionsFromScript.js";
 import { sanitizeTimeline } from "../timeline.js";
 import { demoKey, bumpExpiry, publishProgress } from "../demoService.js";
 import { voiceById, voiceSig, DEFAULT_VOICE } from "../../../../src/components/Studio/voices.mjs";
-import { direct } from "./director.js";
+import { zoomOutGap } from "../../../../src/components/Studio/camera.mjs";
+import { direct, refit } from "./director.js";
+import { buildNarration } from "./narrator.js";
 
 /** How long one job waits for the analysis before handing over to the next. */
 const WAIT_SLICE_MS = 45_000;
@@ -120,6 +124,18 @@ function withOnly(tl, fields, duration) {
   return next;
 }
 
+/**
+ * The zooms with this feature's focus zooms swapped: `remove` (ids it placed
+ * before) taken out, `add` put in. Every other zoom — every click's — is the
+ * stored object exactly as it was; only the new ones are sanitized.
+ */
+function withFocus(tl, { remove = [], add = [] }, duration) {
+  const gone = new Set(remove);
+  const kept = (tl.zooms || []).filter((z) => !gone.has(z.id));
+  const added = add.length ? sanitizeTimeline({ ...tl, zooms: add }, { duration, source: tl.source }).zooms : [];
+  return [...kept, ...added].sort((a, b) => a.start - b.start);
+}
+
 /* ── The request ───────────────────────────────────────────────────────────── */
 
 export const cleanBrief = (v) => String(v || "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").trim().slice(0, BRIEF_MAX);
@@ -152,6 +168,12 @@ export async function requestAutodemo(demo, { brief, voice, user }) {
     voice_error: "",
     seen: "",
     usd: 0,
+    focus: [],
+    skipped: [],
+    // The ids of the focus zooms this feature has in the timeline right now,
+    // whatever became of the request that placed them: the next run replaces
+    // them, Undo removes them.
+    live_focus: Array.isArray(prev?.live_focus) ? prev.live_focus : [],
     // What a finished earlier run replaced stays undoable until this one
     // replaces it in turn.
     before: prev?.status === "done" ? prev.before || null : null,
@@ -180,6 +202,8 @@ export function shapeAutodemo(ad) {
     cues: ad.cues || 0,
     voice_ok: ad.voice_ok ?? null,
     voice_error: ad.voice_error || "",
+    // The zooms it placed where nothing was clicked: { start, end, label }.
+    focus: (ad.focus || []).map((f) => ({ start: f.start, end: f.end, label: f.label })),
     requested_at: ad.requested_at || null,
     finished_at: ad.finished_at || null,
     can_undo: ad.status === "done" && !!ad.before,
@@ -188,8 +212,9 @@ export function shapeAutodemo(ad) {
 
 /**
  * Put back what the last finished run replaced: the captions, the script, the
- * captions switch, the voice switch and the voiceover. Zooms, cuts and
- * everything else are left as they are now.
+ * captions switch, the voice switch, the voiceover, and its focus zooms taken
+ * out (with any earlier run's put back). Click zooms, cuts and everything else
+ * are left as they are now.
  */
 export async function undoAutodemo(demoId) {
   for (let i = 0; i < WRITE_TRIES; i++) {
@@ -200,14 +225,26 @@ export async function undoAutodemo(demoId) {
     }
     const tl = fresh.timeline;
     const b = ad.before;
+    const duration = fresh.recording?.duration || tl.duration || 0;
     const next = withOnly(tl, {
       cues: b.cues || [],
       narration: b.narration || [],
       captions: { ...(tl.captions || {}), enabled: !!b.captions_enabled },
       voice: b.voice || { on: false, keep_original: false },
-    }, fresh.recording?.duration || tl.duration || 0);
+    }, duration);
+    // Put back as they were, not re-sanitized: they were stored objects before.
+    const back = Array.isArray(b.focus_removed) ? b.focus_removed : [];
+    const gone = new Set(ad.live_focus || []);
+    next.zooms = [...(tl.zooms || []).filter((z) => !gone.has(z.id)), ...back].sort((a, b2) => a.start - b2.start);
     const update = {
-      $set: { timeline: next, "autodemo.status": "undone", "autodemo.before": null, expires_at: bumpExpiry(), updated_at: new Date() },
+      $set: {
+        timeline: next,
+        "autodemo.status": "undone",
+        "autodemo.before": null,
+        "autodemo.live_focus": Array.isArray(b.live_focus) ? b.live_focus : [],
+        expires_at: bumpExpiry(),
+        updated_at: new Date(),
+      },
       $inc: { rev: 1 },
     };
     if (b.voiceover) update.$set.voiceover = b.voiceover;
@@ -288,50 +325,82 @@ export const autodemoJob = {
       }
     }
 
-    /* 4. The script. */
+    /* 4. The script, and where the camera eases in. */
+    // An earlier run's focus zooms are this feature's own and about to be
+    // replaced: they neither block the new ones nor read as clicks.
+    const earlierFocus = new Set(demo.autodemo.live_focus || []);
     const plan = await direct({
       video,
       workDir,
       duration,
       brief: demo.autodemo.brief,
-      timeline: demo.timeline,
+      timeline: { ...demo.timeline, zooms: (demo.timeline.zooms || []).filter((z) => !earlierFocus.has(z.id)) },
       hint: { summary: demo.analysis?.summary, product: demo.analysis?.product },
       speech,
+      changes: demo.analysis?.changes || [],
       onProgress: (p, stage) => report(0.1 + 0.45 * p, stage, true),
     });
     usd.total += plan.spend.usd;
-    // Validated the way the timeline will store them BEFORE the voice is made
-    // from them, so the voiceover's signature matches the captions the editor
-    // holds (voices.mjs voiceSig) and the Voice tab does not call it stale.
-    const cues = sanitizeTimeline(
-      { ...demo.timeline, cues: cuesFromNarration(plan.lines, { duration }) },
-      { duration, source: demo.timeline.source }
-    ).cues;
-    if (!plan.lines.length || !cues.length) {
+    if (!plan.lines.length) {
       throw userError("We couldn't write a script for this recording. Try describing what it should show in a sentence or two, and generate it again.");
     }
 
-    /* 5. The voice. A failure here still leaves the script and captions. */
+    /*
+     * 5. The voice, then the lines it did not fit, rewritten and spoken again.
+     *    How fast a line is spoken varies more than its word count says, so
+     *    the first take is measured: a line that left silence before the next
+     *    is lengthened, one that had to be rushed is shortened, and only
+     *    those are spoken again (the narrator keeps the other takes). A
+     *    failure in the voice still leaves the script and its captions.
+     */
     const voice = voiceById(demo.autodemo.voice)?.id || DEFAULT_VOICE;
-    let voiceover = null;
+    let lines = plan.lines;
+    let made = null;
     let voiceError = "";
+    let refitted = 0;
+    const takes = new Map();
     report(0.6, "Recording the voice", true);
     try {
-      const made = await buildVoiceover({
-        cues,
-        voice,
-        duration,
-        workDir,
-        onProgress: (p) => report(0.6 + 0.32 * p, "Recording the voice"),
-      });
+      made = await buildNarration({ lines, voice, duration, workDir, cache: takes, brisk: false, onProgress: (p) => report(0.6 + 0.2 * p, "Recording the voice") });
+    } catch (err) {
+      voiceError = err.userMessage || "The voice couldn't be made this time. The script and captions are in; add the voice from the Voice tab.";
+      console.warn(`[autodemo] ${demo._id}: voice failed (${err.message})`);
+    }
+    for (const [round, minGap] of [[0, 1.0], [1, 1.5]]) {
+      if (!made) break;
+      try {
+        const re = await refit(lines, made.takes, { rec: plan.rec, brief: demo.autodemo.brief, steps: plan.steps, duration, minGap });
+        usd.total += re.spend.usd;
+        if (!re.changed) break;
+        report(0.82 + 0.05 * round, "Smoothing the voice", true);
+        const again = await buildNarration({ lines: re.lines, voice, duration, workDir, cache: takes, onProgress: (p) => report(0.82 + 0.05 * round + 0.05 * p, "Smoothing the voice") });
+        lines = re.lines;
+        made = again;
+        refitted += re.changed;
+      } catch (err) {
+        // The takes so far stand; they are a complete voiceover.
+        console.warn(`[autodemo] ${demo._id}: fitting round ${round + 1} skipped (${err.message})`);
+        break;
+      }
+    }
+
+    // Validated the way the timeline will store them BEFORE the signature is
+    // taken, so the voiceover matches the captions the editor holds (voices.mjs
+    // voiceSig) and the Voice tab does not call it stale.
+    const cues = sanitizeTimeline(
+      { ...demo.timeline, cues: cuesFromNarration(lines, { duration }) },
+      { duration, source: demo.timeline.source }
+    ).cues;
+    if (!cues.length) {
+      throw userError("We couldn't write a script for this recording. Try describing what it should show in a sentence or two, and generate it again.");
+    }
+    let voiceover = null;
+    if (made) {
       const vseq = Date.now();
       const sig = voiceSig(voice, cues);
       const key = demoKey(demo, "voice", `${sig}-${vseq}.mp3`);
       await putFile(made.file, key, "audio/mpeg");
       voiceover = { name: voice, sig, key, seq: vseq, seconds: made.seconds, sentences: made.sentences, made_at: new Date() };
-    } catch (err) {
-      voiceError = err.userMessage || "The voice couldn't be made this time. The script and captions are in; add the voice from the Voice tab.";
-      console.warn(`[autodemo] ${demo._id}: voice failed (${err.message})`);
     }
 
     /* 6. Written on the freshest timeline, only where nobody saved in between. */
@@ -342,21 +411,34 @@ export const autodemoJob = {
       if (!fresh || fresh.purged || !fresh.timeline) return;
       if (fresh.autodemo?.seq !== seq) return;
       const tl = fresh.timeline;
+      const live = Array.isArray(fresh.autodemo?.live_focus) ? fresh.autodemo.live_focus : [];
       const before = {
         cues: tl.cues || [],
         narration: tl.narration || [],
         captions_enabled: !!tl.captions?.enabled,
         voice: tl.voice || { on: false, keep_original: false },
         voiceover: fresh.voiceover || null,
+        // The focus zooms this run replaces, exactly as stored, and their ids.
+        focus_removed: (tl.zooms || []).filter((z) => live.includes(z.id)),
+        live_focus: live,
       };
+      // A zoom may have arrived since the plan was made (the creator's, or the
+      // check's confirmed press): a focus zoom that would now crowd it is dropped.
+      const others = (tl.zooms || []).filter((z) => !live.includes(z.id));
+      const focus = plan.focus.filter((f) =>
+        others.every((z) => z.end + zoomOutGap(z, f) <= f.start || z.start - zoomOutGap(f, z) >= f.end)
+      );
       const next = withOnly(tl, {
-        narration: plan.lines,
+        narration: lines,
         cues,
         captions: { ...(tl.captions || {}), enabled: true },
         // Without a new voice, any older one would read the OLD script over
         // these captions, so it is switched off until the Voice tab makes one.
         voice: { ...(tl.voice || { keep_original: false }), on: !!voiceover },
       }, duration);
+      next.zooms = withFocus(tl, { remove: live, add: focus }, duration);
+      const focusIds = new Set(focus.map((f) => f.id));
+      const placed = next.zooms.filter((z) => focusIds.has(z.id));
       const $set = {
         timeline: next,
         "autodemo.status": "done",
@@ -366,11 +448,17 @@ export const autodemoJob = {
         "autodemo.product": plan.product,
         "autodemo.summary": plan.summary,
         "autodemo.steps": plan.steps,
-        "autodemo.lines": plan.lines.length,
+        "autodemo.lines": lines.length,
+        "autodemo.refitted": refitted,
         "autodemo.cues": cues.length,
         "autodemo.voice_ok": !!voiceover,
         "autodemo.voice_error": voiceError,
         "autodemo.seen": plan.seen,
+        "autodemo.focus": placed.map((z) => ({ id: z.id, start: z.start, end: z.end, label: z.label, level: z.level })),
+        "autodemo.skipped": [...plan.skipped, ...plan.focus.filter((f) => !focusIds.has(f.id)).map((f) => ({ what: f.label, why: "a zoom arrived there meanwhile" }))],
+        "autodemo.live_focus": placed.map((z) => z.id),
+        "autodemo.shortened": plan.shortened,
+        "autodemo.lengthened": plan.lengthened,
         "autodemo.usd": Math.round(usd.total * 10000) / 10000,
         "autodemo.before": before,
         expires_at: bumpExpiry(),
@@ -388,9 +476,10 @@ export const autodemoJob = {
     }
 
     console.log(
-      `[autodemo] ${demo._id}: ${plan.lines.length} lines, ${cues.length} captions, ` +
-        `voice ${voiceover ? `${voice} ${voiceover.seconds}s` : "failed"}, watched as ${plan.seen}` +
-        `${plan.tightened ? `, ${plan.tightened} line(s) shortened` : ""}, $${usd.total.toFixed(4)}`
+      `[autodemo] ${demo._id}: ${lines.length} lines, ${cues.length} captions, ` +
+        `voice ${voiceover ? `${voice} ${voiceover.seconds}s` : "failed"}, watched as ${plan.seen}, ` +
+        `fitted ${plan.shortened} shorter / ${plan.lengthened} longer, ${refitted} refitted to the voice, ` +
+        `${plan.focus.length} focus zoom(s)${plan.skipped.length ? ` (${plan.skipped.length} skipped)` : ""}, $${usd.total.toFixed(4)}`
     );
     publishProgress(demo, { autodemo: { status: "done" } });
   },

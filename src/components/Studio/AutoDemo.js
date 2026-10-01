@@ -106,7 +106,7 @@ export function AutoDemoAsk({ saved, onChoose }) {
         <h3 style={{ margin: 0, fontSize: 16.5, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--ink)" }}>Turn this into a product demo?</h3>
       </div>
       <p style={{ margin: "0 0 16px", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-        Clipo writes the script, adds captions and a voice. Your click zooms stay exactly as they are, and you can change anything afterwards.
+        Clipo writes the script, adds captions and a voice, and eases in on what matters where you didn't click. Your click zooms stay exactly as they are, and you can change anything afterwards.
       </p>
       <BriefForm brief={brief} setBrief={setBrief} voice={voice} setVoice={setVoice} autoFocus />
       {saved && (
@@ -173,7 +173,7 @@ export function AutoDemoDialog({ ad, hasCaptions, onClose, onStart }) {
         </header>
         <div style={{ padding: 20, display: "grid", gap: 16 }}>
           <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-            Clipo watches this recording and writes a script for what you describe, then adds it as captions and a voice. Zooms, cuts and blurs stay as they are.
+            Clipo watches this recording and writes a script for what you describe, adds it as captions and a voice, and eases in on what matters where you didn't click. Your click zooms, cuts and blurs stay as they are.
           </p>
           <BriefForm brief={brief} setBrief={setBrief} voice={voice} setVoice={setVoice} autoFocus />
           {hasCaptions && (
@@ -268,7 +268,11 @@ export function AutoDemoStrip({ demoId, ad, onUndo, onRetry }) {
         <span style={{ fontWeight: 650, color: "var(--ink)" }}>Your product demo is ready.</span>
         <span style={{ color: "var(--ink-body)" }}>
           {" "}{ad.cues} caption{ad.cues === 1 ? "" : "s"} from a {ad.lines}-line script
-          {ad.voice_ok ? `, read by ${ad.voice}` : ""}. Click zooms are unchanged.
+          {ad.voice_ok ? `, read by ${ad.voice}` : ""}
+          {(ad.focus || []).length > 0
+            ? `, and ${ad.focus.length} close-up${ad.focus.length === 1 ? "" : "s"} where you didn't click (${ad.focus.map((f) => f.label).join("; ")})`
+            : ""}
+          . Your click zooms are unchanged.
         </span>
         {ad.voice_error && <div style={{ marginTop: 4, color: "var(--bad)" }}>{ad.voice_error}</div>}
         {undoError && <div style={{ marginTop: 4, color: "var(--bad)" }}>{undoError}</div>}
