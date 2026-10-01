@@ -32,7 +32,7 @@ import {
 } from "./model";
 import { useBox, Icon } from "./ui";
 import Skeleton from "../Shell/Skeleton";
-import { followFor, followAt, followNear, applyState, blurCorner } from "./follow.mjs";
+import { followFor, followAt, followNear, applyState, blurCorner, blurRadius, blurSigma } from "./follow.mjs";
 import { cursorColors, rippleRgb, traceHand, strokeOutline, strokeHandDetail, cursorSize } from "./cursorLook.mjs";
 
 /** How long a click ripple lives. Matches overlay.js. */
@@ -492,13 +492,26 @@ function paintBlur(ctx, video, b, cam, d) {
 
   const canBlur = typeof ctx.filter === "string";
   if (b.kind === "blur" && canBlur) {
+    // The export's reach (follow.mjs blurRadius), as the Gaussian that looks like it.
+    const sigma = Math.max(3, blurSigma(blurRadius(w, h, b.strength ?? 0.8)));
     ctx.save();
     roundRect(ctx, x, y, w, h, r);
     ctx.clip();
-    ctx.filter = `blur(${Math.max(3, Math.min(w, h) * 0.18 * (b.strength ?? 0.8))}px)`;
-    // Drawn slightly larger than the region so the blur kernel has pixels to
-    // reach for at the edges; without it every blur has a sharp, readable rim.
-    ctx.drawImage(video, sx, sy, sw, sh, x - w * 0.12, y - h * 0.12, w * 1.24, h * 1.24);
+    // An opaque floor first: the region's own colours, averaged. A strong
+    // blur fades out towards the edges of what it draws, and over nothing but
+    // the frame, the sharp picture under it would show through at the rim.
+    if (!scratch) scratch = document.createElement("canvas");
+    scratch.width = 4;
+    scratch.height = 2;
+    scratch.getContext("2d").drawImage(video, sx, sy, sw, sh, 0, 0, 4, 2);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(scratch, 0, 0, 4, 2, x, y, w, h);
+    ctx.filter = `blur(${sigma}px)`;
+    // Drawn larger than the region so the blur kernel has pixels to reach for
+    // at the edges; without it every blur has a sharp, readable rim.
+    const mx = Math.max(w * 0.12, sigma * 2.5);
+    const my = Math.max(h * 0.12, sigma * 2.5);
+    ctx.drawImage(video, sx, sy, sw, sh, x - mx, y - my, w + mx * 2, h + my * 2);
     ctx.filter = "none";
     ctx.restore();
     return;

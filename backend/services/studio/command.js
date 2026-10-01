@@ -49,7 +49,7 @@ import path from "path";
 import { generateJson, TEXT_MODEL } from "../edit/gemini.js";
 import { MODEL } from "../ai/provider.js";
 import { extractFrameAt } from "../media/ffmpeg.js";
-import { materialize, readUrl, storageKind } from "../media/storage.js";
+import { materialize, storageKind } from "../media/storage.js";
 import { layout, toSource, toOutput, toOutputSnapped } from "./timeline.js";
 import { containing, containingBox } from "./events.js";
 import { cursorAt, zoomOutGap } from "../../../src/components/Studio/camera.mjs";
@@ -502,19 +502,52 @@ function nearest(th, out, tol) {
 const FRAME_TIMEOUT = 25000;
 const CACHE_DIR = path.join(os.tmpdir(), "clipo-command");
 const CACHE_LIFE = 30 * 60 * 1000;
-/** Whole recordings downloaded when a bucket link could not be read: key → { file: Promise, at }. */
+/** Recordings downloaded for the chat: key → { file: Promise<string>, at }. */
 const copies = new Map();
+let swept = 0;
 
-/** The recording on this disk, downloaded once and kept for half an hour. */
-async function localCopy(demo, key) {
-  if (storageKind() !== "gcs") return materialize(key, CACHE_DIR); // already on disk: its own path
-  const now = Date.now();
+/**
+ * Copies nobody has used for CACHE_LIFE are deleted: the ones this process
+ * knows about, and any a previous run of the server left in the folder.
+ */
+async function sweep(now) {
   for (const [k, v] of copies) {
     if (now - v.at > CACHE_LIFE) {
       copies.delete(k);
       v.file.then((f) => fsp.rm(f, { force: true }), () => {}).catch(() => {});
     }
   }
+  if (now - swept < 10 * 60 * 1000) return;
+  swept = now;
+  const live = new Set();
+  for (const v of copies.values()) live.add(await v.file.catch(() => ""));
+  for (const name of await fsp.readdir(CACHE_DIR).catch(() => [])) {
+    const f = path.join(CACHE_DIR, name);
+    if (live.has(f)) continue;
+    const st = await fsp.stat(f).catch(() => null);
+    if (st && now - st.mtimeMs > CACHE_LIFE) fsp.rm(f, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * The recording on this disk, downloaded once and kept while it is in use
+ * (CACHE_LIFE after the last use).
+ *
+ * ── WHY NOT READ IT STRAIGHT FROM THE BUCKET ─────────────────────────────────
+ * The first version read single frames from a signed bucket link, which on
+ * paper is a second of the file instead of all of it. On the production
+ * server ffmpeg never finished doing it: every close-up waited out its 25 s
+ * limit ("ffmpeg exited with null") and then fell back to a download anyway.
+ * Everything else in the product that reads a recording downloads it first
+ * (the analysis, the tracker, the export), and a demo is tens of megabytes
+ * inside the same cloud. So the chat does too, once, and every look after
+ * that (a zoom, a blur, a whole-video scan, its close-ups) reads the copy.
+ */
+async function localCopy(demo, key) {
+  if (storageKind() !== "gcs") return materialize(key, CACHE_DIR); // already on disk: its own path
+  const now = Date.now();
+  await fsp.mkdir(CACHE_DIR, { recursive: true });
+  await sweep(now);
   const hit = copies.get(key);
   if (hit) {
     hit.at = now;
@@ -530,36 +563,20 @@ async function localCopy(demo, key) {
 /**
  * The recording's frame at source time `t`, as a JPEG on disk (the caller
  * deletes it). The file is the one the analysis read (recording.mp4_key), so
- * a box found on it is in the same frame the zooms are stored against.
- *
- * Straight from the bucket first: the recording is written +faststart, so
- * ffmpeg seeks it with range requests and reads a second or so of it rather
- * than the whole file. If that fails (a signing hiccup, an ffmpeg built
- * without https), the whole file is downloaded once and kept for a while.
+ * a box found on it is in the same frame the zooms are stored against, and
+ * the one the tracker will cut a blur from.
  */
 export async function frameAt(demo, t, { crop = null } = {}) {
   const key = demo.recording?.mp4_key;
   if (!key || demo.purged) throw new Error("the recording's file is not available");
   await fsp.mkdir(CACHE_DIR, { recursive: true });
   const dest = path.join(CACHE_DIR, `${String(demo._id)}-${Math.round(t * 1000)}-${crypto.randomBytes(3).toString("hex")}.jpg`);
-  const sources = [];
-  if (storageKind() === "gcs") {
-    const url = await readUrl(key, { expiresSec: 900 }).catch(() => "");
-    if (/^https?:\/\//.test(url)) sources.push(url);
-  }
-  sources.push(null);
-  for (const src of sources) {
-    try {
-      const file = src || (await localCopy(demo, key));
-      // `crop` is in the recording's own pixels, cut before any scaling, so a
-      // close-up keeps every pixel the recording has.
-      await extractFrameAt(file, dest, t, { longEdge: 1280, crop, timeoutMs: FRAME_TIMEOUT });
-      if ((await fsp.stat(dest).then((s) => s.size, () => 0)) > 0) return dest;
-    } catch (err) {
-      console.warn(`[studio] command: the frame at ${t.toFixed(2)}s could not be read from ${src ? "the bucket link" : "the file"}: ${String(err?.message).slice(0, 160)}`);
-    }
-  }
-  throw new Error("could not read a frame");
+  const file = await localCopy(demo, key);
+  // `crop` is in the recording's own pixels, cut before any scaling, so a
+  // close-up keeps every pixel the recording has.
+  await extractFrameAt(file, dest, t, { longEdge: 1280, crop, timeoutMs: FRAME_TIMEOUT });
+  if ((await fsp.stat(dest).then((s) => s.size, () => 0)) > 0) return dest;
+  throw new Error(`no frame at ${t.toFixed(2)}s`);
 }
 
 export const FRAME_FINDER = (description) => `This is one frame of a screen recording of a website or app. The person who made the recording wants the camera to zoom in, and described what on screen to zoom in on, in their own words:
@@ -625,7 +642,7 @@ async function askJson(ask, opts) {
     return await ask(opts);
   } catch (err) {
     if (!opts.schema || !/\b400\b|INVALID_ARGUMENT/.test(String(err?.message || ""))) throw err;
-    console.warn(`[studio] ${opts.label}: the response schema was refused (${String(err.message).slice(0, 80)}); asking without it`);
+    console.warn(`[studio] ${opts.label}: the response schema was refused (${String(err.message).replace(/\s+/g, " ").slice(0, 400)}); asking without it`);
     return ask({ ...opts, schema: null });
   }
 }
@@ -1050,7 +1067,7 @@ WHAT
 "named": the words the creator used for a thing on screen, like "Projects button". "" when they did not name a thing ("zoom here", "zoom at 0:12", "remove this zoom").
 "blurs": ids from BLURS ON THE TIMELINE that the creator pointed at by what the blur is on or by its order: "the blur on the email", "the last blur". When they point at a blur by time, or say "this blur", leave this empty and use "time".
 "level": how strong a zoom, only when they said it: "2x" → 2, "zoom in a lot" → 2.4, "a little" → 1.4. Otherwise 0.
-"blur_kind": for add_blur, "pixelate" when they ask for pixels or a mosaic, "box" when they ask for a black box, a solid box or to cover it completely; otherwise "".
+"blur_kind": for add_blur, "pixelate" when they ask for pixels or a mosaic, "box" when they ask for a black box, a solid box or to cover it completely; otherwise "blur".
 "everywhere": true when they ask for it hidden everywhere, throughout, in the whole video, wherever it appears. Otherwise false.
 
 EXAMPLES
@@ -1099,7 +1116,9 @@ const COMMAND_SCHEMA = {
     named: { type: "STRING" },
     look_for: { type: "STRING" },
     level: { type: "NUMBER" },
-    blur_kind: { type: "STRING", enum: ["", "blur", "pixelate", "box"] },
+    // Free text, not an enum: the service refused an enum holding "" (the
+    // default), with a 400 on every message. cleanIntent keeps only known styles.
+    blur_kind: { type: "STRING" },
     everywhere: { type: "BOOLEAN" },
     answer: { type: "STRING" },
   },

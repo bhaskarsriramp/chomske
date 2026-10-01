@@ -48,7 +48,7 @@ import { renderOverlay } from "./overlay.js";
 import { videoBox, radiusFor, drawBackground, drawCornerMask } from "./frame.js";
 import { loadBackgroundImage } from "../backgrounds.js";
 import { followedRegions } from "./followBlur.js";
-import { followFor, blurCorner } from "../../../../src/components/Studio/follow.mjs";
+import { followFor, blurCorner, blurRadius, blurChromaRadius } from "../../../../src/components/Studio/follow.mjs";
 import { hideFilter } from "./hide.js";
 import { buildAss, buildSrt, missingFonts, FONTS_DIR } from "./ass.js";
 
@@ -342,9 +342,10 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
           `[${carry}][bp${i}]overlay=x=${X}:y=${Y}:${on}[bo${i}]`
         );
       } else {
-        const rad = Math.max(2, Math.min(Math.floor(Math.min(w, h) / 2) - 1, Math.round(Math.min(w, h) * 0.12 * b.strength)));
+        // The same reach as the preview's (follow.mjs blurRadius).
+        const rad = blurRadius(w, h, b.strength);
         graph.push(
-          `[bm${i}]crop=w=${w}:h=${h}:x=${X}:y=${Y},boxblur=luma_radius=${rad}:luma_power=2:chroma_radius=${rad}:chroma_power=2,setsar=1,${cornered(i, w, h)}`,
+          `[bm${i}]crop=w=${w}:h=${h}:x=${X}:y=${Y},boxblur=luma_radius=${rad}:luma_power=2:chroma_radius=${blurChromaRadius(w, h, rad)}:chroma_power=2,setsar=1,${cornered(i, w, h)}`,
           merged(i),
           `[${carry}][bp${i}]overlay=x=${X}:y=${Y}:${on}[bo${i}]`
         );
@@ -384,10 +385,11 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
       } else {
         // boxblur's radius has to stay inside the region or ffmpeg refuses the
         // filter outright, which is how a blur on a narrow field used to fail
-        // the whole export.
-        const r = Math.max(2, Math.min(Math.floor(Math.min(w, h) / 2) - 1, Math.round(Math.min(w, h) * 0.12 * b.strength)));
+        // the whole export; the colour planes are half the size, so theirs is
+        // held to half as much (follow.mjs blurRadius, blurChromaRadius).
+        const r = blurRadius(w, h, b.strength);
         graph.push(
-          `[bm${i}]crop=${w}:${h}:${x}:${y},boxblur=luma_radius=${r}:luma_power=2:chroma_radius=${r}:chroma_power=2,setsar=1,${cornered(i, w, h)}`,
+          `[bm${i}]crop=${w}:${h}:${x}:${y},boxblur=luma_radius=${r}:luma_power=2:chroma_radius=${blurChromaRadius(w, h, r)}:chroma_power=2,setsar=1,${cornered(i, w, h)}`,
           merged(i),
           `[${carry}][bp${i}]overlay=${x}:${y}:${on}[bo${i}]`
         );

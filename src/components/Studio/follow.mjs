@@ -54,6 +54,42 @@ export function blurCorner(w, h, srcH) {
   return Math.max(0, Math.min((16 * srcH) / 1080, w / 2, h / 2));
 }
 
+/**
+ * How far a blur reaches, in the same pixels as its w and h: the radius of
+ * the export's two-pass box blur (render/compose.js), and through blurSigma
+ * the preview's Gaussian (Preview.js paintBlur). One number for both, so the
+ * preview shows what the export will.
+ *
+ * ── STRONG ENOUGH TO HIDE WHAT IT IS ON ─────────────────────────────────────
+ * It used to be 12% of the box's short side (times the strength), and on a
+ * line of large bold text the word stayed readable: "Open Editor" on the
+ * Cursorful demo, blurred at the default, could still be read through it, and
+ * at full strength too (2026-09-30, rendered on the real frame). A blur exists
+ * to hide something, so the default now hides a line of text of any size:
+ * about 44% of the short side at the default 0.8, a plain band. The slider's
+ * low end is still a soft blur for someone who wants one.
+ */
+export const BLUR_REACH = 0.55;
+export function blurRadius(w, h, strength = 0.8) {
+  const s = Math.min(w, h);
+  // boxblur refuses a radius over half the region, which failed a whole export once.
+  return Math.max(2, Math.min(Math.floor(s / 2) - 1, Math.round(s * BLUR_REACH * (strength ?? 0.8))));
+}
+
+/** The Gaussian that looks like a two-pass box blur of radius r: its standard deviation. */
+export function blurSigma(r) {
+  return Math.sqrt((2 * r * r + 2 * r) / 3);
+}
+
+/**
+ * The same radius for the colour planes, which in the export's yuv420p are
+ * half the size each way: half the radius (the same reach on the picture),
+ * and never over half of a plane that is half as big, or ffmpeg refuses it.
+ */
+export function blurChromaRadius(w, h, r) {
+  return Math.max(0, Math.min(Math.floor(Math.min(w, h) / 4) - 1, Math.round(r / 2)));
+}
+
 /** Which exact blur a follow was made for. */
 export function blurSig(b) {
   return [f4(b.x), f4(b.y), f4(b.w), f4(b.h), f3(b.at), f3(b.start), f3(b.end)].join(",");

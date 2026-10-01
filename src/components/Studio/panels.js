@@ -389,7 +389,7 @@ export function BlurPanel({
               value={current.strength ?? 0.8}
               onChange={(v) => edit(patch(tl, "blurs", current.id, { strength: v }), "Blur strength")}
               format={pct}
-              hint={current.strength < 0.45 ? "At this strength small text can still be readable when the video is paused." : undefined}
+              hint={(current.strength ?? 0.8) < 0.6 ? "At this strength text can still be made out, especially when the video is paused." : undefined}
             />
           )}
 

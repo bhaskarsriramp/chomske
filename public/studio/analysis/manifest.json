@@ -1,6 +1,6 @@
 {
- "version": "b7e72ddf5f5707fcd1729c68a82519809a7e4d7f7d1cdf75b81a710341c87dc8",
- "worker": "/studio/analysis/worker-b7e72ddf5f5707fc.js",
+ "version": "affc981060635fd3abcd818796596a40c3a4efe5800e933ef92826dc36dc1581",
+ "worker": "/studio/analysis/worker-affc981060635fd3.js",
  "templates": "/studio/analysis/tpl/",
  "files": [
   "backend/services/studio/analyse.js",
@@ -57,7 +57,7 @@
   "browser-analysis/shims/rpc.js": "ad88beb7f1d6d739618026c4ab5a7f69952f9621e493d645a368bb0849789ab0",
   "browser-analysis/shims/vision.js": "15e376a2efbd60f1b14ffe635e7bb0561e24a717e1edebc27fee3a43d290096f",
   "browser-analysis/worker.js": "93256b94ae3666a01a94b837fb137ef48bcd372fffd13edff9074ebd44bdfe3a",
-  "src/components/Studio/camera.mjs": "c2b8285157b836edf78c74989b1ccfa81673946b0ec0df4776528604b2129ecf",
+  "src/components/Studio/camera.mjs": "4ef632763361f9401cea491e1b386d0fc403abd531028f6324c57cdefe4ba9a6",
   "src/components/Studio/cursorLook.mjs": "c1068520de4c2f4806865ee20edf42a9769f1361553ec7af3cf62a5fd3514ec7"
  },
  "env_keys": [
@@ -332,5 +332,5 @@
  ],
  "canvas_version": "1.0.9",
  "mediabunny": "1.60.0",
- "built_at": "2026-09-30T04:33:11.097Z"
+ "built_at": "2026-09-30T17:20:02.410Z"
 }
