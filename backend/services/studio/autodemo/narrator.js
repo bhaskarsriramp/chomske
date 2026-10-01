@@ -26,6 +26,7 @@ import path from "path";
 import { aistudioKeys, pool } from "../../ai/provider.js";
 import { ffmpeg } from "../../media/ffmpeg.js";
 import { VOICE_MODEL } from "../voice.js";
+import { PAUSE } from "./prompts.js";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const RATE = 24000;
@@ -46,8 +47,8 @@ const RATE = 24000;
 export const PRESENTER = "clear, friendly product-demo narration, natural and unhurried";
 /** Sped up at most this much, pitch kept: below what anyone hears as a change. */
 const MAX_RATE = 1.06;
-/** The breath between two lines, at least. */
-const GAP = 0.35;
+/** The breath between two lines, at least (prompts.js PAUSE, shared with the fitting). */
+const GAP = PAUSE;
 /** Lines spoken at once. */
 const AT_ONCE = 3;
 /** Quieter than this, at the ends of a take, is padding (about -46 dBFS). */
@@ -119,6 +120,14 @@ async function ask(text, { voice, style }) {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error(`speech ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);
+      // A DAILY limit (measured 2026-10-01: "limit: 100 requests per day on
+      // Tier 1… retry in 15h13m") does not reopen in a minute: say so at once
+      // instead of retrying for minutes. The script and captions still land.
+      if (res.status === 429 && /per day/i.test(String(body?.error?.message || ""))) {
+        throw Object.assign(err, {
+          userMessage: "The voice has reached today's limit on this Gemini plan, so the script and captions are in without it. Add the voice from the Voice tab tomorrow, or raise the plan's tier.",
+        });
+      }
       if (res.status === 429 || res.status >= 500) {
         last = err;
         await sleep(retryAfter(body?.error?.message) || 1500 * 2 ** (attempt - 1));

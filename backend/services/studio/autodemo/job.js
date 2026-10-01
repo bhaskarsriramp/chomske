@@ -136,6 +136,24 @@ function withFocus(tl, { remove = [], add = [] }, duration) {
   return [...kept, ...added].sort((a, b) => a.start - b.start);
 }
 
+/**
+ * The script's lines moved to where the narrator actually placed their voice
+ * (narrator.js `sentences`, one per line, in order): a start only ever moves
+ * later, and each line still holds until just before the next one, as
+ * director.js cleanLines laid them out, so no caption gap opens either.
+ */
+export function alignToVoice(lines, placed, duration) {
+  const moved = lines.map((l, i) => {
+    const at = Number(placed?.[i]?.start);
+    return Number.isFinite(at) && at > l.start + 0.02 ? { ...l, start: Math.round(at * 100) / 100 } : { ...l };
+  });
+  for (let i = 0; i < moved.length; i++) {
+    const next = moved[i + 1];
+    moved[i].end = Math.round(Math.max(moved[i].start + 0.6, next ? next.start - 0.2 : duration) * 100) / 100;
+  }
+  return moved;
+}
+
 /* ── The request ───────────────────────────────────────────────────────────── */
 
 export const cleanBrief = (v) => String(v || "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").trim().slice(0, BRIEF_MAX);
@@ -366,7 +384,7 @@ export const autodemoJob = {
       voiceError = err.userMessage || "The voice couldn't be made this time. The script and captions are in; add the voice from the Voice tab.";
       console.warn(`[autodemo] ${demo._id}: voice failed (${err.message})`);
     }
-    for (const [round, minGap] of [[0, 1.2], [1, 1.6]]) {
+    for (const [round, minGap] of [[0, 1.1], [1, 1.3]]) {
       if (!made) break;
       try {
         const re = await refit(lines, made.takes, { rec: plan.rec, brief: demo.autodemo.brief, steps: plan.steps, duration, minGap });
@@ -383,6 +401,11 @@ export const autodemoJob = {
         break;
       }
     }
+
+    // A line the narrator had to place later than planned, to keep its breath
+    // after the one before, starts there in the script too, so its caption
+    // appears with its voice rather than ahead of it.
+    if (made) lines = alignToVoice(lines, made.sentences, duration);
 
     // Validated the way the timeline will store them BEFORE the signature is
     // taken, so the voiceover matches the captions the editor holds (voices.mjs

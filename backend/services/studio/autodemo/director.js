@@ -24,7 +24,7 @@ import { newId } from "../timeline.js";
 import { findOnFrame } from "../command.js";
 import { containingBox } from "../events.js";
 import { zoomOutGap } from "../../../../src/components/Studio/camera.mjs";
-import { DIRECTOR, DIRECTOR_SCHEMA, FIT, WORDS_PER_SECOND, COVERAGE } from "./prompts.js";
+import { DIRECTOR, DIRECTOR_SCHEMA, FIT, WORDS_PER_SECOND, COVERAGE, PAUSE } from "./prompts.js";
 
 /** Frames a second the model samples from the watch copy. Clicks come from the log, so the flow is what it needs. */
 const WATCH_FPS = 2;
@@ -283,13 +283,13 @@ export function measuredMisfits(lines, takes, duration, { minGap = 1.0 } = {}) {
       const next = lines[i + 1];
       const room = (next ? next.start : duration) - l.start;
       const pace = have / seconds;
-      // Room for the line AND the breath after it (narrator.js GAP), plus a little.
-      const want = Math.round(clamp(pace * Math.max(0.6, room - 0.6), 3, 34));
+      // Room for the line AND the breath after it (PAUSE), plus a little.
+      const want = Math.round(clamp(pace * Math.max(0.6, room - PAUSE - 0.3), 3, 34));
       const hype = hypeOf(l.text);
       if (hype) return { i, have, want, why: `remove "${hype}"` };
       if (room - seconds > minGap && want - have >= 2) return { i, have, want, why: "too short" };
       // Too long once it would need more than the narrator's inaudible 1.06x to keep its breath.
-      if (seconds > (room - 0.35) * 1.06 + 0.15 && have - want >= 2) return { i, have, want, why: "too long" };
+      if (seconds > (room - PAUSE) * 1.06 + 0.1 && have - want >= 2) return { i, have, want, why: "too long" };
       return null;
     })
     .filter(Boolean);

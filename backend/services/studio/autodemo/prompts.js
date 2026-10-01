@@ -24,7 +24,19 @@
 /** How fast the voice speaks, words a second. */
 export const WORDS_PER_SECOND = 2.3;
 /** How much of the recording the voice should cover. */
-export const COVERAGE = 0.85;
+export const COVERAGE = 0.8;
+/**
+ * The breath between one line and the next, edge to edge of the two takes
+ * (each take keeps ~0.15 s of its own lead-in and tail, so what a listener
+ * hears as silence is about 0.3 s more). The creator, 2026-10-01: between one
+ * part and the next it was "a little bit fast… like humans we take some
+ * breathing gap… it should not be long like earlier". Measured in what they
+ * heard: hand-offs of 0.67 and 0.77 s felt rushed; the first version's
+ * 3.6–5 s felt like breaks. So every hand-off gets at least this (≈1.0 s
+ * heard), and the fitting (director.js refit) sizes lines so it is rarely
+ * more than ≈1.4 s heard.
+ */
+export const PAUSE = 0.7;
 
 export const DIRECTOR = `You are writing and directing a product demo video, made from a screen recording.
 
@@ -48,6 +60,7 @@ THE NARRATION RUNS FROM START TO FINISH, LIKE A LIVE PRESENTER
 HOW IT SHOULD SOUND
 - Spoken and engaging, like a founder showing their product to one interested person. Talk to the viewer ("you"). Contractions.
 - Easy to follow by ear: short sentences with one idea each, never more than three items listed in one sentence, and a natural breath between thoughts. Continuous does not mean crammed: a listener who has to untangle a sentence has stopped watching.
+- Each line is one part of the walkthrough, and the voice takes a short breath (about a second) before the next part. Leave room for it: do not fill a window to the last second.
 - Name on-screen labels exactly as they appear, in quotes where it helps: click "Pricing", not click the link.
 - Say what things are FOR, not only what they are.
 - No filler: never "In this video", "Let's go ahead and", "As you can see", "simply". No hype: nothing is seamless, powerful, robust, cutting-edge, revolutionary or game-changing.
@@ -149,4 +162,4 @@ Rewrite ONLY the marked lines, each to about its target number of words (within 
 
 Return ONLY valid JSON: { "lines": [ { "i": 0, "text": "string" } ] }, one entry per marked line, with its "i".`;
 
-export default { DIRECTOR, DIRECTOR_SCHEMA, FIT, WORDS_PER_SECOND, COVERAGE };
+export default { DIRECTOR, DIRECTOR_SCHEMA, FIT, WORDS_PER_SECOND, COVERAGE, PAUSE };
