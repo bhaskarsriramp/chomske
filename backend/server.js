@@ -28,9 +28,11 @@ import showcaseRoutes from "./routes/showcase.js";
 import editRoutes from "./routes/edit.js";
 import studioRoutes from "./routes/studio.js";
 import autodemoRoutes from "./routes/autodemo.js";
+import launchRoutes from "./routes/launch.js";
 import mediaRoutes from "./routes/media.js";
 import { startEditRunner } from "./services/edit/editRunner.js";
 import { startStudioRunner } from "./services/studio/studioRunner.js";
+import { startLaunchRunner } from "./services/launch/launchRunner.js";
 import VoiceProfile from "./models/VoiceProfile.js";
 import User from "./models/User.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
@@ -186,6 +188,13 @@ app.use(
   rateLimit({ windowMs: 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false }),
   autodemoRoutes
 );
+// Demos generated from a website address (routes/launch.js). Mostly polling
+// while a video is made; starting one has its own daily allowance inside.
+app.use(
+  "/studio/launch",
+  rateLimit({ windowMs: 60 * 1000, max: 90, standardHeaders: true, legacyHeaders: false }),
+  launchRoutes
+);
 app.use(
   "/studio",
   rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false }),
@@ -335,6 +344,7 @@ function assertConfig() {
         // and exports. Separate from the editor's so one product's backlog is
         // never the other's ceiling.
         startStudioRunner();
+        startLaunchRunner();
       } else {
         console.log("[server] queues are not running here; start worker.js (RUN_WORKERS=true to run them in-process)");
       }

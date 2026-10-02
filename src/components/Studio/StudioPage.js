@@ -6,6 +6,8 @@
  *   library   every recording, newest first        /app/studio
  *   record    the setup screen and the capture     /app/studio (state)
  *   edit      one demo open in the editor          /app/studio/<slug>
+ *   generate  the "from a website" form            /app/studio (state)
+ *   generated one generated video and its chat     /app/studio/gen-<slug>
  *
  * ── THE EDITOR IS A URL, THE RECORDER IS NOT ─────────────────────────────────
  * An open demo has its own address, so a reload lands back in the editor
@@ -29,6 +31,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { getStudioConfig, listDemos, deleteDemo, startAnalysis } from "./studioApi";
 import { browserAnalysisOffer, runBrowserAnalysis } from "./browserAnalysis";
 import RecordPage from "./RecordPage";
+import { LaunchNew, LaunchVideoPage, GeneratedCards } from "./LaunchPage";
+import { listLaunch, deleteLaunch, isGenKey, GEN } from "./launchApi";
 import StudioEditor from "./StudioEditor";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon, Badge, Empty } from "./ui";
@@ -48,14 +52,14 @@ export default function StudioPage() {
   // "library" or "record". The editor is not here: it is the URL.
   const [view, setView] = useState({ name: "library" });
   const [demos, setDemos] = useState(null);
+  // Generated demos (LaunchPage.js), and whether this server can make them.
+  const [generated, setGenerated] = useState(null);
   const [notice, setNotice] = useState("");
 
   const refresh = useCallback(async () => {
-    try {
-      setDemos(await listDemos());
-    } catch {
-      setDemos([]);
-    }
+    const [d, g] = await Promise.all([listDemos().catch(() => []), listLaunch().catch(() => null)]);
+    setDemos(d);
+    setGenerated(g);
   }, []);
 
   useEffect(() => {
@@ -72,11 +76,13 @@ export default function StudioPage() {
   // else. Only polled while something is actually running.
   useEffect(() => {
     if (openKey || view.name !== "library") return undefined;
-    const busy = (demos || []).some((d) => ["preparing", "analysing", "uploading"].includes(d.status));
+    const busy =
+      (demos || []).some((d) => ["preparing", "analysing", "uploading"].includes(d.status)) ||
+      (generated?.videos || []).some((v) => v.busy);
     if (!busy) return undefined;
     const id = setInterval(refresh, 4000);
     return () => clearInterval(id);
-  }, [openKey, view.name, demos, refresh]);
+  }, [openKey, view.name, demos, generated, refresh]);
 
   const openEditor = useCallback(
     (key) => {
@@ -84,6 +90,15 @@ export default function StudioPage() {
       setView({ name: "library" });
       pushedEditor.current = true;
       navigate(`/app/studio/${key}`);
+    },
+    [navigate]
+  );
+
+  const openGenerated = useCallback(
+    (id) => {
+      setView({ name: "library" });
+      pushedEditor.current = true;
+      navigate(`/app/studio/${GEN}${id}`);
     },
     [navigate]
   );
@@ -138,7 +153,9 @@ export default function StudioPage() {
   // The editor is full-bleed: its own header, stage, inspector and ruler each
   // own their edge, exactly as the script editor's workspace does. The library
   // and the recorder are pages, and pages have margins.
-  const bleed = !!openKey;
+  // A generated video is a page, not the editor: it keeps the margins.
+  const genKey = isGenKey(openKey) ? openKey.slice(GEN.length) : null;
+  const bleed = !!openKey && !genKey;
 
   return (
     <div className="st-root" style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -181,7 +198,9 @@ export default function StudioPage() {
           ...(bleed ? null : { overflowX: "hidden", overflowY: "auto", padding: `${notice ? 14 : 18}px 20px 20px` }),
         }}
       >
-        {openKey ? (
+        {genKey ? (
+          <LaunchVideoPage key={genKey} id={genKey} onExit={closeEditor} />
+        ) : openKey ? (
           // Keyed, so moving from one demo to another starts a fresh editor
           // rather than one carrying the last demo's undo history.
           <StudioEditor
@@ -193,11 +212,21 @@ export default function StudioPage() {
           />
         ) : view.name === "record" ? (
           <RecordPage config={config} onOpen={opened} onCancel={() => setView({ name: "library" })} />
+        ) : view.name === "generate" ? (
+          <LaunchNew onCreated={openGenerated} onCancel={() => setView({ name: "library" })} />
         ) : (
           <Library
             demos={demos}
+            generated={generated}
             config={config}
             onRecord={() => setView({ name: "record" })}
+            onGenerate={() => setView({ name: "generate" })}
+            onOpenGenerated={(v) => openGenerated(v.id)}
+            onDeleteGenerated={async (id) => {
+              await deleteLaunch(id);
+              setGenerated((g) => (g ? { ...g, videos: g.videos.filter((v) => v.id !== id) } : g));
+              refresh();
+            }}
             onOpen={(d) => openEditor(d.slug || d.id)}
             onDelete={async (id) => {
               // Throws on failure, so the confirmation dialog can say so
@@ -226,9 +255,11 @@ const GRID = {
   gap: 16,
 };
 
-function Library({ demos, config, onRecord, onOpen, onDelete }) {
+function Library({ demos, generated, config, onRecord, onGenerate, onOpen, onDelete, onOpenGenerated, onDeleteGenerated }) {
   // The recording waiting on "are you sure", or null.
   const [doomed, setDoomed] = useState(null);
+  // The generated video waiting on "are you sure", or null.
+  const [doomedVideo, setDoomedVideo] = useState(null);
 
   return (
     <div style={{ width: "100%", maxWidth: 1080, margin: "0 auto" }}>
@@ -241,10 +272,24 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
             Record your screen. The zooms, cuts, cursor and blur are decided for you.
           </p>
         </div>
-        <Btn kind="record" size="l" icon={<Icon name="record" size={14} />} onClick={onRecord}>
-          New recording
-        </Btn>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {generated?.available !== false && (
+            <Btn size="l" icon={<Icon name="sparkle" size={14} />} onClick={onGenerate} title="A finished demo from your website, with nothing to record">
+              Generate product demo
+            </Btn>
+          )}
+          <Btn kind="record" size="l" icon={<Icon name="record" size={14} />} onClick={onRecord}>
+            New recording
+          </Btn>
+        </div>
       </header>
+
+      <GeneratedCards videos={generated?.videos} grid={GRID} onOpen={onOpenGenerated} onDelete={setDoomedVideo} />
+      {generated?.videos?.length > 0 && (
+        <h2 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink-mute)" }}>
+          Recordings
+        </h2>
+      )}
 
       {demos === null && <LibrarySkeleton />}
 
@@ -287,6 +332,17 @@ function Library({ demos, config, onRecord, onOpen, onDelete }) {
           onConfirm={async () => {
             await onDelete(doomed.id);
             setDoomed(null);
+          }}
+        />
+      )}
+      {doomedVideo && (
+        <ConfirmDelete
+          demo={doomedVideo}
+          noun="video"
+          onCancel={() => setDoomedVideo(null)}
+          onConfirm={async () => {
+            await onDeleteGenerated(doomedVideo.id);
+            setDoomedVideo(null);
           }}
         />
       )}
@@ -343,7 +399,7 @@ function editedAt(demo) {
  * names the website instead of the recording, cannot show which button is the
  * dangerous one, and freezes the whole tab while it waits.
  */
-function ConfirmDelete({ demo, onCancel, onConfirm }) {
+function ConfirmDelete({ demo, noun = "recording", onCancel, onConfirm }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const cancelRef = useRef(null);
@@ -370,7 +426,7 @@ function ConfirmDelete({ demo, onCancel, onConfirm }) {
     try {
       await onConfirm();
     } catch (err) {
-      setError(err?.response?.data?.message || "We couldn't delete this recording. Please try again.");
+      setError(err?.response?.data?.message || `We couldn't delete this ${noun}. Please try again.`);
       setBusy(false);
     }
   };
@@ -398,11 +454,11 @@ function ConfirmDelete({ demo, onCancel, onConfirm }) {
         }}
       >
         <h2 id="st-delete-title" style={{ margin: 0, fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--ink)" }}>
-          Delete this recording?
+          Delete this {noun}?
         </h2>
         <p id="st-delete-body" style={{ margin: "8px 0 0", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)", overflowWrap: "anywhere" }}>
-          <strong style={{ fontWeight: 650, color: "var(--ink)" }}>{demo.title}</strong> and all of its exports will be
-          deleted. This can't be undone.
+          <strong style={{ fontWeight: 650, color: "var(--ink)" }}>{demo.title}</strong> and all of its{" "}
+          {noun === "video" ? "versions" : "exports"} will be deleted. This can't be undone.
         </p>
         {error && (
           <p role="alert" style={{ margin: "12px 0 0", fontSize: 12.5, lineHeight: 1.5, color: "var(--bad)" }}>

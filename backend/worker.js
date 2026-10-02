@@ -40,6 +40,7 @@ import os from "os";
 import connectToMongo, { keepRunningThroughDbDropouts } from "./db.js";
 import { startEditRunner } from "./services/edit/editRunner.js";
 import { startStudioRunner } from "./services/studio/studioRunner.js";
+import { startLaunchRunner } from "./services/launch/launchRunner.js";
 import { describeProvider, describeModels, providerReady, limits } from "./services/ai/provider.js";
 import redis, { isRedisEnabled } from "./redis.js";
 import { scratchRoot, scratchFree, isTmpfs } from "./services/media/scratch.js";
@@ -121,6 +122,7 @@ async function checkRedis() {
 
     startEditRunner();
     startStudioRunner();
+    startLaunchRunner();
     console.log(`[worker] queues running (${os.cpus().length} cpu available)`);
   } catch (err) {
     console.error("[worker] failed to start:", err.message);

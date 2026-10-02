@@ -657,3 +657,35 @@
   .st-chat-fab { animation: none; }
   .st-chat-typing i { animation: none; opacity: .6; }
 }
+
+/* ── Generated demos (LaunchPage.js) ───────────────────────────────────── */
+.lv-grid { display: grid; grid-template-columns: minmax(0, 1fr) 370px; gap: 20px; align-items: start; }
+@media (max-width: 980px) { .lv-grid { grid-template-columns: 1fr; } }
+.lv-stage {
+  aspect-ratio: 16 / 9; width: 100%; border-radius: 14px; overflow: hidden;
+  border: 1px solid var(--line); background: #EFEDE9; box-shadow: var(--shadow-xs);
+}
+.lv-center { width: 100%; height: 100%; display: grid; place-items: center; padding: 20px; }
+.lv-chat {
+  display: flex; flex-direction: column; height: min(640px, calc(100vh - 170px)); min-height: 420px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--card); overflow: hidden;
+}
+@media (max-width: 980px) { .lv-chat { height: 520px; } }
+.lv-msgs { flex: 1; min-height: 0; padding: 14px; display: flex; flex-direction: column; gap: 9px; }
+.lv-msg {
+  max-width: 88%; align-self: flex-start; padding: 9px 12px; border-radius: 12px 12px 12px 4px;
+  background: var(--hover); color: var(--ink-body); font-size: 13px; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.lv-msg--me { align-self: flex-end; border-radius: 12px 12px 4px 12px; background: var(--primary); color: #fff; }
+.lv-msg--bad { background: #FCE8E6; color: var(--bad); }
+.lv-msg--work { align-self: stretch; max-width: none; background: var(--made-tint); border: 1px solid var(--made-line); }
+.lv-dot { width: 8px; height: 8px; border-radius: 99px; background: var(--made); display: inline-block; animation: lv-pulse 1.1s var(--ease-out) infinite alternate; }
+@keyframes lv-pulse { from { opacity: .35; transform: scale(.8); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .lv-dot { animation: none; } }
+.lv-idea {
+  font-family: inherit; font-size: 12px; padding: 5px 10px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink-body);
+}
+.lv-idea:hover:not(:disabled) { background: var(--hover); border-color: var(--line-strong); }
+.lv-idea:disabled { opacity: .5; cursor: default; }

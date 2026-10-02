@@ -1,0 +1,20 @@
+{
+  "name": "clipo-launch",
+  "private": true,
+  "type": "module",
+  "description": "Generated launch videos: a storyboard (JSON) rendered by a library of hand-built Remotion scenes. See README.md.",
+  "scripts": {
+    "studio": "remotion studio src/index.jsx",
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.532",
+    "@remotion/google-fonts": "4.0.532",
+    "@remotion/renderer": "4.0.532",
+    "@remotion/cli": "4.0.532",
+    "playwright-core": "1.63.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.532"
+  }
+}
