@@ -26,18 +26,22 @@ const POLL_MS = 2500;
  * The auto demo of one recording, kept current.
  *
  * Read once, then every POLL_MS while it is waiting or running, and again on
- * any live "autodemo" event. `onSettled(ad)` is called once when a run ends
+ * any live "autodemo" event. `ad` is undefined until the first answer (the
+ * editor holds its screen until it knows whether a demo is being built), then
+ * the auto demo or null. `onSettled(ad)` is called once when a run ends
  * (done or failed) or is undone, so the editor can read the demo again.
  */
 export function useAutoDemo(demoId, { onSettled } = {}) {
-  const [ad, setAd] = useState(null);
+  const [ad, setAd] = useState(undefined);
   const settledRef = useRef(onSettled);
   settledRef.current = onSettled;
 
   const refresh = useCallback(async () => {
     if (!demoId) return null;
     const res = await getAutoDemo(demoId).catch(() => null);
-    if (res) setAd(res.autodemo || null);
+    // A failed first read is "none", so nothing waits on it; a failed poll
+    // later keeps what was known.
+    setAd((cur) => (res ? res.autodemo || null : cur === undefined ? null : cur));
     return res?.autodemo || null;
   }, [demoId]);
 

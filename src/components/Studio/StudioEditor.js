@@ -10,8 +10,15 @@
  *
  * ── SAVING IS NOT A BUTTON ───────────────────────────────────────────────────
  * Edits are written a second after the last one, and on the way out. `rev` is
- * what the browser last read; a mismatch means another tab saved in between, and
- * the answer is to reload rather than to overwrite work this tab never saw.
+ * what the browser last read; a mismatch means something else saved in between
+ * — nearly always the server's own work (a product demo, a voiceover) and not
+ * another tab — and the answer is to merge, field by field, rather than to
+ * overwrite work this tab never saw or to throw away the edit (mergeTimelines).
+ *
+ * ── NOTHING TO EDIT UNTIL IT IS FINISHED ─────────────────────────────────────
+ * While the automatic edit runs, and while a product demo is built on top of
+ * it, the editor is not shown at all: one animated screen (Working.js) carries
+ * the whole wait with one percentage, and opens on the finished edit.
  *
  * ── AN EDIT IS NAMED ─────────────────────────────────────────────────────────
  * Every call to `edit()` carries a label — "Zoom level", "Add blur". It is what
@@ -25,7 +32,7 @@ import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captio
 import { blurSig, applyState } from "./follow.mjs";
 import { voiceSig } from "./voices.mjs";
 import VoicePanel from "./VoicePanel";
-import { Thinking } from "./RecordPage";
+import Working, { editPhase, demoPhase } from "./Working";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
 import ExportDialog from "./ExportDialog";
@@ -39,7 +46,7 @@ import { VideoPanel, ZoomPanel, BlurPanel, CaptionsPanel, CaptionLine, CursorPan
 import CanvasBar from "./CanvasBar";
 import CommandChat from "./CommandChat";
 // The auto product demo: its screens and its status, from its own files.
-import { AutoDemoDialog, AutoDemoStrip, AutoDemoWaiting } from "./AutoDemo";
+import { AutoDemoDialog, AutoDemoStrip } from "./AutoDemo";
 import { useAutoDemo } from "./autoDemoApi";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon, Drawer } from "./ui";
@@ -84,6 +91,66 @@ function mergeFollows(a, b) {
   }
   return out;
 }
+
+/**
+ * ── AN AUTOMATIC EDIT CHOSEN AFTER RECORDING ─────────────────────────────────
+ * "Zoom on clicks" (EditChoice.js) is answered while the recording uploads,
+ * and the edit cannot start until the server has prepared the recording, which
+ * happens after the editor opens. So the answer is written down here, by the
+ * address the editor opens at, and the editor starts the edit itself the
+ * moment the recording is ready (see "starts by itself" below). In
+ * sessionStorage, so a reload in that window still starts it, and nothing
+ * outlives the tab.
+ */
+const AUTO_EDIT = (key) => `clipo:auto-edit:${key}`;
+export function rememberAutoEdit(key, opts = {}) {
+  try {
+    sessionStorage.setItem(AUTO_EDIT(key), JSON.stringify({ captions: !!opts.captions }));
+  } catch {
+    /* without storage the editor offers its button instead */
+  }
+}
+function readAutoEdit(key) {
+  try {
+    const v = sessionStorage.getItem(AUTO_EDIT(key));
+    return v ? JSON.parse(v) : null;
+  } catch {
+    return null;
+  }
+}
+function forgetAutoEdit(key) {
+  try {
+    sessionStorage.removeItem(AUTO_EDIT(key));
+  } catch {
+    /* nothing to forget */
+  }
+}
+
+const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Three timelines into one, a top-level field at a time: `base` is what this
+ * tab last had from the server, `mine` is what it has now, `theirs` is what
+ * the server has now. A field this tab changed since `base` keeps this tab's
+ * value; every other field is the server's. The server's own writes touch whole
+ * fields of their own (captions and voice, a blur's follow), so this keeps both
+ * sides' work in every case but the one where both changed the same field —
+ * and there the creator's change, the one they can see, wins.
+ */
+function mergeTimelines(base, mine, theirs) {
+  if (!theirs) return mine;
+  if (!mine || !base) return theirs;
+  const out = { ...theirs };
+  for (const k of new Set([...Object.keys(mine), ...Object.keys(base)])) {
+    if (same(mine[k], base[k])) continue;
+    if (mine[k] === undefined) delete out[k];
+    else out[k] = mine[k];
+  }
+  return out;
+}
+
+/** Of the whole wait for a product demo, the share that is the automatic edit. */
+const EDIT_SHARE = 0.55;
 
 /** Changes closer together than this, to the same thing, are one undo step. */
 const COALESCE_MS = 700;
@@ -208,6 +275,10 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const saveRef = useRef(null);
   const revRef = useRef(0);
   const tlRef = useRef(null);
+  // The timeline as the server last had it, for merging (mergeTimelines).
+  const baseRef = useRef(null);
+  // Merges in a row; a server that keeps saying "stale" is not looped on.
+  const staleRun = useRef(0);
   tlRef.current = tl;
   // Read by the poll below, which must not be re-created every time the demo
   // changes or the interval restarts on every answer it receives.
@@ -231,6 +302,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           revRef.current = d.demo.rev;
           if (d.demo.timeline) {
             tlRef.current = d.demo.timeline;
+            baseRef.current = d.demo.timeline;
             setTl(d.demo.timeline);
           }
         }
@@ -260,7 +332,22 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   // The auto product demo (AutoDemo.js): followed on its own, and the demo is
   // read again whenever a run finishes or is undone, so its captions and voice
   // appear without a reload.
-  const auto = useAutoDemo(demoId, { onSettled: () => load(true) });
+  // A product demo that has just finished keeps the working screen up until
+  // the demo it made has been read, so the editor opens on the finished edit
+  // rather than on the old one for a moment.
+  const [held, setHeld] = useState(false);
+  const auto = useAutoDemo(demoId, {
+    onSettled: async () => {
+      try {
+        await load(true);
+      } finally {
+        setHeld(false);
+      }
+    },
+  });
+  useEffect(() => {
+    if (auto.active) setHeld(true);
+  }, [auto.active]);
   const [autoOpen, setAutoOpen] = useState(false);
 
   /**
@@ -370,12 +457,42 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       try {
         const res = await saveTimeline(demoId, current, revRef.current);
         revRef.current = res.rev;
+        baseRef.current = current;
+        staleRun.current = 0;
         // Clean only if nothing was edited while this was on the wire.
         if (editGen.current === gen) dirty.current = false;
       } catch (err) {
-        if (err?.response?.data?.stale) {
-          // A genuine conflict: something else saved in between.
-          setNotice("This recording changed in another tab, so it was reloaded.");
+        if (err?.response?.data?.stale && staleRun.current < 3) {
+          /**
+           * ── SOMETHING ELSE SAVED: KEEP BOTH ───────────────────────────────
+           * Almost never another tab. The server writes this timeline too —
+           * a product demo's captions and voice, a voiceover, a blur following
+           * what it covers — and an edit made after one of those landed, before
+           * this tab re-read it, arrives with the old revision. That used to
+           * throw the edit away, reload, and announce "This recording changed
+           * in another tab", which was untrue and lost the creator's change.
+           * Now the two are merged (mergeTimelines) and the merge is saved at
+           * once with the new revision. Quietly, because nothing was lost.
+           */
+          staleRun.current += 1;
+          try {
+            const d = await getDemo(demoId);
+            const merged = mergeTimelines(baseRef.current, tlRef.current, d.demo.timeline);
+            setDemo(d.demo);
+            revRef.current = d.demo.rev;
+            baseRef.current = d.demo.timeline;
+            if (merged) {
+              tlRef.current = merged;
+              setTl(merged);
+            }
+            retryIn = 1;
+          } catch {
+            retryIn = SAVE_MS * 4;
+          }
+        } else if (err?.response?.data?.stale) {
+          // Merged three times and still refused: take the server's copy.
+          staleRun.current = 0;
+          setNotice("This recording was changed somewhere else, so it was reloaded.");
           dirty.current = false;
           saving.current = null;
           await load(true, { force: true });
@@ -965,11 +1082,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
    * screen. Without the reload the poll above eventually catches up, and "the
    * button did nothing for three seconds" is indistinguishable from broken.
    */
-  const startAnalyse = useCallback(async () => {
+  const startAnalyse = useCallback(async (opts) => {
     setStarting(true);
     setNotice("");
     try {
-      await onAnalyse(demo);
+      await onAnalyse(demo, opts);
     } finally {
       await load(true);
       setStarting(false);
@@ -977,26 +1094,77 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   }, [onAnalyse, demo, load]);
 
   /**
-   * ── A PRODUCT DEMO WAS ASKED FOR: THE AUTOMATIC EDIT STARTS BY ITSELF ──────
+   * ── AN AUTOMATIC EDIT WAS CHOSEN: IT STARTS BY ITSELF ──────────────────────
    * Right after recording the edit cannot start yet (the recording is still
-   * being prepared), which is why the creator normally presses "Edit it
-   * automatically" here. With a product demo asked for, that press is made for
-   * them, once, the moment the recording is ready: the same button's action,
-   * the same price. The demo is built on the server after it finishes. If it
-   * could not start (credits, a limit), the normal screen and its button come
-   * back with the reason.
+   * being prepared), which is why the creator would otherwise press "Edit it
+   * automatically" here. When they already chose an automatic edit after
+   * recording — "Zoom on clicks" (rememberAutoEdit), or a product demo, which
+   * is built on top of one — that press is made for them, once, the moment the
+   * recording is ready: the same button's action, the same price. If it could
+   * not start (credits, a limit), the normal screen and its button come back
+   * with the reason.
    */
   const autoWaiting = auto.ad?.status === "waiting";
+  const [autoIntent] = useState(() => readAutoEdit(demoId));
+  const wantAuto = autoWaiting || !!autoIntent;
   const canAutoStart =
     !!demo && !tl && demo.status === "ready" && demo.recording?.status === "ready" &&
     !["running", "failed"].includes(demo.analysis?.status);
   const autoStarted = useRef(false);
   const [autoTried, setAutoTried] = useState(false);
   useEffect(() => {
-    if (!autoWaiting || !canAutoStart || autoStarted.current) return;
+    if (!wantAuto || !canAutoStart || autoStarted.current) return;
     autoStarted.current = true;
-    startAnalyse().finally(() => setAutoTried(true));
-  }, [autoWaiting, canAutoStart, startAnalyse]);
+    // Asked once: a refusal shows the button and its reason, and a reload does
+    // not ask again.
+    forgetAutoEdit(demoId);
+    startAnalyse({ captions: !autoWaiting && !!autoIntent?.captions }).finally(() => setAutoTried(true));
+  }, [wantAuto, canAutoStart, startAnalyse, demoId, autoWaiting, autoIntent]);
+
+  /**
+   * ── ONE WAIT, ONE SCREEN, ONE NUMBER ───────────────────────────────────────
+   * What the working screen shows, or null when there is nothing to wait for.
+   * A product demo is one percentage across both halves: the automatic edit
+   * is the first EDIT_SHARE of it and the demo the rest, so the number never
+   * goes back to zero halfway. A demo made again from inside the editor, on an
+   * edit that already exists, is the demo's stages alone ("demoOnly"); which of
+   * the two a build is, is decided when it is first seen and kept.
+   */
+  const building = auto.active || held;
+  const buildTrack = useRef(null);
+  if (!building) buildTrack.current = null;
+  else if (!buildTrack.current && demo) buildTrack.current = tl && demo.status !== "analysing" ? "demoOnly" : "demo";
+  const track = building || autoWaiting ? buildTrack.current || "demo" : "edit";
+  const editShare = track === "demo" ? EDIT_SHARE : 1;
+
+  let working = null;
+  if (demo && !error) {
+    const preparing = demo.status === "preparing" || demo.recording?.status === "processing";
+    if (preparing && wantAuto) {
+      working = { track, phase: track === "demoOnly" ? "script" : "watch", progress: 0.01 + 0.01 * (demo.progress || 0) };
+    } else if (demo.status === "analysing") {
+      working = { track, phase: editPhase(demo.stage, demo.progress), progress: editShare * (demo.progress || 0) };
+    } else if (!tl && wantAuto && demo.status !== "failed" && (!autoTried || starting)) {
+      working = { track, phase: "watch", progress: 0.02 };
+    } else if (tl && building) {
+      const ad = auto.ad;
+      const p = ad?.status === "running" ? ad.progress || 0 : ad?.status === "waiting" ? 0 : 1;
+      working = track === "demoOnly"
+        ? { track, phase: demoPhase(ad?.stage), progress: p }
+        : { track, phase: demoPhase(ad?.stage), progress: EDIT_SHARE + (1 - EDIT_SHARE) * p };
+    }
+  }
+
+  // When the wait ends the screen stays a moment longer, runs its number to
+  // 100 and then hands over (Working.js `complete`), instead of cutting away
+  // from 87% to the editor.
+  const [veil, setVeil] = useState(false);
+  const lastWork = useRef(null);
+  if (working) lastWork.current = working;
+  const isWorking = !!working;
+  useEffect(() => {
+    if (isWorking) setVeil(true);
+  }, [isWorking]);
 
   const onCaptionsFromScript = useCallback(async () => {
     setCaptioning(true);
@@ -1008,6 +1176,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       dirty.current = false;
       if (d.demo.timeline) {
         tlRef.current = d.demo.timeline;
+        baseRef.current = d.demo.timeline;
         setTl(d.demo.timeline);
       }
     } catch (err) {
@@ -1096,6 +1265,26 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   if (!demo) return <EditorSkeleton narrow={narrow} />;
 
+  // The finale only for a finished edit: not after a refusal (no edit) or a
+  // demo that failed (the strip in the editor says so instead).
+  const finale = veil && !!lastWork.current && !!tl && demo.status !== "failed" && auto.ad?.status !== "failed";
+  if (working || finale) {
+    const w = working || lastWork.current;
+    return (
+      <Working
+        track={w.track}
+        phase={w.phase}
+        progress={w.progress}
+        complete={!working}
+        onComplete={() => setVeil(false)}
+      />
+    );
+  }
+
+  // Whether a product demo is building is read separately from the demo; until
+  // that answer is in, an edit that may be about to be replaced is not shown.
+  if (tl && auto.ad === undefined) return <EditorSkeleton narrow={narrow} />;
+
   if (demo.status === "preparing" || demo.recording.status === "processing") {
     return (
       <Centred>
@@ -1106,10 +1295,6 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         </div>
       </Centred>
     );
-  }
-
-  if (demo.status === "analysing") {
-    return <Thinking stage={demo.stage} progress={demo.progress} />;
   }
 
   if (demo.status === "failed" && !tl) {
@@ -1123,11 +1308,6 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     );
   }
 
-  // A product demo is waiting on the automatic edit, which is starting now.
-  if (!tl && autoWaiting && (!autoTried || starting)) {
-    return <AutoDemoWaiting starting />;
-  }
-
   if (!tl) {
     return (
       <Centred>
@@ -1136,7 +1316,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           This recording hasn't been analysed yet. The studio will find the steps, cut the waiting, plan the zooms and
           blur anything private.
         </p>
-        <Btn kind="primary" size="l" icon={<Icon name="wand" size={15} />} disabled={starting} onClick={startAnalyse}>
+        <Btn kind="primary" size="l" icon={<Icon name="wand" size={15} />} disabled={starting} onClick={() => startAnalyse()}>
           {starting ? "Starting…" : "Edit it automatically"}
         </Btn>
       </Centred>

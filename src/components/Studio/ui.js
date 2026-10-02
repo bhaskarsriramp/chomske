@@ -437,6 +437,11 @@ const PATHS = {
   stop: <rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" stroke="none" />,
   mic: <><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>,
   micOff: <><path d="M9 9v3a3 3 0 0 0 4.6 2.5M15 11V6a3 3 0 0 0-5.9-.7" /><path d="M5 11a7 7 0 0 0 10.6 6M12 18v3M4 4l16 16" /></>,
+  // A tab's own sound (RecordStart.js): on, and struck through.
+  sound: <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" /></>,
+  soundOff: <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /><path d="M16 9.5l5 5M21 9.5l-5 5" /></>,
+  // A browser tab: what the picker asks for.
+  tab: <><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M3 9h18M6.5 6.8h.01M9 6.8h.01" /></>,
   zoom: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.3-4.3M11 8.5v5M8.5 11h5" /></>,
   blur: <><circle cx="12" cy="12" r="8" strokeDasharray="2 3" /><circle cx="12" cy="12" r="3.5" /></>,
   note: <><path d="M4 5.5h16v11H12l-4 3.5v-3.5H4z" /></>,

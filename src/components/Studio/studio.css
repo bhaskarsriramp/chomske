@@ -689,3 +689,160 @@
 }
 .lv-idea:hover:not(:disabled) { background: var(--hover); border-color: var(--line-strong); }
 .lv-idea:disabled { opacity: .5; cursor: default; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   New recording (RecordStart.js): the button, its two switches, and the card
+   shown while the browser asks for the microphone.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.st-rec { display: inline-flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+.st-rec-opts {
+  display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--card);
+}
+.st-rec-opt {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 12px;
+  border: 0; border-radius: 9px; background: transparent; color: var(--ink-mute);
+  font-family: inherit; font-size: 13px; font-weight: 620; white-space: nowrap; cursor: pointer;
+  transition: background var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+.st-rec-opt:hover { background: var(--hover); color: var(--ink); }
+.st-rec-opt:active { transform: scale(0.97); }
+.st-rec-opt.is-on { background: var(--ink); color: #fff; }
+.st-rec-opt.is-blocked { color: var(--bad); }
+.st-rec-opt:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.st-rec-note {
+  display: flex; align-items: flex-start; gap: 9px; margin: -8px 0 20px; padding: 10px 12px;
+  border-radius: 11px; border: 1px solid var(--made-line); background: var(--made-tint);
+  color: var(--ink-body); font-size: 12.5px; line-height: 1.5;
+}
+.st-rec-note > svg { flex-shrink: 0; margin-top: 2px; color: #B45309; }
+.st-rec-note button { flex-shrink: 0; padding: 3px; border: 0; background: transparent; color: var(--ink-mute); cursor: pointer; }
+
+.st-ask { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 16px; background: rgba(15, 15, 15, 0.38); }
+.st-ask-card {
+  width: min(440px, 100%); padding: 26px 24px 22px; border-radius: 18px; text-align: center;
+  border: 1px solid var(--line); background: var(--card); box-shadow: var(--shadow-modal);
+}
+.st-ask-where {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 16px; padding: 5px 11px 5px 8px;
+  border-radius: 99px; background: var(--made-tint); color: var(--ink-body); font-size: 12px; font-weight: 650;
+}
+.st-ask-where svg { animation: st-nudge 1.2s var(--ease-in-out) infinite; }
+@keyframes st-nudge { 50% { transform: translate(-3px, -3px); } }
+.st-ask-icon {
+  width: 54px; height: 54px; margin: 0 auto 14px; display: grid; place-items: center; border-radius: 16px;
+  background: #FDECEC; color: #E5484D; animation: st-ask-pulse 1.6s ease-out infinite;
+}
+.st-ask-icon.is-ok { background: rgba(13, 138, 79, 0.1); color: var(--ok); animation: none; }
+@keyframes st-ask-pulse { 0% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.35); } 100% { box-shadow: 0 0 0 14px rgba(229, 72, 77, 0); } }
+.st-ask-card h2 { margin: 0; font-size: 19px; font-weight: 720; letter-spacing: -0.025em; color: var(--ink); }
+.st-ask-card p { margin: 8px 0 0; font-size: 13.5px; line-height: 1.6; color: var(--ink-mute); }
+.st-ask-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 20px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   "How should Clipo edit it?" (EditChoice.js). The page's full width: two
+   cards side by side, each with its film, stacking when there is no room.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.st-choice { width: 100%; padding: 2px 0 0; }
+.st-choice-save {
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--card); font-size: 13px; color: var(--ink-body);
+}
+.st-choice-save.is-saved > svg { color: var(--ok); }
+.st-choice-save-label { font-weight: 620; white-space: nowrap; }
+.st-choice-pct { min-width: 38px; text-align: right; font-size: 12.5px; color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+
+.st-choice-head { margin: 26px 0 18px; }
+.st-choice-head h1 { margin: 0; font-size: 26px; font-weight: 740; letter-spacing: -0.035em; color: var(--ink); }
+.st-choice-head p { margin: 6px 0 0; font-size: 14px; line-height: 1.6; color: var(--ink-mute); }
+
+.st-choice-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; align-items: start; }
+.st-choice-grid.is-locked { pointer-events: none; }
+.st-choice-grid.is-locked .st-opt:not(.is-on) { opacity: 0.5; }
+
+.st-opt {
+  position: relative; overflow: hidden; border-radius: 18px; cursor: pointer; outline: none;
+  border: 1px solid var(--line); background: var(--card);
+  transition: border-color var(--dur-hover) var(--ease-out), box-shadow 220ms var(--ease-out), transform var(--dur-press) var(--ease-out), opacity 220ms var(--ease-out);
+}
+.st-opt:hover { border-color: var(--line-strong); box-shadow: 0 14px 40px -24px rgba(15, 15, 15, 0.35); }
+.st-opt.is-on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink), 0 18px 50px -26px rgba(15, 15, 15, 0.45); }
+.st-opt:focus-visible { box-shadow: 0 0 0 1px var(--ink), 0 0 0 4px rgba(15, 15, 15, 0.16); }
+.st-opt:active { transform: scale(0.996); }
+.st-opt-body { padding: 18px 20px 20px; }
+.st-opt-head { display: flex; align-items: center; gap: 10px; }
+.st-opt-head h2 { margin: 0; font-size: 18px; font-weight: 720; letter-spacing: -0.025em; color: var(--ink); }
+.st-opt-radio {
+  flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%;
+  border: 2px solid var(--line-strong); transition: border-color var(--dur-hover) var(--ease-out);
+}
+.st-opt-radio::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--ink); transform: scale(0); transition: transform var(--dur-pop) var(--ease-out); }
+.st-opt.is-on .st-opt-radio { border-color: var(--ink); }
+.st-opt.is-on .st-opt-radio::after { transform: scale(1); }
+.st-opt-badge {
+  margin-left: auto; padding: 3px 9px; border-radius: 99px; font-size: 10.5px; font-weight: 750;
+  letter-spacing: 0.08em; text-transform: uppercase; background: var(--hover); color: var(--ink-mute);
+  transition: background var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out);
+}
+.st-opt.is-on .st-opt-badge { background: var(--ink); color: #fff; }
+.st-opt-lead { margin: 8px 0 0; font-size: 14px; line-height: 1.6; color: var(--ink-body); }
+.st-opt-points { list-style: none; margin: 14px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 18px; }
+.st-opt-points li { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.45; color: var(--ink-body); }
+.st-opt-points svg { margin-top: 2px; color: var(--ok); }
+.st-opt-extra { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); cursor: default; animation: st-reveal 260ms var(--ease-out); }
+.st-opt-more { margin: 14px 0 0; font-size: 12.5px; color: var(--ink-mute); }
+@keyframes st-reveal { from { opacity: 0; transform: translateY(-4px); } }
+
+/* A card's film: the landing page's demonstration on a coloured wall. The
+   screen bleeds off the bottom edge on purpose; it reads as a window. */
+.st-film { position: relative; aspect-ratio: 16 / 9; overflow: hidden; }
+.st-film.is-ocean {
+  background:
+    radial-gradient(110% 90% at 12% 0%, rgba(0, 183, 205, 0.75) 0%, transparent 55%),
+    radial-gradient(90% 90% at 100% 100%, rgba(27, 23, 255, 0.8) 0%, transparent 60%),
+    linear-gradient(135deg, #0d1b2a 0%, #122540 60%, #0a1422 100%);
+}
+.st-film.is-sunset {
+  background:
+    radial-gradient(110% 90% at 0% 0%, rgba(236, 72, 153, 0.7) 0%, transparent 55%),
+    radial-gradient(90% 90% at 100% 100%, rgba(249, 115, 22, 0.75) 0%, transparent 60%),
+    linear-gradient(135deg, #241a2e 0%, #4a3160 55%, #140e1c 100%);
+}
+.st-film-screen {
+  position: absolute; left: 9%; top: 10%; width: 82%; overflow: hidden; border-radius: 1.2% / 1.9%;
+  box-shadow: 0 30px 60px -22px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.st-film-voice {
+  position: absolute; left: 14px; top: 11px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px 5px 8px; border-radius: 99px; background: rgba(10, 12, 22, 0.62); color: #fff;
+  font-size: 11.5px; font-weight: 650; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.st-wave { display: inline-flex; align-items: center; gap: 2px; height: 12px; margin-left: 2px; }
+.st-wave i { width: 2px; height: 100%; border-radius: 2px; background: #FDA4AF; animation: st-wave 0.8s ease-in-out infinite alternate; }
+.st-wave i:nth-child(2) { animation-delay: -0.3s; }
+.st-wave i:nth-child(3) { animation-delay: -0.55s; }
+.st-wave i:nth-child(4) { animation-delay: -0.15s; }
+.st-wave i:nth-child(5) { animation-delay: -0.45s; }
+@keyframes st-wave { from { transform: scaleY(0.25); } to { transform: scaleY(1); } }
+
+/* Pinned to the bottom of the page while it scrolls: opening the demo card's
+   form pushes the cards past the fold, and the button that acts on them must
+   not go with it. */
+.st-choice-go {
+  position: sticky; bottom: -20px; z-index: 3; display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  margin-top: 6px; padding: 18px 0 20px;
+  background: linear-gradient(180deg, rgba(249, 249, 249, 0), var(--paper) 34%);
+}
+.st-choice-hint { font-size: 12.5px; color: var(--ink-mute); }
+.st-choice-done { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; color: var(--ink-body); }
+.st-choice-done > svg { color: var(--ok); }
+
+/* The Voice tab: what the chosen voice still needs, inside its own card. */
+.st-voice-act { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); animation: st-reveal 240ms var(--ease-out); }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-ask-where svg, .st-ask-icon, .st-wave i, .st-opt-extra, .st-voice-act { animation: none; }
+}

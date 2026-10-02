@@ -1,35 +1,35 @@
 /**
- * RecordPage.js: from "Record" to an edited demo, without a decision in between.
+ * RecordPage.js: a recording in progress, and what happens to it after.
  *
- * Four states, in order, and the creator only acts in the first and the last:
+ * It is handed a capture that is ALREADY running: "New recording" opened the
+ * browser's tab picker straight from the click (RecordStart.js), and the
+ * moment a tab was shared this page mounted and started the recorder. Three
+ * states, in order:
  *
- *   setup      what to record with. Microphone, system sound, captions.
- *   recording  the browser's picker has been answered and it is running.
- *   sending    the capture is going to storage.
- *   thinking   the analysis is running, and saying what it is doing.
+ *   recording  the controls float above whatever is being demonstrated.
+ *   sending    the capture goes to storage, and meanwhile the creator says
+ *              how it should be edited (EditChoice.js).
+ *   thinking   saved; the editor is opening.
  *
- * ── THE PICKER IS THE PRODUCT ────────────────────────────────────────────────
- * One click opens the operating system's own share dialog, exactly as Google
- * Meet does, and recording starts the moment it is answered. No extension, no
- * download, no second permission. Everything else on the setup screen is a
- * toggle with a sensible default, so a creator who reads none of it still gets
- * a good recording.
+ * ── NOTHING STANDS BETWEEN THE SHARE AND THE RECORDER ────────────────────────
+ * The recorder starts on mount, before any network call. The studio record the
+ * upload will belong to is created alongside it and awaited only at the end, so
+ * a slow server costs the first seconds of nothing.
  *
  * ── THE CONTROLS FLOAT ABOVE EVERYTHING ──────────────────────────────────────
- * A demo is recorded in a DIFFERENT window from this one, so an overlay drawn
- * in this tab would be behind the thing being demonstrated and useless. Document
+ * A demo is recorded in a DIFFERENT tab from this one, so an overlay drawn
+ * here would be behind the thing being demonstrated and useless. Document
  * Picture-in-Picture gives a browser tab a small always-on-top window, which is
  * the only way to put a stop button over another application without shipping a
  * desktop app. Where that API is missing the overlay stays in the tab, and the
  * creator uses the browser's own "Stop sharing" bar instead.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { captureSupport, environment, startCapture, createRecorder, createTracker, sendRecording, levelOf } from "./capture";
-import { createDemo, startUpload, resumeUpload, completeUpload, startAnalysis } from "./studioApi";
-import { Btn, Icon, Toggle, Panel } from "./ui";
-import { fmtBytes } from "./model";
-import { AutoDemoAsk } from "./AutoDemo";
+import { captureSupport, environment, createRecorder, createTracker, sendRecording, levelOf } from "./capture";
+import { createDemo, startUpload, resumeUpload, completeUpload } from "./studioApi";
+import { Icon } from "./ui";
+import EditChoice from "./EditChoice";
 import { requestAutoDemo } from "./autoDemoApi";
 import "./studio.css";
 
@@ -39,16 +39,15 @@ const clock = (s) => {
   return `${m}:${String(t % 60).padStart(2, "0")}`;
 };
 
-export default function RecordPage({ config, onOpen, onCancel }) {
-  const support = useMemo(() => captureSupport(), []);
-  const [phase, setPhase] = useState("setup");
-  const [error, setError] = useState("");
+/**
+ * `capture`: the running capture (capture.js startCapture). `prefs`: what the
+ * creator asked for, { mic, tabSound }, to say so if the capture lacks it.
+ * `onOpen(key, { autoAnalyse, captions })` once saved; `onFail(message)` if
+ * nothing could be saved, which returns to the library.
+ */
+export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
+  const [phase, setPhase] = useState("recording");
   const [notice, setNotice] = useState("");
-
-  const [wantMic, setWantMic] = useState(true);
-  const [wantSystem, setWantSystem] = useState(true);
-  const [wantCaptions, setWantCaptions] = useState(false);
-  const [autoAnalyse, setAutoAnalyse] = useState(true);
 
   const [elapsed, setElapsed] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -57,65 +56,47 @@ export default function RecordPage({ config, onOpen, onCancel }) {
   const [samples, setSamples] = useState(0);
   const [sent, setSent] = useState(0);
   const [waiting, setWaiting] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  const capture = useRef(null);
+  const capture = useRef(cap);
   const recorder = useRef(null);
   const tracker = useRef(null);
-  const demoRef = useRef(null);
+  // The studio record, being created while the recording runs.
+  const demoReq = useRef(null);
   const stopping = useRef(false);
-  // The answer to "turn this into a product demo?" (AutoDemo.js), asked while
-  // the recording uploads: { brief, voice } for a demo, null to just edit it.
-  const demoChoice = useRef(null);
-  const chooseDemo = useRef(null);
-  const [saved, setSaved] = useState(false);
+  const started = useRef(false);
+  // The answer to "how should Clipo edit it?" (EditChoice.js), asked while the
+  // recording uploads.
+  const choice = useRef(null);
+  const answer = useRef(null);
+  const finishRef = useRef(null);
 
   /* ── Start ────────────────────────────────────────────────────────────── */
 
-  const begin = useCallback(async () => {
-    setError("");
-    setNotice("");
-    let cap = null;
-    try {
-      // The picker FIRST, before any await that is not itself the picker: it
-      // only opens from a live user gesture, and spending the gesture on a
-      // network round trip makes the browser refuse with an error that reads
-      // exactly like the creator having clicked Cancel.
-      cap = await startCapture({ mic: wantMic, systemAudio: wantSystem });
-    } catch (err) {
-      const denied = err?.name === "NotAllowedError";
-      setError(denied ? "" : "We couldn't start the recording. Please try again.");
-      if (denied) setNotice("No screen was shared, so nothing was recorded.");
-      return;
-    }
+  useEffect(() => {
+    // Once, even where StrictMode runs effects twice: refs survive that.
+    if (started.current || !cap) return;
+    started.current = true;
 
-    try {
-      const demo = await createDemo("");
-      demoRef.current = demo.demo;
+    recorder.current = createRecorder(cap.stream, {
+      onError: () => setNotice("The recording stopped unexpectedly. What was captured up to that point is kept."),
+    });
+    tracker.current = createTracker();
+    // Stopping the share from the browser's own bar ends the recording too, or
+    // the creator is left with a tab that thinks it is still going.
+    cap.videoTrack?.addEventListener("ended", () => finishRef.current?.(), { once: true });
 
-      capture.current = cap;
-      recorder.current = createRecorder(cap.stream, {
-        onError: () => setError("The recording stopped unexpectedly. What was captured up to that point is kept."),
-      });
-      tracker.current = createTracker();
+    recorder.current.start();
+    tracker.current.start(cap.stream).catch((err) => console.error("[studio] tracker failed to start", err));
 
-      // Stopping the share from the browser's own bar has to end the recording
-      // too, or the creator is left with a tab that thinks it is still going.
-      cap.videoTrack?.addEventListener("ended", () => finish(), { once: true });
+    demoReq.current = createDemo("").then((d) => d.demo);
+    // Awaited (and retried) when the recording ends; not an error yet.
+    demoReq.current.catch(() => {});
 
-      recorder.current.start();
-      await tracker.current.start(cap.stream);
-
-      if (!cap.hasMic && wantMic) setNotice("The microphone wasn't available, so this recording has no voice.");
-      else if (!cap.hasSystemAudio && wantSystem) setNotice("This share has no system sound. Choose a tab and tick “Share tab audio” if you need it.");
-
-      setPhase("recording");
-    } catch (err) {
-      cap?.stop();
-      console.error("[studio] start failed", err);
-      setError("We couldn't start the recording. Please try again.");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantMic, wantSystem]);
+    if (!cap.hasMic && prefs?.mic) setNotice("The microphone wasn't available, so this recording has no voice.");
+    else if (!cap.hasSystemAudio && prefs?.tabSound) setNotice("This share has no tab sound. Tick “Share tab audio” in the picker next time if you need it.");
+    else if (!captureSupport().tracking) setNotice("This browser can't follow the pointer, so click zooms won't be available. Chrome or Edge on a desktop can.");
+  }, [cap, prefs]);
 
   /* ── While it runs ────────────────────────────────────────────────────── */
 
@@ -163,14 +144,14 @@ export default function RecordPage({ config, onOpen, onCancel }) {
     setMuted(next);
   }, [muted]);
 
-  /* ── Stop, send, analyse ──────────────────────────────────────────────── */
+  /* ── Stop, send, hand over ────────────────────────────────────────────── */
 
   const finish = useCallback(async () => {
     if (stopping.current) return;
     stopping.current = true;
     setSaved(false);
-    demoChoice.current = new Promise((resolve) => {
-      chooseDemo.current = resolve;
+    choice.current = new Promise((resolve) => {
+      answer.current = resolve;
     });
     setPhase("sending");
 
@@ -178,17 +159,20 @@ export default function RecordPage({ config, onOpen, onCancel }) {
       const blob = await recorder.current.stop();
       const report = tracker.current?.report() || { track: [], motion: [], tracker: "", samples: 0 };
       tracker.current?.stop();
-      const cap = capture.current;
-      cap?.stop();
+      const c = capture.current;
+      c?.stop();
 
       if (!blob || blob.size < 1024) {
-        setError("That recording came out empty. Nothing was saved.");
-        setPhase("setup");
-        stopping.current = false;
+        onFail("That recording came out empty. Nothing was saved.");
         return;
       }
 
-      const demo = demoRef.current;
+      let demo;
+      try {
+        demo = await demoReq.current;
+      } catch {
+        demo = (await createDemo("")).demo;
+      }
       const mime = recorder.current.mimeType || blob.type || "video/webm";
       const clientKey = `${demo.id}:${blob.size}`;
 
@@ -205,10 +189,10 @@ export default function RecordPage({ config, onOpen, onCancel }) {
       });
 
       await completeUpload(demo.id, {
-        surface: cap?.surface || "unknown",
-        label: cap?.label || "",
-        mic: !!cap?.hasMic,
-        system_audio: !!cap?.hasSystemAudio,
+        surface: c?.surface || "unknown",
+        label: c?.label || "",
+        mic: !!c?.hasMic,
+        system_audio: !!c?.hasSystemAudio,
         tracker: report.tracker,
         track: report.track,
         motion: report.motion,
@@ -224,7 +208,7 @@ export default function RecordPage({ config, onOpen, onCancel }) {
         frames: report.frames,
         // What the capture track delivered: the cursor mode it applied, its
         // frame rate, its pixel ratio. See startCapture() in capture.js.
-        device: cap?.device,
+        device: c?.device,
         // The display and the OS. The pointer's size in the recording follows
         // from the screen's width in CSS pixels, and the server has no other
         // way to learn it. See environment() in capture.js.
@@ -233,11 +217,11 @@ export default function RecordPage({ config, onOpen, onCancel }) {
 
       // The upload is done; the editor opens once the creator has answered.
       setSaved(true);
-      const pick = await demoChoice.current;
+      const pick = await choice.current;
       let demoAsked = false;
-      if (pick?.brief) {
+      if (pick?.mode === "demo") {
         try {
-          await requestAutoDemo(demo.id, pick);
+          await requestAutoDemo(demo.id, { brief: pick.brief, voice: pick.voice });
           demoAsked = true;
         } catch (err) {
           console.error("[studio] the product demo request failed", err);
@@ -247,26 +231,41 @@ export default function RecordPage({ config, onOpen, onCancel }) {
       setPhase("thinking");
       // By slug, the id the editor's address uses (StudioPage.js). With a
       // product demo asked for, the editor starts the automatic edit itself
-      // once the recording is prepared (StudioEditor.js), and the demo is
-      // built after it. Otherwise this is exactly what it always was.
-      onOpen(demo.slug || demo.id, { autoAnalyse: demoAsked ? false : autoAnalyse, captions: wantCaptions });
+      // once the recording is prepared (StudioEditor.js) and the demo is built
+      // after it. "Zoom on clicks" asks the editor for the same automatic edit
+      // without the demo; if the demo request failed, that is what it gets.
+      onOpen(demo.slug || demo.id, {
+        autoAnalyse: pick?.mode === "zoom" || (pick?.mode === "demo" && !demoAsked),
+        captions: pick?.mode === "zoom" && !!pick.captions,
+      });
     } catch (err) {
       console.error("[studio] finish failed", err);
-      setError(err?.message?.includes("abort") ? "The upload was stopped." : "We couldn't save that recording. Please try again.");
-      setPhase("setup");
-      stopping.current = false;
+      onFail(err?.message?.includes("abort") ? "The upload was stopped." : "We couldn't save that recording. Please try again.");
     }
-  }, [autoAnalyse, wantCaptions, onOpen]);
+  }, [onOpen, onFail]);
+  finishRef.current = finish;
 
-  // Anything still open when this screen goes away is released. A screen share
-  // left running after the tab moved on is the worst bug this feature can have.
-  useEffect(
-    () => () => {
-      tracker.current?.stop();
-      capture.current?.stop();
-    },
-    []
-  );
+  /**
+   * Anything still open when this screen goes away is released. A screen share
+   * left running after the tab moved on is the worst bug this feature can have.
+   *
+   * Released a tick later, and only if the page did not come straight back:
+   * StrictMode unmounts and remounts once in development, and stopping the
+   * capture then would end every recording the instant it began.
+   */
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    const running = capture.current;
+    return () => {
+      alive.current = false;
+      setTimeout(() => {
+        if (alive.current) return;
+        tracker.current?.stop();
+        running?.stop();
+      }, 0);
+    };
+  }, []);
 
   /* ── Screens ──────────────────────────────────────────────────────────── */
 
@@ -288,105 +287,19 @@ export default function RecordPage({ config, onOpen, onCancel }) {
     );
   }
 
-  if (phase === "sending" || phase === "thinking") {
+  if (phase === "sending") {
     return (
-      <>
-        <SendingStage sent={sent} waiting={waiting} done={phase === "thinking"} compact={phase === "sending"} />
-        {phase === "sending" && <AutoDemoAsk saved={saved} onChoose={(choice) => chooseDemo.current?.(choice)} />}
-      </>
+      <EditChoice
+        sent={sent}
+        waiting={waiting}
+        saved={saved}
+        hasMic={!!capture.current?.hasMic}
+        onChoose={(c) => answer.current?.(c)}
+      />
     );
   }
 
-  return (
-    <div style={{ maxWidth: 560, margin: "0 auto", padding: "10px 0 40px" }}>
-      <header style={{ marginBottom: 22 }}>
-        <h1 style={{ margin: 0, fontSize: 25, fontWeight: 720, letterSpacing: "-0.035em", color: "var(--ink)" }}>
-          New recording
-        </h1>
-        <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-          Choose a screen, window or tab when your browser asks. Recording starts straight away — everything else is
-          decided afterwards.
-        </p>
-      </header>
-
-      {!support.ok && (
-        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid #F5C7C3", background: "#FCE8E6", color: "var(--bad)", fontSize: 13, lineHeight: 1.55 }}>
-          {support.why}
-        </div>
-      )}
-
-      {error && (
-        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid #F5C7C3", background: "#FCE8E6", color: "var(--bad)", fontSize: 13, lineHeight: 1.55 }}>
-          {error}
-        </div>
-      )}
-      {notice && !error && (
-        <div style={{ marginBottom: 18, padding: "13px 15px", borderRadius: 12, border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink-body)", fontSize: 13, lineHeight: 1.55 }}>
-          {notice}
-        </div>
-      )}
-
-      <Panel title="Sound">
-        <Toggle
-          label="Record my microphone"
-          hint="Your narration. You can still add captions or a voiceover script afterwards."
-          checked={wantMic}
-          onChange={setWantMic}
-        />
-        <Toggle
-          label="Record the screen's sound"
-          hint="Tab or system audio, where your browser offers it. On macOS this only works when you share a tab."
-          checked={wantSystem}
-          onChange={setWantSystem}
-        />
-      </Panel>
-
-      <div style={{ height: 14 }} />
-
-      <Panel title="After recording">
-        <Toggle
-          label="Edit it automatically"
-          hint="Find the steps, cut the waiting, plan the zooms, and blur anything private. This is what the studio is for."
-          checked={autoAnalyse}
-          onChange={setAutoAnalyse}
-        />
-        <Toggle
-          label="Write captions from my voice"
-          hint={
-            wantMic
-              ? "Off by default. A silent screen recording gets captions of room tone, which is worse than none — you can turn this on later in the editor at any time."
-              : "Needs the microphone on."
-          }
-          checked={wantCaptions && wantMic}
-          onChange={setWantCaptions}
-          disabled={!wantMic}
-        />
-      </Panel>
-
-      <div style={{ marginTop: 22, display: "flex", gap: 10, alignItems: "center" }}>
-        <Btn kind="record" size="l" icon={<Icon name="record" size={14} />} onClick={begin} disabled={!support.ok}>
-          Start recording
-        </Btn>
-        {onCancel && (
-          <Btn kind="quiet" size="l" onClick={onCancel}>
-            Cancel
-          </Btn>
-        )}
-      </div>
-
-      {!support.tracking && support.ok && (
-        <p style={{ marginTop: 18, fontSize: 12, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-          This browser can't recover the pointer from the recording, so cursor effects and click zooms won't be
-          available. Everything else will work. Chrome or Edge on a desktop can do it.
-        </p>
-      )}
-
-      <p style={{ marginTop: 18, fontSize: 12, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-        Recordings are kept for {config?.limits?.retention_days || 7} days, and can be up to{" "}
-        {Math.round((config?.limits?.max_recording_seconds || 1800) / 60)} minutes.
-      </p>
-    </div>
-  );
+  return <SendingStage sent={1} waiting={false} done />;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -587,68 +500,3 @@ function SendingStage({ sent, waiting, done, compact = false }) {
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Analysing
-   ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * What the analysis is doing, told honestly.
- *
- * The stages come from the server's own progress messages
- * (backend/services/studio/analyse.js), not from a script here, so a run that
- * spends ninety seconds reading frames says it is reading frames for ninety
- * seconds. A single indeterminate bar over three minutes of work reads as a
- * hang, and the first thing anybody does about a hang is reload.
- */
-export function Thinking({ stage, progress, error, onRetry }) {
-  const steps = [
-    "Sampling the recording",
-    "Understanding the interface",
-    "Working out the steps",
-    "Planning the camera",
-    "Writing the annotations",
-    "Checking for anything private",
-    "Building the edit",
-  ];
-  const at = Math.max(
-    0,
-    steps.findIndex((s) => stage && stage.toLowerCase().startsWith(s.slice(0, 12).toLowerCase()))
-  );
-
-  return (
-    <div style={{ display: "grid", placeItems: "center", minHeight: "56vh", padding: 20 }}>
-      <div style={{ width: "100%", maxWidth: 420 }}>
-        <h2 style={{ margin: "0 0 6px", fontSize: 19, fontWeight: 680, letterSpacing: "-0.025em", color: "var(--ink)" }}>
-          Editing your demo
-        </h2>
-        <p style={{ margin: "0 0 20px", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-          {error || "This takes a minute or two. You can leave this page — it carries on without you."}
-        </p>
-
-        {!error && (
-          <>
-            <div className="st-bar" style={{ marginBottom: 18 }}>
-              <i style={{ width: `${Math.round(Math.max(0.02, progress || 0) * 100)}%` }} />
-            </div>
-            <div>
-              {steps.map((s, i) => (
-                <div key={s} className={`st-step ${i < at ? "is-done" : i === at ? "is-now" : ""}`}>
-                  <span className="st-step-dot">{i < at ? <Icon name="check" size={11} /> : null}</span>
-                  <span className="st-step-label">{s}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {error && onRetry && (
-          <Btn kind="primary" onClick={onRetry} style={{ marginTop: 6 }}>
-            Try again
-          </Btn>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export { startAnalysis, fmtBytes };

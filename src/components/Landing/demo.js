@@ -10,6 +10,7 @@
  */
 import { useLayoutEffect, useRef, useState } from "react";
 import { SCRIPT, RAMP_OUT, clock, mountScene, shotSpan, useFilm } from "./film";
+import "./demoScreen.css";
 
 /** The same arrow the product draws, so the page and the app agree. */
 export function CursorGlyph() {

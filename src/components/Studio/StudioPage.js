@@ -4,7 +4,7 @@
  * Three destinations:
  *
  *   library   every recording, newest first        /app/studio
- *   record    the setup screen and the capture     /app/studio (state)
+ *   record    a recording in progress, and after   /app/studio (state)
  *   edit      one demo open in the editor          /app/studio/<slug>
  *   generate  the "from a website" form            /app/studio (state)
  *   generated one generated video and its chat     /app/studio/gen-<slug>
@@ -17,13 +17,17 @@
  *
  * The recorder stays a piece of state, because a recording in progress must
  * not be lost to a stray navigation and a route change is the easiest way to
- * lose one.
+ * lose one. "New recording" opens the browser's tab picker straight from the
+ * click (RecordStart.js); the recorder view appears once a tab is shared.
  *
  * ── THE ANALYSIS IS STARTED FROM HERE ────────────────────────────────────────
- * Not from the recorder, which has already navigated away by then, and not from
- * the editor, which may be opened on a demo that was analysed days ago. The
- * page owns the one action that costs credits, so there is one place where the
- * price is confirmed and one place where a refusal is reported.
+ * The page owns the one action that costs credits, so there is one place where
+ * the price is confirmed and one place where a refusal is reported. The editor
+ * asks for it: from its button, or by itself once a fresh recording is ready
+ * when the creator chose an automatic edit after recording (StudioEditor.js
+ * rememberAutoEdit). It used to be asked from here the instant the upload
+ * finished, while the server still had the recording to prepare, and the
+ * answer was "This recording isn't ready yet".
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -31,9 +35,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { getStudioConfig, listDemos, deleteDemo, startAnalysis } from "./studioApi";
 import { browserAnalysisOffer, runBrowserAnalysis } from "./browserAnalysis";
 import RecordPage from "./RecordPage";
+import { useRecordStart, RecordControls, RecordNotice, RecordStartCard } from "./RecordStart";
 import { LaunchNew, LaunchVideoPage, GeneratedCards } from "./LaunchPage";
 import { listLaunch, deleteLaunch, isGenKey, GEN } from "./launchApi";
-import StudioEditor from "./StudioEditor";
+import StudioEditor, { rememberAutoEdit } from "./StudioEditor";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon, Badge, Empty } from "./ui";
 import { fmtTime } from "./model";
@@ -138,17 +143,26 @@ export default function StudioPage() {
     [refresh, config]
   );
 
-  // A recording has just been saved. The edit is started BEFORE the editor
-  // opens, so the editor's first read already sees it running rather than
-  // offering to start it.
+  // A recording has just been saved. The automatic edit, if one was chosen,
+  // is left to the editor, which starts it the moment the recording is ready.
   const opened = useCallback(
-    async (key, opts) => {
-      if (opts?.autoAnalyse) await analyse(key, opts);
-      else refresh();
+    (key, opts) => {
+      if (opts?.autoAnalyse) rememberAutoEdit(key, { captions: !!opts.captions });
+      refresh();
       openEditor(key);
     },
-    [analyse, openEditor, refresh]
+    [openEditor, refresh]
   );
+
+  // "New recording": the tab picker opens from the click, and the recorder
+  // view appears once a tab is shared.
+  const rec = useRecordStart({
+    onCaptured: (cap, prefs) => setView({ name: "record", cap, prefs }),
+  });
+  const recordFailed = useCallback((message) => {
+    setView({ name: "library" });
+    setNotice(message);
+  }, []);
 
   // The editor is full-bleed: its own header, stage, inspector and ruler each
   // own their edge, exactly as the script editor's workspace does. The library
@@ -208,10 +222,10 @@ export default function StudioPage() {
             demoId={openKey}
             config={config}
             onExit={closeEditor}
-            onAnalyse={(demo) => analyse(demo.slug || demo.id)}
+            onAnalyse={(demo, opts) => analyse(demo.slug || demo.id, opts)}
           />
         ) : view.name === "record" ? (
-          <RecordPage config={config} onOpen={opened} onCancel={() => setView({ name: "library" })} />
+          <RecordPage capture={view.cap} prefs={view.prefs} onOpen={opened} onFail={recordFailed} />
         ) : view.name === "generate" ? (
           <LaunchNew onCreated={openGenerated} onCancel={() => setView({ name: "library" })} />
         ) : (
@@ -219,7 +233,7 @@ export default function StudioPage() {
             demos={demos}
             generated={generated}
             config={config}
-            onRecord={() => setView({ name: "record" })}
+            rec={rec}
             onGenerate={() => setView({ name: "generate" })}
             onOpenGenerated={(v) => openGenerated(v.id)}
             onDeleteGenerated={async (id) => {
@@ -238,6 +252,7 @@ export default function StudioPage() {
           />
         )}
       </div>
+      <RecordStartCard rec={rec} />
     </div>
   );
 }
@@ -255,7 +270,7 @@ const GRID = {
   gap: 16,
 };
 
-function Library({ demos, generated, config, onRecord, onGenerate, onOpen, onDelete, onOpenGenerated, onDeleteGenerated }) {
+function Library({ demos, generated, config, rec, onGenerate, onOpen, onDelete, onOpenGenerated, onDeleteGenerated }) {
   // The recording waiting on "are you sure", or null.
   const [doomed, setDoomed] = useState(null);
   // The generated video waiting on "are you sure", or null.
@@ -278,11 +293,10 @@ function Library({ demos, generated, config, onRecord, onGenerate, onOpen, onDel
               Generate product demo
             </Btn>
           )}
-          <Btn kind="record" size="l" icon={<Icon name="record" size={14} />} onClick={onRecord}>
-            New recording
-          </Btn>
+          <RecordControls rec={rec} />
         </div>
       </header>
+      <RecordNotice rec={rec} />
 
       <GeneratedCards videos={generated?.videos} grid={GRID} onOpen={onOpenGenerated} onDelete={setDoomedVideo} />
       {generated?.videos?.length > 0 && (
@@ -299,12 +313,12 @@ function Library({ demos, generated, config, onRecord, onGenerate, onOpen, onDel
             icon="film"
             title="No recordings yet"
             action={
-              <Btn kind="record" icon={<Icon name="record" size={14} />} onClick={onRecord}>
+              <Btn kind="record" icon={<Icon name="record" size={14} />} onClick={rec.start} disabled={!rec.support.ok}>
                 Record your first demo
               </Btn>
             }
           >
-            Click record, choose a screen or a window when your browser asks, and show your product. Everything after
+            Click record, choose the tab to record when your browser asks, and show your product. Everything after
             that is automatic.
           </Empty>
         </div>

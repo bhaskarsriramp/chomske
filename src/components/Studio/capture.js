@@ -216,20 +216,81 @@ export function bestMimeType() {
    Opening the picker
    ──────────────────────────────────────────────────────────────────────────── */
 
+/** The microphone as a narrator wants it. */
+const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+
+/**
+ * Whether this site may use the microphone, without asking:
+ * "granted", "denied", "prompt", or "unknown" where the browser will not say
+ * (Firefox does not know the "microphone" permission name). `status` is the
+ * live PermissionStatus where there is one, for its change event.
+ */
+export async function micPermission() {
+  try {
+    const status = await navigator.permissions?.query?.({ name: "microphone" });
+    return status ? { state: status.state, status } : { state: "unknown", status: null };
+  } catch {
+    return { state: "unknown", status: null };
+  }
+}
+
+/**
+ * Ask for the microphone, in this tab, now.
+ *
+ * ── WHY IT IS ASKED BEFORE THE PICKER AND NOT AFTER ──────────────────────────
+ * It used to be asked after the screen was chosen, and that broke recording
+ * outright the first time anyone used it. Sharing a tab moves the browser to
+ * that tab, so the microphone prompt opened in THIS one, where nobody was
+ * looking; startCapture sat waiting on it, the recorder never started, and the
+ * creator demonstrated their product to a recorder that was not running. They
+ * found the prompt only after pressing "Stop sharing". So the prompt is now
+ * answered here, where the creator is, and the picker comes after it.
+ *
+ * @returns {Promise<{ stream: MediaStream|null, denied?: boolean, missing?: boolean }>}
+ */
+export async function requestMic() {
+  try {
+    return { stream: await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO }) };
+  } catch (err) {
+    const name = err?.name || "";
+    return {
+      stream: null,
+      denied: name === "NotAllowedError" || name === "SecurityError",
+      missing: name === "NotFoundError" || name === "OverconstrainedError",
+    };
+  }
+}
+
 /**
  * Ask for a screen, and for sound.
  *
  * ── THE PICKER MUST BE THE FIRST THING THAT HAPPENS ──────────────────────────
  * getDisplayMedia only opens from a real click, and only once per click. So it
- * is called before the microphone, before the AudioContext, before anything
- * else: any await in front of it spends the user gesture and the browser
- * refuses with a NotAllowedError that reads exactly like the user declining.
+ * is called before the AudioContext and before anything else: any await in
+ * front of it spends the user gesture and the browser refuses with a
+ * NotAllowedError that reads exactly like the user declining. The microphone,
+ * when it still has to be asked for, is asked BEFORE the click that gets here
+ * (requestMic, above) and handed in as `micStream`; when its permission is
+ * already granted it is opened after the picker, where it resolves at once.
+ *
+ * ── A TAB, AND NOTHING ELSE IS OFFERED FIRST ─────────────────────────────────
+ * `displaySurface: "browser"` opens the picker on its Chrome Tab pane, and
+ * `monitorTypeSurfaces: "exclude"` removes Entire Screen from it. There is no
+ * matching switch for Window: Chrome offers no way to hide that pane, so a
+ * creator who goes looking for it can still share one, and it records fine.
+ *
+ * ── TAB SOUND IS ASKED FOR ONLY WHEN THE CREATOR WANTS IT ────────────────────
+ * With `audio` requested, Chrome shows its "Share tab audio" switch already ON
+ * and a page cannot change that default. Without it, the switch is not shown.
+ * So the studio's own Tab sound switch (off unless turned on) decides whether
+ * the picker offers it at all.
  *
  * @returns {{ display, mic, stream, surface, label, hasSystemAudio, hasMic, stop }}
  */
-export async function startCapture({ mic = true, systemAudio = true } = {}) {
+export async function startCapture({ mic = true, micStream: given = null, systemAudio = false } = {}) {
   const display = await navigator.mediaDevices.getDisplayMedia({
     video: {
+      displaySurface: "browser",
       frameRate: { ideal: 30, max: 60 },
       // Not in every browser's constraint list, and harmless where it is
       // ignored: the cursor is composited in by default. It has to be there —
@@ -237,14 +298,16 @@ export async function startCapture({ mic = true, systemAudio = true } = {}) {
       // without a visible cursor is a recording with no pointer data at all.
       cursor: "always",
     },
-    audio: systemAudio,
+    audio: !!systemAudio,
     // The studio's own tab is not a thing anyone means to record, and offering
     // it invites the infinite hall of mirrors.
     selfBrowserSurface: "exclude",
-    // Lets the creator switch to a different window mid-recording without
+    // Lets the creator switch to a different tab mid-recording without
     // stopping, which is how a real demo across two apps gets made.
     surfaceSwitching: "include",
-    systemAudio: systemAudio ? "include" : "exclude",
+    monitorTypeSurfaces: "exclude",
+    // Whole-system sound only ever came with Entire Screen, which is gone.
+    systemAudio: "exclude",
   });
 
   const videoTrack = display.getVideoTracks()[0];
@@ -275,15 +338,13 @@ export async function startCapture({ mic = true, systemAudio = true } = {}) {
     }
   })();
 
-  let micStream = null;
-  if (mic) {
+  let micStream = given;
+  if (!micStream && mic) {
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO });
     } catch {
       // A refused microphone is not a refused recording. The demo carries on
-      // silent, and the setup screen says so afterwards.
+      // silent, and the recording screen says so.
       micStream = null;
     }
   }
@@ -974,5 +1035,5 @@ export function sendRecording(blob, session, opts) {
   return uploadFile(blob, session, opts);
 }
 
-const capture = { captureSupport, environment, bestMimeType, startCapture, createTracker, createRecorder, sendRecording, levelOf, TRACKER_VERSION }
+const capture = { captureSupport, environment, bestMimeType, micPermission, requestMic, startCapture, createTracker, createRecorder, sendRecording, levelOf, TRACKER_VERSION }
 export default capture;

@@ -1,11 +1,13 @@
 /**
  * AutoDemo.js: the auto product demo's screens.
  *
- *   AutoDemoAsk      after recording, while it uploads: "turn this into a
- *                    product demo?" with the description and a voice
+ *   BriefForm        the description and the voice, also asked after recording
+ *                    (EditChoice.js)
  *   AutoDemoDialog   in the editor: make one (or make it again) for this demo
- *   AutoDemoStrip    in the editor, under the header: where it is, and Undo
- *   AutoDemoWaiting  in the editor, before the automatic edit has started
+ *   AutoDemoStrip    in the editor, under the header: what was made, and Undo
+ *
+ * While one is being built the editor is not shown at all (Working.js), so
+ * nobody watches captions and a voice arrive half-made.
  *
  * Everything the auto demo shows lives here, so the record page and the editor
  * only place these. The work itself is on the server (backend
@@ -21,7 +23,7 @@ const EXAMPLE = "e.g. Show a new admin how to invite a teammate and give them th
 
 /* ── The description and the voice ─────────────────────────────────────────── */
 
-function BriefForm({ brief, setBrief, voice, setVoice, autoFocus = false }) {
+export function BriefForm({ brief, setBrief, voice, setVoice, autoFocus = false }) {
   const id = useId();
   const ref = useRef(null);
   useEffect(() => {
@@ -66,68 +68,8 @@ function BriefForm({ brief, setBrief, voice, setVoice, autoFocus = false }) {
 }
 
 const ready = (brief) => brief.trim().length >= BRIEF_MIN;
-
-/* ── After recording ───────────────────────────────────────────────────────── */
-
-/**
- * Asked while the recording uploads, so answering costs no time.
- * `onChoose({ brief, voice })` for a demo, `onChoose(null)` to just edit it.
- * `saved`: the upload has finished and only the answer is awaited.
- */
-export function AutoDemoAsk({ saved, onChoose }) {
-  const [brief, setBrief] = useState("");
-  const [voice, setVoice] = useState(DEFAULT_VOICE);
-  const [chosen, setChosen] = useState(null);
-
-  if (chosen) {
-    return (
-      <div style={card}>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <span style={{ color: "var(--ok)", marginTop: 2 }}><Icon name="check" size={16} /></span>
-          <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-body)" }}>
-            {chosen === "demo"
-              ? "Got it. Clipo will build your product demo right after the automatic edit."
-              : "Got it. Opening the editor when the upload finishes."}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const pick = (choice) => {
-    setChosen(choice ? "demo" : "skip");
-    onChoose(choice);
-  };
-
-  return (
-    <div style={card} role="group" aria-label="Product demo">
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 6 }}>
-        <Icon name="wand" size={17} />
-        <h3 style={{ margin: 0, fontSize: 16.5, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--ink)" }}>Turn this into a product demo?</h3>
-      </div>
-      <p style={{ margin: "0 0 16px", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-        Clipo writes the script, adds captions and a voice, and eases in on what matters where you didn't click. Your click zooms stay exactly as they are, and you can change anything afterwards.
-      </p>
-      <BriefForm brief={brief} setBrief={setBrief} voice={voice} setVoice={setVoice} autoFocus />
-      {saved && (
-        <p style={{ margin: "14px 0 0", fontSize: 12.5, color: "var(--ink-mute)" }}>Your recording is saved. Choose one to continue.</p>
-      )}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-        <Btn kind="primary" icon={<Icon name="wand" size={14} />} disabled={!ready(brief)} onClick={() => pick({ brief: brief.trim(), voice })}>
-          Generate product demo
-        </Btn>
-        <Btn kind="quiet" onClick={() => pick(null)}>
-          Skip, just edit it
-        </Btn>
-      </div>
-    </div>
-  );
-}
-
-const card = {
-  width: "100%", maxWidth: 520, margin: "4px auto 30px", padding: "18px 20px", boxSizing: "border-box",
-  borderRadius: 14, border: "1px solid var(--line)", background: "var(--card)",
-};
+/** Whether a description is long enough to build a demo from. */
+export const briefReady = ready;
 
 /* ── In the editor: make one ───────────────────────────────────────────────── */
 
@@ -317,20 +259,5 @@ export function AutoDemoStrip({ demoId, ad, onUndo, onRetry }) {
   );
 }
 
-/* ── In the editor: before the automatic edit has started ──────────────────── */
-
-export function AutoDemoWaiting({ starting }) {
-  return (
-    <div style={{ display: "grid", placeItems: "center", minHeight: "56vh", padding: 20, textAlign: "center" }}>
-      <div style={{ maxWidth: 400 }}>
-        <span style={{ display: "inline-grid", placeItems: "center", color: "var(--ink)" }}><Icon name="wand" size={22} /></span>
-        <h2 style={{ margin: "10px 0 8px", fontSize: 19, fontWeight: 680, letterSpacing: "-0.025em", color: "var(--ink)" }}>Building your product demo</h2>
-        <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-          {starting ? "Starting the automatic edit…" : "The automatic edit runs first, then Clipo writes the script, captions and voice."}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-export default { AutoDemoAsk, AutoDemoDialog, AutoDemoStrip, AutoDemoWaiting };
+const autoDemo = { BriefForm, briefReady, AutoDemoDialog, AutoDemoStrip };
+export default autoDemo;

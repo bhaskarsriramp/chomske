@@ -8,6 +8,13 @@
  * voice.js) from the captions as they are, and then plays with the picture in
  * the preview and in the export. It speaks the captions, so without captions
  * there is nothing to do here but go and make some.
+ *
+ * ── THE ACTION IS ON THE CARD THAT WAS CHOSEN ────────────────────────────────
+ * "Apply" used to sit under the whole list and the samples line, below the
+ * fold of the inspector: a creator picked Kore, saw nothing happen, and had to
+ * scroll to find out what to do next. It now opens inside the chosen voice's
+ * own card, the voiceover's progress plays there, and once that voice is the
+ * one in use the card simply says so and the button is gone.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Btn, Panel, Empty, Icon, Toggle } from "./ui";
@@ -33,6 +40,8 @@ export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCapti
   const [playing, setPlaying] = useState(null);
   const [loading, setLoading] = useState(null);
   const [sampleError, setSampleError] = useState("");
+  // The voice last asked for, so its progress shows on its own card.
+  const [making, setMaking] = useState(null);
   const heard = useRef(new Map());
   const audio = useRef(null);
   useEffect(() => () => audio.current?.pause(), []);
@@ -86,9 +95,48 @@ export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCapti
     );
   }
 
-  const chosen = voiceById(pick) || VOICES[0];
-  const applied = !!vo && vo.name === pick && !stale && on;
-  const label = !vo || vo.name !== pick ? `Apply ${chosen.label}` : stale ? "Update the voiceover" : on ? "Applied" : `Apply ${chosen.label}`;
+  // What the chosen voice still needs: nothing once it is the voice in use,
+  // reading the captions as they are now.
+  const needs = !vo || vo.name !== pick || !on ? "apply" : stale ? "update" : null;
+  // The card the voiceover in progress belongs to.
+  const makingId = busy ? making || pick : null;
+  const apply = (id) => {
+    setMaking(id);
+    onApply(id);
+  };
+
+  const actionFor = (v) => {
+    if (busy) {
+      if (v.id !== makingId) return null;
+      return (
+        <div role="status" aria-live="polite" style={{ display: "grid", gap: 7 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 620, color: "var(--ink)" }}>
+            <span className="st-spin" aria-hidden="true" />
+            Making the voiceover…{voicing.progress > 0 ? ` ${Math.round(voicing.progress * 100)}%` : ""}
+          </div>
+          <div className="st-bar">
+            <i style={{ width: `${Math.max(4, Math.round((voicing.progress || 0) * 100))}%` }} />
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.5 }}>
+            Each sentence is spoken and fitted to its captions. Usually under a minute.
+          </div>
+        </div>
+      );
+    }
+    if (v.id !== pick || !needs) return null;
+    return (
+      <>
+        <Btn kind="primary" full icon={<Icon name="mic" size={14} />} onClick={() => apply(v.id)}>
+          {needs === "update" ? "Update the voiceover" : `Apply ${v.label}`}
+        </Btn>
+        {voicing?.failed && (
+          <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5, color: "var(--bad)" }}>
+            {voicing.message || "We couldn't make the voiceover. Try again."}
+          </div>
+        )}
+      </>
+    );
+  };
 
   return (
     <>
@@ -109,7 +157,9 @@ export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCapti
               waiting={!!loading && loading !== v.id}
               onSelect={() => setPick(v.id)}
               onPlay={() => play(v.id)}
-            />
+            >
+              {actionFor(v)}
+            </VoiceRow>
           ))}
         </div>
         {text && (
@@ -118,34 +168,6 @@ export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCapti
           </div>
         )}
         {sampleError && <div style={{ fontSize: 12, lineHeight: 1.5, color: "var(--bad)" }}>{sampleError}</div>}
-
-        {busy ? (
-          <div role="status" aria-live="polite" style={{ display: "grid", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 620, color: "var(--ink)" }}>
-              <span className="st-spin" aria-hidden="true" />
-              Making the voiceover…{voicing.progress > 0 ? ` ${Math.round(voicing.progress * 100)}%` : ""}
-            </div>
-            <div className="st-bar">
-              <i style={{ width: `${Math.max(4, Math.round((voicing.progress || 0) * 100))}%` }} />
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.5 }}>
-              Each sentence is spoken and fitted to its captions. Usually under a minute.
-            </div>
-          </div>
-        ) : (
-          <Btn
-            kind="primary"
-            full
-            icon={<Icon name={applied ? "check" : "mic"} size={14} />}
-            disabled={applied}
-            onClick={() => onApply(pick)}
-          >
-            {label}
-          </Btn>
-        )}
-        {voicing?.failed && (
-          <div style={{ fontSize: 12, lineHeight: 1.5, color: "var(--bad)" }}>{voicing.message || "We couldn't make the voiceover. Try again."}</div>
-        )}
       </Panel>
 
       {vo && (
@@ -159,9 +181,11 @@ export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCapti
               <div style={{ fontSize: 12, lineHeight: 1.5, color: "var(--ink-mute)" }}>
                 Your captions changed after this voiceover was made, so it reads the old ones.
               </div>
-              <Btn size="s" icon={<Icon name="mic" size={13} />} onClick={() => onApply(vo.name)}>
-                Update the voiceover
-              </Btn>
+              {pick !== vo.name && (
+                <Btn size="s" icon={<Icon name="mic" size={13} />} onClick={() => apply(vo.name)}>
+                  Update the voiceover
+                </Btn>
+              )}
             </div>
           )}
           <Toggle
@@ -183,64 +207,71 @@ export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCapti
   );
 }
 
-/** One voice: chosen by clicking the row, heard with its own button. */
-function VoiceRow({ voice, selected, inUse, playing, loading, waiting, onSelect, onPlay }) {
+/**
+ * One voice: chosen by clicking the row, heard with its own button. `children`
+ * is what the chosen voice still needs (Apply, or the voiceover's progress),
+ * opened under the row so it is where the choice was made.
+ */
+function VoiceRow({ voice, selected, inUse, playing, loading, waiting, onSelect, onPlay, children }) {
   return (
     <div
       style={{
-        display: "flex", alignItems: "center", gap: 10, padding: "10px 10px 10px 12px", borderRadius: 12,
+        borderRadius: 12, padding: "10px 10px 10px 12px",
         border: `1.5px solid ${selected ? "var(--ink)" : "var(--line)"}`,
         background: selected ? "var(--card)" : "transparent",
         transition: "border-color var(--dur-hover) var(--ease-out), background var(--dur-hover) var(--ease-out)",
       }}
     >
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
-        onClick={onSelect}
-        style={{
-          flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 11, padding: 0, border: 0,
-          background: "transparent", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
-        }}
-      >
-        <span
-          aria-hidden="true"
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={selected}
+          onClick={onSelect}
           style={{
-            width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
-            border: `2px solid ${selected ? "var(--ink)" : "var(--line-strong, #C9C6C0)"}`,
-            display: "grid", placeItems: "center",
+            flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 11, padding: 0, border: 0,
+            background: "transparent", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
           }}
         >
-          {selected && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ink)" }} />}
-        </span>
-        <span style={{ minWidth: 0 }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13.5, fontWeight: 650, color: "var(--ink)" }}>
-            {voice.label}
-            {inUse && (
-              <span style={{ fontSize: 10.5, fontWeight: 650, padding: "1px 7px", borderRadius: 99, background: "rgba(116,221,176,.18)", color: "var(--ok)" }}>
-                In use
-              </span>
-            )}
+          <span
+            aria-hidden="true"
+            style={{
+              width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
+              border: `2px solid ${selected ? "var(--ink)" : "var(--line-strong, #C9C6C0)"}`,
+              display: "grid", placeItems: "center",
+            }}
+          >
+            {selected && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ink)" }} />}
           </span>
-          <span style={{ display: "block", marginTop: 2, fontSize: 12, color: "var(--ink-mute)" }}>{voice.sub}</span>
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={onPlay}
-        disabled={waiting}
-        aria-label={playing ? `Stop ${voice.label}` : `Play a sample of ${voice.label}`}
-        title={playing ? "Stop" : "Play a sample"}
-        style={{
-          width: 34, height: 34, flexShrink: 0, display: "grid", placeItems: "center", borderRadius: "50%",
-          border: "1px solid var(--line)", background: playing ? "var(--ink)" : "var(--card)",
-          color: playing ? "#fff" : "var(--ink)", cursor: waiting ? "default" : "pointer", opacity: waiting ? 0.45 : 1,
-          transition: "background var(--dur-hover) var(--ease-out)",
-        }}
-      >
-        {loading ? <span className="st-spin" aria-hidden="true" /> : <Icon name={playing ? "stop" : "play"} size={13} />}
-      </button>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13.5, fontWeight: 650, color: "var(--ink)" }}>
+              {voice.label}
+              {inUse && (
+                <span style={{ fontSize: 10.5, fontWeight: 650, padding: "1px 7px", borderRadius: 99, background: "rgba(116,221,176,.18)", color: "var(--ok)" }}>
+                  In use
+                </span>
+              )}
+            </span>
+            <span style={{ display: "block", marginTop: 2, fontSize: 12, color: "var(--ink-mute)" }}>{voice.sub}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={onPlay}
+          disabled={waiting}
+          aria-label={playing ? `Stop ${voice.label}` : `Play a sample of ${voice.label}`}
+          title={playing ? "Stop" : "Play a sample"}
+          style={{
+            width: 34, height: 34, flexShrink: 0, display: "grid", placeItems: "center", borderRadius: "50%",
+            border: "1px solid var(--line)", background: playing ? "var(--ink)" : "var(--card)",
+            color: playing ? "#fff" : "var(--ink)", cursor: waiting ? "default" : "pointer", opacity: waiting ? 0.45 : 1,
+            transition: "background var(--dur-hover) var(--ease-out)",
+          }}
+        >
+          {loading ? <span className="st-spin" aria-hidden="true" /> : <Icon name={playing ? "stop" : "play"} size={13} />}
+        </button>
+      </div>
+      {children && <div className="st-voice-act">{children}</div>}
     </div>
   );
 }
