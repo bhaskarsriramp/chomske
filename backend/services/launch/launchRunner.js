@@ -60,11 +60,15 @@ export function launchAvailable() {
 let api = null;
 const loadApi = async () => (api ||= await import(pathToFileURL(path.join(LAUNCH_DIR, "api.mjs")).href));
 
-/** The TinyFish key: the environment's, else the first active one in the pool (models/TinyfishAPIs.js). */
-async function tinyfishKey() {
-  if (process.env.TINYFISH_API_KEY) return process.env.TINYFISH_API_KEY;
-  const row = await TinyfishAPIs.findOne({ active: { $ne: false }, status: { $ne: "invalid" } }).select("tiny_api_key").lean();
-  return row?.tiny_api_key || "";
+/**
+ * Every usable TinyFish key: the environment's (comma-separated), then the
+ * active rows of the pool (models/TinyfishAPIs.js). The pipeline takes them in
+ * turn and moves to the next on a refusal, so more keys means more headroom.
+ */
+async function tinyfishKeys() {
+  const env = String(process.env.TINYFISH_API_KEY || "").split(",").map((k) => k.trim()).filter(Boolean);
+  const rows = await TinyfishAPIs.find({ active: { $ne: false }, status: { $ne: "invalid" } }).select("tiny_api_key").lean().catch(() => []);
+  return [...new Set([...env, ...rows.map((r) => r.tiny_api_key).filter(Boolean)])];
 }
 
 async function fetchTo(key, dest) {
@@ -100,7 +104,9 @@ function replyFor(kind, r) {
   const secs = Math.round(r.seconds);
   const noVoice = r.voiced ? "" : " The voiceover couldn't be recorded right now, so this version has music only. Ask again later to add the voice.";
   if (kind === "create") return `Your first cut is ready: ${secs} seconds, ${plural(r.scenes, "scene")}.${noVoice} Tell me anything you'd like changed.`;
-  return `Done. Version ${r.version} is ready (${secs} seconds).${noVoice}`;
+  // The editor's own words about what it understood and did (launch/api.mjs refineVideo), then the version.
+  const said = String(r.reply || "").trim();
+  return `${said ? `${said} ` : ""}Version ${r.version} is ready (${secs} seconds).${noVoice}`;
 }
 
 /** One job, start to finish. Exported for the end-to-end test (scripts/launchTest.mjs). */
@@ -130,7 +136,7 @@ export async function runLaunchJob(doc) {
   const limit = setTimeout(() => stop.abort(), JOB_TIMEOUT_MS);
   try {
     const pipeline = await loadApi();
-    pipeline.setKeys({ tinyfish: await tinyfishKey() });
+    pipeline.setKeys({ tinyfish: await tinyfishKeys() });
     let result;
     if (kind === "create") {
       await fsp.rm(dir, { recursive: true, force: true });

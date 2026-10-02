@@ -19,7 +19,16 @@ export const Logo = ({ brand, theme, size = 96, style }) => {
           ...style,
         }}
       >
-        <Img src={staticFile(brand.logo)} style={{ height: brand.logoPlate ? size * 0.68 : size, width: "auto", objectFit: "contain" }} />
+        <Img
+          src={staticFile(brand.logo)}
+          style={{
+            height: brand.logoPlate ? size * 0.68 : size,
+            width: "auto",
+            objectFit: "contain",
+            // An app icon's square corners, rounded the way a phone shows it.
+            ...(brand.logoRound ? { borderRadius: size * 0.225, boxShadow: theme.shadow } : null),
+          }}
+        />
       </div>
     );
   }

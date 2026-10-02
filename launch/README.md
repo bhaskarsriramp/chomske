@@ -30,12 +30,18 @@ npx remotion browser ensure              # downloads Remotion's headless Chrome 
 npx remotion still src/index.jsx Launch out/smoke.png   # proves Chrome starts; prints any missing .so
 ```
 
-If the still fails with a missing shared library, install Chrome's libraries (Debian 13 names):
+If the still fails with a missing shared library (`libnspr4.so: cannot open shared object file`
+on a fresh VM), install Chrome's libraries:
 
 ```bash
-sudo apt install -y libnss3 libdbus-1-3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
-  libgbm1 libasound2t64 libxrandr2 libxkbcommon0 libxfixes3 libxcomposite1 libxdamage1 \
-  libpango-1.0-0 libcairo2
+sudo apt-get update
+sudo apt-get install -y libnss3 libnspr4 libdbus-1-3 libgbm1 libxrandr2 libxkbcommon0 \
+  libxfixes3 libxcomposite1 libxdamage1 libpango-1.0-0 libcairo2
+# renamed in Debian 13 (t64); the second line is Debian 12's names
+sudo apt-get install -y libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libasound2t64 \
+  || sudo apt-get install -y libatk1.0-0 libatk-bridge2.0-0 libcups2 libasound2
+# nothing printed = nothing missing
+ldd node_modules/.remotion/chrome-headless-shell/linux64/chrome-headless-shell-linux64/chrome-headless-shell | grep "not found"
 ```
 
 Then restart the worker and the API.
@@ -68,6 +74,27 @@ browser is unavailable (never set on a server: it would open a stranger's addres
 `api.mjs` is the whole thing as calls (`createVideo`, `refineVideo`, `renderLatest`). The storyboard
 (`board-vN.json`) is the whole video: a refinement edits the previous draft and re-renders, reusing the
 screenshots, the facts, unchanged voice takes and the music.
+
+## How a screenshot is taken (`pipeline/capture.mjs`)
+
+- Stops are planned by section heading: hero, then pricing, features, how it works, product, reviews; a
+  pricing or features page the nav only links to is visited too.
+- Each stop is scrolled to in steps, then **waited on until settled**: images in view decoded, fonts
+  loaded, no skeleton/spinner, no fade-in running, no requests in flight, nothing moving between two
+  looks 350 ms apart, and enough of the screen showing content. Max ~6 s, then a scroll-away-and-back
+  retry; a shot that never shows content is dropped, one that never fully settles is marked so the
+  director avoids it. "Reduce motion" is requested and chat widgets are hidden.
+- Logo candidates: the navbar logo first, then app icons, manifest, structured-data logo, favicon;
+  each trimmed to PNG. Gemini picks the brand's own by looking at them.
+
+## How a chat message is handled (`api.mjs refineVideo`)
+
+1. **Understand** (`planChange`): what the creator means. "X is blank / missing / wrong" means fix X,
+   never remove it. Decides: retake a screenshot, photograph a section (or another page), switch the
+   logo (or use a logo link they pasted), and what to change in the storyboard; writes the reply.
+2. **Look again** (`captureMore`) when needed: new shots get new ids, the ones they replace stay for old versions.
+3. **Rewrite** the storyboard with all of that, then voice/music/render as usual.
+The reply in the chat is the editor's own sentence, then "Version N is ready".
 
 ## Notes
 

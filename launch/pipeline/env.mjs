@@ -20,12 +20,23 @@ if (fs.existsSync(file)) {
   }
 }
 
-let tinyfishOverride = "";
-/** The app's worker passes the TinyFish key it took from its pool. */
+/**
+ * TinyFish keys, taken in turn so requests spread across accounts (each has
+ * its own rate limit), and a retry after a refusal goes out on the next key.
+ * The app's worker hands over its whole pool (setKeys); a terminal uses
+ * TINYFISH_API_KEY, comma-separated for more than one.
+ */
+let tinyfishPool = [];
+let tfTurn = 0;
 export function setKeys({ tinyfish } = {}) {
-  if (tinyfish) tinyfishOverride = String(tinyfish).trim();
+  const list = (Array.isArray(tinyfish) ? tinyfish : String(tinyfish || "").split(",")).map((k) => String(k).trim()).filter(Boolean);
+  if (list.length) tinyfishPool = list;
 }
-export const tinyfishKey = () => tinyfishOverride || String(process.env.TINYFISH_API_KEY || "").trim();
+export function tinyfishKey() {
+  const pool = tinyfishPool.length ? tinyfishPool : String(process.env.TINYFISH_API_KEY || "").split(",").map((k) => k.trim()).filter(Boolean);
+  return pool.length ? pool[tfTurn++ % pool.length] : "";
+}
+export const tinyfishCount = () => (tinyfishPool.length || String(process.env.TINYFISH_API_KEY || "").split(",").filter((k) => k.trim()).length);
 
 /** AI Studio keys, comma-separated like the backend's AISTUDIO_KEY, taken in turn. */
 let turn = 0;

@@ -24,13 +24,20 @@ export function resolveBoard(draft, capture, { voices = {} } = {}) {
   const measured = capture.brand;
 
   const b = draft.brand || {};
-  const primary = HEX.test(b.primary || "") ? b.primary : measured.logo?.color || measured.colors[0] || measured.buttonColor || "#5B5BFF";
   const mode = b.mode === "light" ? "light" : "dark";
-  const logo = measured.logo;
+  // The candidate the director chose by looking (capture.mjs collects them);
+  // a board from before candidates existed uses the single measured logo.
+  const candidates = measured.logos || (measured.logo ? [{ id: "L1", ...measured.logo }] : []);
+  const logo = draft.logo === "none" ? null : candidates.find((l) => l.id === draft.logo) || candidates[0] || null;
+  const primary = HEX.test(b.primary || "") ? b.primary : logo?.color || measured.colors[0] || measured.buttonColor || "#5B5BFF";
+  // A logo that is mostly white vanishes on a light video and a mostly black
+  // one on a dark video: those sit on a plate of the opposite colour.
   let logoPlate = null;
   if (logo && !logo.solid) {
-    if (mode === "dark" && logo.lum < 0.35) logoPlate = "light";
-    if (mode === "light" && logo.lum > 0.82) logoPlate = "dark";
+    const dark = logo.dark ?? (logo.lum < 0.35 ? 1 : 0);
+    const light = logo.light ?? (logo.lum > 0.82 ? 1 : 0);
+    if (mode === "dark" && dark > 0.45) logoPlate = "light";
+    if (mode === "light" && light > 0.45) logoPlate = "dark";
   }
   const domain = new URL(capture.url).hostname.replace(/^www\./, "");
   const brand = {
@@ -42,7 +49,10 @@ export function resolveBoard(draft, capture, { voices = {} } = {}) {
     domain,
     logo: logo ? logo.file : null,
     logoPlate,
-    logoHasName: !!(logo && logo.aspect > 2.2),
+    logoHasName: !!(logo && (logo.wordmark || logo.aspect > 2.2)),
+    // App icons are square images with filled corners (a phone rounds them);
+    // drawn as they are, the corners show. Rounded the way a phone does.
+    logoRound: !!(logo && logo.solid && /icon/.test(logo.source || "") && logo.aspect > 0.85 && logo.aspect < 1.18),
   };
 
   const shotFile = (id) => (shots.get(id) || hero).file;

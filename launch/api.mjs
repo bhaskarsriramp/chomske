@@ -20,8 +20,8 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import { fetchSite } from "./pipeline/site.mjs";
-import { captureSite } from "./pipeline/capture.mjs";
-import { directBoard, refineBoard, scenesOf } from "./pipeline/director.mjs";
+import { captureSite, captureMore } from "./pipeline/capture.mjs";
+import { directBoard, planChange, refineBoard, scenesOf } from "./pipeline/director.mjs";
 import { speakAll } from "./pipeline/voice.mjs";
 import { resolveBoard } from "./pipeline/board.mjs";
 import { renderBoard } from "./pipeline/render.mjs";
@@ -125,28 +125,82 @@ export async function createVideo({ url, dir, out, notes = "", local = false, si
   return { ...result, title: draft.brand?.name || capture.brand.siteName || "" };
 }
 
+/**
+ * The next version, from a message in the chat. First what the creator means
+ * (planChange), then whatever that needs from the site (a screenshot retaken,
+ * a section photographed, another logo), then the storyboard rewritten with
+ * all of that in hand. Returns the reply to show in the chat.
+ */
 export async function refineVideo({ dir, request, out, signal = null, onProgress = () => {}, log = () => {} }) {
   const at = stages(onProgress, [
-    ["direct", 0.12, "Rewriting the script"],
-    ["speak", 0.18, "Recording the changes"],
-    ["render", 0.7, "Rendering the new version"],
+    ["plan", 0.07, "Reading your request"],
+    ["look", 0.15, "Taking new screenshots"],
+    ["direct", 0.08, "Rewriting the script"],
+    ["speak", 0.13, "Recording the changes"],
+    ["render", 0.57, "Rendering the new version"],
   ]);
   const state = await readJson(path.join(dir, "state.json"));
   const site = await readJson(path.join(dir, "site.json"));
   const capture = await readJson(path.join(dir, "capture.json"));
   const prev = await readJson(path.join(dir, `draft-v${state.version}.json`));
   const prevBoard = await readJson(path.join(dir, `board-v${state.version}.json`));
-  at("direct")(0);
-  let draft;
+  // Older job folders kept only the requests; the replies are kept from now on.
+  const turns = state.turns || (state.history || []).map((r) => ({ request: r, reply: "" }));
+
+  at("plan")(0);
+  let plan;
   try {
-    ({ draft } = await refineBoard({ site, capture, dir, draft: prev, board: prevBoard, request, history: state.history }));
+    ({ plan } = await planChange({ site, capture, dir, draft: prev, board: prevBoard, request, turns }));
   } catch (err) {
     throw userError("We couldn't work that change out. Please try again, or say it another way.", err);
   }
+  log(`plan: ${plan.understood} | retake ${plan.retake.map((r) => r.shot).join(",") || "-"} | capture ${plan.capture.map((c) => c.find).join(",") || "-"} | logo ${plan.logo}`);
+  checkSignal(signal);
+
+  const done = [];
+  let extraNotes = [];
+  const targets = [
+    ...plan.retake.filter((r) => capture.shots.some((x) => x.id === r.shot)).map((r) => ({ retake: r.shot })),
+    ...plan.capture.filter((c) => String(c.find || "").trim()).map((c) => ({ find: c.find, url: c.url || "" })),
+  ];
+  const logoUrl = plan.logo === "link" && /^https?:\/\//i.test(plan.logo_url || "") ? plan.logo_url : "";
+  let newLogo = null;
+  if (targets.length || logoUrl) {
+    at("look")(0.1);
+    try {
+      const more = await captureMore(dir, capture, { targets, logoUrl, log });
+      await writeJson(path.join(dir, "capture.json"), capture);
+      for (const s of more.added) done.push(s.replaces ? `${s.replaces} was retaken as ${s.id} (${s.label || "same section"})` : `new screenshot ${s.id}: ${s.label || "the requested section"}`);
+      extraNotes = more.notes;
+      newLogo = more.logo;
+      if (newLogo) done.push(`the creator's logo was added as ${newLogo.id}`);
+    } catch (err) {
+      extraNotes = ["the site couldn't be opened again just now"];
+      log(`more shots failed: ${String(err.message).slice(0, 200)}`);
+    }
+    at("look")(1);
+  }
+  checkSignal(signal);
+
+  at("direct")(0);
+  let draft;
+  try {
+    ({ draft } = await refineBoard({ site, capture, dir, draft: prev, board: prevBoard, request, plan, done, turns }));
+  } catch (err) {
+    throw userError("We couldn't work that change out. Please try again, or say it another way.", err);
+  }
+  // The logo is the plan's decision (it looked at the candidates for this); the rewrite only carries it.
+  if (newLogo) draft.logo = newLogo.id;
+  else if (plan.logo && plan.logo !== "keep" && plan.logo !== "link" && (capture.brand.logos || []).some((l) => l.id === plan.logo)) draft.logo = plan.logo;
+  else if (!draft.logo) draft.logo = prev.logo;
+
   const version = state.version + 1;
   const result = await speakScoreRender({ dir, version, draft, capture, out, at, log, signal });
-  await writeJson(path.join(dir, "state.json"), { ...state, version, history: [...state.history, request] });
-  return { ...result, title: draft.brand?.name || "" };
+  let reply = String(plan.reply || "").trim() || "Done.";
+  // What was asked of the site but did not come back is said, not glossed over.
+  if (extraNotes.length) reply += ` (One thing didn't work: ${extraNotes.join("; ")}.)`;
+  await writeJson(path.join(dir, "state.json"), { ...state, version, history: [...(state.history || []), request], turns: [...turns, { request, reply }] });
+  return { ...result, title: draft.brand?.name || "", reply };
 }
 
 export async function renderLatest({ dir, out, onProgress = () => {}, log = () => {} }) {

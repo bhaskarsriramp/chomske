@@ -27,10 +27,10 @@ function dedupe(text) {
 }
 
 export async function fetchSite(url) {
-  const key = tinyfishKey();
-  if (!key) throw new Error("No TinyFish key (TINYFISH_API_KEY, or the app's key pool)");
+  if (!tinyfishKey()) throw new Error("No TinyFish key (TINYFISH_API_KEY, or the app's key pool)");
   let last;
   for (let attempt = 1; attempt <= 3; attempt++) {
+    const key = tinyfishKey(); // the next key in the pool on every try
     try {
       const res = await fetch(ENDPOINT, {
         method: "POST",
