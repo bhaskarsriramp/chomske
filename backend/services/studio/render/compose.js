@@ -50,6 +50,7 @@ import { loadBackgroundImage } from "../backgrounds.js";
 import { loadMusicTrack } from "../music.js";
 import { followedRegions } from "./followBlur.js";
 import { followFor, blurCorner, blurRadius, blurChromaRadius } from "../../../../src/components/Studio/follow.mjs";
+import { musicPlan } from "../../../../src/components/Studio/musicMix.mjs";
 import { hideFilter } from "./hide.js";
 import { buildAss, buildSrt, missingFonts, FONTS_DIR } from "./ass.js";
 
@@ -517,6 +518,10 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
    * and the AI voiceover) through a sidechain compressor, the way an editor
    * rides music under a narrator; the others play at their level.
    *
+   * Two tracks end to end blend (musicMix.mjs, shared with the preview): the
+   * first plays on past its end, fading out under the second as it fades in,
+   * both on equal-power curves, so there is no hole where they meet.
+   *
    * A track that cannot be read fails the export rather than being dropped:
    * a video that silently comes out without its music is the worse outcome.
    */
@@ -525,13 +530,14 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
   const level = [];
   if (!gif) {
     let k = 0;
-    for (const m of music) {
+    for (const m of musicPlan(music)) {
       if (m.muted || !(Number(m.volume) > 0)) continue;
       const file = await loadMusic({ media: m.media, workDir, user }).catch(() => null);
       if (!file) throw userError("A music track couldn't be read for this export. Remove it or pick another, then export again.");
-      const len = Math.max(0.05, Math.min(Number(m.duration), duration - Number(m.start)));
-      const fi = Math.min(Number(m.fade_in) || 0, len / 2);
-      const fo = Math.min(Number(m.fade_out) || 0, len / 2);
+      // Its tail under the next track included (m.play), never past the video.
+      const len = Math.max(0.05, Math.min(m.play, duration - m.start));
+      const fi = Math.min(m.fadeIn, len);
+      const fo = Math.min(m.fadeOut, Math.max(0, len - fi));
       const ms = Math.round(Number(m.start) * 1000);
       const mi = next++;
       inputs.push(...(m.loop !== false ? ["-stream_loop", "-1"] : []), "-i", file);
@@ -541,8 +547,8 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
         "aresample=48000",
         "aformat=sample_fmts=fltp:channel_layouts=stereo",
         `volume=${Number(m.volume).toFixed(3)}`,
-        fi > 0.01 ? `afade=t=in:st=0:d=${fi.toFixed(3)}` : null,
-        fo > 0.01 ? `afade=t=out:st=${(len - fo).toFixed(3)}:d=${fo.toFixed(3)}` : null,
+        fi > 0.01 ? `afade=t=in:st=0:d=${fi.toFixed(3)}${m.blendIn ? ":curve=qsin" : ""}` : null,
+        fo > 0.01 ? `afade=t=out:st=${(len - fo).toFixed(3)}:d=${fo.toFixed(3)}${m.blendOut ? ":curve=qsin" : ""}` : null,
         ms > 0 ? `adelay=${ms}|${ms}` : null,
       ].filter(Boolean);
       graph.push(`[${mi}:a]${chain.join(",")}[mu${k}]`);

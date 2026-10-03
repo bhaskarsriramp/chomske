@@ -60,25 +60,8 @@ export function newMusic(track, room) {
 /** The audio object with its music list replaced. */
 export const withMusic = (tl, music) => ({ ...(tl?.audio || { voice: 1 }), music });
 
-/**
- * How loud an item is at output time `t`, 0..1 of its own volume: its fade in
- * and fade out, as the export draws them (render/compose.js afade).
- */
-export function fadeAt(m, t) {
-  const local = t - m.start;
-  if (local < 0 || local > m.duration) return 0;
-  const fi = Math.min(m.fade_in || 0, m.duration / 2);
-  const fo = Math.min(m.fade_out || 0, m.duration / 2);
-  const a = fi > 0.01 ? Math.min(1, local / fi) : 1;
-  const b = fo > 0.01 ? Math.min(1, (m.duration - local) / fo) : 1;
-  return Math.max(0, Math.min(a, b));
-}
-
-/** Where in its track an item is at output time `t`, looping if it loops. */
-export function trackTimeAt(m, t, trackLength) {
-  const pos = (m.in || 0) + (t - m.start);
-  if (m.loop !== false && trackLength > 0.5) return ((pos % trackLength) + trackLength) % trackLength;
-  return pos;
-}
+// How the lane is heard (fades, the blend between touching tracks, where in
+// its file a track is) is in musicMix.mjs, shared with the export.
+export { fadeAt, trackTimeAt, musicPlan, gainAt } from "./musicMix.mjs";
 
 const round3 = (v) => Math.round(v * 1000) / 1000;

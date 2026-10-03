@@ -21,7 +21,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { uploadMusic, deleteMusic } from "./studioApi";
 import { Btn, Panel, Icon, Toggle, Slider, Segmented, Row } from "./ui";
 import { fmtTime } from "./model";
-import { MUSIC_MAX, musicItems, roomAt, newMusic, withMusic, musicEnd } from "./musicTimeline.mjs";
+import { MUSIC_MAX, musicItems, roomAt, newMusic, withMusic, musicEnd, musicPlan } from "./musicTimeline.mjs";
 
 const fmtLen = (s) => fmtTime(s, false);
 /** The mood the creator's own tracks are filed under (backend music.js YOURS). */
@@ -52,6 +52,8 @@ export default function MusicPanel({ tl, edit, selection, onSelect, time, total,
   const items = useMemo(() => [...musicItems(tl)].sort((a, b) => a.start - b.start), [tl]);
   const tracks = useMemo(() => new Map((library?.tracks || []).map((t) => [t.id, t])), [library]);
   const current = items.find((m) => selection?.kind === "music" && selection.id === m.id) || null;
+  // Whether the selected track blends into a neighbour at either end (musicMix.mjs).
+  const blend = useMemo(() => (current ? musicPlan(items).find((p) => p.id === current.id) : null), [items, current]);
   const [mood, setMood] = useState("All");
   const [notice, setNotice] = useState("");
 
@@ -257,8 +259,16 @@ export default function MusicPanel({ tl, edit, selection, onSelect, time, total,
             checked={current.loop !== false}
             onChange={(v) => patch({ loop: v }, v ? "Loop music" : "Don't loop music")}
           />
-          <Slider label="Fade in" value={current.fade_in ?? 1} min={0} max={5} step={0.1} format={(v) => `${v.toFixed(1)}s`} onChange={(v) => patch({ fade_in: v }, "Music fade in")} />
-          <Slider label="Fade out" value={current.fade_out ?? 2} min={0} max={5} step={0.1} format={(v) => `${v.toFixed(1)}s`} onChange={(v) => patch({ fade_out: v }, "Music fade out")} />
+          {blend?.blendIn ? (
+            <BlendRow label="Fade in" text="Blends from the track before" />
+          ) : (
+            <Slider label="Fade in" value={current.fade_in ?? 1} min={0} max={5} step={0.1} format={(v) => `${v.toFixed(1)}s`} onChange={(v) => patch({ fade_in: v }, "Music fade in")} />
+          )}
+          {blend?.blendOut ? (
+            <BlendRow label="Fade out" text="Blends into the next track" />
+          ) : (
+            <Slider label="Fade out" value={current.fade_out ?? 2} min={0} max={5} step={0.1} format={(v) => `${v.toFixed(1)}s`} onChange={(v) => patch({ fade_out: v }, "Music fade out")} />
+          )}
           <Btn kind="danger" size="s" icon={<Icon name="trash" size={13} />} onClick={remove}>
             Remove track
           </Btn>
@@ -398,6 +408,16 @@ function LibraryRow({ track, playing, inUse, action, onPlay, onPick, onDelete, c
           <Icon name="trash" size={13} />
         </button>
       )}
+    </div>
+  );
+}
+
+/** A fade that is a blend with the neighbouring track: said, not offered as a slider. */
+function BlendRow({ label, text }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-mute)" }}>{label}</span>
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: LANE_COLOR }}>{text}</span>
     </div>
   );
 }

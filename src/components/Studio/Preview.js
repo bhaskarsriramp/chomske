@@ -34,7 +34,7 @@ import { useBox, Icon } from "./ui";
 import Skeleton from "../Shell/Skeleton";
 import { followFor, followAt, followNear, applyState, blurCorner, blurRadius, blurSigma } from "./follow.mjs";
 import { cursorColors, rippleRgb, traceHand, strokeOutline, strokeHandDetail, cursorSize } from "./cursorLook.mjs";
-import { fadeAt, trackTimeAt } from "./musicTimeline.mjs";
+import { musicPlan, gainAt, trackTimeAt } from "./musicMix.mjs";
 
 /**
  * How far music under the voice is turned down in the preview while a caption
@@ -43,6 +43,12 @@ import { fadeAt, trackTimeAt } from "./musicTimeline.mjs";
  * recording, so captions stand in for "someone is talking" and it dips less.
  */
 const PREVIEW_DUCK = 0.25;
+/**
+ * How long before a music track starts its player is made ready: paused at
+ * its first note, so it starts on the beat instead of after a seek (which is
+ * a short, audible hole).
+ */
+const MUSIC_PRIME = 1.2;
 
 /** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
@@ -107,7 +113,9 @@ export default function Preview({
    */
   const musicEls = useRef(new Map());
   const musicNow = useRef(music);
-  musicNow.current = music;
+  // With how each track is heard (musicMix.mjs): fades, and the blend where
+  // one track runs into the next, exactly as the export mixes them.
+  musicNow.current = music ? { ...music, plan: musicPlan(music.items) } : null;
   const musicList = music?.items;
   const musicLib = music?.tracks;
   useEffect(() => {
@@ -398,25 +406,34 @@ export default function Preview({
 
     // ── Background music, kept with the picture ────────────────────────
     const mu = musicNow.current;
-    if (mu?.items?.length) {
+    if (mu?.plan?.length) {
       const talking = cues.some((c) => outT >= c.start && outT <= c.end);
-      for (const m of mu.items) {
+      for (const m of mu.plan) {
         const e = musicEls.current.get(m.id);
         if (!e) continue;
         const a = e.audio;
         const L = mu.tracks?.get(m.media)?.duration || a.duration || 0;
-        const inside = outT >= m.start && outT < m.start + m.duration;
+        // Heard from its start to the end of its tail under the next track.
+        const inside = outT >= m.start && outT < m.start + m.play;
         const want = trackTimeAt(m, outT, L);
         const ranOut = m.loop === false && L > 0 && want >= L;
+        if (!inside && !v.paused && !m.muted && outT >= m.start - MUSIC_PRIME && outT < m.start) {
+          // Coming up: wait at the first note, already seeked.
+          if (!a.paused) a.pause();
+          const first = trackTimeAt(m, m.start, L);
+          if (a.readyState >= 1 && Math.abs(a.currentTime - first) > 0.05) a.currentTime = first;
+          continue;
+        }
         if (v.paused || m.muted || !inside || ranOut) {
           if (!a.paused) a.pause();
           continue;
         }
-        let vol = (m.volume ?? 0.35) * fadeAt(m, outT);
+        let vol = (m.volume ?? 0.35) * gainAt(m, outT);
         if (m.duck !== false && talking) vol *= PREVIEW_DUCK;
         a.volume = clamp(vol, 0, 1);
         if (a.paused) {
-          a.currentTime = want;
+          // Made ready above, so usually no seek here: it just starts.
+          if (Math.abs(a.currentTime - want) > 0.15) a.currentTime = want;
           a.play().catch(() => {});
         } else if (Math.abs(a.currentTime - want) > 0.3) {
           a.currentTime = want;
