@@ -13,7 +13,8 @@
  * mix. A new track fills the free stretch it is put in, up to the next track
  * or the end of the video.
  */
-import { newId } from "./model";
+// With its extension: webpack (the CRA build) requires one in a .mjs file.
+import { newId } from "./model.js";
 
 /** At most this many tracks on one video (backend timeline.js keeps 8). */
 export const MUSIC_MAX = 8;
