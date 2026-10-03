@@ -39,7 +39,7 @@ const Contact = lazy(() => import("./components/Legal/Contact"));
 const AdminPanel = lazy(() => import("./components/Admin/AdminPanel"));
 const ShowcaseEntry = lazy(() => import("./components/Showcase/ShowcaseEntry"));
 
-const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || "341385315335-6p5l9nqi7hrm953k4ucr48gr2fvpq6eu.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || "487382574911-76m0cumf5dseiucvkdv55kolqmdhjhkr.apps.googleusercontent.com";
 
 export default function App() {
   // null = still checking. Distinguishing "unknown" from "signed out" is what
