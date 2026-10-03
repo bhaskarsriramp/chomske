@@ -22,6 +22,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
+import { useCredits } from "../../state/CreditsContext";
 import { captureSupport, micPermission, requestMic, startCapture } from "./capture";
 import { Btn, Icon } from "./ui";
 
@@ -88,6 +90,17 @@ export function useRecordStart({ onCaptured }) {
   const capturedRef = useRef(onCaptured);
   capturedRef.current = onCaptured;
 
+  /**
+   * ── A RECORDING NEEDS SOMETHING TO BECOME ────────────────────────────────
+   * The free first video still to come, or some credits (backend
+   * videoBilling.js; POST /studio/demos refuses otherwise). Without either,
+   * "New recording" says so before a tab is picked, rather than after a
+   * recording nobody can edit. Unknown (still loading) never blocks: the
+   * server has the last word.
+   */
+  const credits = useCredits();
+  const needsCredits = !!credits.trial && !credits.trial.available && typeof credits.balance === "number" && credits.balance <= 0;
+
   useEffect(() => {
     let live = true;
     let status = null;
@@ -147,6 +160,10 @@ export function useRecordStart({ onCaptured }) {
 
   const start = useCallback(async () => {
     if (busy.current || !support.ok) return;
+    if (needsCredits) {
+      setStep("credits");
+      return;
+    }
     busy.current = true;
     setNotice("");
 
@@ -183,7 +200,7 @@ export function useRecordStart({ onCaptured }) {
     }
     setMicReady(mic);
     setStep("pick");
-  }, [support.ok, wantMic, micState, pick, setWantMic]);
+  }, [support.ok, wantMic, micState, pick, setWantMic, needsCredits]);
 
   const choose = useCallback(() => pick(micReady), [pick, micReady]);
 
@@ -205,6 +222,7 @@ export function useRecordStart({ onCaptured }) {
   return {
     support, wantMic, setWantMic, wantTab, setWantTab, micState,
     step, micReady, notice, setNotice, start, choose, skipMic, cancel,
+    credits,
   };
 }
 
@@ -274,6 +292,16 @@ export function RecordNotice({ rec }) {
 export function RecordStartCard({ rec }) {
   const { step, cancel } = rec;
   const go = useRef(null);
+  const navigate = useNavigate();
+  const { trial, openBuy, canBuy, rules, balance } = rec.credits || {};
+  // Their free video, made and not yet exported: the way back to it.
+  const waiting = !!trial?.demo && !trial.paid;
+  const perMin = rules?.video?.credits_per_minute || 60;
+
+  // Credits bought from this card: it has done its job.
+  useEffect(() => {
+    if (step === "credits" && typeof balance === "number" && balance > 0) cancel();
+  }, [step, balance, cancel]);
 
   useEffect(() => {
     if (!step) return undefined;
@@ -290,7 +318,39 @@ export function RecordStartCard({ rec }) {
   return createPortal(
     <div className="st-ask hg-fade">
       <div role="dialog" aria-modal="true" aria-labelledby="st-ask-title" className="st-ask-card hg-sheet-up">
-        {step === "mic" ? (
+        {step === "credits" ? (
+          <>
+            <span className="st-ask-icon">
+              <Icon name="record" size={22} />
+            </span>
+            <h2 id="st-ask-title">{waiting ? "Your free video is waiting" : "Buy credits to record"}</h2>
+            <p>
+              {waiting
+                ? "Buy credits to export it, or to record your next video."
+                : `A video uses ${perMin} credits a minute, everything included.`}
+            </p>
+            <div className="st-ask-actions">
+              {canBuy && (
+                <Btn kind="primary" size="l" icon={<Icon name="plus" size={15} />} onClick={openBuy}>
+                  Buy credits
+                </Btn>
+              )}
+              {waiting && (
+                <Btn
+                  onClick={() => {
+                    cancel();
+                    navigate(`/app/studio/${trial.demo}`);
+                  }}
+                >
+                  Open my video
+                </Btn>
+              )}
+              <Btn kind="quiet" onClick={cancel}>
+                Cancel
+              </Btn>
+            </div>
+          </>
+        ) : step === "mic" ? (
           <>
             <div className="st-ask-where" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

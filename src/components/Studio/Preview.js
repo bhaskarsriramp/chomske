@@ -35,6 +35,7 @@ import Skeleton from "../Shell/Skeleton";
 import { followFor, followAt, followNear, applyState, blurCorner, blurRadius, blurSigma } from "./follow.mjs";
 import { cursorColors, rippleRgb, traceHand, strokeOutline, strokeHandDetail, cursorSize } from "./cursorLook.mjs";
 import { musicPlan, gainAt, trackTimeAt } from "./musicMix.mjs";
+import { paintWatermark } from "./watermark.mjs";
 
 /**
  * How far music under the voice is turned down in the preview while a caption
@@ -83,6 +84,9 @@ export default function Preview({
   // Background music on its lane (musicTimeline.mjs): { items, tracks } with
   // tracks the library by id ({ url, duration }).
   music = null,
+  // A video not yet paid for (backend videoBilling.js): drawn with the
+  // moving "Made with tryclipo.com" mark. See paintWatermark.
+  watermark = false,
 }) {
   const wrapRef = useRef(null);
   // The background image, once loaded. A ref, not state: the frame loop below
@@ -150,6 +154,9 @@ export default function Preview({
   );
   const voiceOnRef = useRef(false);
   voiceOnRef.current = !!(voice?.on && voice?.url);
+  // Where the voiceover says words no longer in the captions (recording time).
+  const voiceMuteRef = useRef(null);
+  voiceMuteRef.current = voice?.mute || null;
   // Instead of the recording's own sound, unless the creator kept it.
   const muteOriginal = !!(voice?.on && voice?.url && !voice?.keepOriginal);
   useEffect(() => {
@@ -391,6 +398,10 @@ export default function Preview({
 
     ctx.restore();
 
+    // On top of everything, in the same canvas as the picture: there is no
+    // element to hide, and it moves, so no one patch of the frame covers it.
+    if (watermark) paintWatermark(ctx, W, H, outT);
+
     if (onTime && Math.abs(outT - timeRef.current) > 0.012) onTime(outT);
 
     // Playback stops at the end of the OUTPUT, which is not the end of the
@@ -449,9 +460,13 @@ export default function Preview({
       if (voiceOnRef.current && !v.paused) {
         if (Math.abs(a.currentTime - v.currentTime) > 0.2) a.currentTime = v.currentTime;
         if (a.paused) a.play().catch(() => {});
+        // Old words under new captions: quiet until the voice-over is updated.
+        const t = v.currentTime;
+        const hush = (voiceMuteRef.current || []).some(([s, e]) => t >= s - 0.05 && t <= e + 0.05);
+        a.volume = hush ? 0 : 1;
       } else if (!a.paused) a.pause();
     }
-  }, [tl, lay, vb, blurs, blurById, follows, clicks, cues, srcW, srcH, onTime, onPlayingChange]);
+  }, [tl, lay, vb, blurs, blurById, follows, clicks, cues, srcW, srcH, onTime, onPlayingChange, watermark]);
 
   useEffect(() => {
     let raf = 0;
@@ -790,6 +805,13 @@ function paintRipple(ctx, c, t, cam, d, srcW, cur) {
   }
   ctx.restore();
 }
+
+/* ── The watermark on a video not yet paid for ──────────────────────────────
+ * Drawn by watermark.mjs, shared with the server, which burns the same card,
+ * moving the same way, into a free generated demo. Only ever drawn here in the
+ * editor: a paid video has none, and an unpaid one cannot be exported
+ * (backend routes/studio.js), so no file of a recording ever carries it.
+ */
 
 function roundRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);

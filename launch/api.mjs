@@ -95,6 +95,40 @@ async function speakScoreRender({ dir, version, draft, capture, out, at, log, si
   return { version, board, seconds, scenes: board.scenes.length, voiced: voices !== null && voice, music: !!track, poster: fs.existsSync(poster) ? poster : null };
 }
 
+/**
+ * ── A PRODUCT DEMO RUNS AT LEAST A MINUTE ────────────────────────────────────
+ * The creator's decision (2026-10-03): the first version of a generated demo
+ * is at least MIN_VIDEO_SECONDS long; from the chat it can then be made
+ * shorter or longer, as asked (refineVideo applies no minimum). The script is
+ * asked for that length (director.mjs RULES), and checked here BEFORE any
+ * voice is recorded, from its words (music.mjs estimateSeconds, the narrator's
+ * pace): a script that comes out short is rewritten longer once, with its
+ * facts kept, so no voice request is spent on a version that would be thrown
+ * away. Should the rewrite fail or come out no longer, the script stands.
+ */
+const MIN_VIDEO_SECONDS = Number(process.env.LAUNCH_MIN_SECONDS) || 60;
+const wordsOf = (t) => String(t || "").split(/s+/).filter(Boolean).length;
+
+async function atLeastMinimum({ draft, site, capture, dir, log }) {
+  const scenes = scenesOf(draft);
+  const est = estimateSeconds(scenes, MIN_SECONDS);
+  if (est >= MIN_VIDEO_SECONDS + 2) return draft;
+  // What refineBoard is shown as the current length, before any voice exists.
+  const board = { scenes: scenes.map((s) => ({ type: s.type, seconds: Math.round(Math.max(MIN_SECONDS[s.type] || 4, wordsOf(s.voice) / 2.4 + 0.8) * 10) / 10, voice: s.voice, shot: s.shot })) };
+  const request =
+    `Make the video at least ${MIN_VIDEO_SECONDS} seconds long; it would run about ${Math.round(est)} seconds now. ` +
+    "Lengthen the voice lines (one or two full sentences each), and use a third feature, the grid or the stats where the site has real content for them. Keep every fact true to the site.";
+  try {
+    const { draft: longer } = await refineBoard({ site, capture, dir, draft, board, request });
+    const after = estimateSeconds(scenesOf(longer), MIN_SECONDS);
+    log(`length: ${est.toFixed(1)}s as written, ${after.toFixed(1)}s after lengthening (minimum ${MIN_VIDEO_SECONDS}s)`);
+    return after > est ? longer : draft;
+  } catch (err) {
+    log(`length: ${est.toFixed(1)}s as written; lengthening failed: ${String(err.message).slice(0, 160)}`);
+    return draft;
+  }
+}
+
 export async function createVideo({ url, dir, out, notes = "", local = false, signal = null, onProgress = () => {}, log = () => {} }) {
   await fsp.mkdir(dir, { recursive: true });
   const at = stages(onProgress, [
@@ -124,6 +158,7 @@ export async function createVideo({ url, dir, out, notes = "", local = false, si
   } catch (err) {
     throw userError("We couldn't write the script. Please try again in a minute.", err);
   }
+  draft = await atLeastMinimum({ draft, site, capture, dir, log });
   const result = await speakScoreRender({ dir, version: 1, draft, capture, out, at, log, signal });
   await writeJson(path.join(dir, "state.json"), { url, version: 1, history: [] });
   return { ...result, title: draft.brand?.name || capture.brand.siteName || "" };

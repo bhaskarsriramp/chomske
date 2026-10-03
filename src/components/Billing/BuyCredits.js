@@ -4,15 +4,38 @@ import api, { errorMessage } from "../../api";
 /**
  * BuyCredits: the pack chooser and the Razorpay handoff.
  *
- * ── NO RUPEE FIGURE IS WRITTEN IN THIS FILE ─────────────────────────────────
- * Every price, credit count and per-script comparison comes from
- * GET /billing/packs. The same arithmetic living in two places disagrees
- * eventually, and the version the customer saw is the one they hold you to.
+ * ── NO PRICE IS WRITTEN IN THIS FILE ─────────────────────────────────────────
+ * Every price, credit count and currency comes from GET /billing/packs. The
+ * same arithmetic living in two places disagrees eventually, and the version
+ * the customer saw is the one they hold you to.
  *
- * Lives here rather than inside the script panel because credits are now bought
- * from three places: the sidebar, the order panel, and the "not enough" state.
- * Three copies of a payment flow is three chances to get a payment flow wrong.
+ * ── RUPEES IN INDIA, DOLLARS EVERYWHERE ELSE ─────────────────────────────────
+ * The server decides which from where the request comes from (backend
+ * services/geo.js) and prices both the list and the order itself. The browser
+ * only sends its timezone as a hint, which the server uses when it cannot place
+ * the address at all (on localhost).
+ *
+ * Two shapes: `PackList` is the packs and the checkout with no frame, shown
+ * inside the export drawer when a 4K export needs more; the default export is
+ * the dialog around it, opened from the sidebar and from "not enough credits".
  */
+
+/** "₹2,999" / "$10": whole units, in the currency the server chose. */
+export function money(amount, currency) {
+  const n = Number(amount) || 0;
+  return currency === "INR" ? `₹${n.toLocaleString("en-IN")}` : `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+}
+
+/** The browser's guess at India, from its timezone. Only ever a hint. */
+export function countryHint() {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    if (/^Asia\/(Kolkata|Calcutta)$/i.test(tz)) return "IN";
+  } catch {
+    /* no Intl: no hint */
+  }
+  return "";
+}
 
 /** Razorpay's widget, loaded on demand, not in index.html, where it would cost
  *  every visitor a script they will mostly never use. */
@@ -27,21 +50,36 @@ function loadCheckout() {
   });
 }
 
-export default function BuyCredits({ rules, balance, onClose, onGranted }) {
+const minutesOf = (m) => {
+  const n = Number(m) || 0;
+  return `${Number.isInteger(n) ? n : n.toFixed(1)} minute${n === 1 ? "" : "s"} of video`;
+};
+
+/**
+ * The packs, and buying one.
+ * @param {object}   rules     GET /billing/packs
+ * @param {Function} onGranted (balance) once the credits have landed
+ * @param {Function} [onBusy]  (busy) while the payment window is open
+ */
+export function PackList({ rules, onGranted, onBusy }) {
   const [buying, setBuying] = useState(false);
   const [error, setError] = useState("");
+  const busy = (b) => {
+    setBuying(b);
+    onBusy?.(b);
+  };
 
   async function buy(packId) {
     setError("");
-    setBuying(true);
+    busy(true);
 
     let order;
     try {
       await loadCheckout();
-      const { data } = await api.post("/billing/order", { pack_id: packId });
+      const { data } = await api.post("/billing/order", { pack_id: packId, country_hint: countryHint() || undefined });
       order = data;
     } catch (err) {
-      setBuying(false);
+      busy(false);
       setError(errorMessage(err, "Couldn't start the payment."));
       return;
     }
@@ -51,7 +89,7 @@ export default function BuyCredits({ rules, balance, onClose, onGranted }) {
       amount: order.amount,
       currency: order.currency,
       name: "Clipo",
-      description: `${order.pack.label} (${order.pack.credits} credits)`,
+      description: `${order.pack.label} · ${order.pack.credits} credits`,
       order_id: order.order_id,
       theme: { color: "#FF0000" },
       handler: async (resp) => {
@@ -61,13 +99,12 @@ export default function BuyCredits({ rules, balance, onClose, onGranted }) {
             payment_id: resp.razorpay_payment_id,
             signature: resp.razorpay_signature,
           });
-          setBuying(false);
+          busy(false);
           onGranted?.(data.balance);
-          onClose?.();
         } catch (err) {
           // The money may well have left their account. Never say "payment
           // failed" here, because we do not know that. Say what we know.
-          setBuying(false);
+          busy(false);
           setError(errorMessage(
             err,
             "Payment went through but we couldn't confirm it. Refresh in a moment. If the credits aren't there, contact us with your payment id."
@@ -76,19 +113,100 @@ export default function BuyCredits({ rules, balance, onClose, onGranted }) {
       },
       modal: {
         ondismiss: () => {
-          setBuying(false);
+          busy(false);
           api.post("/billing/abandoned", { order_id: order.order_id }).catch(() => {});
         },
       },
     });
 
     rzp.on("payment.failed", () => {
-      setBuying(false);
+      busy(false);
       setError("That payment didn't go through. No credits were used.");
     });
 
     rzp.open();
   }
+
+  const configured = !!rules?.configured;
+  const perMin = rules?.video?.credits_per_minute || 60;
+
+  return (
+    <div>
+      {error && (
+        <div
+          role="alert"
+          style={{
+            padding: "10px 12px", borderRadius: 9, marginBottom: 12,
+            background: "#FCE8E6", border: "1px solid #F5C7C3",
+            color: "var(--bad)", fontSize: 13, lineHeight: 1.55,
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {rules && !configured && (
+        <div style={{ fontSize: 13, color: "var(--bad)", marginBottom: 12, lineHeight: 1.55 }}>
+          Payments aren't switched on yet. Please try again later.
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 9 }}>
+        {(rules?.packs || []).map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => buy(p.id)}
+            disabled={buying || !configured}
+            className="hg-pick"
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              gap: 12, width: "100%", textAlign: "left", fontFamily: "inherit",
+              cursor: buying || !configured ? "default" : "pointer",
+              padding: "13px 15px", borderRadius: 12,
+              border: `1px solid ${p.popular ? "var(--ink)" : "var(--line)"}`,
+              background: "var(--card)", opacity: buying ? 0.6 : 1,
+            }}
+          >
+            <span>
+              <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: "var(--ink)" }}>
+                {p.label}
+                {p.popular && (
+                  <span
+                    style={{
+                      marginLeft: 8, fontSize: 10, fontWeight: 700, letterSpacing: ".06em",
+                      padding: "2px 7px", borderRadius: 999,
+                      background: "var(--made-tint)", color: "var(--made)",
+                      border: "1px solid var(--made-line)",
+                    }}
+                  >
+                    POPULAR
+                  </span>
+                )}
+              </span>
+              <span style={{ display: "block", fontSize: 12.5, color: "var(--ink-mute)", marginTop: 3 }}>
+                {p.credits} credits · {minutesOf(p.minutes)}
+              </span>
+            </span>
+            <span style={{ fontSize: 17, fontWeight: 750, color: "var(--ink)", flexShrink: 0 }}>
+              {money(p.price, p.currency)}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {rules?.packs?.length > 0 && (
+        <p style={{ fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.6, margin: "12px 0 0" }}>
+          {rules.currency === "INR" ? "Pay by UPI, card or netbanking." : "Pay by card."}
+          {` A minute of video is ${perMin} credits.`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export default function BuyCredits({ rules, balance, onClose, onGranted }) {
+  const [buying, setBuying] = useState(false);
 
   return (
     <div
@@ -97,7 +215,9 @@ export default function BuyCredits({ rules, balance, onClose, onGranted }) {
       aria-label="Buy credits"
       onClick={buying ? undefined : onClose}
       style={{
-        position: "fixed", inset: 0, zIndex: 90,
+        // Above every other layer: it opens from cards and drawers that are
+        // themselves on top (the record card, the export drawer).
+        position: "fixed", inset: 0, zIndex: 120,
         background: "rgba(15,15,15,.45)", display: "grid", placeItems: "center", padding: 18,
       }}
     >
@@ -128,79 +248,14 @@ export default function BuyCredits({ rules, balance, onClose, onGranted }) {
           {typeof balance === "number" && ` You have ${balance} right now.`}
         </p>
 
-        {error && (
-          <div
-            role="alert"
-            style={{
-              padding: "10px 12px", borderRadius: 9, marginBottom: 12,
-              background: "#FCE8E6", border: "1px solid #F5C7C3",
-              color: "var(--bad)", fontSize: 13, lineHeight: 1.55,
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        {rules && !rules.configured && (
-          <div style={{ fontSize: 13, color: "var(--bad)", marginBottom: 12, lineHeight: 1.55 }}>
-            Payments aren't switched on yet. Please try again later.
-          </div>
-        )}
-
-        <div style={{ display: "grid", gap: 9 }}>
-          {(rules?.packs || []).map((p) => (
-            <button
-              key={p.id}
-              onClick={() => buy(p.id)}
-              disabled={buying || !rules.configured}
-              className="hg-pick"
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                gap: 12, width: "100%", textAlign: "left",
-                cursor: buying || !rules.configured ? "default" : "pointer",
-                padding: "13px 15px", borderRadius: 12,
-                border: `1px solid ${p.popular ? "var(--ink)" : "var(--line)"}`,
-                background: "var(--card)", opacity: buying ? 0.6 : 1,
-              }}
-            >
-              <span>
-                <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: "var(--ink)" }}>
-                  {p.label}
-                  {p.popular && (
-                    <span
-                      style={{
-                        marginLeft: 8, fontSize: 10, fontWeight: 700, letterSpacing: ".06em",
-                        padding: "2px 7px", borderRadius: 999,
-                        background: "var(--made-tint)", color: "var(--made)",
-                        border: "1px solid var(--made-line)",
-                      }}
-                    >
-                      POPULAR
-                    </span>
-                  )}
-                </span>
-                <span style={{ display: "block", fontSize: 12.5, color: "var(--ink-mute)", marginTop: 3 }}>
-                  {p.credits} credits · about {p.shorts} × 60s scripts
-                </span>
-              </span>
-              <span style={{ textAlign: "right", flexShrink: 0 }}>
-                <span style={{ display: "block", fontSize: 17, fontWeight: 750, color: "var(--ink)" }}>
-                  ₹{p.inr}
-                </span>
-                <span style={{ display: "block", fontSize: 11, color: "var(--ink-mute)" }}>
-                  ≈ ₹{p.per_short_inr}/script
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <p style={{ fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.6, margin: "14px 0 0" }}>
-          Pay by UPI, card or netbanking.
-          {rules?.rules?.seconds_per_credit
-            ? ` 1 credit = ${rules.rules.seconds_per_credit} seconds of finished script.`
-            : ""}
-        </p>
+        <PackList
+          rules={rules}
+          onBusy={setBuying}
+          onGranted={(b) => {
+            onGranted?.(b);
+            onClose?.();
+          }}
+        />
       </div>
     </div>
   );

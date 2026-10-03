@@ -1,15 +1,12 @@
 /**
  * autodemo/narrator.js: the auto demo's voice, as one continuous presenter.
  *
- * ── WHY NOT voice.js ─────────────────────────────────────────────────────────
- * voice.js voices the CAPTIONS for the Voice tab: sentences grouped from
- * caption lines, read in a neutral "clear, friendly" style. The auto demo has
- * something better to speak from — its own script, already written as spoken
- * lines — and a different job: to sound like a person walking a customer
- * through the product, without a pause each time the screen changes. Its own
- * file, so tuning how the demo sounds can never change the Voice tab, and the
- * other way round. It speaks to the same model the same way (voice.js's
- * endpoint and model, measured there).
+ * ── ALSO THE VOICE TAB'S VOICE ───────────────────────────────────────────────
+ * The auto demo speaks its own script, written as spoken lines. Since
+ * 2026-10-03 the editor's Voice tab speaks through this file too (voice.js
+ * hands it the captions' sentences and the takes it already holds), because
+ * the creator wanted every voiceover to sound like the demo. So a change to
+ * how this sounds changes both; that is the point.
  *
  * ── TWO VOICES, ONE PER DEMO ─────────────────────────────────────────────────
  *   gemini   AI Studio, gemini-3.8-flash-tts (voice.js's model): 10 a minute and
@@ -37,8 +34,9 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import { aistudioKeys, pool } from "../../ai/provider.js";
+import { withKey } from "../../ai/aistudioPool.js";
 import { ffmpeg } from "../../media/ffmpeg.js";
-import { VOICE_MODEL } from "../voice.js";
+import { VOICE_MODEL } from "../voiceModel.js";
 import { PAUSE } from "./prompts.js";
 import { askCloud, CLOUD_MODELS } from "./cloudVoice.js";
 
@@ -113,64 +111,77 @@ export function waitOf(message) {
   return Math.round(ms);
 }
 
-let turn = 0;
-
+/**
+ * One take from AI Studio. The key comes from the pool (ai/aistudioPool.js):
+ * a key that is refused (its minute's requests used, its day's used, invalid,
+ * out of credit) is rested and the next free key is used at once, so one
+ * key's limit never holds the demo up while another key has room. Only when
+ * every key is out for the day is that said, and the demo goes on with the
+ * other voice service (buildNarration).
+ */
 async function askGemini(text, { voice, style }) {
-  const keys = aistudioKeys();
-  if (!keys.length) {
-    console.error("[autodemo] no AI Studio key is set (AISTUDIO_KEY / GEMINI_API_KEY): the voice cannot be made");
+  if (!aistudioKeys().length) {
+    console.error("[autodemo] no AI Studio key is set (aistudio_keys collection or AISTUDIO_KEY): the voice cannot be made");
     throw userError("The voice isn't available right now. Your script and captions are ready.");
   }
-  let last = null;
-  for (let attempt = 1; attempt <= 6; attempt++) {
-    const key = keys[turn++ % keys.length];
-    await slot(key);
-    let res;
-    try {
-      res = await fetch(ENDPOINT, {
-        method: "POST",
-        headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: VOICE_MODEL,
-          input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style }] }] }],
-          response_format: { type: "audio" },
-          generation_config: { speech_config: [{ voice }] },
-        }),
-        signal: AbortSignal.timeout(90_000),
+  try {
+    return await withKey("tts", async (key) => {
+      // Within one key: a dropped connection or an overloaded service is
+      // tried again here, briefly. A refusal is the pool's to handle.
+      let last = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await slot(key);
+        let res;
+        try {
+          res = await fetch(ENDPOINT, {
+            method: "POST",
+            headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: VOICE_MODEL,
+              input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style }] }] }],
+              response_format: { type: "audio" },
+              generation_config: { speech_config: [{ voice }] },
+            }),
+            signal: AbortSignal.timeout(90_000),
+          });
+        } catch (err) {
+          last = err;
+          await sleep(800 * 2 ** (attempt - 1));
+          continue;
+        }
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) {
+          const audio = (body.steps || []).flatMap((s) => s.content || []).find((c) => c.type === "audio" && c.data);
+          if (audio) return Buffer.from(audio.data, "base64");
+          last = new Error("the model answered without audio");
+          continue;
+        }
+        const said = String(body?.error?.message || JSON.stringify(body)).slice(0, 400);
+        const err = Object.assign(new Error(`speech ${res.status}: ${said}`), { status: res.status });
+        if (res.status >= 500) {
+          last = err;
+          await sleep(retryAfter(said) || 1500 * 2 ** (attempt - 1));
+          continue;
+        }
+        throw err;
+      }
+      throw last || new Error("speech failed");
+    });
+  } catch (err) {
+    // Every key out for the day (measured 2026-10-01: "limit: 100 requests
+    // per day on Tier 1… retry in 15h13m"): said at once, for the other voice
+    // service to take over. For the operator, in the log; the creator is told
+    // what to do, not whose plan ran out.
+    if (err.daily || /per ?day/i.test(String(err?.message || ""))) {
+      console.error(`[autodemo] speech DAILY quota reached for ${VOICE_MODEL} on every key: ${String(err?.message || "").slice(0, 200)}`);
+      throw Object.assign(err, {
+        daily: true,
+        waitMs: err.waitMs || waitOf(err?.message) || 6 * 3600_000,
+        userMessage: "The voice couldn't be added right now because voices are busy today. Your script and captions are ready. Add the voice from the Voice tab a little later.",
       });
-    } catch (err) {
-      last = err;
-      await sleep(800 * 2 ** (attempt - 1));
-      continue;
     }
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const err = new Error(`speech ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);
-      // A DAILY limit (measured 2026-10-01: "limit: 100 requests per day on
-      // Tier 1… retry in 15h13m") does not reopen in a minute: say so at once
-      // instead of retrying for minutes. The script and captions still land.
-      if (res.status === 429 && /per day/i.test(String(body?.error?.message || ""))) {
-        // For the operator, in the log; the creator is told what to do, not
-        // whose plan ran out (no vendor or plan names in what creators see).
-        console.error(`[autodemo] speech DAILY quota reached for ${VOICE_MODEL}: ${String(body?.error?.message || "").slice(0, 200)}`);
-        throw Object.assign(err, {
-          daily: true,
-          waitMs: waitOf(body?.error?.message) || 6 * 3600_000,
-          userMessage: "The voice couldn't be added right now because voices are busy today. Your script and captions are ready. Add the voice from the Voice tab a little later.",
-        });
-      }
-      if (res.status === 429 || res.status >= 500) {
-        last = err;
-        await sleep(retryAfter(body?.error?.message) || 1500 * 2 ** (attempt - 1));
-        continue;
-      }
-      throw err;
-    }
-    const audio = (body.steps || []).flatMap((s) => s.content || []).find((c) => c.type === "audio" && c.data);
-    if (audio) return Buffer.from(audio.data, "base64");
-    last = new Error("the model answered without audio");
+    throw err;
   }
-  throw last || new Error("speech failed");
 }
 
 function samplesOf(wav) {

@@ -37,6 +37,7 @@
  * Nobody pays a number they did not see.
  */
 import express from "express";
+import crypto from "crypto";
 import mongoose from "mongoose";
 import authenticateToken from "../middleware/authenticateToken.js";
 import StudioDemo from "../models/StudioDemo.js";
@@ -55,12 +56,14 @@ import { VISION_ON_ANALYSE } from "../services/studio/analyse.js";
 import { exactDiff } from "../services/studio/exactJson.js";
 import {
   STUDIO_LIMITS, LEDGER_REASON, acceptable, ACCEPT_MIME, demoKey, demoPrefix, bumpExpiry,
-  studioCost, shapeDemo, shapeDemoCard, publishProgress, followsFor, shapeVoiceover,
-  STUDIO_ANALYSE_CREDITS_PER_MIN, STUDIO_EXPORT_CREDITS_PER_MIN,
+  exportCredits, shapeDemo, shapeDemoCard, publishProgress, followsFor, shapeVoiceover,
+  STUDIO_CREDITS_PER_MIN,
 } from "../services/studio/demoService.js";
+import { FOURK_CREDITS_PER_MIN, TRIAL_SECONDS } from "../services/creditPricing.js";
+import { owed, owedWhat, markPaid, unpay, payIfOwed, trialState, claimTrial } from "../services/studio/videoBilling.js";
 import {
   RENDER_ENGINE, RESOLUTIONS, FRAME_RATES, VIDEO_MBPS, AUDIO_KBPS, FORMATS, SPEEDS, MAX_RESOLUTION,
-  PRESETS, DEFAULT_EXPORT, EXPORT_MULTIPLIERS, cleanExportOptions, exportPrice,
+  PRESETS, DEFAULT_EXPORT, cleanExportOptions,
 } from "../services/studio/exportOptions.js";
 import {
   ASPECT_KEYS, CURSOR_THEMES, CAPTION_STYLES, BLUR_KINDS,
@@ -79,6 +82,7 @@ import {
   BACKGROUND_LIMITS, BACKGROUND_TYPES, prepareBackground, saveBackground, deleteBackground, shapeBackground,
 } from "../services/studio/backgrounds.js";
 import { cuesFromNarration } from "../services/studio/captionsFromScript.js";
+import { flow as joinNarration } from "../services/studio/autodemo/director.js";
 import { spend, refund, getBalance, InsufficientCredits } from "../services/creditsService.js";
 import { dbUnreachable, noteDbFault } from "../db.js";
 
@@ -161,6 +165,26 @@ async function charge(req, res, cost, { refId, note, what }) {
   }
 }
 
+/**
+ * Pay for the video before an AI feature runs on it, if it is not paid for yet
+ * (services/studio/videoBilling.js). Answers 402 itself when the balance will
+ * not cover it and returns false; true to carry on.
+ */
+async function paidOr402(req, res, demo, via) {
+  try {
+    await payIfOwed(req.user.id, demo, { via });
+    return true;
+  } catch (err) {
+    if (err instanceof InsufficientCredits) {
+      fail(res, 402, `${owedWhat(demo)} needs ${err.needed} credits and you have ${err.balance}.`, {
+        insufficient_credits: true, needed: err.needed, balance: err.balance,
+      });
+      return false;
+    }
+    throw err;
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
    Config
    ──────────────────────────────────────────────────────────────────────────── */
@@ -180,16 +204,20 @@ router.get("/config", wrap(async (req, res) => {
     limits: {
       max_upload_bytes: STUDIO_LIMITS.maxUploadBytes,
       max_recording_seconds: STUDIO_LIMITS.maxRecordingSeconds,
+      // A first-time creator's free video stops here (videoBilling.js).
+      trial_seconds: TRIAL_SECONDS,
       max_demos: STUDIO_LIMITS.maxDemos,
       retention_days: STUDIO_LIMITS.retentionDays,
       daily_analyses: STUDIO_LIMITS.dailyAnalyses,
       daily_exports: STUDIO_LIMITS.dailyExports,
     },
     accept: ACCEPT_MIME,
+    // One charge per video, by its length; a 4K export is the only extra.
+    // See services/studio/demoService.js studioCost.
     pricing: {
-      analyse_per_min: STUDIO_ANALYSE_CREDITS_PER_MIN,
-      export_per_min: STUDIO_EXPORT_CREDITS_PER_MIN,
-      multipliers: EXPORT_MULTIPLIERS,
+      credits_per_min: STUDIO_CREDITS_PER_MIN,
+      fourk_credits_per_min: FOURK_CREDITS_PER_MIN,
+      read_screens: 0,
     },
     export: {
       presets: PRESETS,
@@ -349,10 +377,21 @@ router.post("/demos", wrap(async (req, res) => {
   if (live >= STUDIO_LIMITS.maxDemos) {
     return fail(res, 429, `You have ${live} recordings. Delete one before starting another.`);
   }
+  // Recording costs nothing; a video does. With the free first video used and
+  // no credits, there is nothing a new recording could become, so it is not
+  // started (videoBilling.js).
+  const [trial, balance] = await Promise.all([trialState(req.user.id), getBalance(req.user.id)]);
+  if (!trial.available && balance <= 0) {
+    return fail(res, 402, "Buy credits to record your next video.", {
+      insufficient_credits: true, needed: 1, balance, trial_demo: trial.demo,
+    });
+  }
   const demo = await StudioDemo.create({
     user: req.user.id,
     title: cleanTitle(req.body?.title),
     status: "new",
+    // Unpaid until Clipo starts on it, an AI feature runs, or it is exported.
+    billing: { paid: false },
     expires_at: bumpExpiry(),
   });
   // Minted here rather than in create(), so the one place that handles a
@@ -579,6 +618,9 @@ router.post("/demos/:id/upload/complete", wrap(async (req, res) => {
   demo.expires_at = bumpExpiry();
   await demo.save();
 
+  // A first-time creator's first recording is their free video (videoBilling.js).
+  await claimTrial(req.user.id, demo).catch((err) => console.error("[studio] free video claim failed:", err.message));
+
   await enqueue({ demo: demo._id, user: req.user.id, type: "prepare" });
   publishProgress(demo, { status: "preparing", stage: "Queued", progress: 0.02 });
 
@@ -603,14 +645,18 @@ router.post("/demos/:id/analyse", wrap(async (req, res) => {
     return fail(res, 429, `You've analysed ${today} recordings today. The daily limit is ${STUDIO_LIMITS.dailyAnalyses}.`);
   }
 
-  const cost = studioCost("analyse", demo.recording.duration);
+  // The video's price, once (videoBilling.js): nothing for a video already
+  // paid for, nothing yet for a first-time creator's free one.
+  const cost = owed(demo);
   const expected = Number(req.body?.expected_cost);
   if (Number.isFinite(expected) && expected !== cost) {
     return fail(res, 409, "The price changed. Please try again.", { price_changed: true, cost });
   }
 
-  const charged = await charge(req, res, cost, { refId: demo._id, note: "analyse", what: "Analysing this recording" });
-  if (charged === null) return;
+  const took = await charge(req, res, cost, { refId: demo._id, note: "analyse", what: owedWhat(demo) });
+  if (took === null) return;
+  // Only what actually paid for the video is refunded if the analysis fails.
+  const charged = took > 0 && (await markPaid(demo, { credits: took, via: "analysis", userId: req.user.id })) ? took : 0;
 
   // Captions are opt-in. See services/studio/analyse.js for why a silent screen
   // recording must not be given captions of room tone by default.
@@ -873,9 +919,9 @@ router.post("/demos/:id/analysis/result", wrap(async (req, res) => {
  * is free. What still needs the model is reading what is ON the screen: finding
  * an API key to blur, naming the steps, writing the voiceover.
  *
- * That is worth paying for when it is wanted and worth nothing when it is not,
- * so it is asked for rather than assumed. Priced like an analysis, because it
- * is the part of one that costs: every sampled frame, read.
+ * That is worth doing when it is wanted and worth nothing when it is not, so it
+ * is asked for rather than assumed. Included in the video's price since
+ * 2026-10-03 (demoService.js studioCost), so the charge below moves nothing.
  *
  * Leaves the edit alone. See the `vision` handler in studioRunner.js.
  */
@@ -889,14 +935,16 @@ router.post("/demos/:id/vision", wrap(async (req, res) => {
   const busy = await StudioJob.findOne({ demo: demo._id, type: { $in: ["analyse", "vision"] }, status: { $in: ["queued", "running"] } });
   if (busy) return fail(res, 409, "This recording is already being read.");
 
-  const cost = studioCost("analyse", demo.recording.duration);
+  // Included in a paid video since 2026-10-03; an unpaid one is paid for here.
+  const cost = owed(demo);
   const expected = Number(req.body?.expected_cost);
   if (Number.isFinite(expected) && expected !== cost) {
     return fail(res, 409, "The price changed. Please try again.", { price_changed: true, cost });
   }
 
-  const charged = await charge(req, res, cost, { refId: demo._id, note: "read screens", what: "Reading this recording's screens" });
-  if (charged === null) return;
+  const took = await charge(req, res, cost, { refId: demo._id, note: "read screens", what: owedWhat(demo) });
+  if (took === null) return;
+  const charged = took > 0 && (await markPaid(demo, { credits: took, via: "read", userId: req.user.id })) ? took : 0;
 
   demo.analysis = { ...(demo.analysis?.toObject?.() || {}), status: "running", error: "", read_charged: charged };
   demo.expires_at = bumpExpiry();
@@ -925,6 +973,7 @@ router.post("/demos/:id/captions", wrap(async (req, res) => {
 
   const busy = await StudioJob.findOne({ demo: demo._id, type: "captions", status: { $in: ["queued", "running"] } });
   if (busy) return fail(res, 409, "Captions are already being written.");
+  if (!(await paidOr402(req, res, demo, "captions"))) return;
 
   await enqueue({ demo: demo._id, user: req.user.id, type: "captions" });
   publishProgress(demo, { captioning: true });
@@ -934,23 +983,49 @@ router.post("/demos/:id/captions", wrap(async (req, res) => {
 /**
  * Captions from the voiceover script the analysis already wrote.
  *
- * Synchronous, free, and no model call: the narration is in the timeline and
- * this is a chunking pass over it (services/studio/captionsFromScript.js). It
- * answers with the whole demo so the editor swaps straight to the new cues.
+ * The narration is in the timeline and this is a chunking pass over it
+ * (services/studio/captionsFromScript.js). It answers with the whole demo so
+ * the editor swaps straight to the new cues.
+ *
+ * ── ONE STORY FIRST ──────────────────────────────────────────────────────────
+ * The narration is written moment by moment against the video and reads that
+ * way: a caption per step, each starting over. The first time captions are
+ * made from it, its lines are read again as one story and their joins
+ * rewritten (autodemo/director.js flow, the same pass the product demo's
+ * script gets): each line picks up the one before and leads into the next,
+ * every fact, label and length kept. One text-model call, once per narration
+ * (analysis.narration_joined); after that this is instant again. If the pass
+ * fails the lines are used as they were.
  */
+const narrationSig = (lines) =>
+  crypto.createHash("sha1").update((lines || []).map((n) => String(n.text || "")).join("\n")).digest("hex").slice(0, 16);
 router.post("/demos/:id/captions/from-script", wrap(async (req, res) => {
   const demo = await ownDemo(req, res);
   if (!demo) return;
   if (!demo.timeline) return fail(res, 409, "Analyse this recording first.");
 
   const tl = demo.timeline;
-  const cues = cuesFromNarration(tl.narration || [], { duration: tl.duration || 0 });
+  let narration = tl.narration || [];
+  if (narration.length > 1 && narrationSig(narration) !== demo.analysis?.narration_joined) {
+    const brief = [demo.analysis?.summary, demo.analysis?.product ? `The product: ${demo.analysis.product}.` : ""].filter(Boolean).join(" ");
+    const spend = { usd: 0, calls: 0 };
+    const joined = await joinNarration(
+      narration.map((n) => ({ ...n, start: Number(n.start) || 0, end: Number(n.end) || 0 })),
+      { brief: brief || demo.title || "", spend }
+    ).catch(() => null);
+    if (joined?.lines?.length === narration.length) {
+      narration = narration.map((n, i) => ({ ...n, text: joined.lines[i].text }));
+      console.log(`[studio] ${demo._id}: narration joined, ${joined.joined} of ${narration.length} lines rewritten, restarts ${joined.restartsBefore} → ${joined.restartsAfter}, ${spend.usd.toFixed(4)}`);
+    }
+    demo.analysis = { ...(demo.analysis?.toObject?.() || demo.analysis || {}), narration_joined: narrationSig(narration) };
+  }
+  const cues = cuesFromNarration(narration, { duration: tl.duration || 0 });
   if (!cues.length) {
     return fail(res, 409, "There's no voiceover script for this recording yet.");
   }
 
   demo.timeline = sanitizeTimeline(
-    { ...tl, cues, captions: { ...(tl.captions || {}), enabled: true } },
+    { ...tl, narration, cues, captions: { ...(tl.captions || {}), enabled: true } },
     { duration: tl.duration, source: tl.source }
   );
   demo.rev = (demo.rev || 0) + 1;
@@ -968,6 +1043,7 @@ router.post("/demos/:id/review", wrap(async (req, res) => {
 
   const busy = await StudioJob.findOne({ demo: demo._id, type: "review", status: { $in: ["queued", "running"] } });
   if (busy) return res.json({ success: true, already: true });
+  if (!(await paidOr402(req, res, demo, "review"))) return;
 
   await enqueue({ demo: demo._id, user: req.user.id, type: "review" });
   res.json({ success: true });
@@ -1032,6 +1108,7 @@ router.post("/demos/:id/command", wrap(async (req, res) => {
   const text = String(req.body?.text || "").trim();
   if (!text && !(req.body?.intent && typeof req.body.intent === "object")) return fail(res, 400, "Type what you'd like to change.");
   if (text.length > 400) return fail(res, 400, "That message is too long. Keep it under 400 characters.");
+  if (!(await paidOr402(req, res, demo, "chat"))) return;
   // What it is doing while the creator waits ("Looking at the frame at
   // 0:15.7…"), over the live channel, tagged with the browser's own id for
   // this message so the right message shows it.
@@ -1222,6 +1299,7 @@ router.post("/demos/:id/voice", wrap(async (req, res) => {
     }))
     .filter((c) => c.text && c.end > c.start);
   if (!cues.length) return fail(res, 400, "Add some captions first: the voice speaks them.");
+  if (!(await paidOr402(req, res, demo, "voice"))) return;
 
   const sig = voiceSig(v.id, cues);
   await StudioJob.deleteMany({ demo: demo._id, type: "voice", status: "queued" });
@@ -1298,22 +1376,31 @@ router.post("/demos/:id/renders", wrap(async (req, res) => {
   const out = layout(demo.timeline).duration;
   if (!(out > 0.1)) return fail(res, 400, "There's nothing left in this edit to export.");
 
-  const cost = exportPrice(studioCost("export", out), options);
+  // A paid video exports for nothing below 4K (demoService.js exportCredits).
+  // One never paid for, a first-time creator's free video above all, is paid
+  // for by its first export (videoBilling.js).
+  const price = owed(demo, { exporting: true });
+  const extra = exportCredits(out, options);
+  const cost = price + extra;
   const expected = Number(req.body?.expected_cost);
   if (Number.isFinite(expected) && expected !== cost) {
     return fail(res, 409, "The price changed. Please try again.", { price_changed: true, cost, options });
   }
 
-  const charged = await charge(req, res, cost, { refId: demo._id, note: `export ${options.format}`, what: "This export" });
-  if (charged === null) return;
+  const what = price > 0 ? owedWhat(demo, { exporting: true }) : "A 4K export";
+  const took = await charge(req, res, cost, { refId: demo._id, note: `export ${options.format} ${options.resolution}p`, what });
+  if (took === null) return;
 
   const id = newId("r");
+  // markPaid hands the price back itself when another request paid first.
+  const paidVideo = price > 0 && (await markPaid(demo, { credits: price, via: "export", ref: id, userId: req.user.id })) ? price : 0;
+  const charged = took - (price - paidVideo);
   await StudioDemo.updateOne(
     { _id: demo._id },
     {
       $push: {
         renders: {
-          $each: [{ id, status: "queued", options, charged, created_at: new Date() }],
+          $each: [{ id, status: "queued", options, charged, paid_video: paidVideo, created_at: new Date() }],
           $position: 0,
           // Ten is what a creator can actually keep track of, and every one is
           // a file in the bucket. Older ones drop off the list; their objects
@@ -1357,6 +1444,8 @@ router.delete("/demos/:id/renders/:rid", wrap(async (req, res) => {
   // and a failed one was refunded when it failed.
   if (entry.status === "queued" && entry.charged > 0) {
     await refund(req.user.id, entry.charged, { refType: "StudioDemo", refId: demo._id, note: "export cancelled" }).catch(() => {});
+    // If that export was what paid for the video, it is unpaid again.
+    if (entry.paid_video > 0) await unpay(demo._id, { via: "export", ref: entry.id }).catch(() => {});
   }
   if (entry.output_key) await removeObject(entry.output_key).catch(() => {});
   if (entry.srt_key) await removeObject(entry.srt_key).catch(() => {});

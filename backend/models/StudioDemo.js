@@ -151,6 +151,15 @@ const AnalysisSchema = new Schema(
     status: { type: String, enum: ["none", "running", "done", "failed"], default: "none" },
     summary: { type: String, default: "" },
     product: { type: String, default: "" },
+    /**
+     * The narration's lines as they were after being joined into one story
+     * (autodemo/director.js flow, run the first time captions are made from
+     * the script): a hash of their words. Kept here rather than on the
+     * timeline, whose code is shared with the browser analysis bundle. A
+     * narration written again by a new analysis no longer matches, so it is
+     * joined again.
+     */
+    narration_joined: { type: String, default: "" },
     language: { type: String, default: "" },
     language_label: { type: String, default: "" },
     frames_read: { type: Number, default: 0 },
@@ -295,6 +304,10 @@ const RenderSchema = new Schema(
     width: { type: Number, default: 0 },
     height: { type: Number, default: 0 },
     charged: { type: Number, default: 0 },
+    // The part of `charged` that paid for the video itself (the first export
+    // of a video never paid otherwise, videoBilling.js). Undone with the
+    // refund if the export fails.
+    paid_video: { type: Number, default: 0 },
 
     worker: { type: String, default: "" },
     engine: { type: Number, default: 0 },
@@ -368,6 +381,16 @@ const StudioDemoSchema = new Schema({
    * captions and voice switch, and `before` keeps what those were for Undo.
    */
   autodemo: { type: Schema.Types.Mixed, default: undefined },
+  /**
+   * Whether this video has been paid for (services/studio/videoBilling.js):
+   * { paid, trial, credits, via, ref, paid_at }. A video is paid once, at 60
+   * credits a minute, by whichever comes first: Clipo starting on it, an AI
+   * feature, or its first export. Until then it plays with the watermark and
+   * cannot be exported. `trial` marks a first-time creator's free video, made
+   * without credits and paid for at export. Absent on every video from before
+   * 2026-10-03, which were charged the old way and count as paid.
+   */
+  billing: { type: Schema.Types.Mixed, default: undefined },
 
   expires_at: { type: Date, default: null, index: true },
   purged: { type: Boolean, default: false },

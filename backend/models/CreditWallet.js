@@ -37,6 +37,19 @@ const CreditWalletSchema = new Schema({
   // two requests race to create the wallet.
   signup_granted_at: { type: Date, default: null },
 
+  // When this balance was counted in today's credits (one second of video
+  // each, 2026-10-03). Null on a wallet from before, which getWallet converts
+  // once, at the same rupee value, the first time it is touched.
+  credits_v2_at: { type: Date, default: null },
+
+  // The free first video (services/studio/videoBilling.js): which recording
+  // it went to, stamped once so a creator gets one, ever.
+  trial_demo: { type: Schema.Types.ObjectId, ref: "StudioDemo", default: null },
+  trial_at: { type: Date, default: null },
+  // The free generated demo (routes/launch.js), separate from the free
+  // recording: which one it went to. Released if that demo never came out.
+  launch_trial: { type: Schema.Types.ObjectId, ref: "LaunchVideo", default: null },
+
   created_at: { type: Date, default: Date.now },
   updated_at: { type: Date, default: Date.now },
 });

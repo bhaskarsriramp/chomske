@@ -17,6 +17,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { Btn, Segmented, Slider, Toggle, Field, Swatches, Panel, Row, Badge, Empty, Icon } from "./ui";
 import { fmtTime, clamp, layout, mergedCuts, placedSpans, GRADIENTS, CAPTION_STYLES, CAPTION_SIZES, CAPTION_LOOKS } from "./model";
 import { create } from "./create";
+import VoiceSyncBar from "./VoiceSync";
 import { clipsOf } from "./clips";
 import { applyState, coverage, blurNames } from "./follow.mjs";
 import { cursorLookName, isHex, cursorSize, CURSOR_SIZE_MIN, CURSOR_SIZE_MAX, DEFAULT_CURSOR_COLOR, DEFAULT_RIPPLE_COLOR } from "./cursorLook.mjs";
@@ -461,7 +462,7 @@ const KIND_LABEL = { blur: "Blurred", pixelate: "Pixelated", box: "Covered" };
  * caption beside the thing it is about, and every demo has one screen where
  * the bottom of the frame is the part that matters.
  */
-export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGenerate, onGenerateFromScript, generating, hasAudio }) {
+export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGenerate, onGenerateFromScript, generating, hasAudio, voice = null, onUpdateVoice }) {
   const cues = [...(tl.cues || [])].sort((a, b) => a.start - b.start);
   const cap = tl.captions || {};
   const current = cues.find((c) => c.id === selection?.id && selection.kind === "cue") || null;
@@ -480,6 +481,8 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
   return (
     <>
       <Panel title="Captions">
+        {/* Edited after the voice-over was made: say so where the edit happens. */}
+        <VoiceSyncBar voice={voice} onUpdate={onUpdateVoice} />
         <Toggle
           label="Show captions"
           hint={cues.length ? `${cues.length} line${cues.length === 1 ? "" : "s"}.` : null}
@@ -599,7 +602,7 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
                 }}
                 onRemove={() => edit({ cues: cues.filter((x) => x.id !== c.id) }, "Remove caption")}
                 title={c.text}
-                sub={fmtTime(c.start, true)}
+                sub={voice?.missing?.has(c.id) ? `${fmtTime(c.start, true)} · Not in the voice-over yet` : fmtTime(c.start, true)}
                 badge={c.custom ? <Badge>Styled</Badge> : null}
               />
             ))}

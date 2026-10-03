@@ -114,7 +114,7 @@ export default function SignUpDialog({ open, onClose, showcaseId, reason }) {
           wait for the analysis again.
         </p>
         <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink-mute)", margin: "0 0 22px" }}>
-          100 free credits to start. No card.
+          Try it free. No credit card required.
         </p>
 
         {busy ? (

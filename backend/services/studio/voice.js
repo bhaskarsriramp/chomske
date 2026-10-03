@@ -1,5 +1,5 @@
 /**
- * voice.js: an AI voiceover, spoken from the captions.
+ * voice.js: an AI voiceover, spoken from the captions (the editor's Voice tab).
  *
  * ── WHAT IT MAKES ────────────────────────────────────────────────────────────
  * One audio track as long as the recording, in the recording's own time, with
@@ -10,136 +10,104 @@
  * sentences (voices.mjs sentencesOf), because captions are cut for reading
  * and spoken line by line they sound read off cards.
  *
- * ── FITTING THE TIME IT HAS ──────────────────────────────────────────────────
- * Each sentence has until the next one starts. Measured on a real demo, 13
- * lines spoken as written: 5 fitted, 6 more fitted when asked to be brisk, and
- * 2 were still a tenth of a second long. So a sentence that does not fit is
- * spoken again, briskly (the model's own pace, which sounds natural); what
- * still does not fit is sped up a little with the pitch kept (MAX_RATE); and
- * what is still long runs on and pushes the next sentence along, rather than
- * being cut or talking over it.
+ * ── SPOKEN BY THE PRODUCT DEMO'S NARRATOR ────────────────────────────────────
+ * It used to be spoken here, its own way: every sentence on its own in a
+ * plain style, one that ran long spoken again "briskly" and sped up to 1.2x,
+ * and sentences that ran into each other 0.12 s apart with the model's own
+ * padding left in. The product demo's narrator (autodemo/narrator.js) was
+ * tuned past exactly that, on the creator's word that it sounded "cluttered
+ * and brittle": the padding taken off every take with a breath kept, a real
+ * pause between sentences, no faster re-takes and no audible speed-up, one
+ * voice service for the whole track (the backup when the first is out for the
+ * day). The creator asked (2026-10-03) for the Voice tab to sound like the
+ * demo, so the voiceover is now made by that same narrator: one presenter,
+ * not cards read aloud. What it is given is the captions' sentences.
  *
- * ── THE MODEL ────────────────────────────────────────────────────────────────
- * gemini-3.8-flash-tts, through the Interactions endpoint, which is the only
- * one that takes a delivery style separately from the words: put in the words,
- * "Say it warmly: …" is read out loud (measured). This project's SDK (1.52)
- * predates the endpoint's current schema, so it is called directly.
+ * ── EVERY SENTENCE KEPT, SO AN UPDATE SPEAKS ONLY WHAT CHANGED ───────────────
+ * An edit to the captions after a voiceover is made changes a sentence or
+ * two. Each take (one sentence, one voice service, one voice, the narrator's
+ * delivery) is kept in the bucket as its 24 kHz samples, already trimmed,
+ * under <MEDIA_PREFIX>/voice-takes/, named by a hash of all four. They are
+ * handed to the narrator before it speaks, so remaking a voiceover speaks
+ * only sentences never spoken before, and one whose captions only moved is
+ * placed again with no model call at all. The service that already holds the
+ * most of this voiceover's sentences is tried first, so an update keeps its
+ * voice and its takes.
+ *
+ * ── SAMPLES ──────────────────────────────────────────────────────────────────
+ * A voice's sample in the Voice tab is one sentence, spoken here directly
+ * (ask) and kept as an MP3 (voiceSampleUrl).
  */
 import crypto from "crypto";
-import fs from "fs";
 import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import { aistudioKeys, pool } from "../ai/provider.js";
+import { withKey } from "../ai/aistudioPool.js";
 import { ffmpeg } from "../media/ffmpeg.js";
-import { KEY_ROOT, statObject, putFile, readUrl, isRelayUrl } from "../media/storage.js";
+import { KEY_ROOT, statObject, putFile, readUrl, isRelayUrl, materialize } from "../media/storage.js";
 import { sentencesOf } from "../../../src/components/Studio/voices.mjs";
+import { VOICE_MODEL } from "./voiceModel.js";
+import { buildNarration, engineOrder, engineLabel, PRESENTER } from "./autodemo/narrator.js";
 
-export const VOICE_MODEL = String(process.env.STUDIO_VOICE_MODEL || "gemini-3.8-flash-tts").trim();
+export { VOICE_MODEL };
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
-/** The model's own sample rate: 24 kHz, mono, 16-bit. */
+/** The narrator's sample rate: 24 kHz, mono, 16-bit. */
 const RATE = 24000;
-/** How a demo is narrated. */
+/** How a sample is spoken (the voiceover itself is spoken in the narrator's PRESENTER style). */
 const NARRATION = "clear, friendly product-demo narration";
-/** ...and a sentence that has to be quicker to fit. */
-const BRISK = "clear, friendly product-demo narration, speaking briskly, a little faster than normal";
-/** Sped up at most this much, pitch kept: past it a voice starts to sound hurried. */
-const MAX_RATE = 1.2;
-/** Breath between two sentences that run into each other. */
-const GAP = 0.12;
-/** Sentences spoken at once. */
-const AT_ONCE = 3;
 
 const userError = (msg) => Object.assign(new Error(msg), { userMessage: msg });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const round3 = (v) => Math.round(v * 1000) / 1000;
-
-let turn = 0;
 
 /**
- * One sentence, spoken: the model's WAV, as it came. Retried when the service
- * is busy or the connection drops; a refusal (bad key, bad request) is not.
+ * One sentence, spoken: the model's WAV, as it came. The key comes from the
+ * pool (ai/aistudioPool.js), which rests a refused key and goes on with the
+ * next at once; a dropped connection or an overloaded service is tried again.
  */
 async function ask(text, { voice, style = NARRATION }) {
-  const keys = aistudioKeys();
-  if (!keys.length) throw userError("The voice-over isn't available right now. Try again later.");
-  let last = null;
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    const key = keys[turn++ % keys.length];
-    let res;
-    try {
-      res = await fetch(ENDPOINT, {
-        method: "POST",
-        headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: VOICE_MODEL,
-          input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style }] }] }],
-          response_format: { type: "audio" },
-          generation_config: { speech_config: [{ voice }] },
-        }),
-        signal: AbortSignal.timeout(90_000),
-      });
-    } catch (err) {
-      last = err;
-      await sleep(800 * 2 ** (attempt - 1));
-      continue;
-    }
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const err = new Error(`speech ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);
-      if (res.status === 429 || res.status >= 500) {
+  if (!aistudioKeys().length) throw userError("The voice-over isn't available right now. Try again later.");
+  return withKey("tts", async (key) => {
+    let last = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      let res;
+      try {
+        res = await fetch(ENDPOINT, {
+          method: "POST",
+          headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: VOICE_MODEL,
+            input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style }] }] }],
+            response_format: { type: "audio" },
+            generation_config: { speech_config: [{ voice }] },
+          }),
+          signal: AbortSignal.timeout(90_000),
+        });
+      } catch (err) {
+        last = err;
+        await sleep(800 * 2 ** (attempt - 1));
+        continue;
+      }
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const audio = (body.steps || []).flatMap((s) => s.content || []).find((c) => c.type === "audio" && c.data);
+        if (audio) return Buffer.from(audio.data, "base64");
+        last = new Error("the model answered without audio");
+        continue;
+      }
+      const err = Object.assign(new Error(`speech ${res.status}: ${String(body?.error?.message || JSON.stringify(body)).slice(0, 400)}`), { status: res.status });
+      if (res.status >= 500) {
         last = err;
         await sleep(1500 * 2 ** (attempt - 1));
         continue;
       }
       throw err;
     }
-    const audio = (body.steps || []).flatMap((s) => s.content || []).find((c) => c.type === "audio" && c.data);
-    if (audio) return Buffer.from(audio.data, "base64");
-    last = new Error("the model answered without audio");
-  }
-  throw last || new Error("speech failed");
-}
-
-/** A WAV's samples and rate, whatever chunks it carries. */
-function samplesOf(wav) {
-  let rate = RATE;
-  for (let at = 12; at + 8 <= wav.length; ) {
-    const id = wav.toString("ascii", at, at + 4);
-    const size = wav.readUInt32LE(at + 4);
-    if (id === "fmt ") rate = wav.readUInt32LE(at + 12);
-    if (id === "data") {
-      const end = Math.min(wav.length, at + 8 + size);
-      const pcm = new Int16Array((end - at - 8) >> 1);
-      for (let i = 0; i < pcm.length; i++) pcm[i] = wav.readInt16LE(at + 8 + i * 2);
-      return { pcm, rate };
-    }
-    at += 8 + size + (size & 1);
-  }
-  throw new Error("no audio data in the model's answer");
-}
-
-/** A sentence spoken, as 24 kHz samples and a length. */
-async function speak(text, { voice, style, workDir, tag }) {
-  const wav = await ask(text, { voice, style });
-  let { pcm, rate } = samplesOf(wav);
-  if (rate !== RATE) pcm = await transform(pcm, rate, [], workDir, `${tag}-rate`);
-  return { pcm, seconds: pcm.length / RATE };
-}
-
-/** Samples through ffmpeg (a sample rate change, a tempo), back as 24 kHz samples. */
-async function transform(pcm, rate, filters, workDir, tag) {
-  const src = path.join(workDir, `${tag}.in.pcm`);
-  const dst = path.join(workDir, `${tag}.out.pcm`);
-  await fsp.writeFile(src, Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength));
-  await ffmpeg([
-    "-f", "s16le", "-ar", String(rate), "-ac", "1", "-i", src,
-    ...(filters.length ? ["-af", filters.join(",")] : []),
-    "-f", "s16le", "-ar", String(RATE), "-ac", "1", dst,
-  ]);
-  const out = await fsp.readFile(dst);
-  await Promise.all([fsp.rm(src, { force: true }), fsp.rm(dst, { force: true })]);
-  return new Int16Array(out.buffer, out.byteOffset, out.length >> 1).slice();
+    throw last || new Error("speech failed");
+  }).catch((err) => {
+    if (err.daily) throw Object.assign(err, { userMessage: "Voices are busy right now. Try again in a little while." });
+    throw err;
+  });
 }
 
 /**
@@ -204,6 +172,38 @@ export async function voiceSampleUrl(text, voice, { baseUrl } = {}) {
   return url;
 }
 
+/* ── Kept takes ──────────────────────────────────────────────────────────── */
+
+const TAKES = `${KEY_ROOT}/voice-takes`;
+const takeKey = (engine, voice, text) =>
+  `${TAKES}/${crypto.createHash("sha1").update(`${engineLabel(engine)}|${voice}|${PRESENTER}|${text}`).digest("hex").slice(0, 32)}.pcm`;
+
+/** A kept take, or null: its samples, as the narrator holds them. */
+async function keptTake(engine, voice, text, workDir, tag) {
+  const key = takeKey(engine, voice, text);
+  try {
+    if (!(await statObject(key))) return null;
+    const buf = await fsp.readFile(await materialize(key, workDir, `${tag}.kept.pcm`));
+    if (buf.length < RATE / 10) return null;
+    // Copied to a fresh buffer: a Buffer's offset into its pool can be odd.
+    const pcm = new Int16Array(Uint8Array.from(buf).buffer, 0, buf.length >> 1);
+    return { pcm, seconds: pcm.length / RATE };
+  } catch (err) {
+    console.warn(`[voice] kept take unreadable, it will be spoken again: ${err.message}`);
+    return null;
+  }
+}
+
+async function keepTake(engine, voice, text, take, workDir, tag) {
+  try {
+    const file = path.join(workDir, `${tag}.take.pcm`);
+    await fsp.writeFile(file, Buffer.from(take.pcm.buffer, take.pcm.byteOffset, take.pcm.byteLength));
+    await putFile(file, takeKey(engine, voice, text), "application/octet-stream");
+  } catch (err) {
+    console.warn(`[voice] could not keep a take: ${err.message}`);
+  }
+}
+
 /**
  * The voiceover for a set of captions.
  *
@@ -212,67 +212,73 @@ export async function voiceSampleUrl(text, voice, { baseUrl } = {}) {
  * @param {string} o.voice      a voices.mjs id
  * @param {number} o.duration   the recording's length, seconds
  * @param {string} o.workDir
- * @returns {Promise<{ file, seconds, sentences: Array<{ start, end, text, rate }> }>}
- *   file an MP3 as long as the recording; sentences where each was placed
+ * @param {object} [o.speakers] the narrator's voice services, replaceable by a test
+ * @returns {Promise<{ file, seconds, sentences: Array<{ start, end, text, rate }>, fresh, engine }>}
+ *   file an MP3 as long as the recording; sentences where each was placed;
+ *   fresh how many sentences were spoken now rather than kept from before;
+ *   engine the voice service that spoke it
  */
-export async function buildVoiceover({ cues, voice, duration, workDir, onProgress = () => {} }) {
-  const sentences = sentencesOf(cues);
-  if (!sentences.length) throw userError("There are no captions to speak.");
-  const total = Math.max(0.5, duration || 0, sentences[sentences.length - 1].end);
-  const until = (i) => (sentences[i + 1] ? sentences[i + 1].start : total);
+export async function buildVoiceover({ cues, voice, duration, workDir, speakers, onProgress = () => {} }) {
+  const lines = sentencesOf(cues).map((s) => ({ start: s.start, end: s.end, text: s.text }));
+  if (!lines.length) throw userError("There are no captions to speak.");
 
-  // 1. Every sentence, as written, a few at a time.
-  let done = 0;
-  const spoken = new Array(sentences.length);
-  await pool(sentences, AT_ONCE, async (s, i) => {
-    spoken[i] = await speak(s.text, { voice, workDir, tag: `s${i}` });
-    onProgress(0.05 + 0.7 * (++done / sentences.length));
-  });
-
-  // 2. What does not fit the time it has, again, briskly; kept only if shorter.
-  const long = sentences.map((s, i) => i).filter((i) => spoken[i].seconds > until(i) - sentences[i].start + 0.05);
-  await pool(long, AT_ONCE, async (i) => {
-    const again = await speak(sentences[i].text, { voice, style: BRISK, workDir, tag: `b${i}` });
-    if (again.seconds < spoken[i].seconds) spoken[i] = again;
-  });
-  onProgress(0.85);
-
-  // 3. In order: each where its first line starts, or just after the one
-  //    before if that ran on; sped up a little if it still would not fit.
-  const mix = new Int16Array(Math.ceil((total + 5) * RATE));
-  const placed = [];
-  let free = 0;
-  let last = 0;
-  for (let i = 0; i < sentences.length; i++) {
-    const s = sentences[i];
-    const at = Math.max(s.start, free > 0 ? free + GAP : 0);
-    const room = Math.max(0.3, until(i) - at);
-    let clip = spoken[i];
-    const rate = Math.min(MAX_RATE, Math.max(1, clip.seconds / room));
-    if (rate > 1.02) {
-      const pcm = await transform(clip.pcm, RATE, [`atempo=${rate.toFixed(3)}`], workDir, `t${i}`);
-      clip = { pcm, seconds: pcm.length / RATE };
+  // 1. What is already spoken, for every service this voiceover may use.
+  const engines = engineOrder();
+  const cache = new Map();
+  const kept = new Set();
+  const held = {};
+  await pool(
+    engines.flatMap((e) => lines.map((l) => [e, l.text])),
+    8,
+    async ([e, text], i) => {
+      const id = `${e}|${voice}|${text}`;
+      if (cache.has(id)) return;
+      const take = await keptTake(e, voice, text, workDir, `k${i}`);
+      if (!take) return;
+      cache.set(id, take);
+      kept.add(id);
+      held[e] = (held[e] || 0) + 1;
     }
-    const from = Math.round(at * RATE);
-    for (let k = 0; k < clip.pcm.length && from + k < mix.length; k++) {
-      mix[from + k] = Math.max(-32768, Math.min(32767, mix[from + k] + clip.pcm[k]));
+  );
+  onProgress(0.05);
+
+  // 2. Spoken by the narrator: first by the service holding the most of it
+  //    (an update keeps its voice and its takes), else in the usual order.
+  const best = engines.filter((e) => held[e]).sort((a, b) => held[b] - held[a])[0];
+  let result = null;
+  let failed = null;
+  if (best && best !== engines[0]) {
+    result = await buildNarration({ lines, voice, duration, workDir, cache, engine: best, speakers, onProgress }).catch((err) => {
+      failed = err;
+      return null;
+    });
+  }
+  if (!result) {
+    try {
+      result = await buildNarration({ lines, voice, duration, workDir, cache, speakers, onProgress });
+    } catch (err) {
+      failed = err;
     }
-    free = at + clip.seconds;
-    last = Math.max(last, free);
-    placed.push({ start: round3(at), end: round3(free), text: s.text, rate: Math.round(rate * 100) / 100 });
+  }
+  if (!result) {
+    console.warn(`[voice] voiceover failed: ${String(failed?.message || failed).slice(0, 300)}`);
+    throw userError(
+      failed?.daily
+        ? "Voices are busy right now. Try the voice-over again in a little while."
+        : "The voice-over couldn't be made right now. Try again in a little while."
+    );
   }
 
-  // 4. One track, as long as the recording (or as long as the last sentence
-  //    ran, if it ran past the end: the export stops at the video's end).
-  const seconds = Math.max(total, last);
-  const raw = path.join(workDir, "voice.pcm");
-  const file = path.join(workDir, "voice.mp3");
-  await fsp.writeFile(raw, Buffer.from(mix.buffer, 0, Math.ceil(seconds * RATE) * 2));
-  await ffmpeg(["-f", "s16le", "-ar", String(RATE), "-ac", "1", "-i", raw, "-c:a", "libmp3lame", "-b:a", "96k", file]);
-  await fsp.rm(raw, { force: true });
-  if (!fs.existsSync(file)) throw new Error("the voiceover did not encode");
-  onProgress(1);
-  return { file, seconds: round3(seconds), sentences: placed };
+  // 3. What was spoken now, kept for the next time.
+  let fresh = 0;
+  await pool(lines, 4, async (l, i) => {
+    const id = `${result.engine}|${voice}|${l.text}`;
+    if (kept.has(id) || !cache.has(id)) return;
+    fresh++;
+    await keepTake(result.engine, voice, l.text, cache.get(id), workDir, `t${i}`);
+  });
+
+  return { file: result.file, seconds: result.seconds, sentences: result.sentences, fresh, engine: result.engine };
 }
 
 export default { VOICE_MODEL, sampleVoice, voiceSampleUrl, buildVoiceover };

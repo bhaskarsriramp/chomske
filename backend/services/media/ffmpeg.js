@@ -574,11 +574,13 @@ export function ffmpegToFrames(src, { width, height, fps, pixelFormat = "gray", 
  * The audio is re-encoded to AAC because Opus in MP4 is not something every
  * later filter graph will accept.
  */
-export function remuxRecording(src, dest, { duration, onProgress } = {}) {
+export function remuxRecording(src, dest, { duration, onProgress, maxSeconds = 0 } = {}) {
   return ffmpeg(
     [
       "-fflags", "+genpts",
       "-i", src,
+      // Cut at the recording limit when the recording ran past it.
+      ...(maxSeconds > 0 ? ["-t", maxSeconds.toFixed(2)] : []),
       "-map", "0:v:0", "-map", "0:a:0?",
       "-c:v", "copy",
       "-c:a", "aac", "-b:a", "192k", "-ar", "48000",

@@ -25,7 +25,13 @@ const CreditPaymentSchema = new Schema({
 
   pack_id: { type: String, required: true },      // starter | creator | studio
   credits: { type: Number, required: true },      // what a successful payment grants
-  amount_inr: { type: Number, required: true },   // rupees, not paise
+  // What was charged, in whole units of `currency`: ₹ inside India (UPI,
+  // netbanking, cards), $ everywhere else (cards). `amount_inr` is kept for
+  // rupee orders, which is every order made before 2026-10-03.
+  currency: { type: String, enum: ["INR", "USD"], default: "INR" },
+  amount: { type: Number, default: 0 },
+  amount_inr: { type: Number, default: 0 },       // rupees, not paise; 0 on a dollar order
+  country: { type: String, default: "" },         // where the buyer was placed, for support
 
   // ── Razorpay ──────────────────────────────────────────────────────────────
   // Unique, and that uniqueness is load-bearing: it is what stops the same

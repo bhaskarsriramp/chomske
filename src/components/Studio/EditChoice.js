@@ -30,6 +30,7 @@ import { SCRIPT, mountScene, useFilm } from "../Landing/film";
 import { BriefForm, briefReady } from "./AutoDemo";
 import { DEFAULT_VOICE, voiceById } from "./voices.mjs";
 import { Btn, Icon, Toggle } from "./ui";
+import { useCredits } from "../../state/CreditsContext";
 
 /** One card's film: the demonstration, framed on a coloured wall. */
 function ChoiceFilm({ captions = false, voice = "", tone = "ocean", label }) {
@@ -101,7 +102,21 @@ function Option({ selected, onSelect, film, badge, title, lead, points, children
  * `onChoose` gets { mode: "zoom", captions } | { mode: "demo", brief, voice }
  * | { mode: "none" }, once.
  */
-export default function EditChoice({ sent = 0, waiting = false, saved = false, hasMic = false, onChoose }) {
+export default function EditChoice({ sent = 0, waiting = false, saved = false, seconds = 0, freeVideo = false, hasMic = false, onChoose, note = "" }) {
+  /**
+   * ── THE PRICE IS ON THE BUTTON, AND CHECKED HERE ───────────────────────────
+   * Both edits cost the same: the video's length at one credit a second
+   * (backend creditPricing.js videoCredits), charged when Clipo starts on it.
+   * Said on the button before it is pressed, and when the balance will not
+   * cover it the button is Buy credits instead, here, while the recording is
+   * still safely saving. "Open it unedited" costs nothing either way.
+   */
+  const { balance, openBuy, canBuy, rules } = useCredits();
+  const perMin = rules?.video?.credits_per_minute || 60;
+  // A first-time creator's free video (backend videoBilling.js) asks for no
+  // credits here: it is paid for when it is exported.
+  const cost = !freeVideo && seconds > 0 ? Math.max(1, Math.ceil((seconds * perMin) / 60 - 1e-9)) : 0;
+  const short = cost > 0 && typeof balance === "number" && balance < cost;
   const [mode, setMode] = useState("zoom");
   const [captions, setCaptions] = useState(false);
   const [brief, setBrief] = useState("");
@@ -140,6 +155,7 @@ export default function EditChoice({ sent = 0, waiting = false, saved = false, h
       <header className="st-choice-head">
         <h1>How should Clipo edit it?</h1>
         <p>Pick one. Either way you can add zooms, captions, a voice or blur in the editor afterwards.</p>
+        {note && <p className="st-choice-note">{note}</p>}
       </header>
 
       <div className={`st-choice-grid${chosen ? " is-locked" : ""}`} role="radiogroup" aria-label="How to edit this recording">
@@ -215,19 +231,32 @@ export default function EditChoice({ sent = 0, waiting = false, saved = false, h
           </p>
         ) : (
           <>
-            <Btn
-              kind="primary"
-              size="l"
-              icon={<Icon name={mode === "demo" ? "wand" : "zoom"} size={15} />}
-              disabled={!canGo}
-              onClick={() => go(mode)}
-            >
-              {mode === "demo" ? "Build my product demo" : "Edit with click zooms"}
-            </Btn>
+            {short ? (
+              <Btn kind="primary" size="l" icon={<Icon name="plus" size={15} />} disabled={!canBuy} onClick={openBuy}>
+                Buy credits
+              </Btn>
+            ) : (
+              <Btn
+                kind="primary"
+                size="l"
+                icon={<Icon name={mode === "demo" ? "wand" : "zoom"} size={15} />}
+                disabled={!canGo}
+                onClick={() => go(mode)}
+              >
+                {mode === "demo" ? "Build my product demo" : "Edit with click zooms"}
+                {cost > 0 ? ` · ${cost} credits` : ""}
+              </Btn>
+            )}
             <Btn kind="quiet" size="l" onClick={() => go("none")}>
               Open it unedited
             </Btn>
-            {!canGo && <span className="st-choice-hint">Describe what the demo should show to continue.</span>}
+            {freeVideo ? (
+              <span className="st-choice-hint">Your first video is free to make. You only pay when you export it.</span>
+            ) : short ? (
+              <span className="st-choice-hint">This video needs {cost} credits. You have {balance}.</span>
+            ) : (
+              !canGo && <span className="st-choice-hint">Describe what the demo should show to continue.</span>
+            )}
           </>
         )}
       </div>

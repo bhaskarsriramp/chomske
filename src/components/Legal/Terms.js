@@ -35,10 +35,10 @@ export default function Terms() {
         <Facts
           rows={[
             ["No subscription", "Credits are bought once and never expire. Nothing recurs, and there is nothing to cancel."],
-            ["New accounts", "Start with 100 free credits, enough to try the product properly before paying anything."],
-            ["What a script costs", "Priced by finished length: one credit buys two seconds of script. The exact cost is shown on the button before you press it."],
-            ["Add-ons", "An English version and the title/description/hashtag pack are priced separately and shown before you order."],
-            ["Payments", "Handled by Razorpay in Indian Rupees. We never see your card details."],
+            ["New accounts", "Your first video, up to 60 seconds, can be recorded, edited and previewed free, with a Clipo watermark. Exporting it, like any video, uses credits."],
+            ["What a video costs", "Priced by length: one credit is one second of video, whether Clipo edits it or turns it into a product demo. Everything done to it after that is included, except a 4K export, which costs extra. The exact cost is shown before you press anything."],
+            ["Generated demo changes", "Each change asked for in a generated product demo uses 10 credits. An account that has never bought credits gets its first three free."],
+            ["Payments", "Handled by Razorpay: in Indian Rupees inside India, in US dollars elsewhere. We never see your card details."],
           ]}
         />
         <P>

@@ -29,7 +29,10 @@ import fsp from "fs/promises";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import LaunchVideo from "../../models/LaunchVideo.js";
+import { refund } from "../creditsService.js";
+import { watermarkCopy } from "./watermark.js";
 import TinyfishAPIs from "../../models/TinyfishAPIs.js";
+import { aistudioKeys, refreshKeys } from "../ai/aistudioPool.js";
 import { putFile, materialize, removePrefix, KEY_ROOT } from "../media/storage.js";
 import { jobDir, scratchRoot } from "../media/scratch.js";
 
@@ -136,7 +139,11 @@ export async function runLaunchJob(doc) {
   const limit = setTimeout(() => stop.abort(), JOB_TIMEOUT_MS);
   try {
     const pipeline = await loadApi();
-    pipeline.setKeys({ tinyfish: await tinyfishKeys() });
+    // The AI Studio keys too: the pool's (the aistudio_keys collection, then
+    // the environment's), so a key added in the database reaches the
+    // generator without a restart. It takes them in turn.
+    await refreshKeys();
+    pipeline.setKeys({ tinyfish: await tinyfishKeys(), aistudio: aistudioKeys() });
     let result;
     if (kind === "create") {
       await fsp.rm(dir, { recursive: true, force: true });
@@ -149,6 +156,23 @@ export async function runLaunchJob(doc) {
     const prefix = launchPrefix(doc);
     const key = `${prefix}/v${result.version}.mp4`;
     await putFile(out, key, "video/mp4");
+    // A free demo not yet paid for plays a copy with the watermark burned in,
+    // and the clean file never reaches the page until it is (routes/launch.js).
+    // If that copy cannot be made the attempt fails: better no video than
+    // the clean one, unpaid.
+    let previewKey = "";
+    const billing = (await LaunchVideo.findById(doc._id).select("billing").lean())?.billing;
+    if (billing?.paid === false) {
+      onProgress(0.997, "Saving");
+      const marked = out.replace(/\.mp4$/, "-preview.mp4");
+      try {
+        await watermarkCopy(out, marked, { signal: stop.signal });
+        previewKey = `${prefix}/v${result.version}-preview.mp4`;
+        await putFile(marked, previewKey, "video/mp4");
+      } finally {
+        await fsp.rm(marked, { force: true }).catch(() => {});
+      }
+    }
     // The poster of this version (a frame of the video), else the site's first screenshot.
     let thumbKey = doc.thumb_key;
     const shot = path.join(dir, "shots", "s1.jpg");
@@ -171,7 +195,7 @@ export async function runLaunchJob(doc) {
         updated_at: new Date(),
       },
       $push: {
-        versions: { v: result.version, key, seconds: Math.round(result.seconds * 10) / 10, scenes: result.scenes, voiced: result.voiced, request: kind === "refine" ? doc.pending.text : "" },
+        versions: { v: result.version, key, preview_key: previewKey, seconds: Math.round(result.seconds * 10) / 10, scenes: result.scenes, voiced: result.voiced, request: kind === "refine" ? doc.pending.text : "" },
         chat: { role: "assistant", text: replyFor(kind, result), v: result.version },
       },
     });
@@ -185,18 +209,32 @@ export async function runLaunchJob(doc) {
       const message = err.userMessage || "Something went wrong making this video. Please try again.";
       const fresh = await LaunchVideo.findById(doc._id).lean();
       const chat = (fresh?.chat || []).slice();
+      // A change that was paid for and did not happen is given back (routes/launch.js).
+      let giveBack = 0;
       for (let i = chat.length - 1; i >= 0; i--) {
         if (chat[i].role === "user") {
-          chat[i] = { ...chat[i], failed: true };
+          giveBack = Number(chat[i].charged) || 0;
+          chat[i] = { ...chat[i], failed: true, charged: 0 };
           break;
         }
       }
-      chat.push({ role: "assistant", text: message, failed: true, at: new Date() });
       // A failed refinement leaves the video as it was; only a first cut that never arrived is a failed video.
       const hasVideo = (fresh?.versions || []).length > 0;
-      await LaunchVideo.updateOne(mine, {
-        $set: { status: hasVideo ? "done" : "failed", error: message, stage: "", progress: 0, lease_until: null, attempts: 0, chat, pending: { kind: "", text: "", at: null }, updated_at: new Date() },
-      }).catch(() => {});
+      // And a first cut that never arrived gives back what was paid for it.
+      if (!hasVideo && fresh?.billing?.paid && fresh.billing.credits > 0) giveBack = fresh.billing.credits;
+      chat.push({ role: "assistant", text: giveBack ? `${message} Your ${giveBack} credits are back.` : message, failed: true, at: new Date() });
+      const saved = await LaunchVideo.updateOne(mine, {
+        $set: {
+          status: hasVideo ? "done" : "failed", error: message, stage: "", progress: 0, lease_until: null, attempts: 0, chat, pending: { kind: "", text: "", at: null }, updated_at: new Date(),
+          ...(!hasVideo && fresh?.billing?.paid && fresh.billing.credits > 0 ? { "billing.paid": false, "billing.credits": 0 } : {}),
+        },
+      }).catch(() => null);
+      // Only once the zeroed amount is written, so a second pass cannot refund it again.
+      if (giveBack > 0 && saved?.modifiedCount) {
+        await refund(doc.user, giveBack, { refType: "LaunchVideo", refId: doc._id, note: "change failed" }).catch((e) =>
+          console.error(`[launch] refund failed for ${doc.slug}:`, e.message)
+        );
+      }
     }
   } finally {
     clearTimeout(limit);

@@ -9,6 +9,8 @@ import { readUrl, isRelayUrl, KEY_ROOT } from "../media/storage.js";
 import { publishUserEvent } from "../newsEvents.js";
 import { layout, drewCounts } from "./timeline.js";
 import { RENDER_ENGINE } from "./exportOptions.js";
+import { CREDITS_PER_MINUTE, videoCredits, exportExtraCredits } from "../creditPricing.js";
+import { isPaid, owed, videoPrice, trialCovers } from "./videoBilling.js";
 
 const MB = 1024 * 1024;
 const int = (v, d) => {
@@ -19,13 +21,15 @@ const int = (v, d) => {
 export const STUDIO_LIMITS = {
   maxUploadBytes: int(process.env.STUDIO_MAX_UPLOAD_MB, 4096) * MB,
   /**
-   * The longest recording this product will accept.
-   *
-   * Thirty minutes is well past any demo worth publishing, and it is also what
-   * bounds one analysis: the vision pass reads a frame every couple of seconds,
-   * so the length of the recording IS the size of the bill.
+   * The longest recording this product will accept: three minutes (the
+   * creator's decision, 2026-10-03; it was thirty). The recorder stops itself
+   * there (RecordPage.js) and the editor is told it through /studio/config;
+   * one that arrives longer anyway is cut to it when it is prepared
+   * (studioRunner.js). It also bounds one analysis: the vision pass reads a
+   * frame every couple of seconds, so the length IS the size of the bill, and
+   * the pointer locator reads frame by frame only up to 180 s (locate.js).
    */
-  maxRecordingSeconds: int(process.env.STUDIO_MAX_RECORDING_SECONDS, 1800),
+  maxRecordingSeconds: int(process.env.STUDIO_MAX_RECORDING_SECONDS, 180),
   /** Live (unexpired) demos per creator. Each can hold gigabytes for a week. */
   maxDemos: int(process.env.STUDIO_MAX_DEMOS, 60),
   retentionDays: int(process.env.STUDIO_RETENTION_DAYS, 7),
@@ -62,28 +66,32 @@ export const bumpExpiry = () => new Date(Date.now() + STUDIO_LIMITS.retentionDay
    ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * ── WHERE THE MONEY GOES ─────────────────────────────────────────────────────
- * Analysing is the expensive half and it is nearly all Gemini: a frame every
- * two seconds through the UI analyser, every frame again through the blur
- * detector, plus the text passes. A ten minute demo is roughly 600 frame reads.
- * Exporting is server time: three ffmpeg passes and a canvas layer.
+ * ── ONE PRICE PER VIDEO (2026-10-03) ─────────────────────────────────────────
+ * A video is charged once, when Clipo starts on it, in proportion to its
+ * length: $2 a minute, one credit a second (creditPricing.js videoCredits).
+ * The same for "Zoom on clicks" and for a product demo, which is built on the
+ * same analysis. Everything after that is part of the video: reading the
+ * screens, captions, the voice, the chat, music, and exports up to 1440p. The
+ * only extra is a 4K export (exportCredits).
  *
- * Recording, uploading, previewing and editing are free. Those are what a
- * creator spends their time doing, and a meter running while somebody drags a
- * zoom handle is a meter that makes them stop editing.
+ * Recording, uploading, previewing and editing were always free, and still
+ * are: a meter running while somebody drags a zoom handle is a meter that
+ * makes them stop editing.
  */
-export const STUDIO_ANALYSE_CREDITS_PER_MIN = int(process.env.STUDIO_ANALYSE_CREDITS_PER_MIN, 12);
-export const STUDIO_EXPORT_CREDITS_PER_MIN = int(process.env.STUDIO_EXPORT_CREDITS_PER_MIN, 8);
-/** The quality review is one text call over the edit, not another look at it. */
-export const STUDIO_REVIEW_CREDITS = int(process.env.STUDIO_REVIEW_CREDITS, 3);
+export const STUDIO_CREDITS_PER_MIN = CREDITS_PER_MINUTE;
 
 /**
- * @param {"analyse"|"export"} kind
- * @param {number} seconds  recording length for analyse, output length for export
+ * @param {"analyse"|"read"|"export"} kind
+ * @param {number} seconds  the recording's length
+ * @returns {number} credits; 0 for anything included in the video
  */
 export function studioCost(kind, seconds) {
-  const perMin = kind === "export" ? STUDIO_EXPORT_CREDITS_PER_MIN : STUDIO_ANALYSE_CREDITS_PER_MIN;
-  return perMin * Math.max(1, Math.ceil((Number(seconds) || 0) / 60));
+  return kind === "analyse" ? videoCredits(seconds) : 0;
+}
+
+/** What an export of `seconds` of finished video costs on top: 0 below 4K. */
+export function exportCredits(seconds, options = {}) {
+  return exportExtraCredits(seconds, options?.resolution);
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -234,6 +242,18 @@ export async function shapeDemo(doc, { baseUrl, withTimeline = true } = {}) {
     created_at: d.created_at,
     updated_at: d.updated_at,
 
+    // Whether it is paid for and what it costs (videoBilling.js): the editor
+    // draws the watermark on an unpaid video and prices its first export.
+    billing: {
+      paid: isPaid(d),
+      trial: !!d.billing?.trial,
+      // The free video, while it is within the free length.
+      trial_covers: trialCovers(d),
+      price: videoPrice(d),
+      // Owed before an AI feature runs now: 0 when paid, or free for now.
+      owed: owed(d),
+    },
+
     recording: {
       status: r.status || "uploading",
       duration: r.duration || 0,
@@ -343,6 +363,6 @@ export async function shapeDemoCard(doc, { baseUrl } = {}) {
 export default {
   STUDIO_LIMITS, LEDGER_REASON, ACCEPT_MIME, acceptable,
   demoPrefix, demoKey, bumpExpiry,
-  STUDIO_ANALYSE_CREDITS_PER_MIN, STUDIO_EXPORT_CREDITS_PER_MIN, STUDIO_REVIEW_CREDITS, studioCost,
+  STUDIO_CREDITS_PER_MIN, studioCost, exportCredits,
   publishProgress, shapeDemo, shapeDemoCard,
 };

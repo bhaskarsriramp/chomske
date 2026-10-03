@@ -278,7 +278,12 @@ const DRAWER_LEAVE_MS = 240;
  * still showing what it showed, before it goes. The parent must be
  * position: relative; it covers that.
  */
-export function Drawer({ open, title, sub, onClose, children, footer = null, label }) {
+/**
+ * `page`: over the whole editor's right side instead of the inspector, at
+ * full height and about 38% of the screen (studio.css .st-drawer.is-page) —
+ * the export, which needs the room and should still look like the same screen.
+ */
+export function Drawer({ open, title, sub, onClose, children, footer = null, label, page = false }) {
   const [mounted, setMounted] = useState(open);
   const [leaving, setLeaving] = useState(false);
   const kept = useRef(null);
@@ -305,7 +310,7 @@ export function Drawer({ open, title, sub, onClose, children, footer = null, lab
       role="dialog"
       aria-modal="false"
       aria-label={label || c.title}
-      className={`st-drawer${leaving ? " is-leaving" : ""}`}
+      className={`st-drawer${page ? " is-page" : ""}${leaving ? " is-leaving" : ""}`}
       onKeyDown={(e) => {
         // Also from inside its own fields, where the editor's Escape does not reach.
         if (e.key === "Escape") {

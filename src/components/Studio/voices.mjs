@@ -81,6 +81,40 @@ export function voiceSig(voice, cues) {
   return a.toString(36) + b.toString(36);
 }
 
+/**
+ * What a voiceover no longer matches in the captions as they are now, for the
+ * editor's "Update voice-over" (Captions panel, the lane, the preview, Export):
+ *   stale    it differs at all (words, places): an update is due
+ *   changed  ids of the caption lines whose sentence it never spoke (new or
+ *            reworded); an update speaks only those (backend voice.js keeps
+ *            every take), and one where only the places changed speaks none
+ *   lines    how many such lines
+ *   gone     where it speaks sentences no longer in the captions, as
+ *            [start, end] in recording time: kept quiet in the preview, so no
+ *            one hears old words under new captions
+ * Null when there is no voiceover.
+ */
+export function voiceDiff(voiceover, cues) {
+  if (!voiceover) return null;
+  const norm = (t) => String(t || "").replace(/s+/g, " ").trim();
+  const now = sentencesOf(cues);
+  const made = voiceover.sentences || [];
+  const spoken = new Set(made.map((s) => norm(s.text)));
+  const said = new Set(now.map((s) => norm(s.text)));
+  // In a sentence it never spoke, the lines that are new: a line still found
+  // word for word in what it did speak was not the edit. If every line is
+  // found (one was deleted, or two swapped), the whole sentence is marked.
+  const byId = new Map((cues || []).map((c) => [c.id, norm(c.text)]));
+  const changed = now
+    .filter((s) => !spoken.has(norm(s.text)))
+    .flatMap((s) => {
+      const fresh = s.ids.filter((id) => !made.some((m) => norm(m.text).includes(byId.get(id))));
+      return fresh.length ? fresh : s.ids;
+    });
+  const gone = made.filter((s) => !said.has(norm(s.text))).map((s) => [Number(s.start) || 0, Number(s.end) || 0]);
+  return { stale: voiceSig(voiceover.name, cues) !== voiceover.sig, changed, lines: changed.length, gone };
+}
+
 /** What a sample of a voice says: the demo's own first sentence, or two if it is short. */
 export function sampleText(cues) {
   const s = sentencesOf(cues);
@@ -90,5 +124,5 @@ export function sampleText(cues) {
   return text.length > 220 ? `${text.slice(0, 217).replace(/\s+\S*$/, "")}…` : text;
 }
 
-const voices = { VOICES, DEFAULT_VOICE, voiceById, sentencesOf, voiceSig, sampleText };
+const voices = { VOICES, DEFAULT_VOICE, voiceById, sentencesOf, voiceSig, voiceDiff, sampleText };
 export default voices;

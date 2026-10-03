@@ -30,14 +30,15 @@ import { onLiveEvent } from "../../realtime/socket";
 // requestReview and resolveSuggestion are hidden with the Review tab (see TABS).
 import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds, followBlur, getFollows, makeVoice, getVoice, listMusic } from "./studioApi";
 import { blurSig, applyState } from "./follow.mjs";
-import { voiceSig } from "./voices.mjs";
+import { voiceSig, voiceDiff } from "./voices.mjs";
 import VoicePanel from "./VoicePanel";
 import MusicPanel from "./MusicPanel";
 import { musicItems, withMusic } from "./musicTimeline.mjs";
 import Working, { editPhase, demoPhase } from "./Working";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
-import ExportDialog from "./ExportDialog";
+import ExportDrawer from "./ExportDrawer";
+import { useCredits } from "../../state/CreditsContext";
 import { create } from "./create";
 import { clipsOf, clipIdAt, splitPatch, deleteClipPatch, trimPatch } from "./clips";
 // StepsPanel is hidden for now with the Steps tab (see TABS); put it back in
@@ -165,6 +166,17 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const [tl, setTl] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // The notice that is "this video needs N credits", which carries the way to
+  // buy them. Kept as that message, so a later notice never inherits the button.
+  const [creditNotice, setCreditNotice] = useState("");
+  const { canBuy, openBuy } = useCredits();
+  /** An action refused: what the server said, and Buy credits when credits were why. */
+  const refused = useCallback((err, fallback) => {
+    const d = err?.response?.data;
+    const message = d?.message || fallback;
+    setNotice(message);
+    setCreditNotice(d?.insufficient_credits ? message : "");
+  }, []);
 
   // The first tab, Video, while Steps is hidden (see TABS).
   const [tab, setTab] = useState("video");
@@ -216,6 +228,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     else stageRef.current?.requestFullscreen?.().catch(() => {});
   }, []);
   const [exporting, setExporting] = useState(false);
+  const closeExport = useCallback(() => setExporting(false), []);
   const [captioning, setCaptioning] = useState(false);
   // The model reading the screens — blur, steps, narration — which is now a
   // separate thing a creator asks for rather than part of the first analysis.
@@ -1095,9 +1108,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       setReading(false);
       // Includes the 402 that names the price and the balance, which is the
       // only confirmation this needs: nobody is charged without being told.
-      setNotice(err?.response?.data?.message || "We couldn't read this recording's screens.");
+      refused(err, "We couldn't read this recording's screens.");
     }
-  }, [demoId, load]);
+  }, [demoId, load, refused]);
 
   const onCaptions = useCallback(async () => {
     setCaptioning(true);
@@ -1106,9 +1119,9 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       await requestCaptions(demoId);
     } catch (err) {
       setCaptioning(false);
-      setNotice(err?.response?.data?.message || "We couldn't write captions for this recording.");
+      refused(err, "We couldn't write captions for this recording.");
     }
-  }, [demoId]);
+  }, [demoId, refused]);
 
   /**
    * Start the automatic edit, and show that it started.
@@ -1375,6 +1388,34 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   const applyAll = () =>
     applyBlurs((tl.blurs || []).filter((b) => ["unapplied", "failed"].includes(applyState(b, follows, following).kind)).map((b) => b.id));
 
+  /**
+   * ── THE VOICEOVER, KEPT IN STEP WITH THE CAPTIONS ─────────────────────────
+   * Captions edited after the voiceover was made: it still reads the old
+   * words. Which lines it is missing (voices.mjs voiceDiff) is shown where it
+   * matters: a bar on the Captions panel, a mark on those lines in the lane,
+   * those sentences kept quiet in the preview, and Export offering to update
+   * first. One button updates it; only the changed lines are spoken again.
+   * Null when there is nothing to say (no voiceover, off, or up to date).
+   */
+  // (No captions with words left: nothing to read, so nothing to offer.)
+  const voiceNow =
+    tl.voice?.on && demo.voiceover && (tl.cues || []).some((c) => String(c.text || "").trim())
+      ? voiceDiff(demo.voiceover, tl.cues || [])
+      : null;
+  const voiceMissing = voiceNow?.stale ? new Set(voiceNow.changed) : null;
+  const voiceState =
+    voiceNow && (voiceNow.stale || voicing)
+      ? {
+          stale: voiceNow.stale,
+          lines: voiceNow.lines,
+          missing: voiceMissing,
+          updating: !!voicing && !voicing.failed,
+          progress: voicing?.progress || 0,
+          failed: voicing?.failed ? voicing.message || "We couldn't update the voice-over. Try again." : "",
+        }
+      : null;
+  const updateVoice = () => demo.voiceover?.name && applyVoice(demo.voiceover.name);
+
   // The uploaded image the canvas names, if it names one and it is still there.
   const bgChoice = tl.canvas?.background;
   const bgImageUrl =
@@ -1401,9 +1442,12 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
    * which of the two happened. See analysis.blur_checked.
    */
   const blurChecked = demo.analysis?.blur_checked === true;
-  /** What that reading costs, so the button can say so before it is pressed. */
-  const readCost =
-    (config?.pricing?.analyse_per_min || 0) * Math.max(1, Math.ceil((demo.recording?.duration || 0) / 60));
+  /**
+   * What that reading costs, so the button can say so before it is pressed.
+   * Included in a paid video since 2026-10-03, so usually 0 and the button
+   * says nothing about credits; an unpaid one is paid for by it (demo.billing.owed).
+   */
+  const readCost = Number(demo.billing?.owed) || 0;
 
   const header = (
     <header
@@ -1465,6 +1509,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       }}
     >
       <span style={{ flex: 1 }}>{notice}</span>
+      {canBuy && creditNotice && creditNotice === notice && (
+        <Btn size="xs" kind="primary" onClick={openBuy}>
+          Buy credits
+        </Btn>
+      )}
       <button
         type="button"
         onClick={() => setNotice("")}
@@ -1512,8 +1561,16 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         follows={follows}
         following={following}
         onApplyBlur={applyBlur}
+        // Not paid for yet (backend videoBilling.js): the moving watermark.
+        watermark={demo.billing?.paid === false}
         // The AI voiceover, played with the picture when it is on.
-        voice={{ url: demo.voiceover?.url || "", on: !!(tl.voice?.on && demo.voiceover?.url), keepOriginal: !!tl.voice?.keep_original }}
+        voice={{
+          url: demo.voiceover?.url || "",
+          on: !!(tl.voice?.on && demo.voiceover?.url),
+          keepOriginal: !!tl.voice?.keep_original,
+          // Sentences it says that are no longer in the captions: not played.
+          mute: voiceNow?.stale ? voiceNow.gone : null,
+        }}
         music={{ items: musicItems(tl), tracks: musicTracks }}
       />
       {full && (
@@ -1659,6 +1716,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
           onGenerateFromScript={onCaptionsFromScript}
           generating={captioning}
           hasAudio={demo.recording.has_audio}
+          voice={voiceState}
+          onUpdateVoice={updateVoice}
         />
       )}
       {tab === "cursor" && <CursorPanel tl={tl} edit={edit} />}
@@ -1760,23 +1819,29 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       onApplyBlur={applyBlur}
       musicTracks={musicTracks}
       onAddMusic={addMusicAt}
+      voiceMissing={voiceMissing}
       // Taller lanes on a desk: bigger chips to grab, drag and resize.
       height={narrow ? 30 : 42}
     />
   );
 
-  const dialog = exporting ? (
-    <ExportDialog
+  // Always mounted: the drawer slides in and back out (ui.js Drawer) and keeps
+  // the preset chosen between openings.
+  const dialog = (
+    <ExportDrawer
+      open={exporting}
       demo={demo}
       config={config}
       outputSeconds={total}
       blurs={blurCounts}
       onApplyBlurs={applyAll}
-      onClose={() => setExporting(false)}
+      voice={voiceState}
+      onUpdateVoice={updateVoice}
+      onClose={closeExport}
       onChanged={() => load(true)}
       beforeExport={save}
     />
-  ) : null;
+  );
   const autoDialog = autoOpen ? (
     <AutoDemoDialog
       ad={auto.ad}

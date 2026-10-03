@@ -126,6 +126,8 @@ export default function Timeline({
   // click on the music lane does: mark that moment for the Music tab.
   musicTracks = null,
   onAddMusic,
+  // Caption ids the voiceover doesn't say yet (voices.mjs voiceDiff): marked.
+  voiceMissing = null,
   height = 30,
 }) {
   const railRef = useRef(null);
@@ -843,6 +845,9 @@ export default function Timeline({
                       }}
                     >
                       <span className="st-grip is-start" onPointerDown={beginDrag(lane.key, item, "start")} />
+                      {lane.key === "cues" && voiceMissing?.has(item.id) && (
+                        <span className="st-chip-flag" title="Not in the voice-over yet" aria-label="Not in the voice-over yet" />
+                      )}
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", pointerEvents: "none" }}>
                         {chipLabel(lane.key, item)}
                       </span>

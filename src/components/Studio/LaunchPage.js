@@ -18,7 +18,8 @@
  * lands on the same video in whatever state it reached.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listLaunch, createLaunch, getLaunch, refineLaunch, retryLaunch, launchDownload } from "./launchApi";
+import { listLaunch, createLaunch, getLaunch, refineLaunch, retryLaunch, launchDownload, unlockLaunch } from "./launchApi";
+import { useCredits } from "../../state/CreditsContext";
 import { Btn, Icon, Badge } from "./ui";
 import { fmtTime } from "./model";
 
@@ -44,13 +45,20 @@ export function LaunchNew({ onCreated, onCancel }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState(null);
+  const { balance, openBuy, canBuy, refresh: refreshCredits } = useCredits();
 
   useEffect(() => {
     listLaunch().then(setInfo).catch(() => setInfo({ available: true, limits: null }));
   }, []);
 
-  const left = info?.limits?.videos_left;
-  const blocked = info && (info.available === false || left === 0);
+  // A demo costs credits; a first-time creator's first one is free to watch
+  // (backend routes/launch.js).
+  const limits = info?.limits;
+  const free = !!limits?.free_demo;
+  const price = limits?.demo_cost ?? 60;
+  const have = typeof balance === "number" ? balance : limits?.balance ?? 0;
+  const short = !!limits && !limits.admin && !free && have < price;
+  const blocked = info?.available === false;
 
   const submit = async (e) => {
     e?.preventDefault();
@@ -59,6 +67,7 @@ export function LaunchNew({ onCreated, onCancel }) {
     setError("");
     try {
       const res = await createLaunch(url.trim(), notes.trim());
+      refreshCredits();
       onCreated(res.video.id);
     } catch (err) {
       setError(errorOf(err, "We couldn't start that. Please try again."));
@@ -108,7 +117,7 @@ export function LaunchNew({ onCreated, onCancel }) {
           <textarea
             id="lv-notes"
             rows={2}
-            placeholder="e.g. aimed at small agencies; show the pricing; keep it under 40 seconds"
+            placeholder="e.g. aimed at small agencies; show the pricing; a calm voice"
             value={notes}
             maxLength={600}
             onChange={(e) => setNotes(e.target.value)}
@@ -129,14 +138,22 @@ export function LaunchNew({ onCreated, onCancel }) {
         )}
 
         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <Btn kind="primary" size="l" icon={<Icon name="sparkle" size={14} />} disabled={busy || !url.trim() || blocked} onClick={submit}>
-            {busy ? "Starting…" : "Generate demo"}
-          </Btn>
-          {info?.limits && !info.limits.admin && (
+          {short ? (
+            <Btn kind="primary" size="l" icon={<Icon name="plus" size={14} />} disabled={!canBuy} onClick={openBuy}>
+              Buy credits
+            </Btn>
+          ) : (
+            <Btn kind="primary" size="l" icon={<Icon name="sparkle" size={14} />} disabled={busy || !url.trim() || blocked} onClick={submit}>
+              {busy ? "Starting…" : free || !limits || limits.admin ? (free ? "Generate my free demo" : "Generate demo") : `Generate · ${price} credits`}
+            </Btn>
+          )}
+          {limits && !limits.admin && (
             <span style={{ fontSize: 12.5, color: "var(--ink-mute)" }}>
-              {left > 0
-                ? `${left} of ${info.limits.daily_videos} left today · free during beta`
-                : "You've used today's demos. More tomorrow."}
+              {free
+                ? `Your first demo is free to watch. Downloading it uses ${price} credits.`
+                : short
+                  ? `A demo uses ${price} credits. You have ${have}.`
+                  : `A demo uses ${price} credits.`}
             </span>
           )}
         </div>
@@ -163,6 +180,9 @@ export function LaunchVideoPage({ id, onExit }) {
   const [downloading, setDownloading] = useState(false);
   const seenVersions = useRef(0);
   const chatEnd = useRef(null);
+  // A change is free while the account still has free ones, then costs credits
+  // (routes/launch.js). The live balance, so a purchase opens the chat again.
+  const { balance, openBuy, canBuy, refresh: refreshCredits } = useCredits();
 
   const apply = useCallback((res) => {
     setVideo(res.video);
@@ -212,6 +232,7 @@ export function LaunchVideoPage({ id, onExit }) {
     try {
       apply(await refineLaunch(id, t));
       setMessage("");
+      refreshCredits();
     } catch (err) {
       setSendError(errorOf(err, "That couldn't be sent. Please try again."));
     }
@@ -227,10 +248,22 @@ export function LaunchVideoPage({ id, onExit }) {
     }
   };
 
+  // A free demo not yet paid for: the clean file is what is bought here.
+  const unpaid = video?.billing?.paid === false;
+  const demoPrice = video?.billing?.price || 60;
+
   const download = async () => {
     if (!current || downloading) return;
+    if (unpaid && !(typeof balance === "number" && balance >= demoPrice)) {
+      openBuy();
+      return;
+    }
     setDownloading(true);
     try {
+      if (unpaid) {
+        apply(await unlockLaunch(id));
+        refreshCredits();
+      }
       const href = await launchDownload(id, current.v);
       const a = document.createElement("a");
       a.href = href;
@@ -259,8 +292,12 @@ export function LaunchVideoPage({ id, onExit }) {
 
   const refining = busy && video?.pending?.kind === "refine";
   const failedFirst = video?.status === "failed" && !versions.length;
-  const changesLeft = limits?.changes_left;
-  const canAsk = !!versions.length && !busy && !sending && changesLeft !== 0;
+  const cost = limits && !limits.admin ? limits.change_cost || 0 : 0;
+  const freeLeft = limits?.free_changes_left || 0;
+  const have = typeof balance === "number" ? balance : limits?.balance ?? 0;
+  // Out of free changes and short of the credits for a paid one.
+  const short = cost > 0 && have < cost;
+  const canAsk = !!versions.length && !busy && !sending && !short;
 
   return (
     <div style={{ width: "100%", maxWidth: 1220, margin: "0 auto" }}>
@@ -280,7 +317,7 @@ export function LaunchVideoPage({ id, onExit }) {
         </div>
         {current && (
           <Btn kind="primary" icon={<Icon name="download" size={14} />} onClick={download} disabled={downloading} style={{ marginTop: 34 }}>
-            {downloading ? "Preparing…" : `Download v${current.v}`}
+            {downloading ? "Preparing…" : unpaid ? `Download · ${demoPrice} credits` : `Download v${current.v}`}
           </Btn>
         )}
       </header>
@@ -302,6 +339,12 @@ export function LaunchVideoPage({ id, onExit }) {
               <Making video={video} steps={STEPS} />
             )}
           </div>
+
+          {unpaid && current && (
+            <p style={{ margin: "10px 0 0", fontSize: 12.5, lineHeight: 1.5, color: "var(--ink-mute)" }}>
+              Free preview, with the Clipo watermark. Download it for {demoPrice} credits to get the clean video.
+            </p>
+          )}
 
           {versions.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
@@ -336,7 +379,6 @@ export function LaunchVideoPage({ id, onExit }) {
           <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 8 }}>
             <Icon name="chat" size={14} />
             <span style={{ fontSize: 13.5, fontWeight: 680, color: "var(--ink)" }}>Ask for changes</span>
-            <Badge>Beta</Badge>
           </div>
 
           <div className="lv-msgs st-scroll">
@@ -381,8 +423,8 @@ export function LaunchVideoPage({ id, onExit }) {
                 rows={2}
                 value={message}
                 maxLength={600}
-                disabled={!versions.length || changesLeft === 0}
-                placeholder={!versions.length ? "Once your video is ready, ask for changes here." : busy ? "Wait for this version to finish…" : "e.g. make it 30 seconds and calmer"}
+                disabled={!versions.length || short}
+                placeholder={!versions.length ? "Once your video is ready, ask for changes here." : short ? "Not enough credits for another change." : busy ? "Wait for this version to finish…" : "e.g. make it 30 seconds and calmer"}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -401,9 +443,22 @@ export function LaunchVideoPage({ id, onExit }) {
               </p>
             )}
             {limits && !limits.admin && versions.length > 0 && (
-              <span style={{ fontSize: 11.5, color: "var(--ink-mute)" }}>
-                {changesLeft > 0 ? `${changesLeft} changes left today · free during beta` : "You've used today's changes. More tomorrow."}
-              </span>
+              short ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ flex: 1, fontSize: 12, color: "var(--ink-body)" }}>
+                    Not enough credits. Each change uses {cost} credits.
+                  </span>
+                  {canBuy && (
+                    <Btn kind="primary" size="s" onClick={openBuy}>
+                      Buy credits
+                    </Btn>
+                  )}
+                </div>
+              ) : (
+                <span style={{ fontSize: 11.5, color: "var(--ink-mute)" }}>
+                  {freeLeft > 0 ? `${freeLeft} free change${freeLeft === 1 ? "" : "s"} left` : `Each change uses ${cost} credits`}
+                </span>
+              )
             )}
           </form>
         </aside>

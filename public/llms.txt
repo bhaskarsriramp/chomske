@@ -64,12 +64,12 @@ Most auto-zoom recorders need a desktop app for one operating system, or an exte
 ## Pricing
 
 - No subscription and nothing recurring. Credits are bought once and never expire
-- New accounts start with 100 free credits
-- Starter: Rs 199 for 250 credits
-- Creator: Rs 499 for 700 credits
-- Studio: Rs 999 for 1600 credits
-- Analysing a recording and exporting a video are charged by the minute, and the cost is shown before anything is charged
-- Payments are in Indian Rupees through Razorpay
+- A video costs USD 2 a minute (Rs 199 in India), charged once by its length, whether Clipo edits it or turns it into a product demo. One credit is one second of video
+- Captions, AI voice, blur, music and exports up to 1440p are included; a 4K export costs extra
+- Try it free: a new account records and edits its first video (up to 60 seconds) free, and previews it with a Clipo watermark. No credit card required. Exporting it uses credits like any video
+- Packs: 60 credits (USD 2 / Rs 199), 300 credits (USD 10 / Rs 999), 900 credits (USD 30 / Rs 2,999)
+- The cost is shown before anything is charged
+- Payments through Razorpay: in Indian Rupees with UPI, cards and netbanking inside India, in US dollars by card everywhere else
 
 ## Who it is for
 
@@ -83,7 +83,7 @@ Most auto-zoom recorders need a desktop app for one operating system, or an exte
 No. Clipo runs in a browser tab. There is no desktop app and no browser extension.
 
 ### Is Clipo free?
-Every new account gets 100 free credits, enough to try it on real recordings. After that, credits come in one-time packs from Rs 199. There is no subscription.
+You can try it free: your first video, up to 60 seconds, is free to record, edit and preview, with no credit card required. Exporting it, and every video after, costs USD 2 a minute (Rs 199 in India), in one-time credit packs. There is no subscription.
 
 ### How long can a recording be?
 Up to 30 minutes.
@@ -107,7 +107,7 @@ You do. You own your recordings and every video Clipo makes from them.
 - [Product demos](https://tryclipo.com/#product-demo): a narrated demo with a script, captions and a voice-over
 - [Edit with a message](https://tryclipo.com/#chat): editing by typing what you want
 - [Features](https://tryclipo.com/#features): cursor, backgrounds, formats, captions, blur, voice-over, trimming and export
-- [Pricing](https://tryclipo.com/#pricing): credit packs and free credits
+- [Pricing](https://tryclipo.com/#pricing): credit packs and the free first video
 - [Contact](https://tryclipo.com/contact): support, sales and security
 - [Privacy Policy](https://tryclipo.com/privacy): what is collected and why
 - [Terms of Service](https://tryclipo.com/terms): the agreement, credits, and who owns the videos

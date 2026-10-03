@@ -28,7 +28,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Btn, Panel, Empty, Icon, Toggle } from "./ui";
-import { VOICES, DEFAULT_VOICE, voiceById, voiceSig, sampleText } from "./voices.mjs";
+import { VOICES, DEFAULT_VOICE, voiceById, voiceSig, voiceDiff, sampleText } from "./voices.mjs";
+import { voiceBehindText } from "./VoiceSync";
 import { voiceSample } from "./studioApi";
 
 /**
@@ -62,6 +63,7 @@ export default function VoicePanel({
   const on = !!tl.voice?.on;
   // Made from captions that have changed since: the words or the places.
   const stale = !!vo && voiceSig(vo.name, cues) !== vo.sig;
+  const behind = useMemo(() => (stale ? voiceDiff(vo, cues) : null), [stale, vo, cues]);
   const busy = !!voicing && !voicing.failed;
 
   /* ── Samples ─────────────────────────────────────────────────────────── */
@@ -170,7 +172,7 @@ export default function VoicePanel({
             <i style={{ width: `${Math.max(4, Math.round((voicing.progress || 0) * 100))}%` }} />
           </div>
           <div style={{ fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.5 }}>
-            Each sentence is spoken and fitted to its captions. Usually under a minute.
+            Usually a minute or two.
           </div>
         </div>
       );
@@ -231,7 +233,7 @@ export default function VoicePanel({
           {stale && !busy && (
             <div style={{ display: "grid", gap: 8, justifyItems: "start" }}>
               <div style={{ fontSize: 12, lineHeight: 1.5, color: "var(--ink-mute)" }}>
-                Your captions changed after this voiceover was made, so it reads the old ones.
+                {voiceBehindText(behind || { lines: 0 })}
               </div>
               {pick !== vo.name && (
                 <Btn size="s" icon={<Icon name="mic" size={13} />} onClick={() => apply(vo.name)}>

@@ -8,6 +8,10 @@
  * from this file, the script route charges from this file, and the frontend
  * renders whatever the API sent rather than hardcoding a rupee figure.
  *
+ * ── WHAT IS SOLD NOW: VIDEOS, ONE CREDIT A SECOND ─────────────────────────────
+ * See "VIDEOS" below (2026-10-03). The script pricing that follows belongs to
+ * the retired script writer and is kept only for the code that still imports it.
+ *
  * ── THE UNIT: ONE CREDIT BUYS TWO SECONDS OF FINISHED SCRIPT ─────────────────
  * Duration is the honest cost driver in both directions. An eight-minute script
  * costs us roughly eight times a Short in output tokens, and it is worth far
@@ -292,24 +296,79 @@ export function voiceAnalysisCost({ builds = 0, videos = 0, categoryUpgrade = fa
 }
 
 /**
- * What a new account starts with: three 60-second scripts.
+ * What a new account starts with: nothing, since 2026-10-03.
  *
- * Enough to reach the moment the product is actually judged on, a finished
- * script in their own voice, without being enough to run a channel on. A
- * trial that ends before that moment tells them nothing about whether to pay.
+ * A zero balance is not the welcome it sounds like, because a first-time
+ * creator does not need credits to try Clipo: their first recording, up to
+ * TRIAL_SECONDS, is made with everything included and plays with a watermark,
+ * and credits are only asked for when they export it (services/studio/
+ * videoBilling.js). Free credits used to do that job and were spent on
+ * whatever, including nothing anybody kept. Overridable, never by a deploy.
  */
-export const SIGNUP_FREE_CREDITS = 100;
+export const SIGNUP_FREE_CREDITS = Math.max(0, parseInt(process.env.SIGNUP_FREE_CREDITS ?? "0", 10) || 0);
+
+/** How long a first-time creator's free video can be: the recorder stops there. */
+export const TRIAL_SECONDS = Math.max(10, parseInt(process.env.STUDIO_TRIAL_SECONDS || "60", 10) || 60);
+
+/* ── VIDEOS: ONE CREDIT IS ONE SECOND ─────────────────────────────────────────
+ *
+ * Decided 2026-10-03: a video costs $2 a minute (₹199 in India), the same
+ * whether Clipo edits it with click zooms or turns it into a product demo,
+ * charged once when Clipo starts on it and in proportion to its length. So a
+ * credit is a second of video, 60 a minute, and everything done to that video
+ * afterwards is included: blurs, captions, music, the voice, the chat, and
+ * exports up to 1440p as many times as wanted.
+ *
+ * The one extra is a 4K export, which takes a bigger render machine for several
+ * times as long: FOURK_CREDITS_PER_MIN more, per minute exported.
+ *
+ * Every number here is what the button shows and what the route charges; the
+ * browser reads them from /studio/config and /billing/packs, never its own copy.
+ */
+export const CREDITS_PER_MINUTE = Math.max(1, parseInt(process.env.CREDITS_PER_MINUTE || "60", 10) || 60);
+export const FOURK_CREDITS_PER_MIN = Math.max(0, parseInt(process.env.FOURK_CREDITS_PER_MIN ?? "30", 10) || 0);
 
 /**
- * The packs. `credits` is what lands in the wallet; `inr` is what Razorpay
- * charges. Everything else is display, derived here so the pricing page cannot
- * drift from the arithmetic.
+ * Credits for a video this long: proportional, rounded up to a whole credit,
+ * at least one. A 61-second recording is 61 credits, not two minutes' worth.
+ */
+export function videoCredits(seconds) {
+  const s = Math.max(0, Number(seconds) || 0);
+  return Math.max(1, Math.ceil((s * CREDITS_PER_MINUTE) / 60 - 1e-9));
+}
+
+/** The extra a 4K export of `seconds` of finished video costs; 0 below 4K. */
+export function exportExtraCredits(seconds, resolution) {
+  if (!(Number(resolution) >= 2160) || FOURK_CREDITS_PER_MIN <= 0) return 0;
+  const s = Math.max(0, Number(seconds) || 0);
+  return Math.max(1, Math.ceil((s * FOURK_CREDITS_PER_MIN) / 60 - 1e-9));
+}
+
+/**
+ * Old credits to new, once per wallet (creditsService.js getWallet).
+ *
+ * Before 2026-10-03 a credit was worth far less: ₹199 bought 250, where it now
+ * buys 60. Balances are carried over at the same rupee value, 60/250 = 0.24,
+ * rounded UP so nobody ends a credit short of what they paid for.
+ */
+export const OLD_CREDIT_VALUE = 0.24;
+
+/**
+ * The packs. `credits` is what lands in the wallet; `inr` is what an Indian
+ * buyer pays (UPI, cards, netbanking) and `usd` what everyone else pays (cards).
+ * Flat: every pack is $2 / ₹199 a minute, so a bigger pack is fewer checkouts,
+ * not a discount that makes the small one look like a bad deal.
  */
 export const PACKS = [
-  { id: "starter", inr: 199, credits: 250,  label: "Starter" },
-  { id: "creator", inr: 499, credits: 700,  label: "Creator", popular: true },
-  { id: "studio",  inr: 999, credits: 1600, label: "Studio"  },
+  { id: "starter", credits: 60,  inr: 199,  usd: 2,  label: "Starter" },
+  { id: "creator", credits: 300, inr: 999,  usd: 10, label: "Creator", popular: true },
+  { id: "studio",  credits: 900, inr: 2999, usd: 30, label: "Studio"  },
 ];
+
+/** What a pack costs in a currency, in whole units (rupees or dollars). */
+export function packPrice(pack, currency) {
+  return currency === "INR" ? pack.inr : pack.usd;
+}
 
 export function getPack(id) {
   return PACKS.find((p) => p.id === String(id || "")) || null;
@@ -413,4 +472,6 @@ export default {
   LOOKUP_CREDITS, readCost,
   VOICE_FREE_BUILDS, VOICE_CREDITS_PER_VIDEO, voiceAnalysisCost,
   getPack, clampSeconds, quote, wordTarget,
+  CREDITS_PER_MINUTE, FOURK_CREDITS_PER_MIN, videoCredits, exportExtraCredits, OLD_CREDIT_VALUE, packPrice,
+  TRIAL_SECONDS,
 };

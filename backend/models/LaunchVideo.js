@@ -29,6 +29,9 @@ const VersionSchema = new Schema(
     scenes: { type: Number, default: 0 },
     voiced: { type: Boolean, default: true },
     request: { type: String, default: "" },
+    // The same cut with the Clipo watermark burned in (services/launch/
+    // watermark.js): what plays while the demo is a free one not yet paid for.
+    preview_key: { type: String, default: "" },
     created_at: { type: Date, default: Date.now },
   },
   { _id: false }
@@ -41,6 +44,8 @@ const ChatSchema = new Schema(
     kind: { type: String, default: "" }, // "create" | "refine" for a user request
     v: { type: Number, default: 0 },     // the version a reply delivered
     failed: { type: Boolean, default: false },
+    // Credits a change took (routes/launch.js): given back, and zeroed, if it fails.
+    charged: { type: Number, default: 0 },
     at: { type: Date, default: Date.now },
   },
   { _id: false }
@@ -73,6 +78,15 @@ const LaunchVideoSchema = new Schema({
   thumb_key: { type: String, default: "" },
   work_key: { type: String, default: "" },
   work_files: { type: [String], default: [] },
+
+  /**
+   * Whether this demo is paid for (routes/launch.js): { paid, trial, credits,
+   * paid_at }. Generating costs DEMO_CREDITS, taken when it is asked for. A
+   * first-time creator's one free demo is `trial`: it plays with the watermark
+   * and its clean file is paid for when it is downloaded. Absent on demos made
+   * during the free beta, which count as paid.
+   */
+  billing: { type: Schema.Types.Mixed, default: undefined },
 
   created_at: { type: Date, default: Date.now, index: true },
   updated_at: { type: Date, default: Date.now },

@@ -42,6 +42,7 @@ import { startEditRunner } from "./services/edit/editRunner.js";
 import { startStudioRunner } from "./services/studio/studioRunner.js";
 import { startLaunchRunner } from "./services/launch/launchRunner.js";
 import { describeProvider, describeModels, providerReady, limits } from "./services/ai/provider.js";
+import { refreshKeys as refreshAistudioKeys } from "./services/ai/aistudioPool.js";
 import redis, { isRedisEnabled } from "./redis.js";
 import { scratchRoot, scratchFree, isTmpfs } from "./services/media/scratch.js";
 
@@ -89,6 +90,9 @@ async function checkRedis() {
   try {
     await connectToMongo();
     await checkRedis();
+    // The AI Studio keys in the database, read now rather than on first use.
+    const aiKeys = await refreshAistudioKeys().catch(() => []);
+    if (aiKeys.length) console.log(`[worker] AI Studio keys: ${aiKeys.length} from the aistudio_keys collection (the environment's AISTUDIO_KEY is not used while it has any)`);
 
     console.log(`[worker] ${WHO} — model provider: ${describeProvider()}`);
     console.log(`[worker] model: ${describeModels()}`);

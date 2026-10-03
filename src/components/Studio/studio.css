@@ -529,6 +529,24 @@
   animation: st-drawer-in var(--dur-drawer) var(--ease-drawer) both;
 }
 .st-drawer.is-leaving { animation: st-drawer-out 240ms var(--ease-drawer) both; pointer-events: none; }
+/* The export: the editor's right side at full height, not just the inspector.
+   No backdrop, so the preview stays in view and playable beside it. */
+.st-drawer.is-page {
+  position: fixed; inset: 0 0 0 auto; z-index: 70;
+  width: clamp(420px, 38vw, 760px); max-width: 100vw;
+  box-shadow: -32px 0 64px -36px rgba(15, 15, 15, .45);
+}
+@media (max-width: 720px) {
+  .st-drawer.is-page { width: 100vw; border-left: none; }
+}
+.st-export-short {
+  display: grid; gap: 10px; padding: 12px 14px 14px;
+  border-bottom: 1px solid var(--line); background: #FFF7E8;
+}
+.st-export-short strong { font-size: 13px; font-weight: 700; color: var(--ink); }
+.st-export-short p { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--ink-body); }
+.st-export-go { display: grid; gap: 8px; padding: 12px 16px 14px; }
+.st-export-note { font-size: 12px; color: var(--ink-mute); line-height: 1.5; }
 @keyframes st-drawer-in { from { transform: translateX(100%); } }
 @keyframes st-drawer-out { to { transform: translateX(100%); } }
 .st-drawer-head {
@@ -758,6 +776,8 @@
 .st-choice-head { margin: 26px 0 18px; }
 .st-choice-head h1 { margin: 0; font-size: 26px; font-weight: 740; letter-spacing: -0.035em; color: var(--ink); }
 .st-choice-head p { margin: 6px 0 0; font-size: 14px; line-height: 1.6; color: var(--ink-mute); }
+/* Why the recording stopped, when the length limit stopped it (RecordPage.js). */
+.st-choice-head p.st-choice-note { display: inline-block; margin-top: 10px; padding: 6px 11px; border-radius: 9px; background: #FFF7E8; border: 1px solid #F1D6A8; color: var(--ink-body); font-size: 13px; }
 
 .st-choice-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; align-items: start; }
 .st-choice-grid.is-locked { pointer-events: none; }
@@ -881,3 +901,9 @@
 .st-mup-wait { animation: st-mup-wait 1.2s ease-in-out infinite; }
 @keyframes st-mup-wait { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .st-mup-wait { animation: none; } }
+
+/* A caption line the voice-over does not say yet (Timeline.js, VoiceSync.js). */
+.st-chip-flag {
+  flex: 0 0 auto; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%;
+  background: #E8A33A; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85); pointer-events: none;
+}

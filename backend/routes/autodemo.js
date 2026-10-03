@@ -17,6 +17,8 @@ import StudioDemo from "../models/StudioDemo.js";
 import authenticateToken from "../middleware/authenticateToken.js";
 import { isDemoSlug, ensureDemoSlug } from "../services/studio/demoSlug.js";
 import { requestAutodemo, undoAutodemo, shapeAutodemo, cleanBrief, BRIEF_MIN } from "../services/studio/autodemo/job.js";
+import { payIfOwed, owedWhat } from "../services/studio/videoBilling.js";
+import { InsufficientCredits } from "../services/creditsService.js";
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -52,6 +54,16 @@ router.post("/:id", wrap(async (req, res) => {
   const brief = cleanBrief(req.body?.brief);
   if (brief.length < BRIEF_MIN) {
     return fail(res, 400, "Describe what this demo should show in a few words, e.g. who it's for and what they should learn.");
+  }
+  // The video is paid for here if it is not yet (videoBilling.js): a product
+  // demo is Clipo starting on it. Nothing for a first-time creator's free video.
+  try {
+    await payIfOwed(req.user.id, demo, { via: "demo" });
+  } catch (err) {
+    if (!(err instanceof InsufficientCredits)) throw err;
+    return fail(res, 402, `${owedWhat(demo)} needs ${err.needed} credits and you have ${err.balance}.`, {
+      insufficient_credits: true, needed: err.needed, balance: err.balance,
+    });
   }
   const autodemo = await requestAutodemo(demo, { brief, voice: String(req.body?.voice || ""), user: req.user.id });
   res.json({ success: true, autodemo });

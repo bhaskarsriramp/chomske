@@ -38,6 +38,7 @@ import User from "./models/User.js";
 import { warmApidirectKeys } from "./services/apidirectClient.js";
 import { initSocketServer } from "./socket/index.js";
 import { describeProvider, describeModels, providerReady, limits } from "./services/ai/provider.js";
+import { refreshKeys as refreshAistudioKeys } from "./services/ai/aistudioPool.js";
 
 // A query that loses the database mid-flight must not take the API down with it. See db.js.
 keepRunningThroughDbDropouts("server");
@@ -252,9 +253,8 @@ function assertConfig() {
    * line says something other than what was intended, nothing below it will
    * work and the reason is on the first screen of the boot output.
    */
-  if (!providerReady()) {
-    throw new Error("GEMINI_PROVIDER is \"aistudio\" but no key is set (AISTUDIO_KEY or GEMINI_API_KEY).");
-  }
+  // AI Studio's keys are read from the database once it is connected (below),
+  // so a missing key is said there, not refused here.
   const l = limits();
   console.log(
     `[server] model provider: ${describeProvider()} — ` +
@@ -275,6 +275,11 @@ function assertConfig() {
   try {
     assertConfig();
     await connectToMongo();
+    // The AI Studio keys in the database, read now rather than on first use.
+    const aiKeys = await refreshAistudioKeys().catch(() => []);
+    if (aiKeys.length) console.log(`[server] AI Studio keys: ${aiKeys.length} from the aistudio_keys collection (the environment's AISTUDIO_KEY is not used while it has any)`);
+    else if (!providerReady()) console.error("[server] NO AI Studio key: add one to the aistudio_keys collection; every model call will fail until then");
+    else console.warn("[server] the aistudio_keys collection has no active key; using the environment's AISTUDIO_KEY");
 
     // ── Drop the old one-voice-per-user unique index ────────────────────────
     // voice_profiles used to carry `unique: true` on `user`. Removing it from

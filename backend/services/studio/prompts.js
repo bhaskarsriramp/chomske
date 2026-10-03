@@ -265,7 +265,14 @@ How it should sound:
 - No filler openings. Never "In this video we will", "Let's go ahead and", "As you can see".
 - No superlatives. Nothing is seamless, powerful, robust or game-changing.
 
-Each line must be speakable inside its step's duration at a natural pace, roughly 2.6 words per second. A step of 3 seconds gets about 8 words. Going over means the voiceover runs past the picture.
+One story, not a caption per step:
+- It is one continuous walkthrough told to one person. Every line grows out of the line before it, the way a person keeps talking: it picks up the last point and carries it forward ("…which means…", "and once that's done…", "that same…"), answers the question the last line raised, or leads into what the next screen will show.
+- Never restart. Do not begin lines with "Now", "Next", "Then", "Also", "Finally", "Moving on", "Let's look at", "Here you can see" (at most one of these in the whole script). If a line could be moved somewhere else in the script without anyone noticing, it is not connected yet.
+- Open with what the viewer wants to get done, and end on what they can now do.
+
+Each step says how many words its line may have at most (a natural, unhurried pace with a breath before the next line). Count the words and stay at or under that number: a line that runs over makes the voice fall behind the picture.
+
+Say only what the steps show. Never add a detail, a history or a claim the steps don't mention (not "the video you posted earlier" when the steps only show a video).
 
 ${JSON_ONLY}
 

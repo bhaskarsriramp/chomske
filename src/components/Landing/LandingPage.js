@@ -205,7 +205,7 @@ function Hero({ onCredential, onError, busy, error }) {
             <GoogleLogin onSuccess={onCredential} onError={onError} text="continue_with" shape="pill" size="large" width="248" />
           </div>
         </div>
-        <p className="lp-start__note">100 free credits · No card · Works on all browsers.</p>
+        <p className="lp-start__note">Try it free · No credit card required · Works on all browsers.</p>
         {error && (
           <p className="lp-error" role="alert">
             {error}
@@ -443,18 +443,21 @@ function Privacy() {
    ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * backend/services/creditPricing.js SIGNUP_FREE_CREDITS, and the smallest of
- * its PACKS. Change them there and here together.
+ * backend/services/creditPricing.js TRIAL_SECONDS (the free first video) and
+ * the price of a minute of video in its PACKS ($2, ₹199 in India, since
+ * 2026-10-03). Change them there and here together. There are no free credits
+ * any more: a new account tries Clipo by making its first video free and pays
+ * only to export it (backend services/studio/videoBilling.js).
  *
  * ── ONE CARD, ON PURPOSE ─────────────────────────────────────────────────────
  * The packs used to sit here as three priced cards beside the free one, and
  * three prices in a row read as monthly tiers at a glance: the one thing this
  * pricing is not. So the page offers what a visitor needs to start, the free
- * credits, and says in a sentence that more are a one-time top-up. The packs
+ * first video, and says in a sentence what a video costs after it. The packs
  * and their prices are in the app, where they are bought, and in the FAQ.
  */
-const FREE_CREDITS = 100;
-const SMALLEST_PACK_INR = 199;
+const FREE_SECONDS = 60;
+const PER_MINUTE = { usd: 2, inr: 199 };
 
 function Pricing({ busy }) {
   return (
@@ -462,29 +465,28 @@ function Pricing({ busy }) {
       <div className="lp-in">
         <Head
           eyebrow="Pricing"
-          title="Start free. Pay only for what you record."
-          sub="No subscription and nothing recurring. Analysing and exporting are charged by the minute, and the exact cost is on the button before you press it."
+          title="Try it free. Pay only for what you export."
+          sub={`No subscription and nothing recurring. $${PER_MINUTE.usd} a minute of video (₹${PER_MINUTE.inr} in India), with captions, voice, blur, music and HD exports included. The exact cost is on the button before you press it.`}
         />
         <div className="lp-free">
           <div className="lp-free__lead">
-            <span className="lp-free__name">Free to start</span>
+            <span className="lp-free__name">Try it free</span>
             <span className="lp-free__num">
-              {FREE_CREDITS}
-              <em>credits</em>
+              1<em>video</em>
             </span>
-            <span className="lp-free__per">on the house, for every new account</span>
+            <span className="lp-free__per">your first, up to {FREE_SECONDS} seconds</span>
           </div>
           <div className="lp-free__body">
             <ul>
               <li>Every feature included</li>
-              <li>Record, edit and export</li>
-              <li>No card needed</li>
+              <li>Record, edit and preview it free</li>
+              <li>No credit card required</li>
             </ul>
             <StartButton busy={busy}>Start free</StartButton>
           </div>
         </div>
         <p className="lp-pricing__note">
-          Need more later? Top up with a one-time credit pack inside the app. No subscription, and credits never expire.
+          Exporting it, and every video after, is ${PER_MINUTE.usd} a minute (₹{PER_MINUTE.inr} in India) with one-time credit packs. No subscription, and credits never expire.
         </p>
       </div>
     </section>
@@ -530,7 +532,7 @@ const FAQ = [
   ],
   [
     "What does it cost?",
-    `New accounts get ${FREE_CREDITS} free credits. After that, one-time credit packs start at ₹${SMALLEST_PACK_INR} and never expire. Analysing and exporting are charged by the minute of video, and the price is shown before you press anything.`,
+    `A video costs $${PER_MINUTE.usd} a minute (₹${PER_MINUTE.inr} in India), whether Clipo edits it or turns it into a product demo. Captions, voice, blur, music and exports up to 1440p are included; only a 4K export costs a little extra. Your first video, up to ${FREE_SECONDS} seconds, is free to make and preview; you pay only when you export it. Credit packs are one-time and never expire.`,
   ],
   [
     "What can I export?",

@@ -41,6 +41,7 @@ import { listLaunch, deleteLaunch, isGenKey, GEN } from "./launchApi";
 import StudioEditor, { rememberAutoEdit } from "./StudioEditor";
 import Skeleton from "../Shell/Skeleton";
 import { Btn, Icon, Badge, Empty } from "./ui";
+import { useCredits } from "../../state/CreditsContext";
 import { fmtTime } from "./model";
 import "./studio.css";
 
@@ -60,6 +61,16 @@ export default function StudioPage() {
   // Generated demos (LaunchPage.js), and whether this server can make them.
   const [generated, setGenerated] = useState(null);
   const [notice, setNotice] = useState("");
+  // The notice is "this video needs N credits": it carries the way to buy them.
+  const [needsCredits, setNeedsCredits] = useState(false);
+  const { canBuy, openBuy, trial, refresh: refreshCredits } = useCredits();
+  // This recording will be a first-time creator's free video: it stops at the
+  // free length (backend videoBilling.js TRIAL_SECONDS), not the usual limit.
+  const freeVideo = !!trial?.available;
+  const maxRecording = config?.limits?.max_recording_seconds;
+  const recordLimit = freeVideo
+    ? Math.min(trial.seconds || config?.limits?.trial_seconds || 60, maxRecording || Infinity)
+    : maxRecording;
 
   const refresh = useCallback(async () => {
     const [d, g] = await Promise.all([listDemos().catch(() => []), listLaunch().catch(() => null)]);
@@ -137,6 +148,7 @@ export default function StudioPage() {
       } catch (err) {
         const d = err?.response?.data;
         setNotice(d?.message || "We couldn't start the edit.");
+        setNeedsCredits(!!d?.insufficient_credits);
       }
       refresh();
     },
@@ -149,9 +161,11 @@ export default function StudioPage() {
     (key, opts) => {
       if (opts?.autoAnalyse) rememberAutoEdit(key, { captions: !!opts.captions });
       refresh();
+      // The free video has just been given to this recording, if it was one.
+      refreshCredits();
       openEditor(key);
     },
-    [openEditor, refresh]
+    [openEditor, refresh, refreshCredits]
   );
 
   // "New recording": the tab picker opens from the click, and the recorder
@@ -162,6 +176,7 @@ export default function StudioPage() {
   const recordFailed = useCallback((message) => {
     setView({ name: "library" });
     setNotice(message);
+    setNeedsCredits(false);
   }, []);
 
   // The editor is full-bleed: its own header, stage, inspector and ruler each
@@ -183,7 +198,20 @@ export default function StudioPage() {
           }}
         >
           <span style={{ flex: 1 }}>{notice}</span>
-          <button type="button" onClick={() => setNotice("")} aria-label="Dismiss" style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer" }}>
+          {needsCredits && canBuy && (
+            <Btn size="xs" kind="primary" onClick={openBuy}>
+              Buy credits
+            </Btn>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setNotice("");
+              setNeedsCredits(false);
+            }}
+            aria-label="Dismiss"
+            style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer" }}
+          >
             <Icon name="close" size={13} />
           </button>
         </div>
@@ -225,7 +253,14 @@ export default function StudioPage() {
             onAnalyse={(demo, opts) => analyse(demo.slug || demo.id, opts)}
           />
         ) : view.name === "record" ? (
-          <RecordPage capture={view.cap} prefs={view.prefs} onOpen={opened} onFail={recordFailed} />
+          <RecordPage
+            capture={view.cap}
+            prefs={view.prefs}
+            onOpen={opened}
+            onFail={recordFailed}
+            maxSeconds={recordLimit}
+            freeVideo={freeVideo}
+          />
         ) : view.name === "generate" ? (
           <LaunchNew onCreated={openGenerated} onCancel={() => setView({ name: "library" })} />
         ) : (

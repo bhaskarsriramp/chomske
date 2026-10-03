@@ -781,7 +781,14 @@ export async function writeNarration({ steps, summary, product, duration, spend 
     `The demo: ${summary || "a product demo"}${product ? ` (product: ${product})` : ""}.\n` +
     `The recording is ${duration.toFixed(1)} seconds long.\n\n` +
     `STEPS:\n` +
-    steps.map((s) => `${s.start.toFixed(2)}–${s.end.toFixed(2)}s (${(s.end - s.start).toFixed(1)}s) ${s.title}: ${s.detail}`).join("\n");
+    steps
+      .map((s) => {
+        // Its own word budget: a model keeps to a number given per item far
+        // better than to a rate. 2.6 words a second, less a 0.7 s breath.
+        const most = Math.max(3, Math.floor((s.end - s.start - 0.7) * 2.6));
+        return `${s.start.toFixed(2)}–${s.end.toFixed(2)}s (${(s.end - s.start).toFixed(1)}s, at most ${most} words) ${s.title}: ${s.detail}`;
+      })
+      .join("\n");
 
   const json = await ask({ model: TEXT_MODEL, parts: [{ text }], spend, label: "writeNarration", maxOutputTokens: 4096 });
   if (!json) return [];

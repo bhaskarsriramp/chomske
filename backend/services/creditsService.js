@@ -22,7 +22,7 @@
 import mongoose from "mongoose";
 import CreditWallet from "../models/CreditWallet.js";
 import CreditLedger from "../models/CreditLedger.js";
-import { SIGNUP_FREE_CREDITS } from "./creditPricing.js";
+import { SIGNUP_FREE_CREDITS, OLD_CREDIT_VALUE } from "./creditPricing.js";
 
 export class InsufficientCredits extends Error {
   constructor(needed, balance) {
@@ -45,8 +45,9 @@ export class InsufficientCredits extends Error {
  */
 export async function getWallet(userId) {
   const now = new Date();
+  let wallet;
   try {
-    return await CreditWallet.findOneAndUpdate(
+    wallet = await CreditWallet.findOneAndUpdate(
       { user: userId },
       {
         $setOnInsert: {
@@ -55,6 +56,8 @@ export async function getWallet(userId) {
           lifetime_purchased: 0,
           lifetime_spent: 0,
           signup_granted_at: now,
+          // Born in today's credits: nothing to convert.
+          credits_v2_at: now,
           created_at: now,
           updated_at: now,
         },
@@ -64,9 +67,55 @@ export async function getWallet(userId) {
   } catch (err) {
     // 11000 = the other request created it a microsecond earlier. Theirs is as
     // good as ours; read it back.
-    if (err?.code === 11000) return CreditWallet.findOne({ user: userId });
-    throw err;
+    if (err?.code !== 11000) throw err;
+    wallet = await CreditWallet.findOne({ user: userId });
   }
+  return wallet && !wallet.credits_v2_at ? convertOldCredits(wallet) : wallet;
+}
+
+/**
+ * A wallet from before 2026-10-03, carried over to today's credits once.
+ *
+ * ── WHY HERE, AND NOT A SCRIPT RUN AT DEPLOY ─────────────────────────────────
+ * Every spend, grant and balance read comes through getWallet first, so a
+ * wallet is converted before anything else can happen to it, whenever its
+ * owner next turns up, with nothing to remember to run and no window where a
+ * purchase in new credits lands in a balance about to be scaled down.
+ *
+ * ── ONCE, EVEN WITH TWO REQUESTS AT THE SAME MOMENT ──────────────────────────
+ * The write matches `credits_v2_at: null` AND the balance just read. A second
+ * request racing this one matches nothing, re-reads, finds it converted and
+ * returns that. A balance that moved in between (a refund from an old job)
+ * fails the match too and is simply converted from its new value.
+ *
+ * Same value, rounded up: see OLD_CREDIT_VALUE in creditPricing.js.
+ */
+async function convertOldCredits(wallet) {
+  for (let attempt = 0; attempt < 5 && wallet && !wallet.credits_v2_at; attempt++) {
+    const old = Math.max(0, Number(wallet.balance) || 0);
+    const next = Math.ceil(old * OLD_CREDIT_VALUE - 1e-9);
+    const now = new Date();
+    const done = await CreditWallet.findOneAndUpdate(
+      { _id: wallet._id, credits_v2_at: null, balance: old },
+      { $set: { balance: next, credits_v2_at: now, updated_at: now } },
+      { new: true }
+    );
+    if (done) {
+      if (next !== old) {
+        await CreditLedger.create({
+          user: wallet.user,
+          delta: next - old,
+          reason: "adjustment",
+          balance_after: next,
+          note: `Credits converted to the new value (1 credit = 1 second of video): ${old} → ${next}`,
+        }).catch((err) => console.error("[credits] ledger write failed (conversion):", err.message));
+      }
+      console.log(`[credits] converted wallet user=${wallet.user}: ${old} → ${next}`);
+      return done;
+    }
+    wallet = await CreditWallet.findById(wallet._id);
+  }
+  return wallet;
 }
 
 /** Balance only, the number the header shows on every page load. */
@@ -179,7 +228,8 @@ export async function openWallet(userId, amount, { reason = "adjustment", refTyp
   const credits = Math.max(0, Math.ceil(Number(amount) || 0));
   const now = new Date();
 
-  const existing = await CreditWallet.findOne({ user: userId });
+  const found = await CreditWallet.findOne({ user: userId });
+  const existing = found && !found.credits_v2_at ? await convertOldCredits(found) : found;
   if (existing) return { balance: existing.balance, opened: false };
 
   let wallet;
@@ -192,6 +242,7 @@ export async function openWallet(userId, amount, { reason = "adjustment", refTyp
       // Stamped so getWallet's upsert treats this as an existing wallet and
       // never tops it up with the signup grant on the first read.
       signup_granted_at: now,
+      credits_v2_at: now,
       created_at: now,
       updated_at: now,
     });

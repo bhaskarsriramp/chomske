@@ -28,9 +28,11 @@ if (fs.existsSync(file)) {
  */
 let tinyfishPool = [];
 let tfTurn = 0;
-export function setKeys({ tinyfish } = {}) {
+export function setKeys({ tinyfish, aistudio } = {}) {
   const list = (Array.isArray(tinyfish) ? tinyfish : String(tinyfish || "").split(",")).map((k) => String(k).trim()).filter(Boolean);
   if (list.length) tinyfishPool = list;
+  const ai = (Array.isArray(aistudio) ? aistudio : String(aistudio || "").split(",")).map((k) => String(k).trim()).filter(Boolean);
+  if (ai.length) aistudioPool = ai;
 }
 export function tinyfishKey() {
   const pool = tinyfishPool.length ? tinyfishPool : String(process.env.TINYFISH_API_KEY || "").split(",").map((k) => k.trim()).filter(Boolean);
@@ -38,13 +40,21 @@ export function tinyfishKey() {
 }
 export const tinyfishCount = () => (tinyfishPool.length || String(process.env.TINYFISH_API_KEY || "").split(",").filter((k) => k.trim()).length);
 
-/** AI Studio keys, comma-separated like the backend's AISTUDIO_KEY, taken in turn. */
+/**
+ * AI Studio keys, taken in turn, so a retry after a refusal goes out on the
+ * next key. The app's worker hands over its pool (setKeys: the aistudio_keys
+ * collection, then its environment); a terminal uses AISTUDIO_KEY,
+ * comma-separated for more than one.
+ */
+let aistudioPool = [];
 let turn = 0;
 export function aiKey() {
-  const keys = String(process.env.AISTUDIO_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "")
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean);
+  const keys = aistudioPool.length
+    ? aistudioPool
+    : String(process.env.AISTUDIO_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "")
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean);
   return keys.length ? keys[turn++ % keys.length] : "";
 }
 

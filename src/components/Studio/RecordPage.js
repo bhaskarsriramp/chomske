@@ -33,6 +33,20 @@ import EditChoice from "./EditChoice";
 import { requestAutoDemo } from "./autoDemoApi";
 import "./studio.css";
 
+/**
+ * ── THREE MINUTES AT MOST ────────────────────────────────────────────────────
+ * The longest recording (the creator's decision, 2026-10-03): the recorder
+ * stops by itself when it is reached, whether or not Stop is pressed, and
+ * counts down the last LAST_WARN seconds. The server says the limit
+ * (config limits.max_recording_seconds, backend demoService.js); this is
+ * the number used until it has. Stopped a little before it, so a recording
+ * never runs past it on a busy machine (a background tab's timers fire about
+ * once a second).
+ */
+export const MAX_RECORDING_SECONDS = 180;
+const LAST_WARN = 30;
+const STOP_EARLY = 0.4;
+
 const clock = (s) => {
   const t = Math.max(0, Math.floor(s));
   const m = Math.floor(t / 60);
@@ -45,7 +59,13 @@ const clock = (s) => {
  * `onOpen(key, { autoAnalyse, captions })` once saved; `onFail(message)` if
  * nothing could be saved, which returns to the library.
  */
-export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
+/**
+ * `freeVideo`: this is a first-time creator's free video (backend
+ * videoBilling.js), so `maxSeconds` is the free length and the choice after it
+ * asks for no credits.
+ */
+export default function RecordPage({ capture: cap, prefs, onOpen, onFail, maxSeconds = MAX_RECORDING_SECONDS, freeVideo = false }) {
+  const limit = maxSeconds > 0 ? maxSeconds : MAX_RECORDING_SECONDS;
   const [phase, setPhase] = useState("recording");
   const [notice, setNotice] = useState("");
 
@@ -56,6 +76,8 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
   const [sent, setSent] = useState(0);
   const [waiting, setWaiting] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Stopped by the limit rather than by the creator: said on the next screen.
+  const [hitLimit, setHitLimit] = useState(false);
 
   const capture = useRef(cap);
   const recorder = useRef(null);
@@ -103,11 +125,17 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
     if (phase !== "recording") return undefined;
     const buf = new Uint8Array(512);
     const id = setInterval(() => {
-      setElapsed(recorder.current?.seconds || 0);
+      const seconds = recorder.current?.seconds || 0;
+      setElapsed(seconds);
       setLevel(levelOf(capture.current?.analyser, buf));
+      // The limit: stopped and saved like a press of Stop.
+      if (seconds >= limit - STOP_EARLY && !stopping.current) {
+        setHitLimit(true);
+        finishRef.current?.();
+      }
     }, 200);
     return () => clearInterval(id);
-  }, [phase]);
+  }, [phase, limit]);
 
   // A recording in progress must not be lost to a stray navigation.
   useEffect(() => {
@@ -147,6 +175,9 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
   const finish = useCallback(async () => {
     if (stopping.current) return;
     stopping.current = true;
+    // The length as it stands at Stop: the recorder's clock keeps counting
+    // after it, and this is what the next screen prices the video by.
+    setElapsed(recorder.current?.seconds || 0);
     setSaved(false);
     choice.current = new Promise((resolve) => {
       answer.current = resolve;
@@ -270,9 +301,10 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
   if (phase === "recording") {
     return (
       <>
-        <RecordingStage elapsed={elapsed} label={capture.current?.label} notice={notice} />
+        <RecordingStage elapsed={elapsed} limit={limit} label={capture.current?.label} notice={notice} />
         <FloatingControls
           elapsed={elapsed}
+          limit={limit}
           paused={paused}
           muted={muted}
           level={level}
@@ -288,9 +320,18 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
   if (phase === "sending") {
     return (
       <EditChoice
+        note={
+          hitLimit
+            ? freeVideo
+              ? `Your free video can be up to ${Math.round(limit)} seconds, so it stopped there.`
+              : `Recordings can be up to ${clock(limit)}, so this one stopped there.`
+            : ""
+        }
         sent={sent}
         waiting={waiting}
         saved={saved}
+        seconds={elapsed}
+        freeVideo={freeVideo}
         hasMic={!!capture.current?.hasMic}
         onChoose={(c) => answer.current?.(c)}
       />
@@ -311,7 +352,8 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
  * are demonstrating — and the one job it has is to be unmistakable if they do
  * glance back at it.
  */
-function RecordingStage({ elapsed, label, notice }) {
+function RecordingStage({ elapsed, limit, label, notice }) {
+  const left = Math.max(0, limit - elapsed);
   return (
     <div style={{ display: "grid", placeItems: "center", minHeight: "58vh", textAlign: "center", padding: 20 }}>
       <div>
@@ -323,6 +365,11 @@ function RecordingStage({ elapsed, label, notice }) {
         </div>
         <div style={{ fontSize: 58, fontWeight: 300, letterSpacing: "-0.04em", color: "var(--ink)", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
           {clock(elapsed)}
+        </div>
+        <div
+          style={{ marginTop: 10, fontSize: 13, fontWeight: left <= LAST_WARN ? 650 : 500, color: left <= LAST_WARN ? "var(--bad)" : "var(--ink-mute)", fontVariantNumeric: "tabular-nums" }}
+        >
+          {left <= LAST_WARN ? `Stops by itself in ${clock(left)}` : `of ${clock(limit)}`}
         </div>
         {label && (
           <div style={{ marginTop: 14, fontSize: 13, color: "var(--ink-mute)", maxWidth: 380, marginInline: "auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -417,16 +464,22 @@ function FloatingControls(props) {
   return pipBody ? createPortal(pill, pipBody) : pill;
 }
 
-function ControlPill({ elapsed, paused, muted, level, hasMic, onPause, onMute, onStop, floating }) {
+function ControlPill({ elapsed, limit, paused, muted, level, hasMic, onPause, onMute, onStop, floating }) {
   const bars = [0, 1, 2, 3];
+  // The last seconds before the limit: counted down, in red.
+  const left = Math.max(0, limit - elapsed);
+  const ending = left <= LAST_WARN;
   return (
     <div
       className="st-overlay"
       style={floating ? undefined : { position: "static", transform: "none", margin: "0 auto", width: "fit-content", animation: "none" }}
     >
       <span className="st-dot" style={{ margin: "0 7px 0 5px", opacity: paused ? 0.3 : 1 }} />
-      <span style={{ minWidth: 46, fontSize: 14, fontWeight: 650, color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
-        {clock(elapsed)}
+      <span
+        title={`Recordings stop by themselves at ${clock(limit)}`}
+        style={{ minWidth: 46, fontSize: 14, fontWeight: 650, color: ending ? "#FF6B6B" : "var(--ink)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}
+      >
+        {ending ? `${clock(left)} left` : clock(elapsed)}
       </span>
 
       <span className="st-overlay-rule" />

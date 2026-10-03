@@ -31,6 +31,7 @@ import StudioJob from "../../models/StudioJob.js";
 import { materialize, putFile, removePrefix, removeObject, statObject } from "../media/storage.js";
 import { probe, makeVideoProxy, makeThumbnail, extractSpeechAudio, remuxRecording } from "../media/ffmpeg.js";
 import { refund } from "../creditsService.js";
+import { unpay } from "./videoBilling.js";
 import { transient } from "../edit/transient.js";
 import { analyseRecording, generateCaptions, visionPass, auditPass } from "./analyse.js";
 import { reviewEdit, newSpend } from "./vision.js";
@@ -310,11 +311,19 @@ const prepare = {
     await report({ stage: "Reading the recording", progress: 0.15 }, true);
     const mp4 = path.join(workDir, "recording.mp4");
     await remuxRecording(raw, mp4, { duration: first.duration });
-    const meta = await probe(mp4);
+    let meta = await probe(mp4);
 
     if (!(meta.duration > 0.5)) throw userError("That recording came out empty. Please try again.");
-    if (meta.duration > STUDIO_LIMITS.maxRecordingSeconds) {
-      throw userError(`That recording is ${Math.round(meta.duration / 60)} minutes long. The limit is ${Math.round(STUDIO_LIMITS.maxRecordingSeconds / 60)}.`);
+    // Past the limit (the recorder stops itself there, so this is a few
+    // tenths of a second, or a recorder that did not): cut to just under it
+    // rather than refused, so the creator keeps what they recorded. Just
+    // under, because the pointer locator reads only recordings up to the
+    // limit exactly (locate.js MAX_SECONDS).
+    const limit = STUDIO_LIMITS.maxRecordingSeconds;
+    if (meta.duration > limit) {
+      console.log(`[studio] ${demo._id}: recording is ${meta.duration.toFixed(1)}s; cut to the ${limit}s limit`);
+      await remuxRecording(raw, mp4, { duration: limit, maxSeconds: limit - 0.1 });
+      meta = await probe(mp4);
     }
 
     // ── The copies everything else reads ──────────────────────────────────
@@ -474,6 +483,8 @@ const analyse = {
       "analysis.status": "failed", "analysis.error": message,
     });
     await refundCharge(demo, demo.analysis?.charged, "analysis");
+    // What paid for the video went back with it: unpaid again (videoBilling.js).
+    if (demo.analysis?.charged > 0) await unpay(demo._id, { via: "analysis" }).catch(() => {});
     publishProgress(demo, { status: demo.timeline ? "ready" : "failed", error: message });
   },
 };
@@ -776,6 +787,7 @@ const vision = {
     if (!demo) return;
     await setDemo(demo._id, { stage: "", progress: 1, "analysis.status": "done" });
     await refundCharge(demo, demo.analysis?.read_charged, "the reading");
+    if (demo.analysis?.read_charged > 0) await unpay(demo._id, { via: "read" }).catch(() => {});
     publishProgress(demo, {
       stage: "", progress: 1, reading: false,
       // Not the demo's `error`: the edit is untouched and perfectly usable.
@@ -1270,6 +1282,7 @@ const render = {
     const message = err.userMessage || "That export failed. Your credits are back.";
     await setRender(demo._id, job.ref, { status: "failed", stage: "", error: message });
     await refundCharge(demo, entry?.charged, `export ${job.ref}`);
+    if (entry?.paid_video > 0) await unpay(demo._id, { via: "export", ref: job.ref }).catch(() => {});
     publishProgress(demo, { render: job.ref, status: "failed", error: message });
   },
 };
@@ -1479,7 +1492,7 @@ const voice = {
       return;
     }
     if (demo.voiceover?.key && demo.voiceover.key !== key) await removeObject(demo.voiceover.key).catch(() => {});
-    console.log(`[studio] voiceover ${demo._id}: ${name}, ${result.sentences.length} sentences, ${result.seconds}s`);
+    console.log(`[studio] voiceover ${demo._id}: ${name}, ${result.sentences.length} sentences (${result.fresh ?? "?"} spoken now), ${result.seconds}s`);
     publishProgress(demo, { voiceover: { sig, done: true } });
   },
 

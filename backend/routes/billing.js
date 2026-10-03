@@ -1,9 +1,12 @@
 /**
  * billing.js: buying credits.
  *
- * Razorpay, in INR, because the buyer is an Indian creator and INR is what
- * surfaces UPI. Card-only checkout in a market that runs on UPI is a checkout
- * most people abandon.
+ * Razorpay, in two currencies (2026-10-03). Inside India in INR, because INR is
+ * what surfaces UPI, and card-only checkout in a market that runs on UPI is a
+ * checkout most people abandon. Everywhere else in USD, on international cards
+ * (the Razorpay account needs International Payments switched on). Which one
+ * is decided on the server from where the request comes from (services/geo.js),
+ * the same way betaFounderProduction does it.
  *
  * ── THE FLOW, AND WHY IT IS TWO CALLS ───────────────────────────────────────
  *   POST /billing/order   we create a Razorpay order and record it as
@@ -33,7 +36,9 @@ import mongoose from "mongoose";
 import Razorpay from "razorpay";
 import CreditPayment from "../models/CreditPayment.js";
 import Source from "../models/Source.js";
-import { PACKS, getPack, DURATION_PRESETS, SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, PACKAGING_CREDITS, ENGLISH_TWIN_RATE, quote } from "../services/creditPricing.js";
+import { PACKS, getPack, packPrice, CREDITS_PER_MINUTE, FOURK_CREDITS_PER_MIN, DURATION_PRESETS, SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, PACKAGING_CREDITS, ENGLISH_TWIN_RATE, quote } from "../services/creditPricing.js";
+import { detectCountry, currencyFor } from "../services/geo.js";
+import { trialState, hasPurchased } from "../services/studio/videoBilling.js";
 import { getBalance, grant, history } from "../services/creditsService.js";
 import authenticateToken, { authenticateAny } from "../middleware/authenticateToken.js";
 
@@ -64,17 +69,36 @@ export function isBillingConfigured() {
  * customer sees is the one they hold you to.
  */
 router.get("/packs", authenticateToken, async (req, res) => {
+  // ₹ with UPI inside India, $ everywhere else (services/geo.js). The order
+  // route places the buyer again for itself; this is only what to show.
+  const country = detectCountry(req, req.query.country_hint);
+  const currency = currencyFor(country);
+  const perMinute = CREDITS_PER_MINUTE;
   return res.json({
     success: true,
     configured: isBillingConfigured(),
-    currency: "INR",
+    country,
+    currency,
+    // How each currency can be paid. A rupee order is what makes Razorpay
+    // offer UPI; a dollar one takes international cards.
+    methods: currency === "INR" ? ["upi", "card", "netbanking"] : ["card"],
     packs: PACKS.map((p) => ({
-      ...p,
-      // Shown as "≈ ₹21 per 60s script", which is the comparison a creator
-      // actually makes, against what they pay an editor, not per credit.
-      per_short_inr: +(p.inr / (p.credits / (60 / SECONDS_PER_CREDIT))).toFixed(1),
-      shorts: Math.floor(p.credits / (60 / SECONDS_PER_CREDIT)),
+      id: p.id,
+      label: p.label,
+      popular: !!p.popular,
+      credits: p.credits,
+      price: packPrice(p, currency),
+      currency,
+      // Shown as "5 minutes of video", the thing a credit actually buys.
+      minutes: +(p.credits / perMinute).toFixed(1),
+      inr: p.inr,
     })),
+    video: {
+      credits_per_minute: perMinute,
+      fourk_credits_per_min: FOURK_CREDITS_PER_MIN,
+      // A minute of video in this currency, from the smallest pack.
+      price_per_minute: +((packPrice(PACKS[0], currency) * perMinute) / PACKS[0].credits).toFixed(2),
+    },
     rules: {
       seconds_per_credit: SECONDS_PER_CREDIT,
       min_seconds: MIN_SECONDS,
@@ -90,11 +114,18 @@ router.get("/packs", authenticateToken, async (req, res) => {
 /** GET /billing/wallet, balance and recent movements. */
 router.get("/wallet", authenticateAny, async (req, res) => {
   try {
-    const [balance, rows] = await Promise.all([
+    const [balance, rows, trial, purchased] = await Promise.all([
       getBalance(req.user.id),
       history(req.user.id, 25),
+      // The free first video (services/studio/videoBilling.js): whether the
+      // next recording is it, or which recording it went to.
+      trialState(req.user.id).catch(() => null),
+      // Whether this account has ever bought credits: the sidebar shows a
+      // balance only to someone who has, so a first-time creator is never
+      // greeted with "0 credits" before they have tried anything.
+      hasPurchased(req.user.id).catch(() => false),
     ]);
-    return res.json({ success: true, balance, history: rows });
+    return res.json({ success: true, balance, history: rows, trial, purchased });
   } catch (err) {
     console.error("[billing] wallet failed:", err);
     return res.status(500).json({ success: false, message: "Couldn't read your credits." });
@@ -171,20 +202,44 @@ router.post("/order", authenticateToken, async (req, res) => {
     const pack = getPack(req.body?.pack_id);
     if (!pack) return res.status(400).json({ success: false, message: "Unknown pack." });
 
-    const order = await rz.orders.create({
-      // Razorpay counts in paise. A rupee figure sent here charges 1/100th of
-      // the intended amount, the classic way to give a product away.
-      amount: pack.inr * 100,
-      currency: "INR",
-      receipt: `lipi_${String(req.user.id).slice(-8)}_${Date.now().toString(36)}`,
-      notes: { userId: String(req.user.id), pack_id: pack.id, credits: String(pack.credits) },
-    });
+    // Placed here, on the server, from the request itself: never from a
+    // currency the browser names. See services/geo.js.
+    const country = detectCountry(req, req.body?.country_hint);
+    const currency = currencyFor(country);
+    const price = packPrice(pack, currency);
+
+    let order;
+    try {
+      order = await rz.orders.create({
+        // Razorpay counts in the smallest unit, paise or cents. A whole-rupee
+        // figure sent here charges 1/100th of the intended amount, the classic
+        // way to give a product away.
+        amount: Math.round(price * 100),
+        currency,
+        receipt: `lipi_${String(req.user.id).slice(-8)}_${Date.now().toString(36)}`,
+        notes: { userId: String(req.user.id), pack_id: pack.id, credits: String(pack.credits), country },
+      });
+    } catch (err) {
+      // A dollar order on an account without international payments switched
+      // on is refused here, by Razorpay; say so plainly rather than "try again".
+      const why = String(err?.error?.description || err?.message || "");
+      console.error(`[billing] Razorpay refused a ${currency} order (${country || "unknown country"}): ${why}`);
+      return res.status(502).json({
+        success: false,
+        message: currency === "USD"
+          ? "Card payments from your country aren't available just yet. Please try again later."
+          : "Couldn't start the payment. Please try again.",
+      });
+    }
 
     await CreditPayment.create({
       user: req.user.id,
       pack_id: pack.id,
       credits: pack.credits,
-      amount_inr: pack.inr,
+      currency,
+      amount: price,
+      amount_inr: currency === "INR" ? price : 0,
+      country,
       rzp_order_id: order.id,
       status: "initiated",
     });
@@ -192,10 +247,10 @@ router.post("/order", authenticateToken, async (req, res) => {
     return res.json({
       success: true,
       order_id: order.id,
-      amount: order.amount,        // paise, for the checkout widget
+      amount: order.amount,        // paise or cents, for the checkout widget
       currency: order.currency,
       key_id: RZP_KEY_ID,          // publishable; the secret never leaves the server
-      pack: { id: pack.id, label: pack.label, credits: pack.credits, inr: pack.inr },
+      pack: { id: pack.id, label: pack.label, credits: pack.credits, price, currency },
     });
   } catch (err) {
     console.error("[billing] order failed:", err);
@@ -273,14 +328,15 @@ router.post("/verify", authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, message: "We couldn't find that order." });
     }
 
+    const paid = claimed.currency === "USD" ? `$${claimed.amount}` : `₹${claimed.amount || claimed.amount_inr}`;
     const { balance } = await grant(req.user.id, claimed.credits, {
       reason: "purchase",
       refType: "CreditPayment",
       refId: claimed._id,
-      note: `${claimed.pack_id} pack · ₹${claimed.amount_inr}`,
+      note: `${claimed.pack_id} pack · ${paid}`,
     });
 
-    console.log(`[billing] +${claimed.credits} credits user=${req.user.id} pack=${claimed.pack_id} ₹${claimed.amount_inr}`);
+    console.log(`[billing] +${claimed.credits} credits user=${req.user.id} pack=${claimed.pack_id} ${paid}`);
     return res.json({ success: true, credits_added: claimed.credits, balance });
   } catch (err) {
     console.error("[billing] verify failed:", err);

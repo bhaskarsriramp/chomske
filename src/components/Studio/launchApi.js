@@ -19,6 +19,8 @@ export const createLaunch = (url, notes) => api.post("/studio/launch", { url, no
 export const getLaunch = (id) => api.get(`/studio/launch/${id}`).then(one);
 export const refineLaunch = (id, message) => api.post(`/studio/launch/${id}/refine`, { message }).then(one);
 export const retryLaunch = (id) => api.post(`/studio/launch/${id}/retry`).then(one);
+/** Pay for a free demo's clean file (routes/launch.js unlock). */
+export const unlockLaunch = (id) => api.post(`/studio/launch/${id}/unlock`).then(one);
 export const deleteLaunch = (id) => api.delete(`/studio/launch/${id}`).then((r) => r.data);
 export const launchDownload = (id, v) => api.get(`/studio/launch/${id}/download`, { params: { v } }).then((r) => abs(r.data.url));
 

@@ -40,6 +40,8 @@
  */
 import { GoogleGenAI } from "@google/genai";
 import redis from "../../redis.js";
+import { coolingFor, cool } from "./cooldown.js";
+import { aistudioKeys, keySource, nextKey, anotherFree, rest, used, keyRefusal, keyId, bucketOf } from "./aistudioPool.js";
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const int = (v, d) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d);
@@ -72,10 +74,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
  * IS the statement. GEMINI_PROVIDER still wins when it is set: "vertex" forces
  * the Cloud project whatever keys are lying around, "aistudio" insists on a key.
  */
+/**
+ * ── AND AI STUDIO WITHOUT A KEY IN THE ENVIRONMENT (2026-10-03) ─────────────
+ * The keys moved into the database (aistudio_keys, ai/aistudioPool.js), which
+ * is read after this line runs, so "is there a key in the environment" no
+ * longer says which Google this is: with the keys only in the collection it
+ * would have answered Vertex, which this project does not use (its API is not
+ * even enabled). AI Studio is the default; GEMINI_PROVIDER=vertex still moves
+ * a process to the Cloud project.
+ */
 export const PROVIDER = (() => {
   const said = String(process.env.GEMINI_PROVIDER || "").trim().toLowerCase();
   if (said === "vertex" || said === "aistudio") return said;
-  return aistudioKeys().length ? "aistudio" : "vertex";
+  return "aistudio";
 })();
 
 export const isVertex = () => PROVIDER === "vertex";
@@ -110,16 +121,15 @@ const PROJECT = String(
  * per-minute limit.
  */
 /**
- * AISTUDIO_KEY is this project's name for it; GEMINI_API_KEY and
- * GOOGLE_API_KEY are the names Google's own documentation and SDK use, and
- * a key set under either of those is the same key.
+ * Since 2026-10-03 they come from the aistudio_keys collection first and the
+ * environment's AISTUDIO_KEY (or GEMINI_API_KEY / GOOGLE_API_KEY) after
+ * (aistudioPool.js), and a key that is refused is rested while the next one
+ * goes on at once. Re-exported here for the callers that import it from this
+ * file. Which provider this process uses is decided at start from the
+ * ENVIRONMENT (below), so keep AISTUDIO_KEY set (or GEMINI_PROVIDER=aistudio)
+ * when the keys live in the collection.
  */
-export function aistudioKeys() {
-  return String(process.env.AISTUDIO_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "")
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean);
-}
+export { aistudioKeys };
 const KEYS = aistudioKeys;
 
 let _cursor = 0;
@@ -132,7 +142,7 @@ const _clients = new Map();
  * quota must share a bucket, and two that do not must not. On AI Studio that is
  * the key; on Vertex it is the region.
  */
-function pick() {
+async function pick() {
   if (isVertex()) {
     if (!REGIONS.length) throw new Error("VERTEX_LOCATION is empty");
     const location = REGIONS[_cursor++ % REGIONS.length];
@@ -158,12 +168,14 @@ function pick() {
     return { client: _clients.get(id), bucket: id, where: location };
   }
 
-  const keys = KEYS();
-  if (!keys.length) throw new Error("No AI Studio key: set AISTUDIO_KEY (or GEMINI_API_KEY)");
-  const key = keys[_cursor++ % keys.length];
-  const id = "aistudio:" + key.slice(-6);
+  // The next key that is not resting (aistudioPool.js); if every key rests,
+  // the one free soonest, and budget() below waits out its rest.
+  const next = await nextKey("text");
+  if (!next) throw new Error("No AI Studio key: add one to the aistudio_keys collection or set AISTUDIO_KEY");
+  const key = next.key;
+  const id = bucketOf(key, "text");
   if (!_clients.has(id)) _clients.set(id, new GoogleGenAI({ apiKey: key }));
-  return { client: _clients.get(id), bucket: id, where: id };
+  return { client: _clients.get(id), bucket: id, where: "aistudio:" + keyId(key), key };
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -234,7 +246,7 @@ export function describeModels() {
 export function describeProvider() {
   if (isVertex()) return "vertex (project " + (PROJECT || "from environment") + ", " + REGIONS.join(", ") + ")";
   const n = KEYS().length;
-  return "aistudio (" + n + " key" + (n === 1 ? "" : "s") + ")";
+  return "aistudio (" + n + " key" + (n === 1 ? "" : "s") + ", from the " + keySource() + ")";
 }
 
 /** Whether the process is configured well enough to make a call at all. */
@@ -289,7 +301,6 @@ const MAX_WAIT_MS = Math.max(1000, int(process.env.GEMINI_MAX_WAIT_MS, 20 * 60 *
 const DEFAULT_COOLDOWN_MS = Math.max(1000, int(process.env.GEMINI_COOLDOWN_MS, 30000));
 
 const RKEY = (bucket) => "hg:ai:bucket:" + bucket;
-const CKEY = (bucket) => "hg:ai:cool:" + bucket;
 
 /**
  * A token bucket, in Lua so the read, the refill and the take are one step.
@@ -328,41 +339,8 @@ function takeLocal(bucket, cap, perMs, now) {
   return wait;
 }
 
-const _cool = new Map();
-
-/** Milliseconds left on this bucket's cooldown, or 0. */
-async function coolingFor(bucket) {
-  const until = _cool.get(bucket) || 0;
-  const local = Math.max(0, until - Date.now());
-  if (!redis) return local;
-  try {
-    const ttl = await redis.pttl(CKEY(bucket));
-    return Math.max(local, ttl > 0 ? ttl : 0);
-  } catch {
-    return local;
-  }
-}
-
-/**
- * Put a bucket to sleep.
- *
- * ── ONE WORKER'S 429 IS EVERY WORKER'S 429 ──────────────────────────────────
- * The quota belongs to the project, not to the request that happened to hit it.
- * Without this, four concurrent workers each discover the closed window
- * separately, each burns its own attempts, and the retries land together and
- * close it again. Marking the bucket means the other three wait before they
- * ask, and through Redis it means the other processes do too.
- */
-async function cool(bucket, ms) {
-  const until = Date.now() + ms;
-  _cool.set(bucket, Math.max(_cool.get(bucket) || 0, until));
-  if (!redis) return;
-  try {
-    await redis.set(CKEY(bucket), "1", "PX", Math.ceil(ms), "NX");
-  } catch {
-    /* Redis being unavailable must never stop a request; the local map holds. */
-  }
-}
+// A bucket put to sleep (coolingFor, cool): cooldown.js, shared with the
+// AI Studio key pool, so a key rested here is one the pool will not hand out.
 
 /** Wait until this bucket has a request to give, or the deadline passes. */
 async function budget(bucket, deadline, onWait) {
@@ -624,9 +602,13 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
   const deadline = Date.now() + MAX_WAIT_MS;
   let lastErr = null;
 
+  // Keys switched away from in this request: a switch is not a failed attempt,
+  // but it is bounded, so a request cannot go round the pool for ever.
+  let switches = 0;
+
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     const model = _retired.get(asked) || asked;
-    const { client, bucket, where } = pick();
+    const { client, bucket, where, key } = await pick();
     await budget(bucket, deadline, onWait);
     await enter();
     let failed = null;
@@ -641,6 +623,7 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
       }
       const input = num(u.promptTokenCount);
       const output = num(u.candidatesTokenCount) + num(u.thoughtsTokenCount);
+      if (key) used(key, true);
       return { res, usd: (input / 1e6) * inRate() + (output / 1e6) * outRate(), input, output };
     } catch (err) {
       failed = err;
@@ -688,6 +671,27 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
       continue;
     }
 
+    /**
+     * ── A KEY'S REFUSAL: REST IT, AND GO ON WITH THE NEXT AT ONCE ───────────
+     * On AI Studio a rate limit, a daily limit, an invalid key or an account
+     * out of credit is about the KEY (its project), not the request. The key
+     * rests for as long as the refusal means (aistudioPool.js keyRefusal) and,
+     * when another key is free, the request goes straight on with it instead
+     * of sleeping the limit out. With no other key free it carries on below:
+     * a rate limit is waited for, anything else ends the request.
+     */
+    const refusal = key ? keyRefusal(statusOf(failed), String(failed?.message || "")) : null;
+    if (refusal) {
+      used(key, false);
+      await rest(key, refusal.ms, { scope: "text", why: refusal.why, status: statusOf(failed) || null, message: failed?.message });
+      if (switches < KEYS().length && (await anotherFree(key, "text"))) {
+        switches++;
+        attempt--;
+        continue;
+      }
+      if (refusal.why !== "rate_limited") break;
+    }
+
     if (!retryable(failed) || attempt === ATTEMPTS) break;
 
     /**
@@ -700,7 +704,7 @@ export async function request({ model: asked, contents, config = {}, onWait = nu
     const status = statusOf(failed);
     const exhausted = status === 429 || /resource_exhausted/i.test(String(failed?.message || ""));
     const nap = exhausted ? told || DEFAULT_COOLDOWN_MS : Math.max(told, backoffMs(attempt));
-    if (exhausted) await cool(bucket, nap);
+    if (exhausted && !refusal) await cool(bucket, nap);
 
     const left = deadline - Date.now();
     if (left <= 0) break;

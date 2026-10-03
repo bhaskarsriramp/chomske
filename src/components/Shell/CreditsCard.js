@@ -12,19 +12,16 @@ import { useShowcase } from "../../state/ShowcaseContext";
  * the nav list scrolls under it, this stays.
  *
  * ── THE THRESHOLD IS DERIVED, NOT PICKED ────────────────────────────────────
- * "Low" means "fewer than two of the cheapest script", measured against the
- * server's own price list. A hardcoded number goes wrong the moment prices move:
- * with a fixed threshold of 30 and a 23-credit minimum, a balance of 18 was
- * being told it was "enough for about one more short script", a claim that was
- * simply false, from the one component whose entire job is to say what you can
- * still do.
+ * "Low" means "less than a minute of video", measured against the server's
+ * own price list (one credit a second since 2026-10-03). A hardcoded number
+ * goes wrong the moment prices move, and this is the one component whose
+ * entire job is to say what you can still do.
  */
 function thresholds(rules) {
-  const costs = (rules?.durations || []).map((d) => d.credits).filter((n) => n > 0);
-  // 23 = a 45s script at 1 credit per 2 seconds. Only used before the price
-  // list has loaded, and only to decide a colour.
-  const cheapest = costs.length ? Math.min(...costs) : 23;
-  return { cheapest, low: cheapest * 2 };
+  // 60 = a minute at one credit a second. Only used before the price list
+  // has loaded, and only to decide a colour.
+  const perMin = rules?.video?.credits_per_minute || 60;
+  return { perMin, low: perMin };
 }
 
 /**
@@ -35,14 +32,27 @@ function thresholds(rules) {
  *   a stranger asked to pay before they have signed up simply leaves. The ask is
  *   to keep the voice we already built for them, which costs them nothing.
  */
+/**
+ * ── NOT SHOWN UNTIL CREDITS HAVE BEEN BOUGHT ─────────────────────────────────
+ * A first-time creator has 0 credits and does not need any: their first video
+ * is free to make (backend videoBilling.js). "0 available" in the corner of the
+ * screen says the opposite, before they have tried a thing. So the balance
+ * appears once credits have been bought, and stays, at 0 too, from then on.
+ * An older account still holding credits from before sees them.
+ */
+export function showsBalance({ purchased, balance }) {
+  return purchased === true || (typeof balance === "number" && balance > 0);
+}
+
 export default function CreditsCard({ compact = false, showcase = false }) {
-  const { balance, openBuy, canBuy, rules } = useCredits();
+  const { balance, openBuy, canBuy, rules, purchased } = useCredits();
   const { openSignUp } = useShowcase();
-  const { cheapest, low: LOW } = thresholds(rules);
+  const { perMin, low: LOW } = thresholds(rules);
 
   const known = typeof balance === "number";
   const low = known && balance < LOW;
-  const cantWrite = known && balance < cheapest;
+
+  if (!showcase && !showsBalance({ purchased, balance })) return null;
 
   return (
     <div
@@ -88,13 +98,11 @@ export default function CreditsCard({ compact = false, showcase = false }) {
 
         {low && (
           <div style={{ fontSize: 11.5, color: "#AB2C41", lineHeight: 1.5, margin: "0 0 9px" }}>
+            {/* Said plainly, in seconds of video: what a credit buys. Anything
+                softer here is a promise the next screen has to break. */}
             {balance === 0
-              ? showcase ? "Create an account to keep writing." : "Top up to keep writing."
-              : cantWrite
-              // Said plainly. Anything softer here is a promise the next screen
-              // has to break.
-              ? `Not enough for a script. The shortest costs ${cheapest}.`
-              : "Enough for about one more short script."}
+              ? showcase ? "Create an account to keep going." : "Top up to edit your next video."
+              : `Enough for ${Math.round((balance * 60) / perMin)} seconds of video.`}
           </div>
         )}
 
@@ -121,10 +129,11 @@ export default function CreditsCard({ compact = false, showcase = false }) {
 
 /** The compact version for the mobile header. Tapping it opens the same dialog. */
 export function CreditsPill() {
-  const { balance, openBuy, canBuy, rules } = useCredits();
+  const { balance, openBuy, canBuy, rules, purchased } = useCredits();
   const { isShowcase, openSignUp } = useShowcase();
   const known = typeof balance === "number";
   const low = known && balance < thresholds(rules).low;
+  if (!isShowcase && !showsBalance({ purchased, balance })) return null;
 
   // On a phone the whole rail is behind a hamburger, so this pill is the only
   // permanently visible credit control. For a showcase visitor it has to open

@@ -46,7 +46,9 @@ const CreditLedgerSchema = new Schema({
     // it. Added after shipping without it reproduced the voice_analysis bug
     // exactly — wallets debited, ledger silent — because spend()'s insert is
     // .catch()-swallowed by design. ANY NEW SPEND REASON MUST LAND HERE FIRST.
-    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase", "voice_analysis", "edit", "studio"],
+    // "launch" is a change asked for in a generated product demo's chat
+    // (routes/launch.js), 10 credits each since 2026-10-03.
+    enum: ["signup", "purchase", "script", "packaging", "refund", "adjustment", "showcase", "voice_analysis", "edit", "studio", "launch"],
     index: true,
   },
 
