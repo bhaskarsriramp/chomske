@@ -51,7 +51,7 @@ function loadCheckout() {
 }
 
 const minutesOf = (m) => {
-  const n = Number(m) || 0;
+  const n = Math.round((Number(m) || 0) * 10) / 10;
   return `${Number.isInteger(n) ? n : n.toFixed(1)} minute${n === 1 ? "" : "s"} of video`;
 };
 
@@ -64,19 +64,25 @@ const minutesOf = (m) => {
 export function PackList({ rules, onGranted, onBusy }) {
   const [buying, setBuying] = useState(false);
   const [error, setError] = useState("");
+  // An amount typed instead of a pack (backend creditPricing.js CUSTOM): whole
+  // rupees or dollars, credits at the pack rate. The server works it out again.
+  const [custom, setCustom] = useState("");
+  // The whole field takes the focus ring, not the bare input inside it.
+  const [typing, setTyping] = useState(false);
   const busy = (b) => {
     setBuying(b);
     onBusy?.(b);
   };
 
-  async function buy(packId) {
+  /** `what`: { pack_id } for a pack, { amount } for an amount typed in. */
+  async function buy(what) {
     setError("");
     busy(true);
 
     let order;
     try {
       await loadCheckout();
-      const { data } = await api.post("/billing/order", { pack_id: packId, country_hint: countryHint() || undefined });
+      const { data } = await api.post("/billing/order", { ...what, country_hint: countryHint() || undefined });
       order = data;
     } catch (err) {
       busy(false);
@@ -89,7 +95,7 @@ export function PackList({ rules, onGranted, onBusy }) {
       amount: order.amount,
       currency: order.currency,
       name: "Clipo",
-      description: `${order.pack.label} · ${order.pack.credits} credits`,
+      description: order.pack.id === "custom" ? `${order.pack.credits} credits` : `${order.pack.label} · ${order.pack.credits} credits`,
       order_id: order.order_id,
       theme: { color: "#FF0000" },
       handler: async (resp) => {
@@ -129,6 +135,13 @@ export function PackList({ rules, onGranted, onBusy }) {
 
   const configured = !!rules?.configured;
   const perMin = rules?.video?.credits_per_minute || 60;
+  const lim = rules?.custom;
+  const amount = Number(custom);
+  const amountOk = !!lim && custom !== "" && Number.isInteger(amount) && amount >= lim.min && amount <= lim.max;
+  const amountCredits = amountOk ? Math.floor((amount * lim.rate.credits) / lim.rate.per + 1e-9) : 0;
+  const buyAmount = () => {
+    if (amountOk && !buying && configured) buy({ amount });
+  };
 
   return (
     <div>
@@ -156,7 +169,7 @@ export function PackList({ rules, onGranted, onBusy }) {
           <button
             key={p.id}
             type="button"
-            onClick={() => buy(p.id)}
+            onClick={() => buy({ pack_id: p.id })}
             disabled={buying || !configured}
             className="hg-pick"
             style={{
@@ -194,6 +207,62 @@ export function PackList({ rules, onGranted, onBusy }) {
           </button>
         ))}
       </div>
+
+      {lim && (
+        <div style={{ marginTop: 9, padding: "12px 15px 13px", borderRadius: 12, border: "1px solid var(--line)", background: "var(--card)" }}>
+          <label htmlFor="bc-amount" style={{ display: "block", fontSize: 14, fontWeight: 700, color: "var(--ink)", marginBottom: 8 }}>
+            Or enter an amount
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div
+              style={{
+                flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, padding: "0 12px",
+                borderRadius: 10, border: `1px solid ${typing ? "var(--ink)" : "var(--line-strong)"}`, background: "var(--paper)",
+                boxShadow: typing ? "var(--ring)" : "none",
+              }}
+            >
+              <span aria-hidden="true" style={{ fontSize: 16, fontWeight: 650, color: "var(--ink-mute)" }}>
+                {lim.currency === "INR" ? "₹" : "$"}
+              </span>
+              <input
+                id="bc-amount"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder={lim.min.toLocaleString(lim.currency === "INR" ? "en-IN" : "en-US")}
+                value={custom}
+                disabled={buying || !configured}
+                onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, "").slice(0, 7))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") buyAmount();
+                }}
+                onFocus={() => setTyping(true)}
+                onBlur={() => setTyping(false)}
+                style={{
+                  flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", boxShadow: "none",
+                  fontFamily: "inherit", fontSize: 16, fontWeight: 650, color: "var(--ink)", padding: "10px 0",
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={buyAmount}
+              disabled={!amountOk || buying || !configured}
+              style={{
+                flexShrink: 0, padding: "0 18px", borderRadius: 10, border: "none", fontFamily: "inherit",
+                fontSize: 14, fontWeight: 650, background: "var(--ink)", color: "#fff",
+                cursor: amountOk && !buying && configured ? "pointer" : "default", opacity: amountOk && !buying ? 1 : 0.4,
+              }}
+            >
+              Buy now
+            </button>
+          </div>
+          <div style={{ marginTop: 7, fontSize: 12, color: amountOk || custom === "" ? "var(--ink-mute)" : "var(--bad)" }}>
+            {amountOk
+              ? `${amountCredits} credits · ${minutesOf(amountCredits / perMin)}`
+              : `From ${money(lim.min, lim.currency)} to ${money(lim.max, lim.currency)}`}
+          </div>
+        </div>
+      )}
 
       {rules?.packs?.length > 0 && (
         <p style={{ fontSize: 11.5, color: "var(--ink-mute)", lineHeight: 1.6, margin: "12px 0 0" }}>

@@ -3,44 +3,24 @@
  *
  * Two lines, "Made with" over a larger "tryclipo.com", beside the Clipo mark,
  * on a dark glass card: legible on any screen and quiet enough to watch the
- * video through. It starts bottom right and moves to another corner every
- * WM_EVERY seconds, so no single crop, blur or sticker over one corner of a
- * re-recorded screen gets rid of it.
+ * video through. It stays in the bottom right corner for the whole video: it
+ * used to move between corners every few seconds, and the user found that
+ * distracting (2026-10-03), so it holds still where people expect a mark.
  *
  * One drawing, two places:
  *   the editor     Preview.js draws it over every frame of an unpaid
  *                  recording, in the same canvas as the picture
  *   the server     backend services/launch/watermark.js draws the card once
- *                  and burns it, moving the same way, into the preview copy of
- *                  a free generated demo
+ *                  and burns it, in the same place, into the preview copy of a
+ *                  free generated demo
  *
  * No imports: the backend loads this file directly, and a browser bundle and
  * Node agree on nothing else.
  */
 
-/** Seconds in one corner before it moves. */
-export const WM_EVERY = 10;
-/** The corners in turn, bottom right first, in an order that is not a circle. */
-export const WM_CORNERS = ["br", "tl", "tr", "bl", "tl", "br", "bl", "tr"];
-/** How far from the frame's edges, at a 1080-high frame. */
+/** How far from the frame's bottom and right edges, at a 1080-high frame. */
 export const WM_MARGIN = 28;
-/** How long each move fades over in the editor, out and in. */
-const WM_FADE = 0.35;
 const FONT = "Inter, 'Segoe UI', system-ui, -apple-system, sans-serif";
-
-const clamp01 = (v) => Math.max(0, Math.min(1, v));
-
-/**
- * Where the mark is at time `t` of the video, and how far faded in: it fades
- * out before each move and in after it; the very start is already in.
- */
-export function watermarkAt(t) {
-  const s = Math.max(0, Number(t) || 0);
-  const slot = Math.floor(s / WM_EVERY);
-  const into = s - slot * WM_EVERY;
-  const alpha = clamp01(Math.min(slot === 0 ? WM_FADE : into, WM_EVERY - into) / WM_FADE);
-  return { corner: WM_CORNERS[slot % WM_CORNERS.length], alpha };
-}
 
 /** The card's measurements at scale `k` (1 = a 1080-high frame). */
 function metrics(ctx, k, font) {
@@ -124,16 +104,12 @@ export function drawWatermarkCard(ctx, x, y, k, { font = FONT, alpha = 1 } = {})
   ctx.restore();
 }
 
-/** Over a whole frame W × H at time `t` of the video. */
-export function paintWatermark(ctx, W, H, t, { font = FONT } = {}) {
-  const { corner, alpha } = watermarkAt(t);
-  if (alpha <= 0.01) return;
+/** Over a whole frame W × H, in the bottom right corner. */
+export function paintWatermark(ctx, W, H, { font = FONT } = {}) {
   const k = H / 1080;
   const { w, h } = watermarkSize(ctx, k, { font });
   const m = WM_MARGIN * k;
-  const x = corner.endsWith("r") ? W - m - w : m;
-  const y = corner.startsWith("b") ? H - m - h : m;
-  drawWatermarkCard(ctx, x, y, k, { font, alpha });
+  drawWatermarkCard(ctx, W - m - w, H - m - h, k, { font });
 }
 
-export default { WM_EVERY, WM_CORNERS, WM_MARGIN, watermarkAt, watermarkSize, drawWatermarkCard, paintWatermark };
+export default { WM_MARGIN, watermarkSize, drawWatermarkCard, paintWatermark };

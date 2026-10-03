@@ -36,7 +36,7 @@ import mongoose from "mongoose";
 import Razorpay from "razorpay";
 import CreditPayment from "../models/CreditPayment.js";
 import Source from "../models/Source.js";
-import { PACKS, getPack, packPrice, CREDITS_PER_MINUTE, FOURK_CREDITS_PER_MIN, DURATION_PRESETS, SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, PACKAGING_CREDITS, ENGLISH_TWIN_RATE, quote } from "../services/creditPricing.js";
+import { PACKS, getPack, packPrice, CUSTOM, creditRate, customCredits, CREDITS_PER_MINUTE, FOURK_CREDITS_PER_MIN, DURATION_PRESETS, SECONDS_PER_CREDIT, MIN_SECONDS, MAX_SECONDS, PACKAGING_CREDITS, ENGLISH_TWIN_RATE, quote } from "../services/creditPricing.js";
 import { detectCountry, currencyFor } from "../services/geo.js";
 import { trialState, hasPurchased } from "../services/studio/videoBilling.js";
 import { getBalance, grant, history } from "../services/creditsService.js";
@@ -99,6 +99,10 @@ router.get("/packs", authenticateToken, async (req, res) => {
       // A minute of video in this currency, from the smallest pack.
       price_per_minute: +((packPrice(PACKS[0], currency) * perMinute) / PACKS[0].credits).toFixed(2),
     },
+    // Any amount instead of a pack: whole units between min and max, at this
+    // rate (credits per `per` units), rounded down. The order works it out
+    // again for itself; this is only for showing it as the buyer types.
+    custom: { ...CUSTOM[currency], currency, rate: creditRate(currency) },
     rules: {
       seconds_per_credit: SECONDS_PER_CREDIT,
       min_seconds: MIN_SECONDS,
@@ -199,13 +203,31 @@ router.post("/order", authenticateToken, async (req, res) => {
       return res.status(503).json({ success: false, message: "Payments aren't set up yet. Please try again later." });
     }
 
-    const pack = getPack(req.body?.pack_id);
-    if (!pack) return res.status(400).json({ success: false, message: "Unknown pack." });
-
     // Placed here, on the server, from the request itself: never from a
     // currency the browser names. See services/geo.js.
     const country = detectCountry(req, req.body?.country_hint);
     const currency = currencyFor(country);
+
+    // A pack, or an amount the buyer typed. Either way the price and the
+    // credits are decided here: a typed amount is checked against this
+    // currency's limits and turned into credits at the pack rate.
+    let pack;
+    if (req.body?.amount !== undefined && req.body?.amount !== null && req.body?.amount !== "") {
+      const amount = Number(req.body.amount);
+      const credits = customCredits(amount, currency);
+      if (!credits) {
+        const lim = CUSTOM[currency];
+        const unit = (n) => (currency === "INR" ? `₹${n.toLocaleString("en-IN")}` : `$${n.toLocaleString("en-US")}`);
+        return res.status(400).json({
+          success: false,
+          message: `Enter a whole amount from ${unit(lim.min)} to ${unit(lim.max)}.`,
+        });
+      }
+      pack = { id: "custom", label: "Credits", credits, inr: amount, usd: amount };
+    } else {
+      pack = getPack(req.body?.pack_id);
+      if (!pack) return res.status(400).json({ success: false, message: "Unknown pack." });
+    }
     const price = packPrice(pack, currency);
 
     let order;
@@ -328,12 +350,14 @@ router.post("/verify", authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, message: "We couldn't find that order." });
     }
 
-    const paid = claimed.currency === "USD" ? `$${claimed.amount}` : `₹${claimed.amount || claimed.amount_inr}`;
+    const paid = claimed.currency === "USD"
+      ? `$${Number(claimed.amount).toLocaleString("en-US")}`
+      : `₹${Number(claimed.amount || claimed.amount_inr).toLocaleString("en-IN")}`;
     const { balance } = await grant(req.user.id, claimed.credits, {
       reason: "purchase",
       refType: "CreditPayment",
       refId: claimed._id,
-      note: `${claimed.pack_id} pack · ${paid}`,
+      note: claimed.pack_id === "custom" ? `${claimed.credits} credits · ${paid}` : `${claimed.pack_id} pack · ${paid}`,
     });
 
     console.log(`[billing] +${claimed.credits} credits user=${req.user.id} pack=${claimed.pack_id} ${paid}`);

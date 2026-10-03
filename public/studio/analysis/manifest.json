@@ -1,6 +1,6 @@
 {
- "version": "affc981060635fd3abcd818796596a40c3a4efe5800e933ef92826dc36dc1581",
- "worker": "/studio/analysis/worker-affc981060635fd3.js",
+ "version": "e0975d57296a3b1c2ae9932c20139e4056296a6c6fc438dfe70ceb63805fc2af",
+ "worker": "/studio/analysis/worker-e0975d57296a3b1c.js",
  "templates": "/studio/analysis/tpl/",
  "files": [
   "backend/services/studio/analyse.js",
@@ -40,7 +40,7 @@
   "backend/services/studio/locate.js": "f399658474da303a51e0085acccd1a76e9e878bb074d0d038c17859c73868718",
   "backend/services/studio/phase.js": "c28d7361b833a54a7b408e9c30dfaf54fe58ed8e16fa955a48498254099cb702",
   "backend/services/studio/sync.js": "75efb6afdc1aac8ff2dbf4a938dbbf8b6bdc950ebecead435c165a31e4c53e82",
-  "backend/services/studio/timeline.js": "b4a580af097131768f62bf7b63141f9fbabd17783811abce74f43b13791fae52",
+  "backend/services/studio/timeline.js": "c8f67986a2586b22f54976d542406c0a4578a40d9171812892ed67649493ca10",
   "backend/services/studio/vig.js": "a54490a1dbb432848b962af763ba95097f5e1e886554aa315c4a9463424c54d2",
   "browser-analysis/shared/canvasKey.js": "38e49621acdfac51517dfa4c33b4ff5490bb2691919b58a231a5520e1ae025a4",
   "browser-analysis/shared/sha1.js": "6a1b6f9032b1d316f1cd56ccda7ecbd5854612bf0fede9c0b1944e0ed84f910f",
@@ -332,5 +332,5 @@
  ],
  "canvas_version": "1.0.9",
  "mediabunny": "1.60.0",
- "built_at": "2026-09-30T17:20:02.410Z"
+ "built_at": "2026-10-03T16:48:24.072Z"
 }

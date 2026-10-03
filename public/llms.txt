@@ -67,7 +67,7 @@ Most auto-zoom recorders need a desktop app for one operating system, or an exte
 - A video costs USD 2 a minute (Rs 199 in India), charged once by its length, whether Clipo edits it or turns it into a product demo. One credit is one second of video
 - Captions, AI voice, blur, music and exports up to 1440p are included; a 4K export costs extra
 - Try it free: a new account records and edits its first video (up to 60 seconds) free, and previews it with a Clipo watermark. No credit card required. Exporting it uses credits like any video
-- Packs: 60 credits (USD 2 / Rs 199), 300 credits (USD 10 / Rs 999), 900 credits (USD 30 / Rs 2,999)
+- Packs: 60 credits (USD 2 / Rs 199), 150 credits (USD 5 / Rs 499), 300 credits (USD 10 / Rs 999), or any amount from USD 20 / Rs 1,999 at the same rate
 - The cost is shown before anything is charged
 - Payments through Razorpay: in Indian Rupees with UPI, cards and netbanking inside India, in US dollars by card everywhere else
 

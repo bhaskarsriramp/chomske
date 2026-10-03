@@ -356,18 +356,49 @@ export const OLD_CREDIT_VALUE = 0.24;
 /**
  * The packs. `credits` is what lands in the wallet; `inr` is what an Indian
  * buyer pays (UPI, cards, netbanking) and `usd` what everyone else pays (cards).
- * Flat: every pack is $2 / ₹199 a minute, so a bigger pack is fewer checkouts,
- * not a discount that makes the small one look like a bad deal.
+ * Flat (2026-10-03, the user's price points): every pack is about $2 / ₹199 a
+ * minute, so a bigger pack is fewer checkouts, not a discount that makes the
+ * small one look like a bad deal, and a rupee buyer and a dollar buyer get the
+ * same credits for the same pack.
  */
 export const PACKS = [
-  { id: "starter", credits: 60,  inr: 199,  usd: 2,  label: "Starter" },
-  { id: "creator", credits: 300, inr: 999,  usd: 10, label: "Creator", popular: true },
-  { id: "studio",  credits: 900, inr: 2999, usd: 30, label: "Studio"  },
+  { id: "starter", credits: 60,  inr: 199, usd: 2,  label: "Starter" },
+  { id: "creator", credits: 150, inr: 499, usd: 5,  label: "Creator", popular: true },
+  { id: "studio",  credits: 300, inr: 999, usd: 10, label: "Studio"  },
 ];
 
 /** What a pack costs in a currency, in whole units (rupees or dollars). */
 export function packPrice(pack, currency) {
   return currency === "INR" ? pack.inr : pack.usd;
+}
+
+/**
+ * ── ANY AMOUNT, FOR MORE THAN THE BIGGEST PACK ───────────────────────────────
+ * A buyer can type an amount instead of picking a pack: whole rupees or whole
+ * dollars, from CUSTOM.min (above the Studio pack, so it is for buying more,
+ * not for shaving a pack) to CUSTOM.max (a typo guard; bigger buyers write to
+ * us). Credits are the Starter pack's rate, rounded down to a whole credit:
+ * ₹1,999 is 602 credits, $20 is 600. Worked out here, from the amount the
+ * server is about to charge, never from anything the page says.
+ */
+export const CUSTOM = {
+  INR: { min: 1999, max: 200000 },
+  USD: { min: 20, max: 2500 },
+};
+
+/** Credits per currency unit: the Starter pack's (60 for ₹199, or for $2). */
+export const creditRate = (currency) => {
+  const p = PACKS[0];
+  return { credits: p.credits, per: packPrice(p, currency) };
+};
+
+/** Credits a custom amount buys, or 0 when the amount is not one we take. */
+export function customCredits(amount, currency) {
+  const n = Number(amount);
+  const lim = CUSTOM[currency];
+  if (!lim || !Number.isInteger(n) || n < lim.min || n > lim.max) return 0;
+  const { credits, per } = creditRate(currency);
+  return Math.floor((n * credits) / per + 1e-9);
 }
 
 export function getPack(id) {
@@ -473,5 +504,5 @@ export default {
   VOICE_FREE_BUILDS, VOICE_CREDITS_PER_VIDEO, voiceAnalysisCost,
   getPack, clampSeconds, quote, wordTarget,
   CREDITS_PER_MINUTE, FOURK_CREDITS_PER_MIN, videoCredits, exportExtraCredits, OLD_CREDIT_VALUE, packPrice,
-  TRIAL_SECONDS,
+  TRIAL_SECONDS, CUSTOM, creditRate, customCredits,
 };

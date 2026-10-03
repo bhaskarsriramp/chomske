@@ -85,7 +85,7 @@ export default function Preview({
   // tracks the library by id ({ url, duration }).
   music = null,
   // A video not yet paid for (backend videoBilling.js): drawn with the
-  // moving "Made with tryclipo.com" mark. See paintWatermark.
+  // "Made with tryclipo.com" mark, bottom right. See watermark.mjs.
   watermark = false,
 }) {
   const wrapRef = useRef(null);
@@ -398,9 +398,9 @@ export default function Preview({
 
     ctx.restore();
 
-    // On top of everything, in the same canvas as the picture: there is no
-    // element to hide, and it moves, so no one patch of the frame covers it.
-    if (watermark) paintWatermark(ctx, W, H, outT);
+    // On top of everything, bottom right, in the same canvas as the picture:
+    // there is no element on the page to hide.
+    if (watermark) paintWatermark(ctx, W, H);
 
     if (onTime && Math.abs(outT - timeRef.current) > 0.012) onTime(outT);
 
@@ -808,7 +808,7 @@ function paintRipple(ctx, c, t, cam, d, srcW, cur) {
 
 /* ── The watermark on a video not yet paid for ──────────────────────────────
  * Drawn by watermark.mjs, shared with the server, which burns the same card,
- * moving the same way, into a free generated demo. Only ever drawn here in the
+ * in the same bottom right corner, into a free generated demo. Only ever drawn here in the
  * editor: a paid video has none, and an unpaid one cannot be exported
  * (backend routes/studio.js), so no file of a recording ever carries it.
  */

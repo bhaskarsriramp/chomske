@@ -10,17 +10,15 @@
  * <video> element is one line of devtools away from gone.
  *
  * The card is drawn by the same code as the editor's (src/components/Studio/
- * watermark.mjs) into an image at this video's scale, and moves between the
- * same corners every WM_EVERY seconds via ffmpeg's overlay, evaluated per
- * frame. It jumps rather than fades: the editor's fade is a nicety, and an
- * ffmpeg alpha ramp per move costs more than it is worth here.
+ * watermark.mjs) into an image at this video's scale, and laid over the
+ * bottom right corner for the whole video, the same place as in the editor.
  */
 import fsp from "fs/promises";
 import path from "path";
 import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
 import { ffmpeg, probe } from "../media/ffmpeg.js";
 import { FONTS_DIR } from "../studio/render/ass.js";
-import { watermarkSize, drawWatermarkCard, WM_EVERY, WM_CORNERS, WM_MARGIN } from "../../../src/components/Studio/watermark.mjs";
+import { watermarkSize, drawWatermarkCard, WM_MARGIN } from "../../../src/components/Studio/watermark.mjs";
 
 /** The family the card is drawn in: the bold Noto Sans the captions ship with. */
 const FAMILY = "Clipo Mark";
@@ -48,23 +46,14 @@ export async function watermarkImage(height, dest) {
   return { w: canvas.width, h: canvas.height };
 }
 
-/**
- * Where the card goes, as ffmpeg overlay expressions: the slot is
- * floor(t / WM_EVERY) mod the number of corners, and each corner is a sum of
- * eq() tests for the slots that are on the right, or at the bottom.
- */
-export function moveExpressions(margin) {
-  const slot = `mod(floor(t/${WM_EVERY}),${WM_CORNERS.length})`;
-  const any = (test) => WM_CORNERS.map((c, i) => (test(c) ? `eq(${slot},${i})` : "")).filter(Boolean).join("+");
+/** Where the card goes, as ffmpeg overlay positions: the bottom right corner. */
+export function cornerPosition(margin) {
   const m = Math.round(margin);
-  return {
-    x: `if(${any((c) => c.endsWith("r"))},W-w-${m},${m})`,
-    y: `if(${any((c) => c.startsWith("b"))},H-h-${m},${m})`,
-  };
+  return { x: `W-w-${m}`, y: `H-h-${m}` };
 }
 
 /**
- * Write `dest`: `src` with the moving mark burned in. The sound is copied;
+ * Write `dest`: `src` with the mark burned in, bottom right. The sound is copied;
  * the picture is encoded once, fast, at a quality that holds up for watching.
  */
 export async function watermarkCopy(src, dest, { signal } = {}) {
@@ -72,13 +61,13 @@ export async function watermarkCopy(src, dest, { signal } = {}) {
   const height = info.height || 1080;
   const png = `${dest}.mark.png`;
   await watermarkImage(height, png);
-  const { x, y } = moveExpressions(WM_MARGIN * (height / 1080));
+  const { x, y } = cornerPosition(WM_MARGIN * (height / 1080));
   try {
     await ffmpeg(
       [
         "-i", src,
         "-i", png,
-        "-filter_complex", `[0:v][1:v]overlay=x='${x}':y='${y}':eval=frame[v]`,
+        "-filter_complex", `[0:v][1:v]overlay=x=${x}:y=${y}[v]`,
         "-map", "[v]", "-map", "0:a?",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
         "-c:a", "copy",
@@ -93,4 +82,4 @@ export async function watermarkCopy(src, dest, { signal } = {}) {
   return dest;
 }
 
-export default { watermarkCopy, watermarkImage, moveExpressions };
+export default { watermarkCopy, watermarkImage, cornerPosition };
