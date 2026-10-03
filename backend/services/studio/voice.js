@@ -59,7 +59,7 @@ let turn = 0;
  */
 async function ask(text, { voice, style = NARRATION }) {
   const keys = aistudioKeys();
-  if (!keys.length) throw userError("The voiceover needs an AI Studio key on this server.");
+  if (!keys.length) throw userError("The voice-over isn't available right now. Try again later.");
   let last = null;
   for (let attempt = 1; attempt <= 4; attempt++) {
     const key = keys[turn++ % keys.length];

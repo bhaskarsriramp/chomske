@@ -312,7 +312,7 @@ export const autodemoJob = {
     if (state === "failed") {
       throw userError("The automatic edit didn't finish, so the product demo couldn't be built. Run Edit it automatically again, then generate the demo.");
     }
-    if (!providerReady()) throw userError("The AI isn't set up on this server, so the demo couldn't be written.");
+    if (!providerReady()) throw userError("The product demo isn't available right now. Try again later.");
 
     /* 2. Started. */
     const report = reporter(demo._id, seq);

@@ -15,13 +15,25 @@
  * scroll to find out what to do next. It now opens inside the chosen voice's
  * own card, the voiceover's progress plays there, and once that voice is the
  * one in use the card simply says so and the button is gone.
+ *
+ * ── NO CAPTIONS YET: THE VOICE TAB MAKES THEM, IT DOES NOT SEND YOU AWAY ─────
+ * It used to say "Add captions first" and send the creator to the Captions
+ * tab to work out the rest. Now "Generate voice-over" opens a small dialog
+ * that says captions come first and offers the two ways to make them (from
+ * the video, from the voice where there is one; not by hand, which is the
+ * Captions tab's job). It shows the work while it runs and closes itself the
+ * moment captions exist, which leaves the voices on screen with the chosen
+ * one's Apply button already open.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Btn, Panel, Empty, Icon, Toggle } from "./ui";
 import { VOICES, DEFAULT_VOICE, voiceById, voiceSig, sampleText } from "./voices.mjs";
 import { voiceSample } from "./studioApi";
 
-export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCaptions }) {
+export default function VoicePanel({
+  tl, edit, demo, voicing, onApply, onCaptionsFromVideo, onCaptionsFromVoice, captioning = false, hasAudio = false,
+}) {
   const cues = useMemo(() => tl.cues || [], [tl.cues]);
   const vo = demo?.voiceover || null;
   const [pick, setPick] = useState(vo?.name || DEFAULT_VOICE);
@@ -42,6 +54,9 @@ export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCapti
   const [sampleError, setSampleError] = useState("");
   // The voice last asked for, so its progress shows on its own card.
   const [making, setMaking] = useState(null);
+  // The "captions come first" dialog, and which way the captions are being made.
+  const [asking, setAsking] = useState(false);
+  const [captionsFrom, setCaptionsFrom] = useState(null);
   const heard = useRef(new Map());
   const audio = useRef(null);
   useEffect(() => () => audio.current?.pause(), []);
@@ -81,16 +96,32 @@ export default function VoicePanel({ tl, edit, demo, voicing, onApply, onGoCapti
       <Panel title="Voice">
         <Empty
           icon="mic"
-          title="Add captions first"
+          title="Generate voice-over"
           action={
-            <Btn size="s" icon={<Icon name="caption" size={13} />} onClick={onGoCaptions}>
-              Go to Captions
+            <Btn size="s" kind="primary" icon={<Icon name="mic" size={13} />} onClick={() => setAsking(true)}>
+              Generate voice-over
             </Btn>
           }
         >
           The AI voiceover reads your captions aloud, so it needs captions to read. Write them from your voice, from the
           script, or by hand.
         </Empty>
+        {asking && (
+          <CaptionsFirst
+            hasScript={(tl.narration || []).length > 0}
+            hasAudio={hasAudio}
+            busy={captioning ? captionsFrom || "video" : null}
+            onVideo={() => {
+              setCaptionsFrom("video");
+              onCaptionsFromVideo?.();
+            }}
+            onVoice={() => {
+              setCaptionsFrom("voice");
+              onCaptionsFromVoice?.();
+            }}
+            onClose={() => setAsking(false)}
+          />
+        )}
       </Panel>
     );
   }
@@ -273,5 +304,65 @@ function VoiceRow({ voice, selected, inUse, playing, loading, waiting, onSelect,
       </div>
       {children && <div className="st-voice-act">{children}</div>}
     </div>
+  );
+}
+
+/**
+ * "Captions come first": the two ways to make them, from the Voice tab.
+ * `busy` is "video" or "voice" while captions are being made; the dialog goes
+ * away by itself when they exist, because the panel that owns it is replaced.
+ */
+function CaptionsFirst({ hasScript, hasAudio, busy, onVideo, onVoice, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
+
+  const hint = { margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--ink-mute)" };
+
+  return createPortal(
+    <div
+      className="st-ask hg-fade"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
+    >
+      <div role="dialog" aria-modal="true" aria-labelledby="st-cf-title" className="st-ask-card st-cf hg-sheet-up">
+        <button type="button" className="st-cf-close" onClick={onClose} disabled={!!busy} aria-label="Close">
+          <Icon name="close" size={14} />
+        </button>
+        <span className="st-ask-icon">
+          <Icon name="caption" size={22} />
+        </span>
+        <h2 id="st-cf-title">Captions come first</h2>
+        <p>The voice-over reads your captions aloud. Generate them, then pick a voice.</p>
+
+        {busy ? (
+          <div role="status" aria-live="polite" className="st-cf-busy">
+            <span className="st-spin" aria-hidden="true" />
+            {busy === "voice" ? "Writing captions from your voice…" : "Generating captions from the video…"}
+          </div>
+        ) : (
+          <div className="st-cf-actions">
+            <Btn kind="primary" full icon={<Icon name="caption" size={14} />} onClick={onVideo} disabled={!hasScript}>
+              Generate captions from the video
+            </Btn>
+            <p style={hint}>
+              {hasScript
+                ? "Understands the video and its flow, and generates captions that fit it."
+                : "Available once the automatic edit has run."}
+            </p>
+            <Btn full icon={<Icon name="sound" size={14} />} onClick={onVoice} disabled={!hasAudio}>
+              Write captions from voice
+            </Btn>
+            {!hasAudio && <p style={hint}>This recording has no sound.</p>}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
   );
 }

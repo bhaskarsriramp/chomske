@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef } from "react";
 import { reducedMotion, useInView } from "./film";
-import { CursorGlyph } from "./demo";
+import { CursorGlyph, DemoScreen } from "./demo";
 
 /** A wrapper that switches its CSS animations on only while visible. */
 export function Live({ as: Tag = "div", className = "", children, ...rest }) {
@@ -64,15 +64,15 @@ export function RecordFlow() {
           {/* 1. ready */}
           <div className="rf-pane rf-ready">
             <b>New recording</b>
-            <span className="rf-opt"><i><Tick /></i>Microphone</span>
-            <span className="rf-opt"><i><Tick /></i>Screen sound</span>
-            <span className="rf-opt"><i><Tick /></i>Edit it automatically</span>
+            <span className="rf-opt"><i><Tick /></i>Mic</span>
+            <span className="rf-opt rf-opt--off"><i />Tab sound</span>
+            <span className="rf-hint">Recording starts the moment you share a tab.</span>
             <span className="rf-go"><i />Start recording</span>
           </div>
           {/* 2. the browser's own dialog */}
           <div className="rf-dialog">
             <b>Choose what to share with tryclipo.com</b>
-            <span className="rf-dialog__tabs"><em className="is-on">Chrome tab</em><em>Window</em><em>Entire screen</em></span>
+            <span className="rf-dialog__tabs"><em className="is-on">Chrome tab</em><em>Window</em></span>
             <span className="rf-thumbs">
               <span className="rf-thumb rf-thumb--pick"><i /><em>Lumen · Pricing</em></span>
               <span className="rf-thumb"><i /><em>Inbox</em></span>
@@ -139,7 +139,7 @@ export function Friction() {
  * llms.txt: it is the part other tools would copy. Describe the result.
  */
 export const HOW_STEPS = [
-  ["Record", "Share a tab, a window or your whole screen, and walk through your product as you normally would."],
+  ["Record", "Share the tab you want to show, and walk through your product as you normally would."],
   ["Clipo follows along", "Nothing to mark, tag or remember while you record. Just do the demo."],
   ["Clicks become highlights", "Every click that matters gets its moment, so nobody watching misses what you did."],
   ["The camera moves for you", "Smooth zooms glide in before each click and ease back out once the result is on screen."],
@@ -390,39 +390,50 @@ function ExportTile() {
   );
 }
 
-function StepsTile() {
-  const steps = ["Open the Pricing page", "Switch billing to Lifetime", "Choose Pro and check out"];
+const VOICES = [
+  ["Kore", "Female · clear and steady"],
+  ["Zephyr", "Female · bright and warm"],
+  ["Charon", "Male · calm and informative"],
+  ["Puck", "Male · upbeat"],
+];
+
+/** The Voice tab (Studio/VoicePanel.js): four voices, each heard before it is picked. */
+function VoiceTile() {
   return (
-    <Tile kind="steps" title="Steps, written for you" body="A clear step-by-step of your demo, ready for a help article or a voiceover script.">
-      <span className="ft-read"><i />Writing your steps</span>
-      <ol className="ft-steps">
-        {steps.map((s, i) => (
-          <li key={s} style={{ "--i": i }}>
-            <span className="ft-steps__n">{i + 1}</span>
-            <span className="ft-steps__t">{s}</span>
-          </li>
+    <Tile kind="voice" title="A voice-over in one click" body="Four natural voices read your captions. Hear each one say your own first line, then pick it.">
+      <span className="ft-voices">
+        {VOICES.map(([name, sub], i) => (
+          <span key={name} className="ft-voice" style={{ "--i": i }}>
+            <i className="ft-voice__dot" />
+            <span>
+              <b>{name}</b>
+              <em>{sub}</em>
+            </span>
+            <span className="ft-voice__wave">
+              <i /><i /><i /><i /><i /><i />
+            </span>
+            <i className="ft-voice__play" />
+          </span>
         ))}
-      </ol>
+      </span>
     </Tile>
   );
 }
 
-function ReviewTile() {
+/** The Video tab (Studio/panels.js VideoPanel): split, trim, take out, restore. */
+function TrimTile() {
   return (
-    <Tile kind="review" title="Nothing slips through" body="If a moment deserves a zoom, Clipo suggests one. One press adds it.">
-      <span className="ft-tl">
-        <span className="ft-tl__block" style={{ left: "6%", width: "22%" }}>2.2×</span>
-        <span className="ft-tl__block ft-tl__block--new" style={{ left: "58%", width: "24%" }}>1.8×</span>
-        <span className="ft-tl__click" style={{ left: "12%" }} />
-        <span className="ft-tl__click ft-tl__click--miss" style={{ left: "66%" }} />
+    <Tile kind="trim" title="Cut it to the good part" body="Split the recording anywhere, trim the ends, or take a section out. Restore brings it back.">
+      <span className="ft-trim">
+        <span className="ft-trim__a"><b>1</b></span>
+        <span className="ft-trim__b"><b>2</b></span>
+        <span className="ft-trim__c"><b>3</b></span>
+        <i className="ft-trim__cut ft-trim__cut--1" />
+        <i className="ft-trim__cut ft-trim__cut--2" />
       </span>
-      <span className="ft-toast">
-        <span className="ft-toast__icon">!</span>
-        <span>
-          <b>Add a zoom at 0:07?</b>
-          <em>Lifetime toggle</em>
-        </span>
-        <span className="ft-toast__btn">Add zoom</span>
+      <span className="ft-trim__note">
+        <em className="ft-trim__out">Clip 2 taken out</em>
+        <em className="ft-trim__back">Restored</em>
       </span>
     </Tile>
   );
@@ -437,8 +448,93 @@ export function FeatureGrid() {
       <CaptionsTile />
       <BlurTile />
       <ExportTile />
-      <StepsTile />
-      <ReviewTile />
+      <VoiceTile />
+      <TrimTile />
     </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Edit with a message
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The editor's chat (Studio/CommandChat.js), as a 14 s loop of keyframes: a
+ * request is typed and sent, Clipo answers and the edit lands: the camera
+ * moves in on the Pro plan and a zoom appears on the timeline; then the email
+ * is blurred in both places it shows. The replies are the chat's own wording
+ * (backend services/studio/command.js): what was done, never how.
+ */
+export function ChatFilm() {
+  return (
+    <Live
+      className="chf"
+      aria-label="The Clipo editor's chat: typing “Zoom in on the Pro plan” adds a zoom, and “Blur my email everywhere” blurs the email in both places it appears."
+    >
+      <div className="chf-app" aria-hidden="true">
+        <div className="chf-top">
+          <span className="chf-file"><i />Pricing walkthrough</span>
+          <span className="chf-top__end">
+            <em>Undo</em>
+            <b>Export</b>
+          </span>
+        </div>
+        <div className="chf-main">
+          <div className="chf-left">
+            <div className="chf-stage wall wall--dusk">
+              <DemoScreen variant="clipo" page="pricing" account="priya@lumen.app" />
+            </div>
+            <div className="chf-tl">
+              <span className="chf-lane">
+                <span className="chf-lane__name">Zoom</span>
+                <span className="chf-lane__body">
+                  <i className="chf-z" style={{ left: "6%", width: "14%" }} />
+                  <i className="chf-z" style={{ left: "62%", width: "18%" }} />
+                  <i className="chf-z chf-z--new" style={{ left: "26%", width: "24%" }}>1.6×</i>
+                </span>
+              </span>
+              <span className="chf-lane">
+                <span className="chf-lane__name">Blur</span>
+                <span className="chf-lane__body">
+                  <i className="chf-b chf-b--1" />
+                  <i className="chf-b chf-b--2" />
+                </span>
+              </span>
+            </div>
+          </div>
+          <div className="chf-chat">
+            <div className="chf-chat__head">
+              <b>Edit with a message</b>
+              <em>Adds and removes zooms and blurs</em>
+            </div>
+            <div className="chf-log">
+              <p className="chf-intro">Tell me what to zoom in on or what to hide, and I'll make the edit.</p>
+              <span className="chf-msg chf-msg--me chf-m1">Zoom in on the Pro plan</span>
+              <span className="chf-msg chf-msg--app chf-r1">
+                <span className="chf-dots"><i /><i /><i /></span>
+                <span className="chf-text">
+                  Added a 1.6× zoom on “Pro” from 0:02 to 0:05.
+                  <em className="chf-undo">Undo</em>
+                </span>
+              </span>
+              <span className="chf-msg chf-msg--me chf-m2">Blur my email everywhere</span>
+              <span className="chf-msg chf-msg--app chf-r2">
+                <span className="chf-dots"><i /><i /><i /></span>
+                <span className="chf-text">
+                  Blurred “priya@lumen.app” in 2 places.
+                  <em className="chf-undo">Undo</em>
+                </span>
+              </span>
+            </div>
+            <div className="chf-input">
+              <span className="chf-ph">Try “zoom in on Projects”</span>
+              <span className="chf-type chf-type--1">Zoom in on the Pro plan</span>
+              <span className="chf-type chf-type--2">Blur my email everywhere</span>
+              <i className="chf-send" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </Live>
   );
 }

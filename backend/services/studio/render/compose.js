@@ -113,7 +113,7 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
     const absent = await missingFonts(fonts);
     if (absent.length) {
       console.error(`[studio] render: caption fonts missing in ${FONTS_DIR}: ${absent.join(", ")}`);
-      throw userError("Captions can't be drawn because this server is missing its caption fonts. Your credits are back.");
+      throw userError("Captions couldn't be drawn for this export. Your credits are back.");
     }
   }
 

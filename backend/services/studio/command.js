@@ -835,7 +835,7 @@ export async function scanFrames(demo, ctx, find, { status = () => {}, what = ""
     const frames = times.filter((f) => f.ok);
     if (!frames.length) return { error: true, sightings: [], frames: 0, missed: times.length, dropped: 0, usd };
 
-    status(`Looking through ${frames.length} frames${what ? ` for “${short(what, 40)}”` : ""}…`);
+    status(what ? `Searching the video for “${short(what, 40)}”…` : "Searching the video…");
     let missed = 0;
     let dropped = 0;
     let sample = "";
@@ -1394,7 +1394,6 @@ async function addZoom(intent, ctx) {
   let label = "";
   let where = "";
   let lookedAt = null; // the output time of the frame that was looked at
-  let scanned = false; // found by looking through the video, not at the playhead
   const clickThing = win.click?.thing;
   const thing = intent.box ? null : clickThing || things[0] || null;
 
@@ -1441,7 +1440,7 @@ async function addZoom(intent, ctx) {
       if (!places.length) {
         const closer = close ? [] : [choice("Look more closely", intent, { close: true })];
         return info(
-          `I looked through the whole video (${r.frames} frames) and couldn't find “${nameFor(intent, "")}”. ` +
+          `I couldn't find “${nameFor(intent, "")}” in this video. ` +
             (close ? "Try describing it another way, like the words written on it." : "I can look more closely, or you can describe it another way, like the words written on it."),
           closer
         );
@@ -1457,7 +1456,7 @@ async function addZoom(intent, ctx) {
       const first = places[0];
       win = { s: first.from, e: clamp(first.from + span, 0, total), anchor: first.from, why: "seen" };
       if (win.e - win.s < MIN_LENGTH) win.s = Math.max(0, win.e - MIN_LENGTH);
-      hit = { matches: [first.best], at: first.from, scanned: true };
+      hit = { matches: [first.best], at: first.from };
       for (const p of places.slice(1, 3)) alts.push({ label: `Use ${fmt(p.from)} instead`, change: placeChange(p) });
     }
     const [best, ...others] = hit.matches;
@@ -1465,7 +1464,6 @@ async function addZoom(intent, ctx) {
     label = nameFor(intent, best.label);
     where = "seen";
     lookedAt = hit.at;
-    scanned = !!hit.scanned;
     for (const o of others) {
       alts.push({ label: `Use: ${o.label || "the other match"}`, change: { box: o.box, boxLabel: o.label } });
     }
@@ -1610,17 +1608,18 @@ async function addZoom(intent, ctx) {
   else if (win.why === "playhead") reply += ", at the playhead";
   else if (win.why === "seen") reply += ", when it first appears";
   reply += ".";
-  if (lookedAt != null && scanned) reply += " It wasn't at the playhead, so I looked through the video for it. If the rectangle on the preview isn't on it, drag it there or describe it differently.";
-  else if (lookedAt != null) reply += ` I found it by looking at the frame at ${fmt(lookedAt)}. If the rectangle on the preview isn't on it, drag it there or describe it differently.`;
-  if (where === "pointer") reply += ` It's centred on where the pointer was at ${fmt(win.anchor)}. Drag the rectangle on the preview to move it.`;
-  if (where === "centre") reply += " It's centred on the middle of the screen, because I couldn't see the pointer then. Drag the rectangle on the preview to move it.";
+  // What was done, never how it was found (the creator asked, 2026-10-03):
+  // no frames, no scans, no "I couldn't see the pointer".
+  if (lookedAt != null) reply += " If the rectangle on the preview isn't on it, drag it there or describe it differently.";
+  if (where === "pointer") reply += " It's centred where your pointer was. Drag the rectangle on the preview to move it.";
+  if (where === "centre") reply += " It's centred on the middle of the screen. Drag the rectangle on the preview to move it.";
   if (cropped) reply += ` “${zoom.label}” is bigger than a zoomed-in view can hold, so this zooms on its middle and crops its edges.`;
   else if (effective < level - 0.05) reply += ` That's as close as it can get while keeping all of “${zoom.label}” in view.`;
-  if (stoppedFor && !stoppedFor.tight) reply += ` It ends there so the camera can pull out before the next zoom, at ${fmt(stoppedFor.z.outStart)}.`;
-  if (stoppedFor && stoppedFor.tight) reply += ` It ends just before the next zoom, at ${fmt(stoppedFor.z.outStart)}, so the camera moves straight from this one to that one.`;
+  if (stoppedFor && !stoppedFor.tight) reply += ` It ends before the next zoom, at ${fmt(stoppedFor.z.outStart)}.`;
+  if (stoppedFor && stoppedFor.tight) reply += ` It runs straight into the next zoom, at ${fmt(stoppedFor.z.outStart)}.`;
   if (replaced.length === 1) reply += ` It replaces the zoom that was at ${fmt(replaced[0].outStart)}.`;
   if (replaced.length > 1) reply += ` It replaces ${replaced.length} zooms that were inside that time.`;
-  if (shortened) reply += ` The zoom before it now ends at ${fmt(toOutputSnapped(shortened.end, ctx.lay))}, so the camera pulls out in between.`;
+  if (shortened) reply += ` The zoom before it now ends at ${fmt(toOutputSnapped(shortened.end, ctx.lay))}.`;
 
   const choices = alts.slice(0, 3).map((a) => choice(a.label, intent, { ...a.change, replace: [zoom.id, ...(a.change.replace || [])] }));
 
@@ -1729,7 +1728,7 @@ function momentChoices(th, intent, ctx) {
  * file, a name the readings do not have is looked for on the frame instead.
  */
 function notFound(named) {
-  return `I couldn't find “${named}”, and this recording's video file isn't available for me to look at right now. Try again in a moment.`;
+  return `I couldn't find “${named}” right now. Try again in a moment.`;
 }
 
 function outside(start, end, total) {
@@ -1944,7 +1943,7 @@ async function addBlur(intent, ctx) {
     // Not on this frame: find it wherever it is, rather than send the creator
     // looking for a moment it is on screen.
     const when = why === "playhead" ? `at the playhead (${fmt(at)})` : `at ${fmt(at)}`;
-    return blurEverywhere({ ...intent, everywhere: true }, ctx, what, { note: `“${short(what)}” isn't on screen ${when}, so I looked through the whole video. ` });
+    return blurEverywhere({ ...intent, everywhere: true }, ctx, what);
   }
   const boxes = await ctx.refine(at, seen.matches, what);
 
@@ -2016,17 +2015,16 @@ async function addBlur(intent, ctx) {
  * blur (see scanFrames for why one blur cannot cover the others).
  */
 async function blurEverywhere(intent, ctx, what, { note = "" } = {}) {
-  if (!ctx.scan) return info(`${note}I can't look through this recording's video right now, so I can't find “${short(what)}”. Try again in a moment.`);
+  if (!ctx.scan) return info(`${note}I can't search this video right now, so I can't find “${short(what)}”. Try again in a moment.`);
   const close = !!intent.close;
   const r = await ctx.scan(what, { close });
-  if (r.error) return info(`${note}I couldn't look through the video just now, so I can't find “${short(what)}”. Try again in a moment.`);
+  if (r.error) return info(`${note}I couldn't search the video just now, so I can't find “${short(what)}”. Try again in a moment.`);
   const step = scanStep(ctx.total, close);
-  const every = step === 1 ? "second" : `${Number(step.toFixed(1))} s`;
   // Never "move the playhead to it": finding it is this feature's job.
   const closer = close ? [] : [choice("Look more closely", intent, { close: true, everywhere: true, time: { kind: "none", at: "", start: "", end: "" } })];
   if (!r.sightings.length) {
     return info(
-      `${note}I looked through the whole video (${r.frames} frames, one every ${every}) and couldn't find “${short(what)}”. ` +
+      `${note}I couldn't find “${short(what)}” in this video. ` +
         (close ? "Try describing it another way, like the words written on it." : "I can look more closely, or you can describe it another way, like the words written on it."),
       closer
     );
@@ -2074,16 +2072,10 @@ async function blurEverywhere(intent, ctx, what, { note = "" } = {}) {
     made.length === 1
       ? " It's being applied now, and it follows its text while it's on screen."
       : " They're being applied now, and each one follows its text while it's on screen.";
-  // Seen at the same x, the same size, lower or higher: most likely one thing
-  // scrolling, blurred once per place it was seen. Harmless, and said so.
-  const scrolled = made.some((a, i) =>
-    made.some((b, j) => j > i && Math.abs(a.x + a.w / 2 - (b.x + b.w / 2)) < 0.02 && Math.abs(a.w - b.w) < 0.02 && Math.abs(a.y - b.y) > a.h)
-  );
-  if (scrolled) reply += " Text that scrolls can get more than one blur; they overlap and look like one.";
   if (already) reply += ` ${already} more ${already === 1 ? "place was" : "places were"} already blurred.`;
   if (fresh.length > kept.length) reply += ` I found ${fresh.length - kept.length} more places; ask again once these finish applying and I'll blur those too.`;
-  reply += ` I looked at one frame every ${every}, so something on screen for less than that could be missed.`;
-  if (r.missed) reply += ` ${r.missed} of the frames couldn't be read.`;
+  // Said: what was blurred and where. Not said: how often the video was
+  // looked at, or what could have been missed by it (2026-10-03).
   if (note) reply = note + reply;
 
   return {
@@ -2205,7 +2197,7 @@ export async function runCommand({ demo, body, ask, look, lookSecrets, refine, s
   const recordingThere = !!(demo.recording?.mp4_key && !demo.purged);
   ctx.look = look || (recordingThere
     ? async (outT, description) => {
-        status(`Looking at the frame at ${fmt(outT)}…`);
+        status(`Looking at ${fmt(outT)}…`);
         let file = null;
         try {
           file = await frameAt(demo, toSource(outT, ctx.lay));
@@ -2226,7 +2218,7 @@ export async function runCommand({ demo, body, ask, look, lookSecrets, refine, s
   // The same, for a blur: every place the thing is on the frame…
   ctx.lookSecrets = lookSecrets || (recordingThere
     ? async (outT, description) => {
-        status(`Looking at the frame at ${fmt(outT)}…`);
+        status(`Looking at ${fmt(outT)}…`);
         let file = null;
         try {
           file = await frameAt(demo, toSource(outT, ctx.lay));
@@ -2245,7 +2237,7 @@ export async function runCommand({ demo, body, ask, look, lookSecrets, refine, s
   // cannot be read keeps the box the first look found (refineBox).
   ctx.refine = refine || (async (outT, matches, description) => {
     if (!matches.length) return [];
-    status(matches.length === 1 ? "Finding its exact edges…" : `Finding the exact edges of all ${matches.length}…`);
+    status(matches.length === 1 ? "Lining it up…" : `Lining up all ${matches.length}…`);
     const t = toSource(outT, ctx.lay);
     return Promise.all(matches.map((m) => refineBox(demo, t, m, description, { ...(ask ? { ask } : {}), W: ctx.W, H: ctx.H })));
   });
@@ -2266,7 +2258,7 @@ export async function runCommand({ demo, body, ask, look, lookSecrets, refine, s
   ctx.scanLook = scanLook || (recordingThere ? scanWith(findOnFrame, "a zoom") : null);
   ctx.refineMany = refineMany || (async (items, description) => {
     if (!items.length) return [];
-    status(items.length === 1 ? "Finding its exact edges…" : `Finding the exact edges of all ${items.length}…`);
+    status(items.length === 1 ? "Lining it up…" : `Lining up all ${items.length}…`);
     return mapLimit(items, 6, (it) => refineBox(demo, it.src, it.match, description, { ...(ask ? { ask } : {}), W: ctx.W, H: ctx.H }));
   });
 

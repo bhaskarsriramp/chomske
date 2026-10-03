@@ -418,7 +418,7 @@ export function Badge({ children, tone = "mute" }) {
 export function Empty({ icon = "sparkle", title, children, action }) {
   return (
     <div style={{ padding: "26px 18px", textAlign: "center", color: "var(--ink-mute)" }}>
-      <div style={{ opacity: 0.5, marginBottom: 10 }}><Icon name={icon} size={22} /></div>
+      <div style={{ opacity: 0.5, marginBottom: 10, display: "grid", placeItems: "center" }}><Icon name={icon} size={22} /></div>
       <div style={{ fontSize: 13.5, fontWeight: 620, color: "var(--ink-body)" }}>{title}</div>
       {children && <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.55, maxWidth: 280, marginInline: "auto" }}>{children}</div>}
       {action && <div style={{ marginTop: 14 }}>{action}</div>}

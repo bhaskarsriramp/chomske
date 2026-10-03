@@ -53,7 +53,6 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
   const [paused, setPaused] = useState(false);
   const [muted, setMuted] = useState(false);
   const [level, setLevel] = useState(0);
-  const [samples, setSamples] = useState(0);
   const [sent, setSent] = useState(0);
   const [waiting, setWaiting] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -95,7 +94,7 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
 
     if (!cap.hasMic && prefs?.mic) setNotice("The microphone wasn't available, so this recording has no voice.");
     else if (!cap.hasSystemAudio && prefs?.tabSound) setNotice("This share has no tab sound. Tick “Share tab audio” in the picker next time if you need it.");
-    else if (!captureSupport().tracking) setNotice("This browser can't follow the pointer, so click zooms won't be available. Chrome or Edge on a desktop can.");
+    else if (!captureSupport().tracking) setNotice("Click zooms aren't available in this browser. Chrome or Edge on a desktop has them.");
   }, [cap, prefs]);
 
   /* ── While it runs ────────────────────────────────────────────────────── */
@@ -105,7 +104,6 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
     const buf = new Uint8Array(512);
     const id = setInterval(() => {
       setElapsed(recorder.current?.seconds || 0);
-      setSamples(tracker.current?.samples || 0);
       setLevel(levelOf(capture.current?.analyser, buf));
     }, 200);
     return () => clearInterval(id);
@@ -272,7 +270,7 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
   if (phase === "recording") {
     return (
       <>
-        <RecordingStage elapsed={elapsed} samples={samples} label={capture.current?.label} notice={notice} />
+        <RecordingStage elapsed={elapsed} label={capture.current?.label} notice={notice} />
         <FloatingControls
           elapsed={elapsed}
           paused={paused}
@@ -313,7 +311,7 @@ export default function RecordPage({ capture: cap, prefs, onOpen, onFail }) {
  * are demonstrating — and the one job it has is to be unmistakable if they do
  * glance back at it.
  */
-function RecordingStage({ elapsed, samples, label, notice }) {
+function RecordingStage({ elapsed, label, notice }) {
   return (
     <div style={{ display: "grid", placeItems: "center", minHeight: "58vh", textAlign: "center", padding: 20 }}>
       <div>
@@ -331,9 +329,6 @@ function RecordingStage({ elapsed, samples, label, notice }) {
             {label}
           </div>
         )}
-        <div style={{ marginTop: 10, fontSize: 12, color: "var(--ink-mute)" }}>
-          {samples > 0 ? `Following the pointer — ${samples.toLocaleString()} points` : "Watching the screen"}
-        </div>
         {notice && (
           <div style={{ marginTop: 20, maxWidth: 380, marginInline: "auto", fontSize: 12.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
             {notice}

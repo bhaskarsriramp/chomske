@@ -142,12 +142,56 @@ export default function Preview({
   const durRef = useRef(tl.duration || 0);
   durRef.current = tl.duration || 0;
 
+  /**
+   * ── ONE SEEK AT A TIME WHILE SCRUBBING ─────────────────────────────────────
+   * Dragging the playhead asks for a new moment on every pointer move. Each new
+   * `currentTime` cancels the seek still in flight, so a steady drag never let
+   * one finish: the element sat "seeking" with no picture for the whole drag and
+   * the preview went black (the creator's report, 2026-10-03). Now a request
+   * made while a seek is in flight waits, only the newest is kept, and it is
+   * sent the moment the current one lands — so the picture keeps up with the
+   * drag at the speed the browser can decode, frame after frame.
+   *
+   * `pendingSeek` is also the time the rest of the preview treats as "now"
+   * (see draw), so the playhead, the camera and the cursor follow the pointer
+   * exactly while the picture catches up behind them.
+   */
+  const pendingSeek = useRef(null);
   useEffect(() => {
     const v = videoRef.current;
     const at = seekTo && typeof seekTo === "object" ? seekTo.t : seekTo;
     if (!v || at == null || !Number.isFinite(at)) return;
-    v.currentTime = clamp(toSource(at, layRef.current), 0, Math.max(0, durRef.current - 0.05));
+    const t = clamp(toSource(at, layRef.current), 0, Math.max(0, durRef.current - 0.05));
+    if (v.seeking) pendingSeek.current = t;
+    else {
+      pendingSeek.current = null;
+      v.currentTime = t;
+    }
   }, [seekTo]);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return undefined;
+    const onSeeked = () => {
+      const next = pendingSeek.current;
+      if (next == null) return;
+      pendingSeek.current = null;
+      if (Math.abs(next - v.currentTime) > 0.001) v.currentTime = next;
+    };
+    v.addEventListener("seeked", onSeeked);
+    return () => v.removeEventListener("seeked", onSeeked);
+  }, []);
+
+  /**
+   * ── THE LAST FRAME, KEPT ───────────────────────────────────────────────────
+   * While the element seeks it has no picture to give (readyState below 2),
+   * and the frame loop used to paint the video's box dark until it had one:
+   * a black flash on every click of the ruler, and black for a whole drag.
+   * Every frame the element does give is copied here (540p, a GPU blit), and
+   * drawn instead while it seeks, so the picture only ever changes from one
+   * real frame to the next. Its size is set as videoWidth/videoHeight too, so
+   * the paint helpers below read it exactly as they read the element.
+   */
+  const lastFrame = useRef(null);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -179,8 +223,30 @@ export default function Preview({
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
 
-    // Where in the OUTPUT we are, from the element's own clock.
-    const srcT = v.currentTime;
+    // Where in the OUTPUT we are, from the element's own clock, or from the
+    // moment a scrub is waiting to seek to (see "One seek at a time").
+    const srcT = pendingSeek.current ?? v.currentTime;
+
+    // The picture: the element when it has a frame for now, otherwise the last
+    // frame it gave (see "The last frame, kept").
+    const fresh = v.readyState >= 2 && !v.seeking && v.videoWidth > 0;
+    if (fresh) {
+      let c = lastFrame.current;
+      if (!c || c.width !== v.videoWidth || c.height !== v.videoHeight) {
+        c = document.createElement("canvas");
+        c.width = v.videoWidth;
+        c.height = v.videoHeight;
+        c.videoWidth = c.width;
+        c.videoHeight = c.height;
+        c.shownAt = -1;
+        lastFrame.current = c;
+      }
+      if (c.shownAt !== v.currentTime) {
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        c.shownAt = v.currentTime;
+      }
+    }
+    const pic = fresh ? v : lastFrame.current;
     const outT = toOutputSnapped(srcT, lay);
     const cam = cameraAt(tl, srcT, { track: drawnTrack(tl) });
 
@@ -206,14 +272,14 @@ export default function Preview({
     }
     ctx.clip();
 
-    if (v.readyState >= 2) {
+    if (pic) {
       // The zoom IS this call: the camera rect, in the source's own pixels, as
       // drawImage's source rectangle. No transform, no second buffer.
-      const sx = cam.x * v.videoWidth;
-      const sy = cam.y * v.videoHeight;
-      const sw = Math.max(1, cam.w * v.videoWidth);
-      const sh = Math.max(1, cam.h * v.videoHeight);
-      ctx.drawImage(v, sx, sy, sw, sh, dx, dy, dw, dh);
+      const sx = cam.x * pic.videoWidth;
+      const sy = cam.y * pic.videoHeight;
+      const sw = Math.max(1, cam.w * pic.videoWidth);
+      const sh = Math.max(1, cam.h * pic.videoHeight);
+      ctx.drawImage(pic, sx, sy, sw, sh, dx, dy, dw, dh);
 
       // ── The pointer the recording came with ──────────────────────────
       // The exporter reconstructs it away with ffmpeg's delogo (render/hide.js).
@@ -223,7 +289,7 @@ export default function Preview({
       // the finished file does not.
       // Only when the drawn path is somewhere the captured one is not.
       if (tl.cursor?.mode === "intent" && tl.cursor?.hide_real !== false && (tl.captured || []).length > 1) {
-        paintHide(ctx, v, tl, srcT, cam, { dx, dy, dw, dh }, srcW, srcH);
+        paintHide(ctx, pic, tl, srcT, cam, { dx, dy, dw, dh }, srcW, srcH);
       }
 
       // ── Blur, on top of the picture and inside the clip ──────────────
@@ -238,10 +304,10 @@ export default function Preview({
           // or after (follow.mjs followNear). At the size it is on each
           // frame: what it covers can zoom.
           for (const p of followNear(f, srcT)) {
-            paintBlur(ctx, v, { ...b, x: p.x, y: p.y, w: b.w * p.s, h: b.h * p.s }, cam, { dx, dy, dw, dh });
+            paintBlur(ctx, pic, { ...b, x: p.x, y: p.y, w: b.w * p.s, h: b.h * p.s }, cam, { dx, dy, dw, dh });
           }
         } else {
-          paintBlur(ctx, v, b, cam, { dx, dy, dw, dh });
+          paintBlur(ctx, pic, b, cam, { dx, dy, dw, dh });
         }
       }
     } else {

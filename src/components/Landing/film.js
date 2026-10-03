@@ -94,6 +94,31 @@ export const SCRIPT = {
   ],
 };
 
+/**
+ * The same recording as a product demo: the same pointer, presses and click
+ * zooms, with a script read over it as captions and a voice, and one close-up
+ * where nobody clicked (the price, once Pro is bought). It is what the studio's
+ * product demo adds to a recording (Studio/AutoDemo.js), and it leaves the
+ * click zooms exactly as SCRIPT has them, as the product does.
+ */
+export const NARRATED = {
+  ...SCRIPT,
+  duration: 10.6,
+  /** Reduced motion: the close-up, with its line on screen. */
+  poster: 8.2,
+  path: [...SCRIPT.path.slice(0, -1), { t: 10.6, x: 0.76, y: 0.9 }],
+  shots: [
+    ...SCRIPT.shots,
+    { in: 7.0, out: 9.1, s: 1.7, label: "1.7×", name: "Close-up", closeup: true, focus: [{ t: 0, to: "pro-price" }] },
+  ],
+  captions: [
+    { t0: 0.4, t1: 2.75, text: "Every Lumen plan sits on one page." },
+    { t0: 2.95, t1: 5.15, text: "Switch billing to Lifetime to pay once." },
+    { t0: 5.35, t1: 6.95, text: "Pick Pro, and you're in." },
+    { t0: 7.2, t1: 9.4, text: "$249, once, and it's yours." },
+  ],
+};
+
 /** A shot's span on the timeline, ramps included. */
 export const shotSpan = (s) => [s.in, s.out + RAMP_OUT];
 
@@ -208,13 +233,14 @@ export function useInView(ref, { once = false } = {}) {
  * `variant` "raw" is the recording as a browser hands it over: no camera, a
  * small cursor with the tremor of a real hand, no ripples. "clipo" is the edit.
  */
-export function mountScene(root, variant = "clipo") {
+export function mountScene(root, variant = "clipo", script = SCRIPT) {
+  const S = script;
   const cam = root.querySelector("[data-cam]");
   const view = root.querySelector("[data-view]");
   const cursor = root.querySelector("[data-cursor]");
   const screen = root.querySelector("[data-screen]");
   const caption = root.querySelector("[data-caption]");
-  const ripples = SCRIPT.presses.map((_, i) => root.querySelector(`[data-ripple="${i}"]`));
+  const ripples = S.presses.map((_, i) => root.querySelector(`[data-ripple="${i}"]`));
   const hoverables = [...root.querySelectorAll("[data-hoverable]")];
   const clipo = variant !== "raw";
   const H = 62.5; // the screen is 16:10, so its height is 62.5% of its width (cqw)
@@ -265,7 +291,7 @@ export function mountScene(root, variant = "clipo") {
   };
 
   const pointerAt = (t) => {
-    const p = along(SCRIPT.path, t, clipo);
+    const p = along(S.path, t, clipo);
     if (clipo) return p;
     // The raw recording: a real hand's tremor, which the edit smooths away.
     return {
@@ -279,7 +305,7 @@ export function mountScene(root, variant = "clipo") {
     let cx = 0.5;
     let cy = 0.5;
     if (clipo) {
-      for (const shot of SCRIPT.shots) {
+      for (const shot of S.shots) {
         const k = smooth(clamp01((t - shot.in) / RAMP_IN)) * (1 - smooth(clamp01((t - shot.out) / RAMP_OUT)));
         if (k <= 0) continue;
         const f = along(shot.focus, t, true);
@@ -295,15 +321,15 @@ export function mountScene(root, variant = "clipo") {
   };
 
   const stateAt = (t) => {
-    const st = { ...SCRIPT.initial };
-    for (const e of SCRIPT.events) if (t >= e.t) Object.assign(st, e, { t: undefined });
+    const st = { ...S.initial };
+    for (const e of S.events) if (t >= e.t) Object.assign(st, e, { t: undefined });
     delete st.t;
     return st;
   };
 
   const apply = (t) => {
     lastT = t;
-    const D = SCRIPT.duration;
+    const D = S.duration;
     const { s, cx, cy } = cameraAt(t);
     if (cam) cam.style.transform = `translate(${(0.5 - s * cx) * 100}%, ${(0.5 - s * cy) * 100}%) scale(${s})`;
 
@@ -312,7 +338,7 @@ export function mountScene(root, variant = "clipo") {
     const Y = s * (p.y - cy) + 0.5;
 
     let pressing = 0;
-    SCRIPT.presses.forEach((press, i) => {
+    S.presses.forEach((press, i) => {
       const u = (t - press.t) / 0.6;
       if (u >= 0 && u < 0.18) pressing = 1 - u / 0.18;
       const el = ripples[i];
@@ -346,7 +372,7 @@ export function mountScene(root, variant = "clipo") {
     }
 
     if (caption) {
-      const line = SCRIPT.captions.find((c) => t >= c.t0 && t < c.t1);
+      const line = S.captions.find((c) => t >= c.t0 && t < c.t1);
       const text = line ? line.text : "";
       if (text !== lastCaption) {
         lastCaption = text;

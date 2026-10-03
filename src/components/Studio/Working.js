@@ -6,10 +6,9 @@
  * editor", so nobody watches the editor fill itself in half-made and decides
  * it is broken. It shows three things at once:
  *
- *   the percentage   big, and always moving. The server reports progress in
- *                    jumps; the number eases towards each report and creeps a
- *                    few points past it while a long stage runs, never more
- *                    than CREEP and never to 100 until the work is done.
+ *   the percentage   big, and always moving. Paced on a clock as well as
+ *                    by the server: brisk to 75%, slow after, and to 100 only
+ *                    when the work is done (see PACE below).
  *   the stage        what is happening, in words, from the server's own
  *                    progress messages (editPhase / demoPhase below).
  *   a film of it     a small made-up app being edited in front of the creator,
@@ -34,8 +33,8 @@ import "./working.css";
    ──────────────────────────────────────────────────────────────────────────── */
 
 const EDIT = [
-  { id: "watch", label: "Watching your recording", sub: "Reading it frame by frame and following your pointer.", a: "#22D3EE", b: "#3B82F6" },
-  { id: "clicks", label: "Finding every click", sub: "Where you pressed, and what changed on screen when you did.", a: "#6D6BFF", b: "#22D3EE" },
+  { id: "watch", label: "Watching your recording", sub: "Getting to know your recording, start to finish.", a: "#22D3EE", b: "#3B82F6" },
+  { id: "clicks", label: "Finding every click", sub: "Spotting each click and what it opened.", a: "#6D6BFF", b: "#22D3EE" },
   { id: "camera", label: "Planning the camera", sub: "Choosing where to zoom in, how far, and for how long.", a: "#A855F7", b: "#6D6BFF" },
   { id: "private", label: "Checking for anything private", sub: "Emails, keys and personal details get blurred.", a: "#F43F5E", b: "#F59E0B" },
   { id: "build", label: "Building the edit", sub: "Laying the zooms, blur and pointer on the timeline.", a: "#F59E0B", b: "#F43F5E" },
@@ -79,9 +78,39 @@ export function demoPhase(stage = "") {
    The number
    ──────────────────────────────────────────────────────────────────────────── */
 
-/** How far past the last report the number may creep, and how slowly. */
-const CREEP = 0.05;
-const CREEP_S = 18;
+/**
+ * ── THE NUMBER IS PACED, NOT JUST REPORTED ───────────────────────────────────
+ * The server's own progress is honest and slow to start: an edit spends its
+ * first half-minute reading frames at a few percent, and a number that sits at
+ * 2% while the film plays reads as stuck. So the number runs on a clock as well:
+ * briskly to FAST_TO over the track's `fast` seconds, then slower and slower
+ * towards SLOW_TO, and to 100 only when the work is really done (`complete`),
+ * which it then covers quickly. The real progress still lifts it whenever it is
+ * ahead of the clock, so the number is never behind the work.
+ *
+ * `fast` is roughly how long each kind of wait usually takes to get most of the
+ * way: an edit about half a minute, a product demo (edit, script and voice)
+ * about a minute.
+ */
+const FAST_TO = 0.75;
+const SLOW_TO = 0.95;
+const PACE = {
+  edit: { fast: 30, slow: 45 },
+  demo: { fast: 55, slow: 100 },
+  demoOnly: { fast: 40, slow: 80 },
+};
+
+/** Where the clock alone puts the number after `sec` seconds. */
+function paced(sec, { fast, slow }) {
+  if (sec <= fast) {
+    // Mostly ease-out, with a little straight line mixed in so it is still
+    // moving when it reaches FAST_TO and hands over to the slow part without
+    // a visible stop.
+    const k = sec / fast;
+    return FAST_TO * (0.85 * k * (2 - k) + 0.15 * k);
+  }
+  return FAST_TO + (SLOW_TO - FAST_TO) * (1 - Math.exp(-(sec - fast) / slow));
+}
 
 const reduced = () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
@@ -91,22 +120,20 @@ const reduced = () => typeof window !== "undefined" && !!window.matchMedia?.("(p
  * re-render the scene sixty times a second. Monotonic: a report lower than
  * what is already shown holds the number where it is.
  */
-function useShown(target, complete, onFinished) {
+function useShown(target, complete, onFinished, track) {
   const numRef = useRef(null);
   const barRef = useRef(null);
-  const st = useRef({ shown: 0, target: 0, since: 0, last: 0, finished: false });
+  const st = useRef({ shown: 0, target: 0, start: 0, last: 0, finished: false });
   const completeRef = useRef(complete);
   completeRef.current = complete;
   const finishedRef = useRef(onFinished);
   finishedRef.current = onFinished;
+  const paceRef = useRef(PACE[track] || PACE.edit);
+  paceRef.current = PACE[track] || PACE.edit;
 
   useEffect(() => {
     const s = st.current;
-    const t = Math.max(0, Math.min(1, Number(target) || 0));
-    if (t > s.target) {
-      s.target = t;
-      s.since = performance.now();
-    }
+    s.target = Math.max(s.target, Math.max(0, Math.min(1, Number(target) || 0)));
   }, [target]);
 
   useEffect(() => {
@@ -115,20 +142,16 @@ function useShown(target, complete, onFinished) {
     let raf = 0;
     let timer = 0;
     const frame = (now) => {
+      if (!s.start) s.start = now;
       const dt = s.last ? Math.min(0.1, (now - s.last) / 1000) : 0;
       s.last = now;
       const done = completeRef.current;
-      let goal;
-      if (done) goal = 1;
-      else {
-        const waited = s.since ? (now - s.since) / 1000 : 0;
-        goal = Math.min(0.99, s.target + CREEP * (1 - Math.exp(-waited / CREEP_S)));
-      }
+      const goal = done ? 1 : Math.min(0.99, Math.max(s.target, paced((now - s.start) / 1000, paceRef.current)));
       if (still) s.shown = Math.max(s.shown, goal);
       else {
-        // Quick to catch up from far behind (a page opened at 60%), gentle
-        // once close, and quick again for the finale.
-        const rate = done ? 5 : goal - s.shown > 0.12 ? 2.6 : 1.4;
+        // Close behind the clock, which is already smooth; quicker when the
+        // real progress jumps ahead of it, and quickest for the run to 100.
+        const rate = done ? 6 : goal - s.shown > 0.1 ? 2.6 : 4;
         s.shown = Math.max(s.shown, s.shown + (goal - s.shown) * (1 - Math.exp(-rate * dt)));
       }
       const pct = done && s.shown > 0.994 ? 100 : Math.min(99, Math.floor(s.shown * 100));
@@ -167,10 +190,15 @@ export default function Working({ track = "edit", phase, progress = 0, complete 
   const found = phases.findIndex((p) => p.id === phase);
   const idx = Math.max(0, found);
   const [finished, setFinished] = useState(false);
-  const { numRef, barRef } = useShown(progress, complete, (what) => {
-    if (what === "shown") setFinished(true);
-    else onComplete?.();
-  });
+  const { numRef, barRef } = useShown(
+    progress,
+    complete,
+    (what) => {
+      if (what === "shown") setFinished(true);
+      else onComplete?.();
+    },
+    track
+  );
 
   const current = finished ? phases[phases.length - 1] : phases[idx];
   const sceneId = finished ? "final" : current.id;
@@ -419,7 +447,7 @@ function Dock({ phase }) {
   if (phase === "watch") {
     return (
       <div className="wk-dock">
-        <span className="wk-dock-label">Frames</span>
+        <span className="wk-dock-label">Recording</span>
         <div className="wk-strip">
           <div>
             {Array.from({ length: 16 }, (_, i) => (

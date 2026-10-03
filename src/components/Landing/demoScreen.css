@@ -121,3 +121,10 @@
   opacity: 0; transition: opacity 0.2s ease, transform 0.3s var(--lp-ease, cubic-bezier(0.23, 1, 0.32, 1));
 }
 .dm-caption[data-on="true"] { opacity: 1; transform: translate(-50%, 0); }
+
+/* A signed-in account (DemoScreen `account`): the chat film blurs its email. */
+.dm-acct { display: inline-flex; align-items: center; gap: 0.8cqw; padding: 0.5cqw 1.2cqw 0.5cqw 0.5cqw; border-radius: 99px; background: #f1f2f6; color: #11131a; font-weight: 600; }
+.dm-acct i { width: 2.2cqw; height: 2.2cqw; border-radius: 50%; background: linear-gradient(135deg, #ff9a5c, #f4511e); }
+.dm-mail { position: relative; }
+.dm-billed { margin-top: 2cqw; font-size: 1.15cqw; color: #6b7185; text-align: center; }
+.dm-billed .dm-mail { color: #11131a; font-weight: 600; }

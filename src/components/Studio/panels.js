@@ -84,8 +84,8 @@ export function VideoPanel({ tl, selection, onSelect, seek, onDeleteClip, onRest
         )}
       </div>
       <Hint>
-        Point at the video on the timeline and Ctrl + click (⌘ + click on a Mac) to cut it into clips. Click a clip to
-        select it, then drag its edges to trim it, or delete it to take it out. Restore brings back anything taken out.
+        Ctrl + click the timeline (⌘ + click on a Mac) to split the video. Drag a clip's edges to trim it, or delete
+        it. Restore brings it back.
       </Hint>
     </Panel>
   );
@@ -117,7 +117,7 @@ export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {
       >
         {zooms.length === 0 ? (
           <Empty icon="zoom" title="No camera moves" action={<Btn size="s" onClick={add}>Add one at the playhead</Btn>}>
-            A demo with no zoom shows everything at once, which means it shows nothing in particular.
+            Add a zoom to draw the eye to what matters.
           </Empty>
         ) : (
           <div style={{ display: "grid", gap: 2, margin: -6 }}>
@@ -160,12 +160,12 @@ export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {
             value={current.level}
             onChange={(v) => edit(patch(tl, "zooms", current.id, { level: v }), "Zoom level")}
             format={(v) => `${v.toFixed(2)}×`}
-            hint={current.level > 2.6 ? "Past about 2.5× the recording runs out of pixels and the picture goes soft." : undefined}
+            hint={current.level > 2.6 ? "Above 2.5× the picture starts to look soft." : undefined}
           />
           {/* Follow the cursor: hidden for now, kept to bring back.
           <Toggle
             label="Follow the cursor"
-            hint="The camera tracks the pointer instead of holding still. For a drag or a scroll — on a still target it drifts and looks like a mistake."
+            hint="Moves with your pointer. Best for drags and scrolls."
             checked={!!current.follow}
             onChange={(v) => edit(patch(tl, "zooms", current.id, { follow: v }), "Follow cursor")}
           />
@@ -231,14 +231,14 @@ export function ZoomPanel({ tl, selection, onSelect, edit, time, seek }) {
  * a demo where no frame was checked at all. A promise like that is worse than
  * no promise, because the creator acts on it and exports.
  */
-function Unread({ icon, title, children, reading, onRead, readCost }) {
+function Unread({ icon, title, children, reading, onRead, readCost, label = "Read the screens", busy = "Reading the screens…" }) {
   return (
     <Empty
       icon={icon}
       title={title}
       action={
         <Btn size="s" kind="primary" onClick={onRead} disabled={reading}>
-          {reading ? "Reading the screens…" : readCost > 0 ? `Read the screens · ${readCost} credits` : "Read the screens"}
+          {reading ? busy : readCost > 0 ? `${label} · ${readCost} credits` : label}
         </Btn>
       }
     >
@@ -295,22 +295,24 @@ export function BlurPanel({
           </Btn>
         }
       >
+        {/* Short on purpose: what is missing and the one button that fixes
+            it. The creator asked for no more than that (2026-10-03). It still
+            never claims a check that did not happen (see Unread above). */}
         {blurs.length === 0 && !read ? (
-          <Unread icon="blur" title="Nothing has been checked yet" reading={reading} onRead={onRead} readCost={readCost}>
-            Your edit was made from the recording itself, which needs no AI. Finding emails, keys, tokens and personal
-            details does — it means reading what is on every sampled frame. You can also{" "}
-            <button
-              type="button"
-              onClick={add}
-              style={{ font: "inherit", color: "var(--primary)", background: "none", border: 0, padding: 0, cursor: "pointer" }}
-            >
-              blur something by hand
-            </button>.
+          <Unread
+            icon="blur"
+            title="No blurs applied"
+            label="Apply blur"
+            busy="Finding private details…"
+            reading={reading}
+            onRead={onRead}
+            readCost={readCost}
+          >
+            Blur every email, key and other private detail in this video automatically.
           </Unread>
         ) : blurs.length === 0 ? (
-          <Empty icon="blur" title="Nothing private found" action={<Btn size="s" onClick={add}>Add one anyway</Btn>}>
-            Every sampled frame was checked for emails, keys, tokens and personal details. Add your own if something was
-            missed.
+          <Empty icon="blur" title="Nothing private found" action={<Btn size="s" onClick={add}>Add a blur</Btn>}>
+            Spotted something we missed? Blur it yourself.
           </Empty>
         ) : (
           <>
@@ -480,7 +482,7 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
       <Panel title="Captions">
         <Toggle
           label="Show captions"
-          hint={cues.length ? `${cues.length} line${cues.length === 1 ? "" : "s"}.` : "None yet. Write them from the script, from your voice, or by hand."}
+          hint={cues.length ? `${cues.length} line${cues.length === 1 ? "" : "s"}.` : null}
           checked={!!cap.enabled}
           onChange={(v) => setCap({ enabled: v }, v ? "Captions on" : "Captions off")}
           disabled={!cues.length}
@@ -495,23 +497,26 @@ export function CaptionsPanel({ tl, selection, onSelect, edit, time, seek, onGen
               disabled={!hasScript || generating}
               full
             >
-              Add captions from the script
+              Generate captions from the video
             </Btn>
+            {/* The script it splits is the narration written from what is on
+                screen during the automatic edit, so "from the video" is what
+                it is. Short wording on purpose (2026-10-03). */}
             <Hint>
               {hasScript
-                ? "Uses the voiceover script already written for this demo, split into lines and timed to the steps. Free, and it matches what you will say if you record the voiceover."
-                : "There is no voiceover script for this recording yet. It is written during the automatic edit."}
+                ? "Understands the video and its flow, and generates captions that fit it."
+                : "Available once the automatic edit has run."}
             </Hint>
 
             <Btn
-              icon={<Icon name="wand" size={14} />}
+              icon={<Icon name="sound" size={14} />}
               onClick={onGenerate}
               disabled={!hasAudio || generating}
               full
             >
-              {generating ? "Listening…" : "Write captions from my voice"}
+              {generating ? "Listening…" : "Write captions from voice"}
             </Btn>
-            {!hasAudio && <Hint>This recording has no sound, so there is nothing to transcribe.</Hint>}
+            {!hasAudio && <Hint>This recording has no sound.</Hint>}
 
             <Btn size="s" icon={<Icon name="plus" size={12} />} onClick={addCue} full>
               Add a caption by hand
@@ -892,9 +897,8 @@ export function CursorPanel({ tl, edit }) {
     <Panel title="Cursor">
       {points === 0 ? (
         <>
-          <Empty icon="cursor" title="No pointer was recovered">
-            The pointer is read back out of the recording's own pixels, and this one was too busy to read — a full-screen
-            video or a constantly repainting page. Zooms and annotations still work.
+          <Empty icon="cursor" title="Cursor effects aren't available">
+            This recording's pointer couldn't be used. Zooms and blur still work.
           </Empty>
           {ripple}
         </>

@@ -9,7 +9,7 @@
  * at 1400px and the camera maths in film.js never has to know which.
  */
 import { useLayoutEffect, useRef, useState } from "react";
-import { SCRIPT, RAMP_OUT, clock, mountScene, shotSpan, useFilm } from "./film";
+import { SCRIPT, NARRATED, RAMP_OUT, clock, mountScene, shotSpan, useFilm } from "./film";
 import "./demoScreen.css";
 
 /** The same arrow the product draws, so the page and the app agree. */
@@ -33,12 +33,17 @@ const Check = () => (
 
 const BARS = [38, 52, 44, 61, 57, 72, 66, 81, 76, 92];
 
-export function DemoScreen({ variant = "clipo", captions = false }) {
+/**
+ * `page` is where a screen that no film drives sits (the chat film shows the
+ * pricing page and moves its camera in CSS). `account` signs a made-up user
+ * in: their email in the nav and on the bill, for the chat film to blur.
+ */
+export function DemoScreen({ variant = "clipo", captions = false, page = "home", account = "" }) {
   return (
     <div className="dm" data-variant={variant}>
       <div className="dm-view" data-view>
         <div className="dm-cam" data-cam>
-          <div className="dm-app" data-screen data-page="home" data-plan="monthly" data-bought="no">
+          <div className="dm-app" data-screen data-page={page} data-plan="monthly" data-bought="no">
             <header className="dm-nav">
               <span className="dm-logo">
                 <i />
@@ -52,10 +57,19 @@ export function DemoScreen({ variant = "clipo", captions = false }) {
                   Pricing
                 </span>
               </nav>
-              <span className="dm-nav__end">
-                <span>Sign in</span>
-                <b>Start free</b>
-              </span>
+              {account ? (
+                <span className="dm-nav__end">
+                  <span className="dm-acct">
+                    <i />
+                    <span className="dm-mail">{account}</span>
+                  </span>
+                </span>
+              ) : (
+                <span className="dm-nav__end">
+                  <span>Sign in</span>
+                  <b>Start free</b>
+                </span>
+              )}
             </header>
 
             <section className="dm-page dm-home">
@@ -146,7 +160,7 @@ export function DemoScreen({ variant = "clipo", captions = false }) {
                 <div className="dm-plan dm-plan--hot">
                   <span className="dm-plan__badge">Most popular</span>
                   <span className="dm-plan__name">Pro</span>
-                  <span className="dm-price dm-price--swap">
+                  <span className="dm-price dm-price--swap" data-target="pro-price">
                     <span className="dm-price__m">
                       <b>$29</b>
                       <em>per month</em>
@@ -190,6 +204,11 @@ export function DemoScreen({ variant = "clipo", captions = false }) {
                   <span className="dm-btn dm-btn--quiet">Talk to us</span>
                 </div>
               </div>
+              {account && (
+                <p className="dm-billed">
+                  Billed to <span className="dm-mail">{account}</span>
+                </p>
+              )}
             </section>
           </div>
         </div>
@@ -204,12 +223,12 @@ export function DemoScreen({ variant = "clipo", captions = false }) {
   );
 }
 
-/** Mount a scene on every .dm inside `ref`, in document order. */
-function useScenes(ref, variants) {
+/** Mount a scene on every .dm inside `ref`, in document order, playing `script`. */
+function useScenes(ref, variants, script = SCRIPT) {
   const scenes = useRef([]);
   useLayoutEffect(() => {
     const roots = [...ref.current.querySelectorAll(".dm")];
-    scenes.current = roots.map((el, i) => mountScene(el, variants[i] || "clipo"));
+    scenes.current = roots.map((el, i) => mountScene(el, variants[i] || "clipo", script));
     return () => scenes.current.forEach((s) => s.destroy());
     // variants is a literal at every call site
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -447,14 +466,6 @@ export function EditorFilm() {
             <i style={{ width: `${((shot.s - 1) / 2) * 100}%` }} />
           </div>
           <div className="ed-field">
-            <span>Easing</span>
-            <span className="ed-seg">
-              <em className="is-on">Smooth</em>
-              <em>Snappy</em>
-              <em>Slow</em>
-            </span>
-          </div>
-          <div className="ed-field">
             <span>Follow the cursor</span>
             <span className="ed-switch" data-on={shot.follow ? "true" : "false"}>
               <i />
@@ -526,5 +537,195 @@ export function EditorFilm() {
         </span>
       </div>
     </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   The product demo
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const pctN = (t) => `${(t / NARRATED.duration) * 100}%`;
+const RULER_N = [0, 2, 4, 6, 8, 10];
+/** The voice pill's bars, tallest in the middle of a word. */
+const VOICE_BARS = [38, 64, 46, 82, 58, 92, 70, 50, 86, 62, 44, 74];
+
+/**
+ * The same recording, made into a narrated demo: a one-line brief at the top,
+ * the script it became on the right (each line lights as it is read), the
+ * voice speaking over the picture, a close-up nobody clicked for, and the
+ * lanes it all lands on. Everything moves on the film's own clock, so the line
+ * that is lit, the caption on the picture and the voice are always one moment.
+ */
+export function ProductDemoFilm() {
+  const root = useRef(null);
+  const parts = useRef(null);
+  const scenes = useScenes(root, ["clipo"], NARRATED);
+  const close = NARRATED.shots.find((sh) => sh.closeup);
+
+  useFilm(
+    root,
+    NARRATED.duration,
+    (t) => {
+      scenes.current[0]?.apply(t);
+      const el = root.current;
+      if (!el) return;
+      if (!parts.current) {
+        parts.current = {
+          head: el.querySelector("[data-pdhead]"),
+          time: el.querySelector("[data-pdtime]"),
+          lines: [...el.querySelectorAll("[data-line]")],
+          bars: [...el.querySelectorAll("[data-linebar]")],
+          caps: [...el.querySelectorAll("[data-pdcap]")],
+          speak: el.querySelector("[data-speak]"),
+          closeTag: el.querySelector("[data-closetag]"),
+          blocks: [...el.querySelectorAll("[data-pdblock]")],
+        };
+      }
+      const P = parts.current;
+      P.head.style.left = pctN(t);
+      const txt = clock(t);
+      if (P.time.textContent !== txt) P.time.textContent = txt;
+
+      let speaking = false;
+      NARRATED.captions.forEach((c, i) => {
+        const state = t >= c.t1 ? "past" : t >= c.t0 ? "now" : "next";
+        if (state === "now") speaking = true;
+        if (P.lines[i].dataset.state !== state) P.lines[i].dataset.state = state;
+        if (P.caps[i].dataset.live !== (state === "now" ? "true" : "false")) P.caps[i].dataset.live = state === "now" ? "true" : "false";
+        const k = state === "now" ? (t - c.t0) / (c.t1 - c.t0) : state === "past" ? 1 : 0;
+        P.bars[i].style.transform = `scaleX(${k})`;
+      });
+      const sp = speaking ? "true" : "false";
+      if (P.speak.dataset.speak !== sp) P.speak.dataset.speak = sp;
+
+      NARRATED.shots.forEach((sh, i) => {
+        const [a, b] = shotSpan(sh);
+        const v = t >= a && t < b ? "true" : "false";
+        if (P.blocks[i] && P.blocks[i].dataset.live !== v) P.blocks[i].dataset.live = v;
+      });
+      const [ca, cb] = shotSpan(close);
+      const cv = t >= ca && t < cb ? "true" : "false";
+      if (P.closeTag.dataset.live !== cv) P.closeTag.dataset.live = cv;
+    },
+    { poster: NARRATED.poster }
+  );
+
+  return (
+    <figure
+      className="pd"
+      ref={root}
+      aria-label="A screen recording turned into a narrated product demo: a script read aloud as captions and a voice-over, with zooms on each click and a close-up on the price."
+    >
+      <div className="pd-top">
+        <div className="pd-brief">
+          <span className="pd-label">Your brief</span>
+          <span className="pd-brief__text">Show a new customer how to buy Pro for life.</span>
+        </div>
+        <span className="pd-made">
+          <Check />
+          Script · Captions · Voice-over
+        </span>
+      </div>
+
+      <div className="pd-main">
+        <div className="pd-stage wall wall--aurora">
+          <DemoScreen variant="clipo" captions />
+          <span className="pd-voice" data-speak="false">
+            <i className="pd-voice__avatar">K</i>
+            Kore
+            <span className="pd-voice__wave">
+              {VOICE_BARS.map((h, i) => (
+                <i key={i} style={{ "--h": `${h}%`, "--i": i }} />
+              ))}
+            </span>
+          </span>
+          <span className="pd-closetag" data-closetag data-live="false">
+            Close-up, where you didn&rsquo;t click
+          </span>
+        </div>
+
+        <aside className="pd-script">
+          <span className="pd-label">Script</span>
+          <ol>
+            {NARRATED.captions.map((c, i) => (
+              <li key={i} data-line={i} data-state="next">
+                <span className="pd-n">{i + 1}</span>
+                <span className="pd-line">
+                  {c.text}
+                  <i className="pd-line__bar" data-linebar />
+                </span>
+              </li>
+            ))}
+          </ol>
+          <span className="pd-label">Voice</span>
+          <span className="pd-voices">
+            <em className="is-on">Kore</em>
+            <em>Zephyr</em>
+            <em>Charon</em>
+            <em>Puck</em>
+          </span>
+        </aside>
+      </div>
+
+      <div className="ed-tl pd-tl">
+        <div className="ed-ruler">
+          {RULER_N.map((sec) => (
+            <span key={sec} style={{ left: pctN(sec) }}>
+              {clock(sec)}
+            </span>
+          ))}
+          <em data-pdtime>0:00</em>
+        </div>
+        <div className="ed-lane">
+          <span className="ed-lane__name">Zoom</span>
+          <div className="ed-lane__body">
+            {NARRATED.shots.map((sh, i) => {
+              if (sh.closeup) return null;
+              const [a, b] = shotSpan(sh);
+              return (
+                <span key={i} className="ed-block" data-pdblock={i} style={{ left: pctN(a), width: pctN(b - a) }}>
+                  {sh.label}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+        <div className="ed-lane">
+          <span className="ed-lane__name">Close-up</span>
+          <div className="ed-lane__body">
+            {NARRATED.shots.map((sh, i) => {
+              if (!sh.closeup) return null;
+              const [a, b] = shotSpan(sh);
+              return (
+                <span key={i} className="ed-block pd-closeblock" data-pdblock={i} style={{ left: pctN(a), width: pctN(b - a) }}>
+                  {sh.label}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+        <div className="ed-lane">
+          <span className="ed-lane__name">Captions</span>
+          <div className="ed-lane__body">
+            {NARRATED.captions.map((c, i) => (
+              <span key={i} className="ed-cap" data-pdcap={i} style={{ left: pctN(c.t0), width: pctN(c.t1 - c.t0) }}>
+                {c.text}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="ed-lane">
+          <span className="ed-lane__name">Voice</span>
+          <div className="ed-lane__body">
+            {NARRATED.captions.map((c, i) => (
+              <span key={i} className="pd-take" style={{ left: pctN(c.t0), width: pctN(c.t1 - c.t0) }} />
+            ))}
+          </div>
+        </div>
+        <span className="ed-heads" aria-hidden="true">
+          <span className="ed-playhead" data-pdhead />
+        </span>
+      </div>
+    </figure>
   );
 }

@@ -1,28 +1,27 @@
 # Clipo
 
-> Clipo is a screen recorder for product demos that runs entirely in the browser. Record a tab, a window or your whole screen, and Clipo turns it into a polished demo that zooms in on every click, smoothly and automatically. There is nothing to install and no browser extension. Credits are bought once and never expire. There is no subscription.
+> Clipo is a screen recorder for product demos that runs entirely in the browser. Record a tab or a window, and Clipo turns it into a polished demo that zooms in on every click, smoothly and automatically. It can also turn the same recording into a narrated product demo, with a script, captions and an AI voice-over. There is nothing to install and no browser extension. Credits are bought once and never expire. There is no subscription.
 
 Most auto-zoom recorders need a desktop app for one operating system, or an extension from one browser's store. Clipo needs neither: open it in a tab, press record, and show your product the way you normally would. The zooms, the smooth cursor and the framing are done for you.
 
 ## How it works
 
-1. Open Clipo in your browser, press record, and choose a tab, a window or your whole screen.
+1. Open Clipo in your browser, press record, and choose the tab you want to show.
 2. Show your product the way you normally would, talking over it if you like.
-3. Stop recording. Clipo edits it for you: it zooms in on every click, trims the waiting and smooths the cursor.
-4. Change anything you want on the timeline, then export the video in the size and format you need.
+3. Stop recording. Clipo edits it for you: it zooms in on every click and smooths the cursor. Or ask for a full product demo, and it adds a script, captions and a voice-over too.
+4. Change anything you want on the timeline, or type what you want in the editor's chat, then export the video in the size and format you need.
 
 ## What a creator gets
 
 ### Record in the browser
-- Record a tab, a window or the whole screen, straight from the browser
-- Record your microphone along with the screen, and the tab's or computer's sound where your browser allows it
+- Record a browser tab or a window, straight from the browser (Firefox and Safari can also share the whole screen)
+- Record your microphone along with the screen, and the tab's own sound when you turn it on
 - Nothing to install and no extension to approve
 - Works in current desktop versions of Chrome, Edge, Firefox, Safari, Brave and Opera, on macOS, Windows, Linux and ChromeOS
 
 ### Automatic zoom on every click
 - The camera glides in on each click and eases back out once the result is on screen
 - Nothing to mark or tag while recording
-- Clipo suggests a zoom wherever a moment deserves one
 
 ### A cursor worth watching
 - A shaky cursor path, redrawn smooth
@@ -31,9 +30,21 @@ Most auto-zoom recorders need a desktop app for one operating system, or an exte
 ### Framed like a product shot
 - Backgrounds, padding, rounded corners and a shadow, kept for every export
 
-### Captions and steps
+### Narrated product demos
+- Describe in a line who the demo is for and what they should learn
+- Clipo writes the script, captions it, and reads it in one of four natural voices (Kore, Zephyr, Charon or Puck)
+- Close-ups on what matters on screen, even where you didn't click; your own click zooms stay exactly as they were
+- Edit the captions, switch the voice, or undo the whole product demo in one click
+
+### Captions and voice-over
 - Captions from your voice, timed and burned in, in the style you pick
-- A step-by-step of the demo, written for you, ready for a help article or a voiceover script
+- Or captions generated from the video itself, for a recording with no narration
+- An AI voice-over that reads your captions, in four voices you can hear before you pick
+
+### Edit with a message
+- Type what you want in the editor's chat, like "zoom in on the Pro plan" or "blur my email everywhere"
+- Clipo finds it in the video and makes the change on the timeline
+- Every change can be moved afterwards or undone
 
 ### Private information stays private
 - Blur, pixelate or cover an email, a key or a customer's name, for a moment or the whole recording
@@ -42,7 +53,8 @@ Most auto-zoom recorders need a desktop app for one operating system, or an exte
 - Every zoom, blur and caption sits on a timeline: drag it, retime it or delete it
 - Point at an empty spot on the timeline and click to add your own zoom, blur or caption right there
 - Choose how far each zoom goes in, and drag the frame on the preview to choose what it holds
-- Trim, cursor settings and captions in the same place
+- Split the recording anywhere, trim the ends or take a section out, and restore it later
+- Cursor settings, captions and the voice-over in the same place
 
 ### Output in the shape it has to land in
 - MP4, WebM or GIF, from 720p up to 4K, at 24, 30 or 60fps
@@ -77,7 +89,10 @@ Every new account gets 100 free credits, enough to try it on real recordings. Af
 Up to 30 minutes.
 
 ### Can I change what Clipo decides?
-Yes. Every zoom, blur and caption can be moved, retimed, resized or deleted, and you can add your own anywhere on the timeline.
+Yes. Every zoom, blur and caption can be moved, retimed, resized or deleted, and you can add your own anywhere on the timeline, or ask for it in the editor's chat.
+
+### Can Clipo add a voice-over?
+Yes. Describe who the demo is for, and Clipo writes the script, captions it and reads it in one of four natural voices. You can edit the captions, switch the voice or undo it afterwards.
 
 ### How long are recordings kept?
 Recordings are deleted automatically about a week after you last work on them, and you can delete one yourself at any time. Videos you have downloaded are yours to keep.
@@ -89,7 +104,9 @@ You do. You own your recordings and every video Clipo makes from them.
 
 - [Homepage](https://tryclipo.com/): what Clipo does, with a live demonstration of the auto zoom
 - [How it works](https://tryclipo.com/#how): from recording to finished demo
-- [Features](https://tryclipo.com/#features): cursor, backgrounds, formats, captions, blur and export
+- [Product demos](https://tryclipo.com/#product-demo): a narrated demo with a script, captions and a voice-over
+- [Edit with a message](https://tryclipo.com/#chat): editing by typing what you want
+- [Features](https://tryclipo.com/#features): cursor, backgrounds, formats, captions, blur, voice-over, trimming and export
 - [Pricing](https://tryclipo.com/#pricing): credit packs and free credits
 - [Contact](https://tryclipo.com/contact): support, sales and security
 - [Privacy Policy](https://tryclipo.com/privacy): what is collected and why

@@ -15,7 +15,10 @@
  *    That is the difference from every alternative: desktop recorders are an
  *    app per operating system, auto-zoom extensions are one browser's store.
  * 3. How it works, in the viewer's words.         (the dark band)
- * 4. Everything else a demo needs is there, and all of it can be changed.
+ * 4. The same recording can become a narrated product demo: a script, captions,
+ *    a voice-over and close-ups, from one line of brief.  (product demos)
+ * 5. Everything else a demo needs is there, and all of it can be changed, by
+ *    hand on the timeline or by typing what you want.     (editor, chat)
  *
  * ── HONEST BY CONSTRUCTION ───────────────────────────────────────────────────
  * Nothing here describes a feature the code does not have. Where a claim is a
@@ -32,8 +35,8 @@ import { GoogleLogin } from "@react-oauth/google";
 import api, { errorMessage } from "../../api";
 import Logo from "../Shell/Logo";
 import { useInView } from "./film";
-import { HeroFilm, CompareFilm, EditorFilm, CursorGlyph } from "./demo";
-import { RecordFlow, Friction, HowItWorks, FeatureGrid } from "./tiles";
+import { HeroFilm, CompareFilm, EditorFilm, ProductDemoFilm, CursorGlyph } from "./demo";
+import { RecordFlow, Friction, HowItWorks, FeatureGrid, ChatFilm } from "./tiles";
 import { BrowserRow } from "./logos";
 import "./landing.css";
 
@@ -69,8 +72,10 @@ export default function LandingPage({ onSignedIn, checking }) {
       <Compare />
       <Install />
       <How />
+      <ProductDemo busy={working} />
       <Features />
       <Editor />
+      <Chat />
       <Privacy />
       <Pricing busy={working} />
       <Faq />
@@ -148,6 +153,7 @@ function Nav() {
         </a>
         <nav aria-label="Main">
           <a href="#how">How it works</a>
+          <a href="#product-demo">Product demos</a>
           <a href="#features">Features</a>
           <a href="#pricing">Pricing</a>
           <a href="#faq">FAQ</a>
@@ -286,6 +292,70 @@ function How() {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+   Product demos
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The studio's product demo (Studio/AutoDemo.js, backend services/studio/
+ * autodemo/): a one-line brief becomes a script, captions, a voice-over and
+ * close-ups, over the recording's own click zooms. Described by what it gives,
+ * never by how the script or the close-ups are worked out.
+ */
+const PD_POINTS = [
+  [
+    "Written for your audience",
+    "One line on who it's for and what they should learn. The script follows it.",
+    <path key="i" d="M5 19h14M7 15l8-8 3 3-8 8H7v-3Z" />,
+  ],
+  [
+    "Captions in time with the voice",
+    "Every line is captioned as it is spoken, in the caption style you choose.",
+    <path key="i" d="M4 6h16v12H4zM8 13h3M13 13h3" />,
+  ],
+  [
+    "Four natural voices",
+    "Kore, Zephyr, Charon or Puck. Hear each one, and switch whenever you like.",
+    <path key="i" d="M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3ZM6 11a6 6 0 0 0 12 0M12 17v3" />,
+  ],
+  [
+    "Close-ups you didn't click",
+    "It moves in on what matters on screen, and leaves your own zooms exactly where they were.",
+    <path key="i" d="M11 5a6 6 0 1 0 0 12 6 6 0 0 0 0-12ZM20 20l-4.3-4.3M11 8v6M8 11h6" />,
+  ],
+];
+
+function ProductDemo({ busy }) {
+  return (
+    <section className="lp-sec lp-pd" id="product-demo">
+      <div className="lp-in">
+        <Head
+          eyebrow="Product demos"
+          title="Turn the same recording into a narrated demo."
+          sub="Tell Clipo who it's for. It writes the script, adds captions and a natural voice-over, and moves in close on what matters. Change any of it afterwards, or undo it in one click."
+        />
+        <ProductDemoFilm />
+        <div className="pd-points">
+          {PD_POINTS.map(([title, body, icon]) => (
+            <div key={title} className="pd-point">
+              <i>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {icon}
+                </svg>
+              </i>
+              <h3>{title}</h3>
+              <p>{body}</p>
+            </div>
+          ))}
+        </div>
+        <div className="pd-cta">
+          <StartButton busy={busy}>Make your first product demo</StartButton>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
    Features
    ──────────────────────────────────────────────────────────────────────────── */
 
@@ -310,6 +380,25 @@ function Editor() {
           sub="Zooms, clicks, the cursor and captions sit on one timeline. Drag, retime or delete any of it, or add a zoom where Clipo was too careful."
         />
         <EditorFilm />
+      </div>
+    </section>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Edit with a message
+   ──────────────────────────────────────────────────────────────────────────── */
+
+function Chat() {
+  return (
+    <section className="lp-sec lp-chat" id="chat">
+      <div className="lp-in">
+        <Head
+          eyebrow="Edit with a message"
+          title="Or just say what you want."
+          sub="Type “zoom in on the Pro plan” or “blur my email everywhere”. Clipo finds it in your video and makes the change on the timeline, where you can still move it, or undo it."
+        />
+        <ChatFilm />
       </div>
     </section>
   );
@@ -421,11 +510,19 @@ const FAQ = [
   ],
   [
     "What if I want a zoom somewhere else?",
-    "Every zoom sits on the timeline, where you can drag it, retime it, delete it or add your own. Clipo also suggests a zoom wherever a moment deserves one.",
+    "Every zoom sits on the timeline, where you can drag it, retime it, delete it or add your own. Or type it: “zoom in on the Pro plan” in the editor's chat adds it for you.",
   ],
   [
-    "Can I record a window or my whole screen?",
-    "Yes. Share a browser tab, a single window, or the entire screen.",
+    "Can Clipo add a voice-over?",
+    "Yes. Describe who the demo is for in a line, and Clipo writes the script, captions it and reads it in one of four natural voices. You can edit the captions, switch the voice or undo the whole thing afterwards.",
+  ],
+  [
+    "Can I edit by typing instead?",
+    "Yes. Open the chat in the editor and say what you want, like “zoom in on the Pro plan” or “blur my email everywhere”. Each change lands on the timeline, and every one can be undone.",
+  ],
+  [
+    "What can I record?",
+    "A browser tab, which is what most demos need, or a single window. In Firefox and Safari you can also share your whole screen.",
   ],
   [
     "Is my recording private?",
@@ -491,6 +588,7 @@ function Foot() {
         <nav aria-label="Product" className="lp-foot__col">
           <b>Product</b>
           <a href="#how">How it works</a>
+          <a href="#product-demo">Product demos</a>
           <a href="#features">Features</a>
           <a href="#pricing">Pricing</a>
           <a href="#faq">FAQ</a>

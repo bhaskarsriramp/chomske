@@ -1313,8 +1313,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       <Centred>
         <h2 style={{ margin: "0 0 8px", fontSize: 19, fontWeight: 680, color: "var(--ink)" }}>Ready to edit</h2>
         <p style={{ margin: "0 0 20px", fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)", maxWidth: 380, textAlign: "center" }}>
-          This recording hasn't been analysed yet. The studio will find the steps, cut the waiting, plan the zooms and
-          blur anything private.
+          Clipo zooms in on your clicks and blurs anything private.
         </p>
         <Btn kind="primary" size="l" icon={<Icon name="wand" size={15} />} disabled={starting} onClick={() => startAnalyse()}>
           {starting ? "Starting…" : "Edit it automatically"}
@@ -1384,14 +1383,18 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         onChange={(e) => setDemo({ ...demo, title: e.target.value })}
         onBlur={(e) => renameDemo(demoId, e.target.value).catch(() => {})}
         placeholder="Untitled recording"
+        // A name, not a paragraph: at most 440px, about half the header,
+        // rather than the whole width the moment it is clicked. The spacer
+        // after it keeps the buttons on the right.
         style={{
-          flex: "1 1 160px", minWidth: 110, background: "transparent", border: "1px solid transparent",
+          flex: "0 1 440px", minWidth: 110, background: "transparent", border: "1px solid transparent",
           borderRadius: 8, padding: "5px 8px", fontFamily: "inherit", fontSize: 15.5, fontWeight: 680,
           letterSpacing: "-0.02em", color: "var(--ink)", outline: "none",
         }}
         onFocus={(e) => { e.target.style.borderColor = "var(--line)"; }}
         onBlurCapture={(e) => { e.target.style.borderColor = "transparent"; }}
       />
+      <span aria-hidden style={{ flex: "1 1 0", minWidth: 0 }} />
       <Btn
         size="s"
         kind="quiet"
@@ -1621,7 +1624,17 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       )}
       {tab === "cursor" && <CursorPanel tl={tl} edit={edit} />}
       {tab === "voice" && (
-        <VoicePanel tl={tl} edit={edit} demo={demo} voicing={voicing} onApply={applyVoice} onGoCaptions={() => openTab("captions")} />
+        <VoicePanel
+          tl={tl}
+          edit={edit}
+          demo={demo}
+          voicing={voicing}
+          onApply={applyVoice}
+          onCaptionsFromVideo={onCaptionsFromScript}
+          onCaptionsFromVoice={onCaptions}
+          captioning={captioning}
+          hasAudio={demo.recording.has_audio}
+        />
       )}
       {/* Canvas and Review: hidden with their tabs (see TABS).
       {tab === "canvas" && <CanvasPanel tl={tl} edit={edit} />}

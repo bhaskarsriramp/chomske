@@ -53,7 +53,7 @@ export function BriefForm({ brief, setBrief, voice, setVoice, autoFocus = false 
           onBlur={(e) => { e.target.style.borderColor = "var(--line-strong)"; }}
         />
         <div style={{ marginTop: 6, fontSize: 12, color: "var(--ink-mute)", lineHeight: 1.5 }}>
-          Who it's for and what they should learn. Clipo writes the script from this and what's on screen.
+          Who it's for and what they should learn.
         </div>
       </div>
       <div>
@@ -61,7 +61,7 @@ export function BriefForm({ brief, setBrief, voice, setVoice, autoFocus = false 
           Voice
         </div>
         <Segmented size="s" value={v.id} onChange={setVoice} label="Voice" options={VOICES.map((x) => ({ value: x.id, label: x.label, title: x.sub }))} />
-        <div style={{ marginTop: 6, fontSize: 12, color: "var(--ink-mute)" }}>{v.sub}. You can switch it later in the Voice tab.</div>
+        <div style={{ marginTop: 6, fontSize: 12, color: "var(--ink-mute)" }}>{v.sub}. You can change it later.</div>
       </div>
     </div>
   );
@@ -115,12 +115,12 @@ export function AutoDemoDialog({ ad, hasCaptions, onClose, onStart }) {
         </header>
         <div style={{ padding: 20, display: "grid", gap: 16 }}>
           <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: "var(--ink-mute)" }}>
-            Clipo watches this recording and writes a script for what you describe, adds it as captions and a voice, and eases in on what matters where you didn't click. Your click zooms, cuts and blurs stay as they are.
+            Adds a script, captions and a voice to this recording. Your zooms and blurs stay as they are.
           </p>
           <BriefForm brief={brief} setBrief={setBrief} voice={voice} setVoice={setVoice} autoFocus />
           {hasCaptions && (
             <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.55, color: "var(--ink-body)", background: "var(--made-tint)", borderRadius: 10, padding: "9px 12px" }}>
-              This replaces the captions and voice this recording has now. You can undo it afterwards.
+              Replaces the current captions and voice. You can undo it.
             </p>
           )}
           {error && <p style={{ margin: 0, fontSize: 13, color: "var(--bad)" }}>{error}</p>}
@@ -209,12 +209,9 @@ export function AutoDemoStrip({ demoId, ad, onUndo, onRetry }) {
       <>
         <span style={{ fontWeight: 650, color: "var(--ink)" }}>Your product demo is ready.</span>
         <span style={{ color: "var(--ink-body)" }}>
-          {" "}{ad.cues} caption{ad.cues === 1 ? "" : "s"} from a {ad.lines}-line script
+          {" "}{ad.cues} caption{ad.cues === 1 ? "" : "s"}
           {ad.voice_ok ? `, read by ${ad.voice}` : ""}
-          {(ad.focus || []).length > 0
-            ? `, and ${ad.focus.length} close-up${ad.focus.length === 1 ? "" : "s"} where you didn't click (${ad.focus.map((f) => f.label).join("; ")})`
-            : ""}
-          . Your click zooms are unchanged.
+          {(ad.focus || []).length > 0 ? `, and ${ad.focus.length} close-up${ad.focus.length === 1 ? "" : "s"}` : ""}.
         </span>
         {ad.voice_error && <div style={{ marginTop: 4, color: "var(--bad)" }}>{ad.voice_error}</div>}
         {undoError && <div style={{ marginTop: 4, color: "var(--bad)" }}>{undoError}</div>}

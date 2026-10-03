@@ -846,3 +846,20 @@
 @media (prefers-reduced-motion: reduce) {
   .st-ask-where svg, .st-ask-icon, .st-wave i, .st-opt-extra, .st-voice-act { animation: none; }
 }
+
+/* "Captions come first" (VoicePanel.js): the ask card, with the two ways to
+   make captions stacked full width. */
+.st-cf { position: relative; }
+.st-cf .st-ask-icon { background: var(--made-tint); color: var(--ink); animation: none; }
+.st-cf-close {
+  position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; display: grid; place-items: center;
+  border: 0; border-radius: 8px; background: transparent; color: var(--ink-mute); cursor: pointer;
+}
+.st-cf-close:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.st-cf-close:disabled { opacity: 0.4; cursor: default; }
+.st-cf-actions { display: grid; gap: 8px; margin-top: 20px; }
+.st-cf-actions > p + button { margin-top: 6px; }
+.st-cf-busy {
+  display: flex; align-items: center; justify-content: center; gap: 9px; margin-top: 20px; padding: 13px;
+  border-radius: 12px; background: var(--made-tint); font-size: 13.5px; font-weight: 620; color: var(--ink);
+}
