@@ -37,7 +37,9 @@
  *   cues     [{ id, start, end, text, emphasis, custom }]  custom: one line styled alone
  *   blurs    [{ id, start, end, x, y, w, h, kind, strength, label, auto }]
  *   canvas   { aspect, background, padding, radius, shadow }
- *   audio    { voice, music: [...] }
+ *   audio    { voice, music: [{ id, media, start, in, duration, volume, fade_in, fade_out, muted, duck, loop }] }
+ *            music is placed in OUTPUT time (seconds into the finished video), not
+ *            recording time: a cut must not make it jump. media = a music.js track id.
  *   narration[{ id, start, end, text }]
  */
 import crypto from "crypto";
@@ -981,6 +983,9 @@ export function sanitizeTimeline(input, { duration = 0, source = null } = {}) {
       volume: clamp(num(m.volume, 0.2), 0, 2),
       fade_in: clamp(num(m.fade_in, 0.5), 0, 10),
       fade_out: clamp(num(m.fade_out, 1), 0, 10),
+      muted: !!m.muted,
+      duck: m.duck !== false,
+      loop: m.loop !== false,
     })),
   };
 

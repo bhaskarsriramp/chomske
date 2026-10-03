@@ -27,6 +27,7 @@ import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import { materialize, putFile, statObject } from "../../media/storage.js";
+import { loadMusicTrack } from "../music.js";
 
 /** A small JSON file into the bucket. */
 async function putJson(key, value) {
@@ -114,6 +115,14 @@ export async function renderFromRequest(requestKey) {
           console.warn(`[render] background image could not be loaded: ${err.message}`);
           return null;
         }
+      },
+      // Music: the VM looked each track up (an upload against its owner);
+      // here it is only fetched. A library track can also be found by its id,
+      // for a request from a VM that predates music_keys.
+      loadMusic: async ({ media, workDir: dir }) => {
+        const key = req.music_keys?.[media];
+        if (key) return materialize(key, dir, `music-${String(media).replace(/[^a-z0-9-]/gi, "_")}.mp3`);
+        return loadMusicTrack({ media, workDir: dir });
       },
       onProgress: (p, stage) => report(Math.max(0.01, Math.min(0.99, p)), stage),
     });

@@ -93,7 +93,7 @@ export const getFollows = (id) => api.get(`/studio/demos/${id}/follows`).then((r
 
 /* ── The AI voiceover (backend services/studio/voice.js) ──────────────────── */
 
-/** One voice saying `text`, as a playable data: URL. */
+/** One voice saying `text`: a link to its sample, made once and kept on the server. */
 export const voiceSample = (id, voice, text) =>
   api.post(`/studio/demos/${id}/voice/sample`, { voice, text }).then((r) => r.data.audio);
 /**
@@ -172,3 +172,73 @@ const studioApi = {
   voiceSample, makeVoice, getVoice,
 }
 export default studioApi;
+
+/* ── The music library (backend services/studio/music.js) ─────────────────── */
+
+let musicOnce = null;
+/**
+ * Every track in the library, and the creator's own first, with a link to play
+ * each: { moods, tracks, limits }. Asked once per page and shared: the links
+ * are good for hours. An upload or a delete forgets it, so the next editor
+ * opened asks again; a failed ask is not kept either.
+ */
+export const listMusic = () => {
+  if (!musicOnce) {
+    musicOnce = api.get("/studio/music").then((r) => ({
+      moods: r.data.moods || [],
+      tracks: (r.data.tracks || []).map((t) => ({ ...t, url: abs(t.url) })),
+      limits: r.data.limits || { max_bytes: 60 * 1048576, max_seconds: 480 },
+    }));
+    musicOnce.catch(() => {
+      musicOnce = null;
+    });
+  }
+  return musicOnce;
+};
+
+/**
+ * Upload one of the creator's own tracks; resolves to the track as the list
+ * shows it. Sent as the file itself, like a background image, but through
+ * XMLHttpRequest so a long track can show how far along it is:
+ * onProgress(0…1) while it is sent, then onProgress(null) while the server
+ * gets it ready.
+ */
+export function uploadMusic(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", `${ROOT}/studio/music`);
+    x.withCredentials = true;
+    x.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    x.setRequestHeader("Accept", "application/json");
+    x.setRequestHeader("X-Filename", encodeURIComponent(file.name || ""));
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    x.upload.onload = () => onProgress?.(null);
+    const failed = (status, body) => {
+      const message =
+        body?.message ||
+        (status === 413 ? "That file is too large to upload." : status ? "That track couldn't be uploaded. Please try again." : "The upload stopped. Check your connection and try again.");
+      reject(Object.assign(new Error(message), { response: { status, data: { ...body, message } } }));
+    };
+    x.onload = () => {
+      let body = {};
+      try {
+        body = JSON.parse(x.responseText || "{}");
+      } catch {
+        body = {};
+      }
+      if (x.status >= 200 && x.status < 300 && body?.track) {
+        musicOnce = null;
+        resolve({ ...body.track, url: abs(body.track.url) });
+      } else failed(x.status, body);
+    };
+    x.onerror = () => failed(0, {});
+    x.send(file);
+  });
+}
+
+/** Delete one of the creator's own tracks for good. */
+export const deleteMusic = (id) =>
+  api.delete(`/studio/music/${encodeURIComponent(id)}`).then((r) => {
+    musicOnce = null;
+    return r.data;
+  });

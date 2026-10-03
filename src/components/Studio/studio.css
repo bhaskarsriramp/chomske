@@ -863,3 +863,21 @@
   display: flex; align-items: center; justify-content: center; gap: 9px; margin-top: 20px; padding: 13px;
   border-radius: 12px; background: var(--made-tint); font-size: 13.5px; font-weight: 620; color: var(--ink);
 }
+
+/* The music lane (Timeline.js): a track's chip carries its waveform under its
+   name; a muted one is drawn faded and striped. */
+.st-mchip { padding: 0 8px; color: #1f6e55; }
+.st-mchip.is-on { color: #fff; }
+.st-mchip-wave { position: absolute; inset: 3px 0; width: 100%; height: calc(100% - 6px); pointer-events: none; opacity: 0.55; }
+.st-mchip-name {
+  position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+  padding: 1px 6px 1px 4px; border-radius: 5px; background: rgba(255, 255, 255, 0.72); color: #1f5c48;
+}
+.st-mchip.is-on .st-mchip-name { background: rgba(0, 0, 0, 0.22); color: #fff; }
+.st-mchip.is-muted { filter: saturate(0.2); opacity: 0.7; background-image: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.35) 0 4px, transparent 4px 8px) !important; }
+
+/* Music tab: an upload the server is getting ready (MusicPanel.js). */
+.st-mup-wait { animation: st-mup-wait 1.2s ease-in-out infinite; }
+@keyframes st-mup-wait { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .st-mup-wait { animation: none; } }

@@ -31,6 +31,22 @@ import { Btn, Panel, Empty, Icon, Toggle } from "./ui";
 import { VOICES, DEFAULT_VOICE, voiceById, voiceSig, sampleText } from "./voices.mjs";
 import { voiceSample } from "./studioApi";
 
+/**
+ * Samples heard in this page, by voice and sentence: kept outside the panel so
+ * switching tabs and back does not ask again. The server keeps every sample
+ * for good (backend voice.js voiceSampleUrl), so after a reload a sample is
+ * one quick request for its link and never a second call to the voice model.
+ * A link is reused for a few hours, well inside the time it is signed for.
+ */
+const HEARD = new Map();
+const HEARD_MS = 4 * 3600 * 1000;
+function heardUrl(key) {
+  const hit = HEARD.get(key);
+  if (hit && Date.now() - hit.at < HEARD_MS) return hit.url;
+  HEARD.delete(key);
+  return "";
+}
+
 export default function VoicePanel({
   tl, edit, demo, voicing, onApply, onCaptionsFromVideo, onCaptionsFromVoice, captioning = false, hasAudio = false,
 }) {
@@ -57,7 +73,6 @@ export default function VoicePanel({
   // The "captions come first" dialog, and which way the captions are being made.
   const [asking, setAsking] = useState(false);
   const [captionsFrom, setCaptionsFrom] = useState(null);
-  const heard = useRef(new Map());
   const audio = useRef(null);
   useEffect(() => () => audio.current?.pause(), []);
 
@@ -71,12 +86,12 @@ export default function VoicePanel({
     setPlaying(null);
     setSampleError("");
     const key = `${id}|${text}`;
-    let url = heard.current.get(key);
+    let url = heardUrl(key);
     if (!url) {
       setLoading(id);
       try {
         url = await voiceSample(demo.id, id, text);
-        heard.current.set(key, url);
+        HEARD.set(key, { url, at: Date.now() });
       } catch (err) {
         setSampleError(err?.response?.data?.message || "That voice didn't answer. Try again in a moment.");
         return;
@@ -87,6 +102,12 @@ export default function VoicePanel({
     const a = new Audio(url);
     audio.current = a;
     a.onended = () => setPlaying((p) => (p === id ? null : p));
+    // A link that has expired (a tab left open past its lifetime) is forgotten,
+    // so the next press asks the server, which still has the sample kept.
+    a.onerror = () => {
+      HEARD.delete(key);
+      setPlaying((p) => (p === id ? null : p));
+    };
     setPlaying(id);
     a.play().catch(() => setPlaying(null));
   };

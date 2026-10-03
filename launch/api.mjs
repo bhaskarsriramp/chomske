@@ -59,7 +59,7 @@ async function speakScoreRender({ dir, version, draft, capture, out, at, log, si
   const scenes = scenesOf(draft);
   if (!scenes.length) throw userError("We couldn't write a script for this page. Please try again.");
   at("speak")(0);
-  // The score is composed while the lines are spoken, so its length is an
+  // The score is picked while the lines are spoken, so its length is an
   // estimate with room to spare; the video fades it out at its own end.
   const [voices, track] = await Promise.all([
     voice
@@ -77,7 +77,11 @@ async function speakScoreRender({ dir, version, draft, capture, out, at, log, si
   ]);
   checkSignal(signal);
   const board = resolveBoard(draft, capture, { voices: voices || {} });
-  if (track) board.music = track.file;
+  if (track) {
+    board.music = track.file;
+    // A library track shorter than the video plays again (LaunchVideo.jsx).
+    board.musicLoop = !!track.loop;
+  }
   await writeJson(path.join(dir, `board-v${version}.json`), board);
   const seconds = durationOf(board) / 30;
   log(`board v${version}: ${board.scenes.map((s) => `${s.type}(${s.seconds}s)`).join(" → ")} = ${seconds.toFixed(1)}s`);

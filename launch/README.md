@@ -67,7 +67,7 @@ browser is unavailable (never set on a server: it would open a stranger's addres
 | look | TinyFish browser (CDP) → 2× screenshots, every element's box, logo, colours, font | `pipeline/capture.mjs` |
 | direct | Gemini fills the scene slots by id (never coordinates, never pixels) | `pipeline/director.mjs` |
 | speak | Gemini TTS, one take per line, cached by words; falls through models on a daily limit | `pipeline/voice.mjs` |
-| score | Lyria 3 composes music for the mood, in parallel with the voice | `pipeline/music.mjs` |
+| score | a track from Clipo's public-domain music library, picked for the mood, in parallel with the voice | `pipeline/music.mjs` |
 | resolve | ids → boxes and files; each scene as long as its line | `pipeline/board.mjs` |
 | render | Remotion, the hand-built scene library (`src/`), plus a poster frame | `pipeline/render.mjs` |
 

@@ -72,7 +72,8 @@ import { runCommand } from "../services/studio/command.js";
 import { isDemoSlug, ensureDemoSlug } from "../services/studio/demoSlug.js";
 import { blurSig } from "../../src/components/Studio/follow.mjs";
 import { voiceById, voiceSig } from "../../src/components/Studio/voices.mjs";
-import { sampleVoice } from "../services/studio/voice.js";
+import { voiceSampleUrl } from "../services/studio/voice.js";
+import { listMusic, saveUploadedMusic, deleteUploadedMusic, UPLOAD as MUSIC_UPLOAD } from "../services/studio/music.js";
 import StudioAsset from "../models/StudioAsset.js";
 import {
   BACKGROUND_LIMITS, BACKGROUND_TYPES, prepareBackground, saveBackground, deleteBackground, shapeBackground,
@@ -218,6 +219,61 @@ router.get("/config", wrap(async (req, res) => {
     ),
     balance: await getBalance(req.user.id),
   });
+}));
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Music
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * GET /studio/music
+ *
+ * Clipo's music library (services/studio/music.js): public-domain tracks we
+ * host, and the creator's own uploads first, each with a link to play it, its
+ * mood, length and waveform. Free: listing them calls no model.
+ */
+router.get("/music", wrap(async (req, res) => {
+  res.json({ success: true, ...(await listMusic({ baseUrl: baseUrlOf(), user: req.user.id })) });
+}));
+
+/**
+ * POST /studio/music   body: the audio file itself; X-Filename: its name
+ *
+ * One of the creator's own tracks, up to MUSIC_UPLOAD.maxSeconds long: checked,
+ * made into an MP3 at the library's loudness and kept on their account.
+ * Answers { track } as the list shows it. Any audio type is accepted here and
+ * judged by what ffmpeg can read, not by the browser's guess at the type.
+ */
+router.post(
+  "/music",
+  (req, res, next) =>
+    Number(req.get("content-length") || 0) > MUSIC_UPLOAD.maxBytes
+      ? fail(res, 413, `That file is over ${Math.round(MUSIC_UPLOAD.maxBytes / 1048576)} MB. Use an MP3 or M4A, or a shorter clip.`)
+      : next(),
+  express.raw({ type: () => true, limit: MUSIC_UPLOAD.maxBytes }),
+  wrap(async (req, res) => {
+    let name = "";
+    try {
+      name = decodeURIComponent(String(req.get("x-filename") || ""));
+    } catch {
+      name = "";
+    }
+    try {
+      const { track } = await saveUploadedMusic(req.user.id, req.body, name);
+      // The link for the editor, now that the file is stored.
+      const list = await listMusic({ baseUrl: baseUrlOf(), user: req.user.id });
+      res.json({ success: true, track: list.tracks.find((t) => t.id === track.id) || track });
+    } catch (err) {
+      if (err.userMessage) return fail(res, err.status || 400, err.userMessage);
+      throw err;
+    }
+  })
+);
+
+router.delete("/music/:id", wrap(async (req, res) => {
+  const gone = await deleteUploadedMusic(req.user.id, req.params.id);
+  if (!gone) return fail(res, 404, "That track isn't here any more.");
+  res.json({ success: true, deleted: String(req.params.id) });
 }));
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -1115,18 +1171,13 @@ router.post("/demos/:id/follow", wrap(async (req, res) => {
    ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Samples already spoken, so playing a voice twice, or in two tabs, is one
- * model call. Small: a sample is one sentence of one demo.
- */
-const samples = new Map();
-const SAMPLES_KEPT = 120;
-
-/**
  * POST /studio/demos/:id/voice/sample  { voice, text }
  *
  * One voice saying the demo's own first sentence, so a creator hears how it
- * sounds on their content before choosing it: { audio: "data:audio/wav;…" }.
- * Free, like the voiceover itself for now.
+ * sounds on their content before choosing it: { audio: <a link to an MP3> }.
+ * Made once and kept (voice.js voiceSampleUrl): asking again, today or next
+ * week, plays the kept file instead of calling the model. Free, like the
+ * voiceover itself for now.
  */
 router.post("/demos/:id/voice/sample", wrap(async (req, res) => {
   const demo = await ownDemo(req, res);
@@ -1135,19 +1186,14 @@ router.post("/demos/:id/voice/sample", wrap(async (req, res) => {
   const text = String(req.body?.text || "").replace(/\s+/g, " ").trim().slice(0, 240);
   if (!v) return fail(res, 400, "Which voice?");
   if (!text) return fail(res, 400, "There is nothing to say yet.");
-  const key = `${v.id}|${text}`;
-  let wav = samples.get(key);
-  if (!wav) {
-    try {
-      wav = await sampleVoice(text, v.id);
-    } catch (err) {
-      console.error(`[studio] voice sample ${v.id} failed:`, err.message);
-      return fail(res, 502, err.userMessage || "That voice didn't answer. Try again in a moment.");
-    }
-    samples.set(key, wav);
-    while (samples.size > SAMPLES_KEPT) samples.delete(samples.keys().next().value);
+  let audio;
+  try {
+    audio = await voiceSampleUrl(text, v.id, { baseUrl: baseUrlOf() });
+  } catch (err) {
+    console.error(`[studio] voice sample ${v.id} failed:`, err.message);
+    return fail(res, 502, err.userMessage || "That voice didn't answer. Try again in a moment.");
   }
-  res.json({ success: true, audio: `data:audio/wav;base64,${wav.toString("base64")}` });
+  res.json({ success: true, audio });
 }));
 
 /**

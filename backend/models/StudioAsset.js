@@ -4,7 +4,8 @@ const { Schema } = mongoose;
 /**
  * StudioAsset: a file a creator brought to the studio that is not a recording.
  *
- * Today that is one kind, a background image for the canvas. It belongs to the
+ * Two kinds: a background image for the canvas, and a music track the creator
+ * uploaded for the music lane (services/studio/music.js). Each belongs to the
  * ACCOUNT, not to a demo: the same logo backdrop is used on every demo, so it
  * must outlive any one of them and never be swept away with a demo's files.
  * Its objects live beside the demos' folders in the same bucket, under
@@ -16,7 +17,7 @@ const { Schema } = mongoose;
  */
 const StudioAssetSchema = new Schema({
   user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-  kind: { type: String, enum: ["background"], default: "background" },
+  kind: { type: String, enum: ["background", "music"], default: "background" },
 
   // Storage keys. Never sent to the browser, which gets signed URLs instead.
   key: { type: String, required: true },
@@ -26,6 +27,12 @@ const StudioAssetSchema = new Schema({
   width: { type: Number, default: 0 },
   height: { type: Number, default: 0 },
   size: { type: Number, default: 0 },
+
+  // Music only: what the creator called the file, how long it plays, and its
+  // waveform (0–100 per point) for the music lane.
+  title: { type: String, default: "" },
+  duration: { type: Number, default: 0 },
+  peaks: { type: [Number], default: undefined },
 
   created_at: { type: Date, default: Date.now },
 });

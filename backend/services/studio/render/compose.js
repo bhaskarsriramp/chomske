@@ -47,6 +47,7 @@ import { zoomFilter, cameraKeys } from "./camera.js";
 import { renderOverlay } from "./overlay.js";
 import { videoBox, radiusFor, drawBackground, drawCornerMask } from "./frame.js";
 import { loadBackgroundImage } from "../backgrounds.js";
+import { loadMusicTrack } from "../music.js";
 import { followedRegions } from "./followBlur.js";
 import { followFor, blurCorner, blurRadius, blurChromaRadius } from "../../../../src/components/Studio/follow.mjs";
 import { hideFilter } from "./hide.js";
@@ -82,9 +83,14 @@ const threads = () => (ENCODER_THREADS ? ["-threads", String(ENCODER_THREADS)] :
  *                               (backgrounds.js); the Cloud Run export
  *                               (renderJob.js), which has no database, is
  *                               handed the file the VM looked up.
+ * @param {Function} [o.loadMusic] ({ media, workDir, user }) → a music track's
+ *                               file, or null. By default read from the bucket
+ *                               (music.js): a library track by its id, an
+ *                               upload by its id and the demo's owner. The
+ *                               Cloud Run export is handed the keys instead.
  * @returns {Promise<{ width, height, duration, drew, srt }>}
  */
-export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null, follows = {}, voiceFile = null, loadBackground = loadBackgroundImage }) {
+export async function renderTimeline({ timeline, source, workDir, dest, options = null, onProgress = () => {}, user = null, follows = {}, voiceFile = null, loadBackground = loadBackgroundImage, loadMusic = loadMusicTrack }) {
   const o = cleanExportOptions(options, { hevc: options?.codec === "hevc" });
   const lay = layout(timeline);
   if (!(lay.duration > 0.1)) {
@@ -470,13 +476,6 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
     graph.push(`[0:a]volume=${voice.toFixed(2)}[a0]`);
     a = "a0";
   }
-  // Music tracks would be extra inputs here. They are accepted by the timeline
-  // and the editor, and wiring their files through is the one thing this
-  // renderer does not do yet; an export with music silently dropping it would
-  // break the rule at the top of this file, so it is refused instead.
-  if (music.length) {
-    throw userError("Background music isn't in this export yet. Remove the music track and export again.");
-  }
 
   /**
    * ── THE AI VOICEOVER ────────────────────────────────────────────────────
@@ -507,7 +506,82 @@ export async function renderTimeline({ timeline, source, workDir, dest, options 
     }
   }
 
-  const isGif = o.format === "gif";
+  /**
+   * ── MUSIC, IN THE FINISHED VIDEO'S TIME ─────────────────────────────────
+   * Each track (services/studio/music.js) sits on the OUTPUT timeline: it
+   * starts `start` seconds into the finished video and plays for `duration`,
+   * from `in` seconds into its file, looping when the file runs out. Unlike
+   * the voiceover it is not cut with the picture: a cut in the recording must
+   * not make the music jump. Faded in and out, at its own volume. The tracks
+   * marked `duck` dip under whatever is speaking (the recording's own sound
+   * and the AI voiceover) through a sidechain compressor, the way an editor
+   * rides music under a narrator; the others play at their level.
+   *
+   * A track that cannot be read fails the export rather than being dropped:
+   * a video that silently comes out without its music is the worse outcome.
+   */
+  const gif = o.format === "gif";
+  const ducked = [];
+  const level = [];
+  if (!gif) {
+    let k = 0;
+    for (const m of music) {
+      if (m.muted || !(Number(m.volume) > 0)) continue;
+      const file = await loadMusic({ media: m.media, workDir, user }).catch(() => null);
+      if (!file) throw userError("A music track couldn't be read for this export. Remove it or pick another, then export again.");
+      const len = Math.max(0.05, Math.min(Number(m.duration), duration - Number(m.start)));
+      const fi = Math.min(Number(m.fade_in) || 0, len / 2);
+      const fo = Math.min(Number(m.fade_out) || 0, len / 2);
+      const ms = Math.round(Number(m.start) * 1000);
+      const mi = next++;
+      inputs.push(...(m.loop !== false ? ["-stream_loop", "-1"] : []), "-i", file);
+      const chain = [
+        `atrim=start=${(Number(m.in) || 0).toFixed(3)}:duration=${len.toFixed(3)}`,
+        "asetpts=PTS-STARTPTS",
+        "aresample=48000",
+        "aformat=sample_fmts=fltp:channel_layouts=stereo",
+        `volume=${Number(m.volume).toFixed(3)}`,
+        fi > 0.01 ? `afade=t=in:st=0:d=${fi.toFixed(3)}` : null,
+        fo > 0.01 ? `afade=t=out:st=${(len - fo).toFixed(3)}:d=${fo.toFixed(3)}` : null,
+        ms > 0 ? `adelay=${ms}|${ms}` : null,
+      ].filter(Boolean);
+      graph.push(`[${mi}:a]${chain.join(",")}[mu${k}]`);
+      (m.duck !== false ? ducked : level).push(`mu${k}`);
+      k++;
+    }
+  }
+  const bus = (labels, name) => {
+    if (!labels.length) return null;
+    if (labels.length === 1) return labels[0];
+    graph.push(`${labels.map((l) => `[${l}]`).join("")}amix=inputs=${labels.length}:duration=longest:normalize=0[${name}]`);
+    return name;
+  };
+  let duckBus = bus(ducked, "mbusd");
+  const levelBus = bus(level, "mbusl");
+  if (duckBus || levelBus) {
+    if (duckBus && a) {
+      // The speech is used twice: as itself in the mix, and as the key that
+      // pushes the music down while it is heard. The threshold (about -42 dB)
+      // is under quiet laptop-microphone narration (around -33 dB) and over a
+      // room's hiss (under -50 dB), so the music dips for a soft speaker too
+      // and rises again in the pauses. Measured by scripts/music/mixTest.mjs.
+      graph.push(`[${a}]asplit=2[spk][skey]`);
+      graph.push(`[${duckBus}][skey]sidechaincompress=threshold=0.008:ratio=8:attack=20:release=500[mducked]`);
+      a = "spk";
+      duckBus = "mducked";
+    }
+    const parts = [a, duckBus, levelBus].filter(Boolean);
+    if (parts.length === 1) {
+      graph.push(`[${parts[0]}]apad[amus]`);
+    } else {
+      // The first input decides the length: the speech when there is any (it
+      // runs the whole video); otherwise the music, padded and cut by -t below.
+      graph.push(`${parts.map((l) => `[${l}]`).join("")}amix=inputs=${parts.length}:duration=${a ? "first" : "longest"}:normalize=0,apad[amus]`);
+    }
+    a = "amus";
+  }
+
+  const isGif = gif;
   graph.push(`[${v}]format=yuv420p[vout]`);
 
   // A GIF is made FROM the finished video rather than in the same graph. The

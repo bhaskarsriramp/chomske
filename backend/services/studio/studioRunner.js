@@ -40,6 +40,7 @@ import { applySuggestion } from "./suggestions.js";
 import { renderTimeline } from "./render/compose.js";
 import { renderInCloud, renderRemote, CLOUD_FALLBACK } from "./render/remoteRender.js";
 import { backgroundKey } from "./backgrounds.js";
+import { musicKey } from "./music.js";
 import { trackBlur } from "./blurTrack.js";
 import { buildVoiceover } from "./voice.js";
 import { twinOf } from "./foundBlurs.js";
@@ -1181,6 +1182,13 @@ const render = {
             voice_key: withVoice ? demo.voiceover.key : "",
             // Looked up here, with the owner check; Cloud Run only fetches it.
             background_key: bg?.kind === "image" ? await backgroundKey({ id: bg.value, user: demo.user }) : "",
+            // Each music track's file, the creator's own checked against their
+            // account here (music.js musicKey); Cloud Run only fetches them.
+            music_keys: Object.fromEntries(
+              await Promise.all(
+                (demo.timeline.audio?.music || []).map(async (m) => [m.media, await musicKey({ media: m.media, user: demo.user })])
+              )
+            ),
             timeline: demo.timeline,
             options,
             follows: demo.follows || {},

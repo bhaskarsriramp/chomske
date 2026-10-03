@@ -25,11 +25,14 @@
  * "Say it warmly: …" is read out loud (measured). This project's SDK (1.52)
  * predates the endpoint's current schema, so it is called directly.
  */
+import crypto from "crypto";
 import fs from "fs";
 import fsp from "fs/promises";
+import os from "os";
 import path from "path";
 import { aistudioKeys, pool } from "../ai/provider.js";
 import { ffmpeg } from "../media/ffmpeg.js";
+import { KEY_ROOT, statObject, putFile, readUrl, isRelayUrl } from "../media/storage.js";
 import { sentencesOf } from "../../../src/components/Studio/voices.mjs";
 
 export const VOICE_MODEL = String(process.env.STUDIO_VOICE_MODEL || "gemini-3.8-flash-tts").trim();
@@ -148,6 +151,60 @@ export async function sampleVoice(text, voice) {
 }
 
 /**
+ * ── A SAMPLE IS MADE ONCE, THEN KEPT ─────────────────────────────────────────
+ * A sample is the same sound every time it is asked for: one voice saying one
+ * sentence. It used to be remembered only in this process (gone on every
+ * restart and deploy) and in the open Voice tab (gone on every tab change and
+ * reload), so a creator who came back to compare voices paid for the same
+ * model call again, against the TTS model's small daily allowance.
+ *
+ * Now it is spoken once, made into a small MP3, and kept in the bucket under
+ * <MEDIA_PREFIX>/voice-samples/, named by a hash of the model, the voice and
+ * the words. Coming back an hour or a week later, reloading, or opening the
+ * same demo in another tab plays that file; only a voice and a sentence never
+ * heard before reach the model. Two requests for the same new sample at once
+ * share one call. The link handed out is reused for a few hours too, so a
+ * revisit costs neither a model call nor a signature.
+ */
+const SAMPLE_LINK_MS = 6 * 3600 * 1000;
+const SAMPLE_LINKS_KEPT = 500;
+const sampleLinks = new Map();
+const sampling = new Map();
+
+export async function voiceSampleUrl(text, voice, { baseUrl } = {}) {
+  const hash = crypto.createHash("sha1").update(`${VOICE_MODEL}|${voice}|${text}`).digest("hex").slice(0, 24);
+  const key = `${KEY_ROOT}/voice-samples/${hash}.mp3`;
+  const hit = sampleLinks.get(key);
+  if (hit && Date.now() - hit.at < SAMPLE_LINK_MS) return hit.url;
+
+  if (!(await statObject(key))) {
+    if (!sampling.has(key)) {
+      const made = (async () => {
+        const wav = await sampleVoice(text, voice);
+        const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "voice-sample-"));
+        try {
+          await fsp.writeFile(path.join(dir, "sample.wav"), wav);
+          await ffmpeg(["-y", "-i", "sample.wav", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k", "sample.mp3"], { cwd: dir });
+          await putFile(path.join(dir, "sample.mp3"), key, "audio/mpeg");
+        } finally {
+          fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+        }
+      })();
+      sampling.set(key, made.finally(() => sampling.delete(key)));
+    }
+    await sampling.get(key);
+  }
+
+  const url = await readUrl(key, { baseUrl, contentType: "audio/mpeg", expiresSec: 12 * 3600 });
+  // A relayed link (storage.js's fallback when signing fails) is short-lived.
+  if (!isRelayUrl(url)) {
+    sampleLinks.set(key, { url, at: Date.now() });
+    while (sampleLinks.size > SAMPLE_LINKS_KEPT) sampleLinks.delete(sampleLinks.keys().next().value);
+  }
+  return url;
+}
+
+/**
  * The voiceover for a set of captions.
  *
  * @param {object} o
@@ -218,4 +275,4 @@ export async function buildVoiceover({ cues, voice, duration, workDir, onProgres
   return { file, seconds: round3(seconds), sentences: placed };
 }
 
-export default { VOICE_MODEL, sampleVoice, buildVoiceover };
+export default { VOICE_MODEL, sampleVoice, voiceSampleUrl, buildVoiceover };

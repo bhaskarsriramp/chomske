@@ -69,6 +69,14 @@
  * until the handle is let go, so the lanes hold still under the pointer
  * instead of rippling on every pixel, and the whole drag is one undo step.
  *
+ * ── THE MUSIC LANE IS IN OUTPUT TIME ─────────────────────────────────────────
+ * The one lane stored the way it is drawn: music sits on the finished video
+ * (musicTimeline.mjs), so its chips are placed, dragged and trimmed in output
+ * time with no mapping through the cuts. Each chip draws its track's waveform,
+ * repeating where the track loops. Ctrl/⌘ + click on an empty stretch does not
+ * make anything by itself: there is no one right song, so it marks the moment
+ * and opens the Music tab's library, where the track is chosen.
+ *
  * ── THE WHEEL ZOOMS ──────────────────────────────────────────────────────────
  * Up zooms in and down zooms out, around the moment under the pointer: a mouse
  * wheel, a two-finger swipe on a trackpad and a pinch all do it. A sideways
@@ -80,6 +88,8 @@ import { applyState, coverage, blurNames } from "./follow.mjs";
 import { DEFAULT_LENGTH, MIN_LENGTH } from "./create";
 import { clipsOf, trimBounds, MIN_CLIP } from "./clips";
 import { Icon } from "./ui";
+import { musicItems, MUSIC_MIN } from "./musicTimeline.mjs";
+import { LANE_COLOR as MUSIC_COLOR } from "./MusicPanel";
 
 const LANES = [
   { key: "zooms", label: "Zoom", color: "#918DFF", icon: "zoom" },
@@ -89,7 +99,9 @@ const LANES = [
 
 // Every row, top to bottom: the recording, then the things laid over it.
 const VIDEO = { key: "video", label: "Video", color: "#C5221F", icon: "film" };
-const ROWS = [VIDEO, ...LANES];
+// Last: the sound under it all (musicTimeline.mjs).
+const MUSIC = { key: "music", label: "Music", color: MUSIC_COLOR, icon: "music" };
+const ROWS = [VIDEO, ...LANES, MUSIC];
 
 /** Smallest drag that counts, so a click on a chip is not read as a nudge. */
 const SLOP = 3;
@@ -110,6 +122,10 @@ export default function Timeline({
   follows = null,
   following = null,
   onApplyBlur,
+  // The music library by id ({ title, duration, peaks }), and what a Ctrl/⌘ +
+  // click on the music lane does: mark that moment for the Music tab.
+  musicTracks = null,
+  onAddMusic,
   height = 30,
 }) {
   const railRef = useRef(null);
@@ -157,6 +173,8 @@ export default function Timeline({
       const source = lane.key === "zooms" ? activeZooms(tl) : tl[lane.key] || [];
       out[lane.key] = placedSpans(source, lay, { min: 0.03 });
     }
+    // Already in output time: drawn where it is stored.
+    out.music = musicItems(tl).map((m) => ({ ...m, end: m.start + m.duration }));
     return out;
   }, [tl, lay]);
 
@@ -276,7 +294,8 @@ export default function Timeline({
       e.stopPropagation();
       e.currentTarget.setPointerCapture?.(e.pointerId);
       onSelect({ kind: SINGULAR[lane], id: item.id });
-      setDrag({ lane, id: item.id, mode, x0: e.clientX, moved: false, src: { start: item.src_start, end: item.src_end } });
+      const src = lane === "music" ? { start: item.start, end: item.end, in: item.in || 0 } : { start: item.src_start, end: item.src_end };
+      setDrag({ lane, id: item.id, mode, x0: e.clientX, moved: false, src });
     },
     [onSelect]
   );
@@ -296,6 +315,34 @@ export default function Timeline({
       const shift = (dx / r.width) * total;
       const from = drag.src;
       const kind = SINGULAR[drag.lane];
+
+      // Music: output time, as stored. Its head trim moves where in the track
+      // it starts too, so the song itself stays put under the trimmed edge.
+      if (drag.lane === "music") {
+        const m = musicItems(tl).find((x) => x.id === drag.id);
+        if (!m) return;
+        const L = musicTracks?.get(m.media)?.duration || 0;
+        const loops = m.loop !== false && L > 0.5;
+        const len = from.end - from.start;
+        let start = from.start;
+        let end = from.end;
+        let inn = from.in;
+        if (drag.mode === "move") {
+          start = clamp(from.start + shift, 0, Math.max(0, total - len));
+          end = start + len;
+        } else if (drag.mode === "start") {
+          // Not before the track's own first second unless it loops.
+          start = clamp(from.start + shift, loops ? 0 : Math.max(0, from.start - from.in), from.end - MUSIC_MIN);
+          inn = from.in + (start - from.start);
+          if (loops) inn = ((inn % L) + L) % L;
+        } else {
+          // Not past the track's end unless it loops, nor past the video's.
+          const most = loops || !L ? total : Math.min(total, from.start + (L - from.in));
+          end = clamp(from.end + shift, from.start + MUSIC_MIN, most);
+        }
+        onChange({ kind, id: drag.id, patch: { start: round3(start), duration: round3(end - start), in: round3(inn) } });
+        return;
+      }
       const list = drag.lane === "zooms" ? tl.zooms : tl[drag.lane];
       const item = list?.find((x) => x.id === drag.id);
       if (!item) return;
@@ -318,7 +365,7 @@ export default function Timeline({
 
       onChange({ kind, id: drag.id, patch: { start: round3(start), end: round3(end) } });
     },
-    [drag, lay, onChange, tl, total]
+    [drag, lay, onChange, tl, total, musicTracks]
   );
 
   const endDrag = useCallback(() => setDrag(null), []);
@@ -390,6 +437,16 @@ export default function Timeline({
       // BLUR LANE above), so there is no gap to fit and nothing is in the way.
       if (laneKey === "blurs") return { lane: laneKey, t, end: total, flip, point: true };
 
+      // On the music lane, the free stretch: up to the next track or the end.
+      if (laneKey === "music") {
+        let gapEnd = total;
+        for (const it of items.music) {
+          if (t >= it.start && t <= it.end) return null;
+          if (it.start > t && it.start < gapEnd) gapEnd = it.start;
+        }
+        return gapEnd - t >= MUSIC_MIN ? { lane: laneKey, t, end: gapEnd, flip } : null;
+      }
+
       const kind = SINGULAR[laneKey];
       let gapEnd = total;
       for (const it of items[laneKey]) {
@@ -409,6 +466,10 @@ export default function Timeline({
         // Stored in recording time, like everything else.
         onSplit(round3(toSource(g.t, lay)));
         onSeek(g.t);
+      } else if (g.lane === "music") {
+        // Output time; the track is chosen in the Music tab.
+        onAddMusic?.(round3(g.t));
+        onSeek(g.t + 0.05);
       } else {
         // Stored in recording time. Both ends are mapped rather than adding a
         // length to the start, so an item that crosses a cut covers what plays.
@@ -417,7 +478,7 @@ export default function Timeline({
       }
       setGhost(null);
     },
-    [lay, onAdd, onSplit, onSeek]
+    [lay, onAdd, onSplit, onSeek, onAddMusic]
   );
 
   /* ── The ruler's tick marks ───────────────────────────────────────────── */
@@ -558,7 +619,8 @@ export default function Timeline({
             {/* Lanes: the video first, then the things laid over it. */}
             {ROWS.map((lane) => {
               const isVideo = lane.key === "video";
-              const canAdd = isVideo ? !!onSplit : !!onAdd;
+              const isMusic = lane.key === "music";
+              const canAdd = isVideo ? !!onSplit : isMusic ? !!onAddMusic : !!onAdd;
               return (
               <div
                 key={lane.key}
@@ -672,8 +734,8 @@ export default function Timeline({
                     <span className={`st-ghost-tag${ghost.flip ? " is-left" : ""}`} style={{ borderColor: lane.color }}>
                       <kbd className="st-kbd">{ADD_KEY}</kbd>
                       <span style={{ color: "var(--ink-mute)", fontWeight: 600 }}>+ click</span>
-                      <Icon name={isVideo ? "scissors" : "plus"} size={11} />
-                      {isVideo ? "Cut here" : `Add ${NOUN[lane.key]}`}
+                      <Icon name={isVideo ? "scissors" : isMusic ? "music" : "plus"} size={11} />
+                      {isVideo ? "Cut here" : isMusic ? "Add music" : `Add ${NOUN[lane.key]}`}
                     </span>
                   </div>
                 )}
@@ -718,7 +780,44 @@ export default function Timeline({
                     />
                   ))}
 
-                {lane.key !== "blurs" && (items[lane.key] || []).map((item, i) => {
+                {/* Music: each track with its waveform, in output time. */}
+                {isMusic &&
+                  items.music.map((item) => {
+                    const on = selection?.kind === "music" && selection.id === item.id;
+                    const track = musicTracks?.get(item.media);
+                    return (
+                      <div
+                        key={item.id}
+                        className={`st-chip st-mchip${on ? " is-on" : ""}${item.muted ? " is-muted" : ""}`}
+                        title={`${track?.title || "Music"} · ${fmtTime(item.start, true)} – ${fmtTime(item.end, true)}${item.muted ? " · muted" : ""}`}
+                        onPointerDown={beginDrag("music", item, "move")}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!drag?.moved) {
+                            onSelect({ kind: "music", id: item.id });
+                            onSeek(item.start + 0.05);
+                          }
+                        }}
+                        style={{
+                          left: `${(item.start / total) * 100}%`,
+                          width: `${Math.max(0.6 / zoom, ((item.end - item.start) / total) * 100)}%`,
+                          background: on ? lane.color : `${lane.color}40`,
+                          borderColor: lane.color,
+                          color: on ? "#fff" : "var(--ink-body)",
+                        }}
+                      >
+                        <MusicWave item={item} track={track} on={on} />
+                        <span className="st-grip is-start" onPointerDown={beginDrag("music", item, "start")} />
+                        <span className="st-mchip-name">
+                          <Icon name={item.muted ? "soundOff" : "music"} size={11} />
+                          {track?.title || "Music"}
+                        </span>
+                        <span className="st-grip is-end" onPointerDown={beginDrag("music", item, "end")} />
+                      </div>
+                    );
+                  })}
+
+                {lane.key !== "blurs" && !isMusic && (items[lane.key] || []).map((item, i) => {
                   const left = (item.start / total) * 100;
                   const width = Math.max(0.6 / zoom, ((item.end - item.start) / total) * 100);
                   const on = selection?.kind === SINGULAR[lane.key] && selection.id === item.id;
@@ -904,8 +1003,37 @@ const zoomBtn = (off) => ({
 
 const LABEL_W = 74;
 
-const SINGULAR = { zooms: "zoom", blurs: "blur", cues: "cue" };
-const NOUN = { zooms: "zoom", blurs: "blur", cues: "caption" };
+const SINGULAR = { zooms: "zoom", blurs: "blur", cues: "cue", music: "music" };
+const NOUN = { zooms: "zoom", blurs: "blur", cues: "caption", music: "music" };
+
+/**
+ * A music chip's waveform: the track's loudest moments across the stretch it
+ * plays, from where it starts in the track, repeating where it loops. Drawn as
+ * bars in a viewBox that stretches with the chip.
+ */
+function MusicWave({ item, track, on }) {
+  const peaks = track?.peaks;
+  const L = track?.duration || 0;
+  if (!peaks?.length || !(L > 0)) return null;
+  const bars = 64;
+  const vals = [];
+  for (let i = 0; i < bars; i++) {
+    let at = (item.in || 0) + (item.duration * (i + 0.5)) / bars;
+    if (item.loop !== false) at %= L;
+    else if (at > L) {
+      vals.push(0);
+      continue;
+    }
+    vals.push(peaks[Math.min(peaks.length - 1, Math.floor((at / L) * peaks.length))] || 0);
+  }
+  return (
+    <svg className="st-mchip-wave" viewBox={`0 0 ${bars} 100`} preserveAspectRatio="none" aria-hidden="true">
+      {vals.map((v, i) => (
+        <rect key={i} x={i + 0.18} width={0.64} y={50 - Math.max(4, v) / 2.4} height={Math.max(4, v) / 1.2} rx={0.3} fill={on ? "rgba(255,255,255,.55)" : "currentColor"} />
+      ))}
+    </svg>
+  );
+}
 
 /** Pixels the add label needs to the right of the pointer, or it flips left. */
 const TAG_ROOM = 190;

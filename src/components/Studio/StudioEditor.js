@@ -28,10 +28,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onLiveEvent } from "../../realtime/socket";
 // requestReview and resolveSuggestion are hidden with the Review tab (see TABS).
-import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds, followBlur, getFollows, makeVoice, getVoice } from "./studioApi";
+import { getDemo, saveTimeline, renameDemo, readScreens, requestCaptions, captionsFromScript, /* requestReview, resolveSuggestion, */ listBackgrounds, followBlur, getFollows, makeVoice, getVoice, listMusic } from "./studioApi";
 import { blurSig, applyState } from "./follow.mjs";
 import { voiceSig } from "./voices.mjs";
 import VoicePanel from "./VoicePanel";
+import MusicPanel from "./MusicPanel";
+import { musicItems, withMusic } from "./musicTimeline.mjs";
 import Working, { editPhase, demoPhase } from "./Working";
 import Preview from "./Preview";
 import Timeline from "./Timeline";
@@ -54,7 +56,7 @@ import { layout, clamp, fmtTime, toSource } from "./model";
 import "./studio.css";
 
 /** The inspector tab each kind of selectable thing is edited in. */
-const TAB_OF = { clip: "video", zoom: "zoom", blur: "blur", cue: "captions" };
+const TAB_OF = { clip: "video", zoom: "zoom", blur: "blur", cue: "captions", music: "music" };
 
 const TABS = [
   // Steps is hidden for now, not removed. Restoring it is this line, the
@@ -69,6 +71,8 @@ const TABS = [
   { id: "cursor", label: "Cursor", icon: "cursor" },
   // The AI voiceover that reads the captions (VoicePanel.js).
   { id: "voice", label: "Voice", icon: "mic" },
+  // Background music from Clipo's library, on its own lane (MusicPanel.js).
+  { id: "music", label: "Music", icon: "music" },
   // Canvas moved under the preview (CanvasBar.js); Review is hidden for now.
   // Both are commented out, not removed, with their panel blocks in `panel`.
   // { id: "canvas", label: "Canvas", icon: "canvas" },
@@ -234,6 +238,21 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   // The AI voiceover being made (VoicePanel, backend voice.js): { sig,
   // progress } or { sig, failed, message }; null when none is.
   const [voicing, setVoicing] = useState(null);
+  // The music library (backend services/studio/music.js): asked for once, for
+  // the lane's waveforms, the preview and the Music tab. Null while loading.
+  const [library, setLibrary] = useState(null);
+  useEffect(() => {
+    let live = true;
+    listMusic()
+      .then((l) => live && setLibrary(l))
+      .catch(() => live && setLibrary({ moods: [], tracks: [] }));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const musicTracks = useMemo(() => new Map((library?.tracks || []).map((t) => [t.id, t])), [library]);
+  // A moment on the music lane waiting for a track to be picked (Timeline.js).
+  const [musicAt, setMusicAt] = useState(null);
   useEffect(() => {
     let live = true;
     listBackgrounds()
@@ -599,6 +618,12 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   const changeItem = useCallback(
     ({ kind, id, patch }) => {
+      // Music lives under audio, in output time (musicTimeline.mjs).
+      if (kind === "music") {
+        const cur = tlRef.current;
+        edit({ audio: withMusic(cur, musicItems(cur).map((m) => (m.id === id ? { ...m, ...patch } : m))) }, LABELS.music);
+        return;
+      }
       const list = { zoom: "zooms", blur: "blurs", cue: "cues" }[kind];
       if (!list) return;
       // A blur's rectangle moved or resized on the picture: it is now right
@@ -617,6 +642,14 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
 
   // A click on an empty stretch of a timeline lane: make one there, in
   // recording time, and select it, which opens its tab (see Timeline.js).
+  // Ctrl/⌘ + click on the music lane: remember the moment and open the Music
+  // tab's library, where the track for it is chosen.
+  const addMusicAt = useCallback((t) => {
+    setSelection(null);
+    setMusicAt(t);
+    setTab("music");
+  }, []);
+
   const addAt = useCallback(
     (kind, start, end) => {
       const cur = tlRef.current;
@@ -649,6 +682,11 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
     if (sel.kind === "clip") {
       const clip = clipsOf(cur, layout(cur)).find((c) => c.id === sel.id);
       if (clip) deleteClipRef.current?.(clip);
+      return;
+    }
+    if (sel.kind === "music") {
+      edit({ audio: withMusic(cur, musicItems(cur).filter((m) => m.id !== sel.id)) }, "Remove music");
+      setSelection(null);
       return;
     }
     const list = { zoom: "zooms", blur: "blurs", cue: "cues" }[sel.kind];
@@ -1476,6 +1514,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         onApplyBlur={applyBlur}
         // The AI voiceover, played with the picture when it is on.
         voice={{ url: demo.voiceover?.url || "", on: !!(tl.voice?.on && demo.voiceover?.url), keepOriginal: !!tl.voice?.keep_original }}
+        music={{ items: musicItems(tl), tracks: musicTracks }}
       />
       {full && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "12px 4px 0", color: "#fff" }}>
@@ -1560,7 +1599,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
             aria-selected={on}
             onClick={() => openTab(t.id)}
             style={{
-              flexShrink: 0, padding: "11px 11px 9px", fontSize: 12.5, fontWeight: on ? 680 : 600,
+              flexShrink: 0, padding: "11px 10px 9px", fontSize: 12.5, fontWeight: on ? 680 : 600,
               color: on ? "var(--ink)" : "var(--ink-mute)", fontFamily: "inherit",
               border: "none", borderBottom: `2px solid ${on ? "var(--ink)" : "transparent"}`,
               marginBottom: -1, background: "none", cursor: "pointer", whiteSpace: "nowrap",
@@ -1623,6 +1662,21 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
         />
       )}
       {tab === "cursor" && <CursorPanel tl={tl} edit={edit} />}
+      {tab === "music" && (
+        <MusicPanel
+          tl={tl}
+          edit={edit}
+          selection={selection}
+          onSelect={select}
+          time={time}
+          total={lay?.duration || 0}
+          seek={seek}
+          library={library}
+          onLibrary={setLibrary}
+          addAt={musicAt}
+          onClearAddAt={() => setMusicAt(null)}
+        />
+      )}
       {tab === "voice" && (
         <VoicePanel
           tl={tl}
@@ -1704,6 +1758,8 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
       follows={follows}
       following={following}
       onApplyBlur={applyBlur}
+      musicTracks={musicTracks}
+      onAddMusic={addMusicAt}
       // Taller lanes on a desk: bigger chips to grab, drag and resize.
       height={narrow ? 30 : 42}
     />
@@ -1818,7 +1874,7 @@ export default function StudioEditor({ demoId, config, onExit, onAnalyse }) {
   );
 }
 
-const LABELS = { zoom: "Zoom", blur: "Blur", cue: "Caption" };
+const LABELS = { zoom: "Zoom", blur: "Blur", cue: "Caption", music: "Music" };
 
 /** True while the window is too narrow for a picture and an inspector side by side. */
 function useNarrow(px = 900) {

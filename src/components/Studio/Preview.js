@@ -34,6 +34,15 @@ import { useBox, Icon } from "./ui";
 import Skeleton from "../Shell/Skeleton";
 import { followFor, followAt, followNear, applyState, blurCorner, blurRadius, blurSigma } from "./follow.mjs";
 import { cursorColors, rippleRgb, traceHand, strokeOutline, strokeHandDetail, cursorSize } from "./cursorLook.mjs";
+import { fadeAt, trackTimeAt } from "./musicTimeline.mjs";
+
+/**
+ * How far music under the voice is turned down in the preview while a caption
+ * line is on screen. The export ducks on the speech itself (render/compose.js,
+ * about 20 dB under a normal voice); the preview has no way to hear the
+ * recording, so captions stand in for "someone is talking" and it dips less.
+ */
+const PREVIEW_DUCK = 0.25;
 
 /** How long a click ripple lives. Matches overlay.js. */
 const RIPPLE = 0.5;
@@ -65,6 +74,9 @@ export default function Preview({
   // The AI voiceover (VoicePanel): { url, on, keepOriginal }. One track in the
   // recording's own time, so it simply follows the video's clock.
   voice = null,
+  // Background music on its lane (musicTimeline.mjs): { items, tracks } with
+  // tracks the library by id ({ url, duration }).
+  music = null,
 }) {
   const wrapRef = useRef(null);
   // The background image, once loaded. A ref, not state: the frame loop below
@@ -86,6 +98,48 @@ export default function Preview({
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const voiceRef = useRef(null);
+  /**
+   * ── MUSIC, ONE PLAYER PER TRACK ON THE LANE ────────────────────────────────
+   * Kept in step with the picture on every frame, like the voiceover below:
+   * started where the video is, nudged back when it drifts, paused with it,
+   * faded and turned down the way the export will. Players are made when a
+   * track arrives on the lane and dropped when it leaves.
+   */
+  const musicEls = useRef(new Map());
+  const musicNow = useRef(music);
+  musicNow.current = music;
+  const musicList = music?.items;
+  const musicLib = music?.tracks;
+  useEffect(() => {
+    const els = musicEls.current;
+    const want = new Set();
+    for (const m of musicList || []) {
+      const url = musicLib?.get(m.media)?.url;
+      if (!url) continue;
+      want.add(m.id);
+      const had = els.get(m.id);
+      if (!had || had.src !== url) {
+        had?.audio.pause();
+        const audio = new Audio();
+        audio.preload = "auto";
+        audio.src = url;
+        els.set(m.id, { audio, src: url });
+      }
+    }
+    for (const [id, e] of els) {
+      if (!want.has(id)) {
+        e.audio.pause();
+        els.delete(id);
+      }
+    }
+  }, [musicList, musicLib]);
+  useEffect(
+    () => () => {
+      for (const e of musicEls.current.values()) e.audio.pause();
+      musicEls.current.clear();
+    },
+    []
+  );
   const voiceOnRef = useRef(false);
   voiceOnRef.current = !!(voice?.on && voice?.url);
   // Instead of the recording's own sound, unless the creator kept it.
@@ -342,6 +396,34 @@ export default function Preview({
       }
     }
 
+    // ── Background music, kept with the picture ────────────────────────
+    const mu = musicNow.current;
+    if (mu?.items?.length) {
+      const talking = cues.some((c) => outT >= c.start && outT <= c.end);
+      for (const m of mu.items) {
+        const e = musicEls.current.get(m.id);
+        if (!e) continue;
+        const a = e.audio;
+        const L = mu.tracks?.get(m.media)?.duration || a.duration || 0;
+        const inside = outT >= m.start && outT < m.start + m.duration;
+        const want = trackTimeAt(m, outT, L);
+        const ranOut = m.loop === false && L > 0 && want >= L;
+        if (v.paused || m.muted || !inside || ranOut) {
+          if (!a.paused) a.pause();
+          continue;
+        }
+        let vol = (m.volume ?? 0.35) * fadeAt(m, outT);
+        if (m.duck !== false && talking) vol *= PREVIEW_DUCK;
+        a.volume = clamp(vol, 0, 1);
+        if (a.paused) {
+          a.currentTime = want;
+          a.play().catch(() => {});
+        } else if (Math.abs(a.currentTime - want) > 0.3) {
+          a.currentTime = want;
+        }
+      }
+    }
+
     // ── The AI voiceover, kept with the picture ────────────────────────
     // Same clock as the video, so a seek, a cut skipped or a pause is just
     // the two drifting apart, and they are pulled back together.
@@ -352,7 +434,7 @@ export default function Preview({
         if (a.paused) a.play().catch(() => {});
       } else if (!a.paused) a.pause();
     }
-  }, [tl, lay, vb, blurs, blurById, follows, clicks, srcW, srcH, onTime, onPlayingChange]);
+  }, [tl, lay, vb, blurs, blurById, follows, clicks, cues, srcW, srcH, onTime, onPlayingChange]);
 
   useEffect(() => {
     let raf = 0;

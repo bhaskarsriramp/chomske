@@ -370,9 +370,10 @@ export function Row({ selected, onClick, onRemove, accent, title, sub, right, ba
       }}
     >
       {accent && <span aria-hidden style={{ flexShrink: 0, width: 3, height: 26, borderRadius: 2, background: accent }} />}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* width 0 + grow: a long title is cut short rather than widening the panel */}
+      <div style={{ flex: "1 1 0", width: 0, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ fontSize: 13, fontWeight: 620, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ minWidth: 0, fontSize: 13, fontWeight: 620, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {title}
           </span>
           {badge}
@@ -440,6 +441,8 @@ const PATHS = {
   // A tab's own sound (RecordStart.js): on, and struck through.
   sound: <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" /></>,
   soundOff: <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /><path d="M16 9.5l5 5M21 9.5l-5 5" /></>,
+  // Music (MusicPanel.js, the timeline's music lane): a pair of notes.
+  music: <><path d="M9 17V5l11-2v12" /><circle cx="6.5" cy="17" r="2.5" /><circle cx="17.5" cy="15" r="2.5" /></>,
   // A browser tab: what the picker asks for.
   tab: <><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M3 9h18M6.5 6.8h.01M9 6.8h.01" /></>,
   zoom: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.3-4.3M11 8.5v5M8.5 11h5" /></>,

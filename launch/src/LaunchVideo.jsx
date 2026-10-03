@@ -59,7 +59,7 @@ const Music = ({ board, placed, total }) => {
     const ends = interpolate(f, [0, 12, total - 50, total - 2], [0, 1, 1, 0], clamp);
     return ends * (up - (up - MUSIC_UNDER) * duck);
   };
-  return <Audio src={staticFile(board.music)} volume={volume} />;
+  return <Audio src={staticFile(board.music)} volume={volume} loop={!!board.musicLoop} />;
 };
 
 export const LaunchVideo = ({ board }) => {
